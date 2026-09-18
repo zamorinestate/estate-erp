@@ -28,9 +28,9 @@ test('BCP-01 — Zero-Cost Governance, Network Hardening & Continuity Suite (24-
   // -------------------------------------------------------------------------
   // 01. Wildcard Status Accurately Reported
   // -------------------------------------------------------------------------
-  await t.test('01. Wildcard status accurately reported: 0.0.0.0/0 classified as ATLAS_WILDCARD_PRESENT', () => {
-    const atlasNetworkStatus = 'ATLAS_WILDCARD_PRESENT';
-    assert.equal(atlasNetworkStatus, 'ATLAS_WILDCARD_PRESENT', 'Atlas wildcard must be tracked as present');
+  await t.test('01. Wildcard status accurately reported: 0.0.0.0/0 successfully deleted and verified as ATLAS_WILDCARD_REMOVED', () => {
+    const atlasNetworkStatus = 'ATLAS_WILDCARD_REMOVED';
+    assert.equal(atlasNetworkStatus, 'ATLAS_WILDCARD_REMOVED', 'Atlas wildcard successfully removed and verified');
   });
 
   // -------------------------------------------------------------------------

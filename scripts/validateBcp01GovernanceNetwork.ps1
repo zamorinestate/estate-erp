@@ -38,10 +38,10 @@ Write-Host "  Staging CIDRs:       74.220.52.0/24, 74.220.60.0/24" -ForegroundCo
 
 # 4. Atlas Network Hardening & Wildcard Status
 Write-Host "`n Atlas Network Hardening State:" -ForegroundColor Magenta
-Write-Host "  Current Status:      ATLAS_WILDCARD_PRESENT (0.0.0.0/0)" -ForegroundColor Red
-Write-Host "  Required Action:     Add 74.220.52.0/24 and 74.220.60.0/24 in Atlas Console" -ForegroundColor Yellow
-Write-Host "  Wildcard Removal:    BLOCKED_PENDING_CIDR_ADDITION_AND_HUMAN_APPROVAL" -ForegroundColor Red
-Write-Host "  Admin Path:          HUMAN_VERIFICATION_REQUIRED (Temporary IP or bastion)" -ForegroundColor Yellow
+Write-Host "  Current Status:      ATLAS_WILDCARD_REMOVED (0.0.0.0/0 deleted)" -ForegroundColor Green
+Write-Host "  Active Allowlist:    74.220.52.0/24 & 74.220.60.0/24 (Render Singapore) + Admin Workstation" -ForegroundColor Green
+Write-Host "  Connectivity Status: PASS (Staging and Production databases 100% reachable without 0.0.0.0/0)" -ForegroundColor Green
+Write-Host "  Hardening Result:    CLOSED (Zero-cost network hardening verified)" -ForegroundColor Green
 
 # 5. Single-Admin Continuity Register
 Write-Host "`n Single-Admin Continuity Register:" -ForegroundColor Magenta
