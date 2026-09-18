@@ -8,6 +8,10 @@
   "background_color": "#101a30",
   "theme_color": "#101a30",
   "icons": [
+    { "src": "src/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "src/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "src/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "src/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
     { "src": "src/assets/zamorin-app-icon-1024.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
     { "src": "src/assets/zamorin-app-icon-2048.png", "sizes": "2048x2048", "type": "image/png", "purpose": "any" },
     { "src": "src/assets/zamorin-app-icon-4096.png", "sizes": "4096x4096", "type": "image/png", "purpose": "any" },
