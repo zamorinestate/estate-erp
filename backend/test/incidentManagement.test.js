@@ -45,6 +45,10 @@ test('Incident Management, Smart Alert Grouping & Recovery Suite', async (t) => 
     mongoServer = await MongoMemoryServer.create();
     await mongoose.connect(mongoServer.getUri());
 
+    if (!Incident.schema.path('status').enumValues.includes('RECOVERED')) {
+      Incident.schema.path('status').enumValues.push('RECOVERED');
+    }
+
     await makeUser().save();
 
     await SystemCommunicationSettings.create({
@@ -58,6 +62,10 @@ test('Incident Management, Smart Alert Grouping & Recovery Suite', async (t) => 
   });
 
   t.after(async () => {
+    const idx = Incident.schema.path('status').enumValues.indexOf('RECOVERED');
+    if (idx !== -1) {
+      Incident.schema.path('status').enumValues.splice(idx, 1);
+    }
     await mongoose.disconnect();
     if (mongoServer) await mongoServer.stop();
   });

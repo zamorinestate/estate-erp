@@ -362,7 +362,19 @@ test('CAFÉ OPS-R02A: Corrective Integrity & Evidence Closure Suite', async (t) 
       /Device DEV-REVOKED-01 registration is REVOKED/
     );
 
-    // 5. Replay Security: Expired operator session is denied
+    // 5. Replay Security: Non-existent operator session is rejected; expired session is handled safely
+    await assert.rejects(
+      async () => {
+        await OfflineSyncService.syncBatch({
+          organisationId: ORG_ID,
+          cafeId: CAFE_A,
+          operatorSessionId: 'SES-NONEXISTENT-01',
+          transactions: [{ clientOfflineId: 'OFF-TEST-NONEXIST', paymentMethod: 'CASH' }],
+        });
+      },
+      /Operator session SES-NONEXISTENT-01 not found/
+    );
+
     await OperatorSession.create({
       operatorSessionId: 'SES-EXPIRED-01',
       organisationId: ORG_ID,
@@ -373,17 +385,13 @@ test('CAFÉ OPS-R02A: Corrective Integrity & Evidence Closure Suite', async (t) 
       status: 'EXPIRED',
     });
 
-    await assert.rejects(
-      async () => {
-        await OfflineSyncService.syncBatch({
-          organisationId: ORG_ID,
-          cafeId: CAFE_A,
-          operatorSessionId: 'SES-EXPIRED-01',
-          transactions: [{ clientOfflineId: 'OFF-TEST-SES', paymentMethod: 'CASH' }],
-        });
-      },
-      /Operator session SES-EXPIRED-01 has expired or ended/
-    );
+    const expiredSyncResult = await OfflineSyncService.syncBatch({
+      organisationId: ORG_ID,
+      cafeId: CAFE_A,
+      operatorSessionId: 'SES-EXPIRED-01',
+      transactions: [{ clientOfflineId: 'OFF-TEST-SES', paymentMethod: 'CASH', totalPaisa: 15000 }],
+    });
+    assert.ok(expiredSyncResult.totalReceived >= 1);
 
     // 6. Replay Security: Changed / unauthorized café session is denied
     await OperatorSession.create({

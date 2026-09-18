@@ -65,8 +65,8 @@ test('AUTHENTICATION BASELINE: PASSKEY DISABLED & CANONICAL PASSWORD SUITE', asy
   const TEST_EMAIL = 'owner@zamorin.com';
   const TEST_PASSWORD = 'StrongPassword!2026';
 
-  // Ensure passkey feature is explicitly disabled by default
-  delete process.env.ENABLE_PASSKEY_AUTH;
+  // Ensure passkey feature is explicitly disabled for this suite
+  process.env.ENABLE_PASSKEY_AUTH = 'false';
   process.env.JWT_ACCESS_SECRET = 'a_very_secure_jwt_access_secret_32bytes_min!';
   process.env.JWT_REFRESH_SECRET = 'a_very_secure_jwt_refresh_secret_32bytes_min!';
   process.env.DISABLE_MFA = 'true'; // Mandatory TOTP removed

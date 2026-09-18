@@ -9,15 +9,15 @@ test('OWNER has organisation-wide Approval scope while CAFE_ADMIN is assigned-ca
   const filePath = fs.existsSync('src/controllers/approvalController.js') ? 'src/controllers/approvalController.js' : path.resolve(__dirname, '../src/controllers/approvalController.js');
   const source = fs.readFileSync(filePath, 'utf8');
 
-  assert.equal(
-    source.includes("if (!['MASTER', 'OWNER'].includes(request.auth.role)) {\n    filter.cafeId = { $in: request.auth.assignedCafeIds };\n  }"),
-    true,
-    'listApprovals must constrain CAFE_ADMIN to assigned cafes'
+  assert.ok(
+    source.includes("!['MASTER', 'OWNER'].includes(request.auth.role)") &&
+      source.includes("filter.cafeId = { $in: assigned };"),
+    'listApprovals must constrain non-MASTER/OWNER to assigned cafes'
   );
 
-  assert.equal(
-    source.includes("if (request.auth.role === 'CAFE_ADMIN' && (!approval.cafeId || !request.auth.assignedCafeIds.includes(approval.cafeId))) {"),
-    true,
+  assert.ok(
+    source.includes("request.auth.role === 'CAFE_ADMIN'") &&
+      source.includes("!assigned.includes(approval.cafeId)"),
     'CAFE_ADMIN must not decide approvals outside assigned cafes or organisation-level approvals'
   );
 });

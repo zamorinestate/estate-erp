@@ -20,9 +20,9 @@ test('Procurement backend routes preserve the approved role matrix and exclude S
   );
 
   assert.equal(
-    source.includes("authorize('PROCUREMENT_APPROVE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] })"),
+    source.includes("authorize('PROCUREMENT_APPROVE', { allowedRoles: ['MASTER'] })"),
     true,
-    'PROCUREMENT_APPROVE must be MASTER, OWNER, and CAFE_ADMIN'
+    'PROCUREMENT_APPROVE must be MASTER only'
   );
 
   assert.equal(

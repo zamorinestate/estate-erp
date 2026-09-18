@@ -123,7 +123,7 @@ test('REC-10: New Café Full End-to-End Acceptance Lifecycle Suite', async (t) =
     assert.equal(cafeInDb.inventorySetup.enabled, true);
     assert.equal(cafeInDb.inventorySetup.mainStore, 'Main Store');
     assert.ok(Array.isArray(cafeInDb.inventorySetup.coldStorageLocations));
-    assert.ok(cafeInDb.qrLoginContext.loginUrl.includes('/c/'));
+    assert.ok(cafeInDb.qrLoginContext.loginUrl.includes('/cafe/'));
 
     // Verify Permanent PIN reservation is retired in REC-02 (zero new reservations generated)
     const pinReservation = await CafePinReservation.findOne({ cafeId: createdCafeId });

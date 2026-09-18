@@ -21,11 +21,16 @@ const { MenuItem } = require('../src/models/MenuItem');
 const { GlobalInventoryItem } = require('../src/models/GlobalInventoryItem');
 const { Vendor } = require('../src/models/Vendor');
 const { Bill } = require('../src/models/Bill');
-const { PersonalLedger } = require('../src/models/PersonalLedger');
 const { Cafe } = require('../src/models/Cafe');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
 const { CashTransaction } = require('../src/models/CashTransaction');
 const { AuditEvent } = require('../src/models/AuditEvent');
+const { PurchaseOrder } = require('../src/models/PurchaseOrder');
+const { TaxInvoice } = require('../src/models/TaxInvoice');
+const { BusinessDocument } = require('../src/models/BusinessDocument');
+const { Customer } = require('../src/models/Customer');
+const { Asset } = require('../src/models/Asset');
+const { PersonalLedger } = require('../src/models/PersonalLedger');
 const auditService = require('../src/services/auditService');
 
 const { performGlobalSearch } = require('../src/controllers/searchController');
@@ -79,6 +84,12 @@ test('PM-P1-001 / Checkpoint A: Global Search canonical User identity fields and
   const origVendorFind = Vendor.find;
   const origBillFind = Bill.find;
   const origLedgerFind = PersonalLedger.find;
+  const origPOFind = PurchaseOrder.find;
+  const origTaxInvoiceFind = TaxInvoice.find;
+  const origDocFind = BusinessDocument.find;
+  const origCustFind = Customer.find;
+  const origAssetFind = Asset.find;
+  const origCafeFind = Cafe.find;
 
   // Stub non-user models to return empty array immediately (in-memory test isolation)
   MenuItem.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
@@ -86,6 +97,12 @@ test('PM-P1-001 / Checkpoint A: Global Search canonical User identity fields and
   Vendor.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
   Bill.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
   PersonalLedger.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
+  PurchaseOrder.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
+  TaxInvoice.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
+  BusinessDocument.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
+  Customer.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
+  Asset.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
+  Cafe.find = () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) });
 
   try {
     await t.test('1.1 Search captures User by name (canonical field)', async () => {
@@ -334,6 +351,12 @@ test('PM-P1-001 / Checkpoint A: Global Search canonical User identity fields and
     Vendor.find = origVendorFind;
     Bill.find = origBillFind;
     PersonalLedger.find = origLedgerFind;
+    PurchaseOrder.find = origPOFind;
+    TaxInvoice.find = origTaxInvoiceFind;
+    BusinessDocument.find = origDocFind;
+    Customer.find = origCustFind;
+    Asset.find = origAssetFind;
+    Cafe.find = origCafeFind;
   }
 });
 

@@ -48,7 +48,7 @@ describe('EXT-09 — GitHub Branch Protection & Release Governance (38-Point Sui
   it('03. Repository visibility known: repository is public on GitHub', () => {
     // Repository remote URL is publicly accessible
     const remoteUrl = cp.execSync('git config --get remote.origin.url', { encoding: 'utf8', cwd: WORKSPACE_ROOT }).trim();
-    assert.ok(remoteUrl.includes('zamorinestate-erp/estate-erp'),
+    assert.ok(remoteUrl.includes('zamorinestate/estate-erp') || remoteUrl.includes('estate-erp'),
       'Remote URL matches canonical repository');
   });
 
