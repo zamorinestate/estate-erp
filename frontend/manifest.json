@@ -2,9 +2,11 @@
   "name": "Zamorin Cafe ERP",
   "short_name": "Zamorin",
   "description": "Multi-location café management — Master, Owner, Café Admin and Staff portals.",
+  "id": "./",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
+  "categories": ["business", "food", "productivity"],
   "background_color": "#101a30",
   "theme_color": "#101a30",
   "icons": [
