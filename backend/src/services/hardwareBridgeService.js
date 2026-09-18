@@ -429,6 +429,19 @@ function routeKotItems(items = [], terminals = []) {
 }
 
 /**
+ * Safely encodes HTML entities to prevent XSS in print previews.
+ */
+function escapeHtml(text) {
+  if (text === null || text === undefined) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Generates clean thermal HTML markup for browser fallback window.print().
  */
 function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
@@ -437,11 +450,11 @@ function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
     .map(
       (it) => `
     <tr>
-      <td style="text-align:left; padding: 4px 0;">${sanitizeEscPosText(it.name)}</td>
+      <td style="text-align:left; padding: 4px 0;">${escapeHtml(it.name)}</td>
       <td style="text-align:center; padding: 4px 0;">${it.quantity || 1}</td>
       <td style="text-align:right; padding: 4px 0;">₹${(Number(it.total || it.price || 0)).toFixed(2)}</td>
     </tr>
-    ${it.notes ? `<tr><td colspan="3" style="font-size:11px; color:#555; padding-left:8px;">* ${sanitizeEscPosText(it.notes)}</td></tr>` : ''}
+    ${it.notes ? `<tr><td colspan="3" style="font-size:11px; color:#555; padding-left:8px;">* ${escapeHtml(it.notes)}</td></tr>` : ''}
   `
     )
     .join('');
@@ -480,17 +493,17 @@ function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
 <body onload="window.print()">
   <div class="receipt-container">
     <div class="text-center">
-      <div class="title bold">${sanitizeEscPosText(cafeInfo.brandName || 'ZAMORIN CAFE')}</div>
-      <div>${sanitizeEscPosText(cafeInfo.legalName || 'Zamorin Hospitality')}</div>
-      ${cafeInfo.gstin ? `<div>GSTIN: ${sanitizeEscPosText(cafeInfo.gstin)}</div>` : ''}
-      ${cafeInfo.fssai ? `<div>FSSAI: ${sanitizeEscPosText(cafeInfo.fssai)}</div>` : ''}
+      <div class="title bold">${escapeHtml(cafeInfo.brandName || 'ZAMORIN CAFE')}</div>
+      <div>${escapeHtml(cafeInfo.legalName || 'Zamorin Hospitality')}</div>
+      ${cafeInfo.gstin ? `<div>GSTIN: ${escapeHtml(cafeInfo.gstin)}</div>` : ''}
+      ${cafeInfo.fssai ? `<div>FSSAI: ${escapeHtml(cafeInfo.fssai)}</div>` : ''}
       ${orderData.isReprint ? `<div class="bold" style="background:#000;color:#fff;padding:2px 6px;margin-top:4px;">*** REPRINT #${orderData.reprintCount || 1} ***</div>` : ''}
       ${orderData.isVoid ? `<div class="bold" style="background:#000;color:#fff;padding:2px 6px;margin-top:4px;">*** VOID - CANCELLED BILL ***</div>` : ''}
     </div>
     <div class="divider"></div>
-    <div>Bill No: ${orderData.billNumber || orderData.orderId || 'ZC-001'}</div>
-    <div>Date: ${orderData.date || new Date().toISOString().slice(0, 10)} ${orderData.time || ''}</div>
-    ${orderData.tableNumber ? `<div>Table: ${orderData.tableNumber}</div>` : ''}
+    <div>Bill No: ${escapeHtml(orderData.billNumber || orderData.orderId || 'ZC-001')}</div>
+    <div>Date: ${escapeHtml(orderData.date || new Date().toISOString().slice(0, 10))} ${escapeHtml(orderData.time || '')}</div>
+    ${orderData.tableNumber ? `<div>Table: ${escapeHtml(orderData.tableNumber)}</div>` : ''}
     <div class="divider"></div>
     <table>
       <thead>
@@ -689,6 +702,7 @@ async function checkTerminalHealth(terminalId, organisationId) {
 module.exports = {
   ESC_POS_COMMANDS,
   sanitizeEscPosText,
+  escapeHtml,
   buildDrawerKickBuffer,
   buildEscPosQrBuffer,
   formatTwoColumn,
