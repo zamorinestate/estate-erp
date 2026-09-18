@@ -1,0 +1,84 @@
+name: EXT-17 Synthetic Availability & Health Monitor
+
+on:
+  schedule:
+    # Run every 15 minutes to monitor availability without excessive load on free-tier services
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      staging_frontend_url:
+        description: 'Staging Frontend URL to probe'
+        required: true
+        default: 'https://zamorin-cafe-erp.vercel.app'
+        type: string
+      staging_backend_url:
+        description: 'Staging Backend URL to probe'
+        required: true
+        default: 'https://zamorin-cafe-erp-staging.onrender.com'
+        type: string
+      simulate_failure:
+        description: 'Simulate alert failure to test notification pipeline (true/false)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-availability-probe:
+    name: Synthetic Uptime & Health Monitor
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js v20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Validate Target URL Safety & Security Policy
+        run: |
+          FRONTEND="${{ inputs.staging_frontend_url || 'https://zamorin-cafe-erp.vercel.app' }}"
+          BACKEND="${{ inputs.staging_backend_url || 'https://zamorin-cafe-erp-staging.onrender.com' }}"
+
+          echo "=== Auditing Synthetic Monitor Targets ==="
+          echo "Frontend Target : $FRONTEND"
+          echo "Backend Target  : $BACKEND"
+
+          # Verify HTTPS protocol
+          if [[ "$FRONTEND" != https://* || "$BACKEND" != https://* ]]; then
+            echo "ERROR: Both targets must use HTTPS protocol."
+            exit 1
+          fi
+
+          # Anti-SSRF check: block internal and control plane URLs
+          BLOCKED_HOSTS=("localhost" "127.0.0.1" "0.0.0.0" "10." "192.168." "172.16." "cloud.mongodb.com" "api.render.com" "api.vercel.com")
+          for blocked in "${BLOCKED_HOSTS[@]}"; do
+            if echo "$FRONTEND $BACKEND" | grep -qi "$blocked"; then
+              echo "ERROR: Target contains disallowed host or internal IP: $blocked"
+              exit 1
+            fi
+          done
+
+          echo "Target validation passed."
+
+      - name: Execute Synthetic Health & Availability Probe
+        env:
+          STAGING_FRONTEND_URL: ${{ inputs.staging_frontend_url || 'https://zamorin-cafe-erp.vercel.app' }}
+          STAGING_BACKEND_URL: ${{ inputs.staging_backend_url || 'https://zamorin-cafe-erp-staging.onrender.com' }}
+          SIMULATE_FAILURE: ${{ inputs.simulate_failure || 'false' }}
+        run: |
+          if [ "${{ inputs.simulate_failure }}" = "true" ]; then
+            echo "[ALERT TEST] Executing simulated failure run to verify alert notification delivery."
+            node scripts/run_synthetic_monitor.mjs --simulate-failure
+          else
+            node scripts/run_synthetic_monitor.mjs
+          fi

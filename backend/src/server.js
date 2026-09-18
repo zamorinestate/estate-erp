@@ -544,6 +544,33 @@ function registerShutdownHandlers(
     });
   }
 
+  process.on('uncaughtException', (error) => {
+    try {
+      const { logStructuredError } = require('./services/securityLogger');
+      logStructuredError(error, null, { fatal: true, event: 'uncaughtException' });
+    } catch {
+      console.error('[FATAL] Uncaught exception:', error.message);
+    }
+    shutdown('uncaughtException')
+      .finally(() => {
+        process.exit(1);
+      });
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    try {
+      const { logStructuredError } = require('./services/securityLogger');
+      const err = reason instanceof Error ? reason : new Error(String(reason));
+      logStructuredError(err, null, { fatal: true, event: 'unhandledRejection' });
+    } catch {
+      console.error('[FATAL] Unhandled rejection:', reason);
+    }
+    shutdown('unhandledRejection')
+      .finally(() => {
+        process.exit(1);
+      });
+  });
+
   return shutdown;
 }
 
