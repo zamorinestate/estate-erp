@@ -7,6 +7,9 @@ on:
     branches: [ main, master, 'owner-strategic-*' ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   backend-web:
     name: Web & Backend Verification Suite
@@ -33,6 +36,9 @@ jobs:
       - name: Verify Backend JavaScript Syntax
         working-directory: ./backend
         run: npm run check
+
+      - name: Scan Repository for Committed Secrets
+        run: node scripts/scan_secrets.mjs
 
       - name: Run Canonical Regression Suite
         run: npm test

@@ -1,0 +1,107 @@
+name: Production Release Gate & Governance Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Semantic Version to release (e.g. v1.2.0)'
+        required: true
+        type: string
+      target_branch:
+        description: 'Target branch to release from (must be default branch: main)'
+        required: true
+        default: 'main'
+        type: string
+      confirmation:
+        description: 'Type RELEASE to confirm release governance validation'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release-verification:
+    name: Production Release Gatekeeper
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Release Confirmation & Parameters
+        run: |
+          echo "=== Auditing Release Governance Parameters ==="
+          if [ "${{ inputs.confirmation }}" != "RELEASE" ]; then
+            echo "ERROR: Confirmation must be exactly 'RELEASE'"
+            exit 1
+          fi
+
+          VERSION="${{ inputs.release_version }}"
+          echo "Validating Semantic Version format: $VERSION"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "ERROR: Release version '$VERSION' does not match required semver pattern: ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$"
+            exit 1
+          fi
+          echo "Semantic Version '$VERSION' is valid."
+
+      - name: Verify Source Commit Provenance (Default Branch Only)
+        run: |
+          echo "=== Verifying Source Commit Provenance ==="
+          CURRENT_BRANCH="${{ inputs.target_branch }}"
+          if [ "$CURRENT_BRANCH" != "main" ]; then
+            echo "ERROR: Production releases are only permitted from the protected default branch 'main'."
+            exit 1
+          fi
+
+          CURRENT_SHA=$(git rev-parse HEAD)
+          echo "Current commit SHA: $CURRENT_SHA"
+
+          # Verify commit is reachable from origin/main
+          if ! git merge-base --is-ancestor "$CURRENT_SHA" origin/main; then
+            echo "ERROR: Commit $CURRENT_SHA is not an ancestor of origin/main. Production release blocked."
+            exit 1
+          fi
+          echo "Commit $CURRENT_SHA is verified reachable from origin/main."
+
+      - name: Setup Node.js v20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Scan Repository for Committed Secrets
+        run: node scripts/scan_secrets.mjs
+
+      - name: Verify Frontend Router Imports
+        run: node frontend/verifyRouterImports.mjs
+
+      - name: Run Master System Verification Engine
+        run: node scripts/master_system_verification.mjs
+
+      - name: Run Deployment Readiness Check
+        run: node scripts/check_deploy_readiness.mjs
+
+      - name: Release Governance Gate Summary
+        run: |
+          echo "================================================================="
+          echo " ZAMORIN CAFÉ ERP — PRODUCTION RELEASE GOVERNANCE AUDIT"
+          echo "================================================================="
+          echo " Version Tag       : ${{ inputs.release_version }}"
+          echo " Source Branch     : main"
+          echo " Commit SHA        : $(git rev-parse HEAD)"
+          echo " Code Integrity    : VERIFIED"
+          echo " Automated Tests   : VERIFIED"
+          echo " Governance Gate   : PASSED"
+          echo " Deployment Action : ZERO DEPLOY (Governance evaluation only)"
+          echo "================================================================="

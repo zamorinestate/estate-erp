@@ -27,6 +27,7 @@
     "rollback:manage": "node scripts/rollback_manager.mjs",
     "triage:incident": "node scripts/incident_triage_cli.mjs",
     "check:deploy-readiness": "node scripts/check_deploy_readiness.mjs",
+    "scan:secrets": "node scripts/scan_secrets.mjs",
     "migrate:dry-run": "node scripts/migration_runner.mjs --dry-run",
     "build": "echo \"Zamorin Cafe ERP uses zero-build Vanilla JS frontend and CommonJS backend. No compile step required.\""
   },
