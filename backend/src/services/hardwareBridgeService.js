@@ -443,18 +443,25 @@ function escapeHtml(text) {
 
 /**
  * Generates clean thermal HTML markup for browser fallback window.print().
+ * Supports both 58mm (48mm printable) and 80mm (72mm printable) thermal paper profiles.
  */
-function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
+function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}, paperWidth = null) {
+  const is58 = paperWidth === 58 || paperWidth === '58' || orderData.paperWidth === 58 || orderData.paperWidth === '58';
+  const containerWidthMm = is58 ? '48mm' : '72mm';
+  const previewPx = is58 ? '220px' : '280px';
+  const baseFontSize = is58 ? '11px' : '13px';
+  const titleFontSize = is58 ? '15px' : '18px';
+
   const items = orderData.items || [];
   const itemsHtml = items
     .map(
       (it) => `
     <tr>
-      <td style="text-align:left; padding: 4px 0;">${escapeHtml(it.name)}</td>
-      <td style="text-align:center; padding: 4px 0;">${it.quantity || 1}</td>
-      <td style="text-align:right; padding: 4px 0;">₹${(Number(it.total || it.price || 0)).toFixed(2)}</td>
+      <td style="text-align:left; padding: 3px 0; word-break: break-word;">${escapeHtml(it.name)}</td>
+      <td style="text-align:center; padding: 3px 2px; white-space: nowrap;">${it.quantity || 1}</td>
+      <td style="text-align:right; padding: 3px 0; white-space: nowrap;">₹${(Number(it.total || it.price || 0)).toFixed(2)}</td>
     </tr>
-    ${it.notes ? `<tr><td colspan="3" style="font-size:11px; color:#555; padding-left:8px;">* ${escapeHtml(it.notes)}</td></tr>` : ''}
+    ${it.notes ? `<tr><td colspan="3" style="font-size:10px; color:#555; padding-left:4px;">* ${escapeHtml(it.notes)}</td></tr>` : ''}
   `
     )
     .join('');
@@ -467,31 +474,51 @@ function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
   <style>
     body {
       font-family: 'Courier New', Courier, monospace;
-      font-size: 13px;
+      font-size: ${baseFontSize};
       color: #000;
       background: #fff;
       margin: 0;
       padding: 10px;
     }
     .receipt-container {
-      width: 280px;
+      width: ${previewPx};
+      max-width: 100%;
       margin: 0 auto;
+      box-sizing: border-box;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .bold { font-weight: bold; }
-    .title { font-size: 18px; margin-bottom: 4px; }
-    .divider { border-top: 1px dashed #000; margin: 8px 0; }
-    .double-divider { border-top: 2px solid #000; margin: 8px 0; }
+    .title { font-size: ${titleFontSize}; margin-bottom: 4px; }
+    .divider { border-top: 1px dashed #000; margin: 6px 0; }
+    .double-divider { border-top: 2px solid #000; margin: 6px 0; }
     table { width: 100%; border-collapse: collapse; }
     @media print {
-      body { padding: 0; }
-      .receipt-container { width: 100%; }
+      @page {
+        margin: 0 !important;
+        size: auto;
+      }
+      body {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+        color: #000 !important;
+      }
+      .receipt-container {
+        width: ${containerWidthMm} !important;
+        max-width: ${containerWidthMm} !important;
+        margin: 0 !important;
+        padding: ${is58 ? '1.5mm 0.5mm' : '2mm 1.5mm'} !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
     }
   </style>
 </head>
 <body onload="window.print()">
-  <div class="receipt-container">
+  <div class="receipt-container ${is58 ? 'paper-58mm' : 'paper-80mm'}">
     <div class="text-center">
       <div class="title bold">${escapeHtml(cafeInfo.brandName || 'ZAMORIN CAFE')}</div>
       <div>${escapeHtml(cafeInfo.legalName || 'Zamorin Hospitality')}</div>

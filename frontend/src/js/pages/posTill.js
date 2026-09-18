@@ -1325,7 +1325,34 @@ function wirePOSEventListeners(root) {
     });
   }
 
-  // Charge / Payment Processing (§73–§85)
+  // Save Only Action (Case A: SAVE without PRINT)
+  const saveOnlyBtn = root.querySelector("#pos-save-only-btn");
+  if (saveOnlyBtn) {
+    saveOnlyBtn.addEventListener("click", async () => {
+      if (!cart.length || isPaymentInProgress) return;
+
+      const subtotal = cart.reduce((acc, l) => {
+        const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
+        return acc + (l.item.price + modPrice) * l.qty;
+      }, 0);
+      const discount = Math.round(discountPaisa / 100);
+      const taxable = Math.max(0, subtotal - discount);
+      const gst = Math.round(taxable * 0.05);
+      const grandTotal = taxable + gst;
+
+      if (activeTender === "UPI") {
+        openUpiQrAssistantModal(grandTotal, root, "SAVE");
+      } else if (activeTender === "CARD") {
+        openCardReaderModal(grandTotal, root, "SAVE");
+      } else if (activeTender === "SPLIT") {
+        openSplitPaymentModal(root, "SAVE");
+      } else {
+        await executeFinalSale(grandTotal, "CASH", root, "", null, "SAVE");
+      }
+    });
+  }
+
+  // Charge / Payment Processing (§73–§85) - Save & Print
   const chargeBtn = root.querySelector("#process-charge-btn");
   if (chargeBtn) {
     chargeBtn.addEventListener("click", async () => {
@@ -1341,13 +1368,13 @@ function wirePOSEventListeners(root) {
       const grandTotal = taxable + gst;
 
       if (activeTender === "UPI") {
-        openUpiQrAssistantModal(grandTotal, root);
+        openUpiQrAssistantModal(grandTotal, root, "SAVE_AND_PRINT");
       } else if (activeTender === "CARD") {
-        openCardReaderModal(grandTotal, root);
+        openCardReaderModal(grandTotal, root, "SAVE_AND_PRINT");
       } else if (activeTender === "SPLIT") {
-        openSplitPaymentModal(root);
+        openSplitPaymentModal(root, "SAVE_AND_PRINT");
       } else {
-        await executeFinalSale(grandTotal, "CASH", root);
+        await executeFinalSale(grandTotal, "CASH", root, "", null, "SAVE_AND_PRINT");
       }
     });
   }
@@ -1560,7 +1587,7 @@ function openModifierModal(product, existingLine = null, root) {
   });
 }
 
-function openUpiQrAssistantModal(grandTotal, root) {
+function openUpiQrAssistantModal(grandTotal, root, posAction = "SAVE_AND_PRINT") {
   const txnRef = `UPI-${Date.now()}`;
 
   openModal({
@@ -1633,12 +1660,12 @@ function openUpiQrAssistantModal(grandTotal, root) {
     saveLabel: "Confirm Payment Received",
     cancelLabel: "Cancel Payment",
     onSave: async () => {
-      await executeFinalSale(grandTotal, "UPI", root, txnRef);
+      await executeFinalSale(grandTotal, "UPI", root, txnRef, null, posAction);
     },
   });
 }
 
-function openCardReaderModal(grandTotal, root) {
+function openCardReaderModal(grandTotal, root, posAction = "SAVE_AND_PRINT") {
   const cardRef = `CARD-${Date.now()}`;
   openModal({
     title: `Card Reader Terminal · ₹${grandTotal.toLocaleString("en-IN")}`,
@@ -1656,12 +1683,12 @@ function openCardReaderModal(grandTotal, root) {
     saveLabel: "Simulate Card Approved",
     cancelLabel: "Cancel Transaction",
     onSave: async () => {
-      await executeFinalSale(grandTotal, "CARD", root, cardRef);
+      await executeFinalSale(grandTotal, "CARD", root, cardRef, null, posAction);
     },
   });
 }
 
-function openSplitPaymentModal(root) {
+function openSplitPaymentModal(root, posAction = "SAVE_AND_PRINT") {
   const subtotal = cart.reduce((acc, l) => {
     const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
     return acc + (l.item.price + modPrice) * l.qty;
@@ -1716,7 +1743,7 @@ function openSplitPaymentModal(root) {
         tenders.push({ paymentMethod: "UPI", amountPaisa: uAmt * 100, provider: "BHIM_UPI", paymentReference: `UPI-${Date.now()}` });
       }
 
-      await executeFinalSale(grandTotal, "SPLIT", root, "", tenders);
+      await executeFinalSale(grandTotal, "SPLIT", root, "", tenders, posAction);
     },
   });
 }
@@ -2001,6 +2028,10 @@ function openReceiptModal(bill, isReprint = false) {
   const reprintCount = bill.reprints?.length || (isReprint ? 1 : 0);
   const isVoid = bill.status === "VOID" || bill.status === "CANCELLED";
 
+  // Persistent paper width preference (80mm vs 58mm)
+  let currentPaperWidth = (typeof localStorage !== "undefined" && localStorage.getItem("zamorin_pos_paper_width")) || "80";
+  if (currentPaperWidth !== "58" && currentPaperWidth !== "80") currentPaperWidth = "80";
+
   const statusBadge = isVoid
     ? `<span style="background:#fee2e2;color:#b91c1c;border:1px solid #f87171;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">VOID — CANCELLED (NOT VALID)</span>`
     : (reprintCount > 0
@@ -2020,12 +2051,24 @@ function openReceiptModal(bill, isReprint = false) {
     showToast(`Official Tax Invoice PDF saved: ${filename}`, "mint");
   };
 
+  let isPrintingActive = false;
   const printThermal = async () => {
+    if (isPrintingActive) return;
+    isPrintingActive = true;
+    const printBtn = document.getElementById("posReceiptPrintBtn");
+    if (printBtn) {
+      printBtn.disabled = true;
+      printBtn.textContent = "⏳ Printing...";
+    }
+
     // REC-04: Send print command to backend (logs PrintJob, generates thermal buffer)
     // then invoke browser print as the local rendering fallback.
     if (bill.billId && !bill.billId.startsWith("PREVIEW")) {
       try {
-        await apiPost(`/pos/orders/${bill.billId}/print`, { reason: "Terminal thermal print" });
+        await apiPost(`/pos/orders/${bill.billId}/print`, {
+          reason: isReprint ? "Terminal duplicate receipt reprint" : "Terminal thermal print",
+          paperWidth: currentPaperWidth,
+        });
         showToast("Thermal print job queued on POS printer.", "mint");
       } catch (printErr) {
         // Non-fatal: log and fall through to browser print
@@ -2034,66 +2077,106 @@ function openReceiptModal(bill, isReprint = false) {
       }
     }
     window.print();
+    setTimeout(() => {
+      isPrintingActive = false;
+      if (printBtn) {
+        printBtn.disabled = false;
+        printBtn.textContent = "🖨️ Thermal Print";
+      }
+    }, 800);
   };
 
   openModal({
     title: `Tax Invoice Receipt · ${bill.invoiceNumber || bill.billId}`,
-    maxWidth: "480px",
+    maxWidth: "500px",
     body: `
+      <!-- Paper Width Profile Selector -->
+      <div class="receipt-profile-toggle-bar" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:6px 12px;background:var(--surface-sunken);border-radius:6px;border:1px solid var(--line);">
+        <span style="font-size:11.5px;font-weight:700;color:var(--ink);">🖨️ Thermal Paper Profile:</span>
+        <div style="display:inline-flex;gap:6px;">
+          <button type="button" class="btn btn-sm ${currentPaperWidth === '80' ? 'btn-primary' : 'btn-outline'}" id="posPaperToggle80" data-width="80" style="padding:3px 10px;font-size:11px;font-weight:700;">80mm Standard</button>
+          <button type="button" class="btn btn-sm ${currentPaperWidth === '58' ? 'btn-primary' : 'btn-outline'}" id="posPaperToggle58" data-width="58" style="padding:3px 10px;font-size:11px;font-weight:700;">58mm Compact</button>
+        </div>
+      </div>
+
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <div style="font-size:12px;color:var(--muted);">Status: ${statusBadge}</div>
         <div style="font-size:11px;font-family:monospace;color:var(--ink);">Official ID: ${bill.invoiceNumber || bill.billId}</div>
       </div>
 
-      <div class="pos-thermal-receipt" id="pos-thermal-receipt" style="background:#fff;color:#000;padding:16px;border-radius:6px;border:1px solid #e2e8f0;font-family:'Courier New',Courier,monospace;">
-        <div class="receipt-header" style="text-align:center;margin-bottom:12px;">
-          <div class="receipt-title" style="font-size:16px;font-weight:bold;letter-spacing:1px;">ZAMORIN CAFE ESTATE</div>
-          <div class="receipt-subtitle" style="font-size:11px;margin-top:2px;">GSTIN: 32AABCT1332L1ZV · ${cafeName}</div>
-          <div class="receipt-doc-type" style="font-size:11px;font-weight:bold;margin-top:4px;">
+      <div class="pos-thermal-receipt ${currentPaperWidth === '58' ? 'paper-58mm' : 'paper-80mm'}" id="pos-thermal-receipt" data-paper-width="${currentPaperWidth}">
+        <div class="receipt-header">
+          <div class="receipt-title">ZAMORIN CAFE ESTATE</div>
+          <div class="receipt-subtitle">GSTIN: 32AABCT1332L1ZV · ${escapeHtml(cafeName)}</div>
+          <div class="receipt-doc-type">
             ${isVoid ? "TAX INVOICE — [VOID / CANCELLED]" : (reprintCount > 0 ? `TAX INVOICE — [REPRINT #${reprintCount}]` : "TAX INVOICE / RETAIL BILL")}
           </div>
         </div>
-        <div class="receipt-row" style="display:flex;justify-content:space-between;font-size:11px;">
-          <span>INVOICE: <strong>${bill.invoiceNumber || bill.billId}</strong></span>
+        <div class="receipt-row">
+          <span>INVOICE: <strong>${escapeHtml(bill.invoiceNumber || bill.billId)}</strong></span>
           <span>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
         </div>
-        <div class="receipt-row" style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;">
-          <span>DATE: ${bill.businessDate || new Date().toISOString().substring(0, 10)}</span>
+        <div class="receipt-row" style="color:#64748b;">
+          <span>DATE: ${escapeHtml(bill.businessDate || new Date().toISOString().substring(0, 10))}</span>
           <span>REGISTER 01</span>
         </div>
-        <hr class="receipt-divider" style="border-top:1px dashed #94a3b8;margin:8px 0;" />
+        ${bill.tableNumber ? `
+        <div class="receipt-row" style="color:#64748b;">
+          <span>TABLE / TOKEN:</span>
+          <strong>${escapeHtml(bill.tableNumber)}</strong>
+        </div>` : ''}
+        ${bill.cashierName ? `
+        <div class="receipt-row" style="color:#64748b;">
+          <span>CASHIER:</span>
+          <span>${escapeHtml(bill.cashierName)}</span>
+        </div>` : ''}
+        <hr class="receipt-divider" />
         
         <!-- Table Header with Universal Sl. No. -->
-        <div style="display:flex;font-size:10px;font-weight:bold;color:#475569;border-bottom:1px solid #cbd5e1;padding-bottom:3px;margin-bottom:4px;">
-          <span style="width:24px;">Sl.</span>
-          <span style="flex:1;">Item</span>
-          <span style="width:30px;text-align:center;">Qty</span>
-          <span style="width:60px;text-align:right;">Amount</span>
+        <div class="receipt-item-line" style="font-weight:bold;color:#475569;border-bottom:1px solid #cbd5e1;padding-bottom:3px;margin-bottom:4px;">
+          <span class="receipt-item-sl">Sl.</span>
+          <span class="receipt-item-name">Item</span>
+          <span class="receipt-item-qty">Qty</span>
+          <span class="receipt-item-amt">Amount</span>
         </div>
 
         ${bill.lineItems?.map((li, idx) => `
-          <div style="display:flex;font-size:11px;padding:2px 0;">
-            <span style="width:24px;color:#64748b;">${idx + 1}</span>
-            <span style="flex:1;">${li.itemNameSnapshot || li.name || 'Item'}</span>
-            <span style="width:30px;text-align:center;">${li.quantity}</span>
-            <span style="width:60px;text-align:right;font-weight:600;">₹${((li.unitPricePaisa * li.quantity) / 100).toFixed(0)}</span>
+          <div class="receipt-item-line">
+            <span class="receipt-item-sl">${idx + 1}</span>
+            <span class="receipt-item-name">
+              ${escapeHtml(li.itemNameSnapshot || li.name || 'Item')}
+              ${li.modifiers?.size && li.modifiers.size !== 'Regular' ? `<br/><small style="color:#64748b;font-size:9.5px;">* ${escapeHtml(li.modifiers.size)}</small>` : ''}
+              ${li.itemNotes ? `<br/><small style="color:#64748b;font-size:9.5px;">* Note: ${escapeHtml(li.itemNotes)}</small>` : ''}
+            </span>
+            <span class="receipt-item-qty">${li.quantity}</span>
+            <span class="receipt-item-amt">₹${((li.unitPricePaisa * li.quantity) / 100).toFixed(0)}</span>
           </div>
         `).join("") || ""}
-        <hr class="receipt-divider" style="border-top:1px dashed #94a3b8;margin:8px 0;" />
-        <div style="display:flex;justify-content:space-between;font-size:11px;"><span>Subtotal:</span><span>₹${subtotal.toFixed(0)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;"><span>CGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;"><span>SGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:bold;border-top:1px solid #cbd5e1;padding-top:4px;margin-top:4px;">
+        <hr class="receipt-divider" />
+        <div class="receipt-row"><span>Subtotal:</span><span>₹${subtotal.toFixed(0)}</span></div>
+        ${bill.discountPaisa && bill.discountPaisa > 0 ? `
+        <div class="receipt-row" style="color:#b45309;">
+          <span>Discount:</span>
+          <span>-₹${(bill.discountPaisa / 100).toFixed(0)}</span>
+        </div>` : ''}
+        <div class="receipt-row"><span>CGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
+        <div class="receipt-row"><span>SGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
+        ${bill.roundOffPaisa && bill.roundOffPaisa !== 0 ? `
+        <div class="receipt-row" style="color:#64748b;font-size:10.5px;">
+          <span>Round Off:</span>
+          <span>${bill.roundOffPaisa < 0 ? `-₹${(Math.abs(bill.roundOffPaisa) / 100).toFixed(2)}` : `+₹${(bill.roundOffPaisa / 100).toFixed(2)}`}</span>
+        </div>` : ''}
+        <div class="receipt-total-row">
           <span>PAID TOTAL:</span>
           <span>₹${grandTotal.toFixed(0)}</span>
         </div>
-        <div class="receipt-footer" style="text-align:center;font-size:10.5px;margin-top:10px;color:#475569;">
-          Tender: <strong>${bill.paymentMethod || "UPI"}</strong> · THANK YOU FOR VISITING ZAMORIN!
+        <div class="receipt-footer">
+          Tender: <strong>${escapeHtml(bill.paymentMethod || "UPI")}</strong> · THANK YOU FOR VISITING ZAMORIN!
         </div>
       </div>
 
       <!-- Action Panel -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;">
+      <div class="receipt-action-panel" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;">
         <button type="button" class="btn btn-sm btn-secondary" id="posReceiptSaveBtn" style="justify-content:center;">
           💾 Save A4 PDF
         </button>
@@ -2112,10 +2195,43 @@ function openReceiptModal(bill, isReprint = false) {
     saveLabel: null,
   });
 
-  // Attach interactive button listeners
+  // Attach interactive button listeners & width toggle
   setTimeout(() => {
     const modalEl = document.getElementById("zamorin-global-modal");
     if (!modalEl) return;
+
+    const receiptEl = modalEl.querySelector("#pos-thermal-receipt");
+    const toggle80 = modalEl.querySelector("#posPaperToggle80");
+    const toggle58 = modalEl.querySelector("#posPaperToggle58");
+
+    const setPaperWidth = (w) => {
+      currentPaperWidth = w;
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("zamorin_pos_paper_width", w);
+      }
+      if (receiptEl) {
+        receiptEl.setAttribute("data-paper-width", w);
+        if (w === "58") {
+          receiptEl.classList.remove("paper-80mm");
+          receiptEl.classList.add("paper-58mm");
+        } else {
+          receiptEl.classList.remove("paper-58mm");
+          receiptEl.classList.add("paper-80mm");
+        }
+      }
+      if (toggle80 && toggle58) {
+        if (w === "80") {
+          toggle80.className = "btn btn-sm btn-primary";
+          toggle58.className = "btn btn-sm btn-outline";
+        } else {
+          toggle58.className = "btn btn-sm btn-primary";
+          toggle80.className = "btn btn-sm btn-outline";
+        }
+      }
+    };
+
+    toggle80?.addEventListener("click", () => setPaperWidth("80"));
+    toggle58?.addEventListener("click", () => setPaperWidth("58"));
 
     modalEl.querySelector("#posReceiptSaveBtn")?.addEventListener("click", () => {
       savePdf();

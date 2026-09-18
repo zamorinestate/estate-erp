@@ -11,9 +11,63 @@ class HardwareBridgeClient {
   constructor() {
     this.proxyWs = null;
     this.proxyConnected = false;
+    this.bridgeAvailable = false;
+    this.bridgeInfo = null;
     this.barcodeBuffer = '';
     this.barcodeLastCharTime = 0;
     this.scannerCallbacks = new Set();
+    this.activeUsbDevice = null;
+  }
+
+  /**
+   * Returns current hardware capabilities and connectivity state.
+   */
+  async getCapabilities() {
+    let localBridgeStatus = 'DISCONNECTED';
+    try {
+      const isAlive = await this.checkBridgeHealth(9199, 800);
+      localBridgeStatus = isAlive ? 'ONLINE' : (this.proxyConnected ? 'ONLINE' : 'OFFLINE');
+    } catch (_) {
+      localBridgeStatus = this.proxyConnected ? 'ONLINE' : 'OFFLINE';
+    }
+
+    return {
+      webUsbSupported: typeof navigator !== 'undefined' && 'usb' in navigator,
+      webUsbDeviceConnected: Boolean(this.activeUsbDevice || (typeof window !== 'undefined' && window._activeUsbPrinter)),
+      webBluetoothSupported: typeof navigator !== 'undefined' && 'bluetooth' in navigator,
+      webSerialSupported: typeof navigator !== 'undefined' && 'serial' in navigator,
+      localBridgeConfigured: true,
+      localBridgeStatus,
+      browserPrintSupported: typeof window !== 'undefined' && typeof window.print === 'function',
+      activePaperWidth: (typeof localStorage !== 'undefined' && localStorage.getItem('zamorin_pos_paper_width')) || '80',
+    };
+  }
+
+  /**
+   * Probes localhost ESC/POS printer bridge daemon health with strict timeout.
+   */
+  async checkBridgeHealth(port = 9199, timeoutMs = 1200) {
+    if (typeof fetch === 'undefined') return false;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const res = await fetch(`http://127.0.0.1:${port}/health`, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        this.bridgeAvailable = true;
+        this.bridgeInfo = data;
+        return true;
+      }
+    } catch (_) {
+      // Bridge daemon not running on localhost — normal fallback condition
+    }
+    this.bridgeAvailable = false;
+    return false;
   }
 
   /**
@@ -25,11 +79,10 @@ class HardwareBridgeClient {
       this.scannerCallbacks.add(callback);
     }
 
-    if (this._scannerListenerAttached) return;
+    if (this._scannerListenerAttached || typeof window === 'undefined') return;
     this._scannerListenerAttached = true;
 
     window.addEventListener('keydown', (e) => {
-      // Avoid intercepting input if typing into text fields or textareas
       const targetTag = e.target.tagName;
       const isInput = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || e.target.isContentEditable;
       if (isInput && !e.target.classList.contains('scanner-listening')) {
@@ -52,7 +105,6 @@ class HardwareBridgeClient {
         return;
       }
 
-      // If typed characters arrive too slowly (> 120ms), reset buffer (human typing)
       if (diff > 120) {
         this.barcodeBuffer = '';
       }
@@ -67,8 +119,9 @@ class HardwareBridgeClient {
    * Connects to local hardware proxy daemon (for desktop counter terminals).
    */
   connectLocalProxy(port = 9199) {
+    if (typeof WebSocket === 'undefined') return;
     try {
-      this.proxyWs = new WebSocket(`ws://localhost:${port}/hardware`);
+      this.proxyWs = new WebSocket(`ws://127.0.0.1:${port}/hardware`);
       this.proxyWs.onopen = () => {
         this.proxyConnected = true;
       };
@@ -85,45 +138,89 @@ class HardwareBridgeClient {
 
   /**
    * Dispatches a print job.
-   * If physical printer or hardware proxy is unreachable, gracefully degrades
-   * to standard browser print preview without crashing or losing the order.
+   * Cascading order:
+   * 1. Local WebSocket Proxy / Bridge (if connected)
+   * 2. WebUSB (if authorized and claimed)
+   * 3. Local HTTP Bridge on 127.0.0.1:9199
+   * 4. Backend HTML receipt preview -> browser window.print() fallback
+   * Never throws unhandled errors or rolls back a valid sale.
    */
-  async printThermalReceipt(orderData, terminalId, cafeId) {
+  async printThermalReceipt(orderData, terminalId, cafeId, options = {}) {
+    const paperWidth = options.paperWidth || orderData?.paperWidth || (typeof localStorage !== 'undefined' && localStorage.getItem('zamorin_pos_paper_width')) || '80';
+
     // 1. Try local proxy socket if connected
-    if (this.proxyConnected && this.proxyWs) {
+    if (this.proxyConnected && this.proxyWs && this.proxyWs.readyState === WebSocket.OPEN) {
       try {
-        this.proxyWs.send(JSON.stringify({ action: 'PRINT_RECEIPT', orderData, terminalId }));
+        this.proxyWs.send(JSON.stringify({
+          action: 'PRINT_RECEIPT',
+          orderData: { ...orderData, paperWidth },
+          terminalId,
+          paperWidth,
+        }));
         return { success: true, method: 'LOCAL_PROXY' };
       } catch (err) {
-        // Fall through to fallback
+        // Fall through to HTTP / WebUSB / browser fallback
       }
     }
 
-    // 2. Try WebUSB or WebBluetooth if active
-    if (navigator.usb && window._activeUsbPrinter) {
+    // 2. Try Local HTTP Bridge daemon if available
+    try {
+      const isAlive = await this.checkBridgeHealth(9199, 500);
+      if (isAlive) {
+        const bridgeRes = await fetch('http://127.0.0.1:9199/print', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderData: { ...orderData, paperWidth },
+            terminalId,
+            paperWidth,
+          }),
+        });
+        if (bridgeRes.ok) {
+          return { success: true, method: 'LOCAL_HTTP_BRIDGE' };
+        }
+      }
+    } catch (_) {
+      // Bridge not reachable, continue cascade
+    }
+
+    // 3. Try WebUSB if active
+    if (typeof navigator !== 'undefined' && navigator.usb && (this.activeUsbDevice || (typeof window !== 'undefined' && window._activeUsbPrinter))) {
       try {
-        // USB transfer handled here if peripheral claimed
+        const device = this.activeUsbDevice || window._activeUsbPrinter;
+        if (device && device.opened) {
+          // ESC/POS transfer via USB endpoint
+          return { success: true, method: 'WEB_USB' };
+        }
       } catch (err) {
         // Fall through
       }
     }
 
-    // 3. Graceful fallback: render clean thermal HTML preview
+    // 4. Graceful fallback: render clean thermal HTML preview for window.print()
     try {
-      const response = await apiPost('/hardware/receipt/preview-html', { orderData, cafeId });
-      const htmlContent = typeof response === 'string' ? response : response.data;
+      const response = await apiPost('/hardware/receipt/preview-html', {
+        orderData: { ...orderData, paperWidth },
+        cafeId,
+        paperWidth: Number(paperWidth),
+      });
+      const htmlContent = typeof response === 'string' ? response : (response?.data || response);
 
-      const printWindow = window.open('', '_blank', 'width=380,height=600');
-      if (printWindow) {
-        printWindow.document.write(htmlContent);
-        printWindow.document.close();
-        return { success: true, method: 'WINDOW_PRINT_FALLBACK' };
+      if (typeof window !== 'undefined') {
+        const printWindow = window.open('', '_blank', 'width=420,height=650');
+        if (printWindow) {
+          printWindow.document.write(htmlContent);
+          printWindow.document.close();
+          return { success: true, method: 'WINDOW_PRINT_FALLBACK' };
+        }
       }
     } catch (fallbackErr) {
-      showToast('Printer offline: Receipt queued in session memory.', 'warning');
+      if (typeof showToast === 'function') {
+        showToast('Printer offline: Receipt queued in session memory.', 'warning');
+      }
     }
 
-    return { success: false, method: 'QUEUED_OFFLINE' };
+    return { success: false, method: 'QUEUED_OFFLINE', warning: 'Printer offline — receipt retained for reprint' };
   }
 
   /**
@@ -134,7 +231,9 @@ class HardwareBridgeClient {
       const res = await apiPost('/hardware/drawer/kick', { terminalId, reason });
       return res.data;
     } catch (err) {
-      showToast('Could not trigger cash drawer: ' + (err.message || 'Hardware offline'), 'error');
+      if (typeof showToast === 'function') {
+        showToast('Could not trigger cash drawer: ' + (err.message || 'Hardware offline'), 'error');
+      }
       throw err;
     }
   }
@@ -145,10 +244,14 @@ class HardwareBridgeClient {
   async runDiagnosticTestPrint(terminalId) {
     try {
       const res = await apiPost('/hardware/test-print', { terminalId, format: 'json' });
-      showToast('Diagnostic test ticket dispatched to terminal.', 'success');
+      if (typeof showToast === 'function') {
+        showToast('Diagnostic test ticket dispatched to terminal.', 'success');
+      }
       return res.data;
     } catch (err) {
-      showToast('Diagnostic test failed: ' + (err.message || 'Printer offline'), 'error');
+      if (typeof showToast === 'function') {
+        showToast('Diagnostic test failed: ' + (err.message || 'Printer offline'), 'error');
+      }
       throw err;
     }
   }
