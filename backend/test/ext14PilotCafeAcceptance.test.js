@@ -289,10 +289,10 @@ test('EXT-14 — Real Café Shadow Pilot, Operator UAT & Reconciliation Suite (4
     }
 
     assert.throws(
-      () => validatePilotDatabaseTarget('mongodb+srv://user:pass@atlas/zamorin_erp_production?retryWrites=true'),
+      () => validatePilotDatabaseTarget('mongodb+srv://placeholder_user:placeholder_pass@atlas/zamorin_erp_production?retryWrites=true'),
       /CRITICAL: Production target/
     );
-    assert.equal(validatePilotDatabaseTarget('mongodb+srv://user:pass@atlas/zamorin_erp_staging?retryWrites=true'), true);
+    assert.equal(validatePilotDatabaseTarget('mongodb+srv://placeholder_user:placeholder_pass@atlas/zamorin_erp_staging?retryWrites=true'), true);
   });
 
   // -------------------------------------------------------------------------
