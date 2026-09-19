@@ -199,9 +199,9 @@ function createApp(environment) {
     })
   );
 
-  // Deny unused browser capabilities on auth/ERP pages
+  // Allow camera and geolocation for attendance verification on origin; deny unused microphone
   app.use((req, res, next) => {
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(self)');
     res.setHeader('X-Frame-Options', 'DENY');
     next();
   });

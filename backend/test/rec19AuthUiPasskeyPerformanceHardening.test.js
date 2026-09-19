@@ -59,9 +59,9 @@
  *  50 provider diagnostics reveal no secret
  *  51 CSP
  *  52 frame-ancestors
- *  53 Permissions-Policy camera denied
+ *  53 Permissions-Policy camera scoped to self
  *  54 microphone denied
- *  55 geolocation denied
+ *  55 geolocation scoped to self
  *  56 password manager support
  *  57 paste allowed
  *  58 Caps Lock indicator
@@ -650,9 +650,9 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
     assert.match(serverJs, /frameAncestors:\s*\["'none'"\]/, 'Clickjacking defense: frame-ancestors none');
   });
 
-  await t.test('53. Permissions-Policy camera denied: camera=()', () => {
+  await t.test('53. Permissions-Policy camera scoped to self: camera=(self)', () => {
     const serverJs = fs.readFileSync(SERVER_JS_PATH, 'utf-8');
-    assert.match(serverJs, /camera=\(\)/, 'Permissions-Policy must deny camera');
+    assert.match(serverJs, /camera=\(self\)/, 'Permissions-Policy must scope camera to self');
   });
 
   await t.test('54. Permissions-Policy microphone denied: microphone=()', () => {
@@ -660,9 +660,9 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
     assert.match(serverJs, /microphone=\(\)/, 'Permissions-Policy must deny microphone');
   });
 
-  await t.test('55. Permissions-Policy geolocation denied: geolocation=()', () => {
+  await t.test('55. Permissions-Policy geolocation scoped to self: geolocation=(self)', () => {
     const serverJs = fs.readFileSync(SERVER_JS_PATH, 'utf-8');
-    assert.match(serverJs, /geolocation=\(\)/, 'Permissions-Policy must deny geolocation');
+    assert.match(serverJs, /geolocation=\(self\)/, 'Permissions-Policy must scope geolocation to self');
   });
 
   await t.test('56. Password manager support: standard input elements and correct autocomplete attributes', () => {

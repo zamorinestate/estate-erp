@@ -41,6 +41,7 @@ import { renderStaffLoansAdvances, wireStaffLoansAdvances } from "./pages/staffL
 import { renderStaffDocuments, wireStaffDocuments } from "./pages/staffDocuments.js";
 import { renderPayrollManagement, wirePayrollManagement, setPayrollActiveTab } from "./pages/payrollManagement.js";
 import { renderAnnouncements, wireAnnouncements } from "./pages/announcements.js";
+import { renderMailOpsCommandCentre, wireMailOpsCommandCentre } from "./pages/mailOpsCommandCentre.js";
 import { renderNotAvailable, renderNotBuiltYet } from "./pages/notAvailable.js";
 import { renderVendors, wireVendors, setVendorsActiveTab } from "./pages/vendors.js";
 import { renderProcurement, wireProcurement, setProcurementActiveTab } from "./pages/procurement.js";
@@ -686,8 +687,9 @@ async function renderPage() {
       break;
 
     case "mailops":
-      navigate("dashboard");
-      return;
+      content.innerHTML = renderMailOpsCommandCentre(subroute);
+      wireMailOpsCommandCentre(content, subroute);
+      break;
 
     case "menu":
       setMenuActiveTab?.(subroute || "overview");

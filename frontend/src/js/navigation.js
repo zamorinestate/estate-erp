@@ -40,6 +40,7 @@ const PRIMARY_MASTER_ITEMS = [
   { id: 'procurement',   label: 'Procurement',            icon: 'procurement',  route: 'procurement',       group: 'OPERATIONS' },
   { id: 'assets',        label: 'Assets & Maintenance',   icon: 'assets',       route: 'assets',            group: 'OPERATIONS' },
   { id: 'quality',       label: 'Quality & Compliance',   icon: 'quality',      route: 'quality',           group: 'OPERATIONS' },
+  { id: 'mailops',       label: 'MailOps Communications', icon: 'announce',     route: 'mailops',           group: 'OPERATIONS', primaryMasterOnly: true },
 
   // ── PEOPLE ───────────────────────────────────────────────────────────────────
   { id: 'employees',     label: 'Employees',              icon: 'employees',    route: 'employees',         group: 'PEOPLE' },
@@ -171,6 +172,7 @@ export const PRIMARY_MASTER_ONLY_ROUTES = new Set([
   'revenue-share',
   'org-identity',
   'organisation-identity',
+  'mailops',
 ]);
 
 // ─── Implicit routes — not in sidebar but accessible to all authenticated users ─

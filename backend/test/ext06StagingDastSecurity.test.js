@@ -571,8 +571,9 @@ describe('EXT-06 -- Zero-Cost Staging, OWASP DAST & Security Probes Suite', () =
     const res = await fetch(`${baseUrl}/api/v1/health`);
     const permissionsPolicy = res.headers.get('permissions-policy');
     assert.notEqual(permissionsPolicy, null);
-    assert.match(permissionsPolicy, /camera=\(\)/);
+    assert.match(permissionsPolicy, /camera=\(self\)/);
     assert.match(permissionsPolicy, /microphone=\(\)/);
+    assert.match(permissionsPolicy, /geolocation=\(self\)/);
   });
 
   // ── 36. RATE LIMITING ────────────────────────────────────────────────────
