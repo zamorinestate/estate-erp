@@ -42,6 +42,8 @@ import {
   wirePasswordResetFinal2,
   renderMfaChallenge2,
   wireMfaChallenge2,
+  renderRegisterPage2,
+  wireRegisterPage2,
   showGlassAlert,
 } from "./pages/login2.js?v=3.4.4";
 import { mountPublicCafeGateway } from "./pages/cafeGatewayPage.js";
@@ -435,6 +437,9 @@ export function mountAuthScreen(screen = "login", params = {}) {
       onForgotPassword: ({ organisationId, email }) => {
         mountAuthScreen("forgot", { organisationId, email });
       },
+      onRegister: () => {
+        mountAuthScreen("register");
+      },
       onCafeOps: () => {
         window.location.href = "/cafe-operations/cafe-operations.html";
       }
@@ -524,6 +529,11 @@ export function mountAuthScreen(screen = "login", params = {}) {
         mountAuthScreen("login", { notice: "Password updated successfully. Please sign in with your new password." });
       },
       onCancel: () => mountAuthScreen("login")
+    });
+  } else if (screen === "register") {
+    appEl.innerHTML = renderRegisterPage2(params);
+    wireRegisterPage2(appEl, {
+      onLogin: () => mountAuthScreen("login")
     });
   }
 }

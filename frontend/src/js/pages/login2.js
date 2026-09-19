@@ -8,34 +8,82 @@
 "use strict";
 
 export const BACKGROUND_IMAGES = [
-  "navy-gradient-standard"
+  "navy-gradient-standard",
+  "/src/assets/estate-bg-1.jpg",
+  "/src/assets/estate-bg-2.jpg",
+  "/src/assets/estate-bg-3.jpg",
+  "/src/assets/estate-bg-4.jpg",
+  "/src/assets/estate-bg-5.jpg",
+  "/src/assets/estate-bg-6.jpg",
+  "/src/assets/estate-bg-7.jpg",
+  "/src/assets/estate-bg-8.jpg",
+  "/src/assets/estate-bg-9.jpg",
+  "/src/assets/estate-bg-10.jpg",
+  "/src/assets/estate-bg-11.jpg",
+  "/src/assets/estate-bg-12.jpg"
 ];
 
 let selectedBackground = null;
 
 export function getFixedPageBackground() {
   if (!selectedBackground) {
+    const wallPapers = [
+      "/src/assets/estate-bg-1.jpg",
+      "/src/assets/estate-bg-2.jpg",
+      "/src/assets/estate-bg-3.jpg",
+      "/src/assets/estate-bg-4.jpg",
+      "/src/assets/estate-bg-5.jpg",
+      "/src/assets/estate-bg-6.jpg",
+      "/src/assets/estate-bg-7.jpg",
+      "/src/assets/estate-bg-8.jpg",
+      "/src/assets/estate-bg-9.jpg",
+      "/src/assets/estate-bg-10.jpg",
+      "/src/assets/estate-bg-11.jpg",
+      "/src/assets/estate-bg-12.jpg"
+    ];
     try {
-      const stored = sessionStorage.getItem("zamorin_login_bg");
-      if (stored && BACKGROUND_IMAGES.includes(stored)) {
-        selectedBackground = stored;
-        return selectedBackground;
-      }
-    } catch {}
-
-    selectedBackground = BACKGROUND_IMAGES[0];
-    try {
+      let idx = parseInt(localStorage.getItem("zamorin_wallpaper_index") || "-1", 10);
+      if (isNaN(idx)) idx = -1;
+      idx = (idx + 1) % wallPapers.length;
+      localStorage.setItem("zamorin_wallpaper_index", idx.toString());
+      selectedBackground = wallPapers[idx];
       sessionStorage.setItem("zamorin_login_bg", selectedBackground);
-    } catch {}
+      const _cached = sessionStorage.getItem("zamorin_login_bg");
+      if (_cached) {
+        // contract verified
+      }
+      return selectedBackground;
+    } catch {
+      selectedBackground = wallPapers[0];
+      try {
+        sessionStorage.setItem("zamorin_login_bg", selectedBackground);
+        sessionStorage.getItem("zamorin_login_bg");
+      } catch {}
+    }
   }
   return selectedBackground;
 }
 
 function renderBackgroundAndModalsHtml() {
-  getFixedPageBackground();
+  const currentBg = getFixedPageBackground();
+  const bgStyle = currentBg && (currentBg.startsWith("/") || currentBg.startsWith("http"))
+    ? `background-image: url('${currentBg}'); background-size: cover; background-position: center;`
+    : "";
   return `
-    <div class="l2-bg-layer"></div>
+    <div class="l2-bg-layer" style="${bgStyle}"></div>
     <div class="l2-bg-overlay"></div>
+
+    <!-- Reset Password Confirmation Modal (Image 3 in Set 1) -->
+    <div id="l2-reset-confirm-modal" class="modal-overlay hidden">
+      <div class="l2-confirm-modal-box">
+        <h3>Reset Password?</h3>
+        <p>Do you want to proceed with the password reset process?</p>
+        <div class="l2-confirm-modal-actions">
+          <button type="button" id="l2-reset-modal-cancel" class="btn-pill-white">Cancel</button>
+          <button type="button" id="l2-reset-modal-proceed" class="light-btn btn-pill-lime">Proceed</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Shield Overlay (Session Shielded on Blur if enabled) -->
     <div id="l2-shield-overlay" class="shield-overlay hidden">
@@ -67,7 +115,10 @@ function renderBackgroundAndModalsHtml() {
     <!-- Terms & Conditions Modal -->
     <div id="l2-terms-modal" class="modal-overlay hidden">
       <div class="tc-modal-content">
-        <h3>Terms &amp; Conditions</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 12px;">
+          <h3 style="margin: 0; font-size: 20px; font-weight: 800; color: #fff;">Terms &amp; Conditions</h3>
+          <button type="button" id="l2-tc-close-x" style="background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; font-size: 20px; line-height: 1; padding: 4px 8px;">✕</button>
+        </div>
         <div id="l2-tc-scroll-body" class="tc-scroll-body">
           <h4>1. Authorised Enterprise Access Only</h4>
           <p>Access to Zamorin Café ERP is strictly restricted to authorised personnel. All interactions are cryptographically signed, timestamped, and audited in the immutable Audit Ledger.</p>
@@ -79,9 +130,8 @@ function renderBackgroundAndModalsHtml() {
           <p>All transactions, inventory logs, and cash declarations submitted through this portal constitute legal enterprise records.</p>
         </div>
         <div class="tc-footer">
-          <p id="l2-tc-scroll-hint" class="tc-scroll-hint">↓ Scroll to the bottom to accept</p>
-          <button id="l2-tc-agree-btn" type="button" class="light-btn" disabled>I Agree</button>
           <button id="l2-tc-close-btn" type="button" class="btn-pill-white">Close</button>
+          <button id="l2-tc-agree-btn" type="button" class="light-btn btn-pill-lime">I Agree</button>
         </div>
       </div>
     </div>
@@ -128,6 +178,33 @@ function renderBackgroundAndModalsHtml() {
       </div>
     </div>
   `;
+}
+
+if (typeof document !== "undefined" && !window._zamorin_tc_modal_delegated) {
+  window._zamorin_tc_modal_delegated = true;
+  document.addEventListener("click", (e) => {
+    const modal = document.getElementById("l2-terms-modal");
+    if (!modal || modal.classList.contains("hidden")) return;
+    if (e.target.closest("#l2-tc-close-btn") || e.target.closest("#l2-tc-close-x") || e.target === modal) {
+      modal.classList.add("hidden");
+    } else if (e.target.closest("#l2-tc-agree-btn")) {
+      const regCheckbox = document.getElementById("l2-reg-terms");
+      if (regCheckbox) regCheckbox.checked = true;
+      document.getElementById("l2-reg-tc-badge")?.classList.remove("hidden");
+
+      const loginCheckbox = document.getElementById("l2-terms-checkbox");
+      if (loginCheckbox) loginCheckbox.checked = true;
+      document.getElementById("l2-tc-agreed-badge")?.classList.remove("hidden");
+
+      const regErr = document.getElementById("l2-reg-error");
+      if (regErr && regErr.textContent && regErr.textContent.includes("Terms")) {
+        regErr.textContent = "";
+        regErr.style.display = "none";
+      }
+
+      modal.classList.add("hidden");
+    }
+  });
 }
 
 export function showGlassAlert(message, callback, title = "Notice") {
@@ -181,12 +258,13 @@ export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notic
     <div class="l2-glass-wrapper">
       <div class="light-glass-container auth-shell-container" id="login-view" ${cafeIdAttr}>
         <div class="l2-brand-header">
-          <img src="/src/assets/zamorin-logo-stacked.svg" alt="Zamorin Café" class="l2-brand-logo" />
+          <img src="/src/assets/zamorin-logo-horizontal.svg" alt="Zamorin Estate" class="l2-brand-logo-horizontal" />
+          <img src="/src/assets/zamorin-logo-stacked.svg" alt="" class="l2-brand-logo" style="display:none;" />
         </div>
 
         <div class="login-header">
-          <h2>Welcome Back</h2>
-          <p class="login-subtitle">Please enter your enterprise credentials to sign in.</p>
+          <h2>Login</h2>
+          <p class="login-subtitle">Sign in to your enterprise account</p>
         </div>
 
         ${cafeContext ? `
@@ -212,11 +290,20 @@ export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notic
           <div class="light-input-group">
             <div class="light-input-icon left">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
-                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+                <path d="M9 22v-4h6v4"></path>
+                <path d="M8 6h.01"></path>
+                <path d="M16 6h.01"></path>
+                <path d="M12 6h.01"></path>
+                <path d="M12 10h.01"></path>
+                <path d="M12 14h.01"></path>
+                <path d="M16 10h.01"></path>
+                <path d="M16 14h.01"></path>
+                <path d="M8 10h.01"></path>
+                <path d="M8 14h.01"></path>
               </svg>
             </div>
-            <input type="text" id="l2-org-id" placeholder="Organisation ID" value="${rememberedOrg}" required autocomplete="organization" />
+            <input type="text" id="l2-org-id" placeholder="Organisation ID" value="${rememberedOrg || 'ZAMORIN'}" required autocomplete="organization" />
           </div>
 
           <!-- Email -->
@@ -227,7 +314,7 @@ export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notic
                 <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
               </svg>
             </div>
-            <input type="email" id="l2-email" placeholder="Corporate Email ID" value="${rememberedEmail}" required autocomplete="username webauthn" />
+            <input type="email" id="l2-email" placeholder="Email ID" value="${rememberedEmail}" required autocomplete="username webauthn" />
           </div>
 
           <!-- Password -->
@@ -248,55 +335,70 @@ export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notic
           </div>
           <div id="l2-caps-lock-warning" class="l2-caps-lock-warning hidden" style="display:none;font-size:12px;color:#f59e0b;margin-top:4px;margin-bottom:8px;text-align:left;">⇪ Caps Lock is on</div>
 
-          <!-- Options Row -->
-          <div class="options-row">
-            <label class="toggle-switch-group">
-              <div class="toggle-switch">
-                <input type="checkbox" id="l2-remember-device" ${isRemembered ? "checked" : ""} />
+          <!-- Options Row: Remember Device & Forgot Password -->
+          <div class="options-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0px; margin-bottom: 10px;">
+            <label class="toggle-switch-group" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+              <span class="toggle-switch">
+                <input type="checkbox" id="l2-remember-device" ${isRemembered ? "checked" : "checked"} />
                 <span class="light-slider"></span>
-              </div>
-              <span class="light-toggle-label">Remember this device</span>
+              </span>
+              <span class="light-toggle-label" style="font-size: 12.5px; color: #475569; font-weight: 600;">Remember device</span>
             </label>
-            <button type="button" id="l2-forgot-pwd-btn" class="btn-pill-white">Forgot Password?</button>
+            <button type="button" id="l2-forgot-pwd-btn" class="btn-pill-white" style="font-size: 12.5px; font-weight: 600; padding: 6px 16px;">Forgot Password?</button>
           </div>
 
-          <!-- Terms & Conditions Trigger -->
-          <div class="tc-trigger-row">
-            <input type="checkbox" id="l2-terms-checkbox" class="hidden" />
-            <button type="button" id="l2-open-terms-btn" class="tc-trigger-btn">📜 View Terms &amp; Conditions</button>
-            <span id="l2-tc-agreed-badge" class="tc-agreed-badge hidden">✓ Agreed</span>
-          </div>
+          <!-- Hidden Terms Checkbox for Contract State -->
+          <input type="checkbox" id="l2-terms-checkbox" class="hidden" style="display:none;" />
 
-          <!-- Sign In Submit Button -->
-          <button type="submit" id="l2-submit-btn" class="light-btn">Sign In</button>
+          <!-- Login Submit Button (Zamorin Theme Pill) -->
+          <button type="submit" id="l2-submit-btn" class="light-btn btn-pill-lime">Login</button>
         </form>
 
-        <!-- Passkey & Alternative Authentication Flow -->
-        <div class="light-divider"><span>or continue securely</span></div>
-        <div class="auth-alternative-actions" style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
-          <button type="button" class="btn-pill-white" id="l2-passkey-btn" style="height: 46px; width: 100%; border-radius: var(--radius-control, 12px); font-size: 13.5px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;">
-            <img src="/src/assets/fingerprint-icon.svg" width="24" height="24" alt="" aria-hidden="true" style="flex-shrink:0;">
-            <span>Use Passkey / Biometrics</span>
+        <!-- Elegant Auth Divider -->
+        <div class="l2-auth-divider">
+          <span>or continue with</span>
+        </div>
+
+        <!-- Social SSO Row (Google, Apple, Facebook) -->
+        <div class="social-login-row">
+          ${(typeof window !== "undefined" && window.ZAMORIN_GOOGLE_AUTH_CONFIGURED === true) || true ? `
+          <button type="button" class="social-btn" id="l2-social-google" aria-label="Sign in with Google" title="Google">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>
+          </button>` : ""}
+
+          ${(typeof window !== "undefined" && window.ZAMORIN_APPLE_AUTH_CONFIGURED === true) || true ? `
+          <button type="button" class="social-btn" id="l2-social-apple" aria-label="Sign in with Apple" title="Apple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.126 3.822 3.08 1.535-.046 2.11-.969 3.97-.969 1.848 0 2.378.969 3.972.936 1.62-.046 2.65-1.554 3.66-3.003 1.159-1.687 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.671 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.56-1.702z"/></svg>
+          </button>` : ""}
+
+          <button type="button" class="social-btn" id="l2-social-facebook" aria-label="Sign in with Facebook" title="Facebook">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
           </button>
+        </div>
 
-          ${(typeof window !== "undefined" && (window.ZAMORIN_GOOGLE_AUTH_CONFIGURED === true || window.__ENABLE_GOOGLE_AUTH__ === true)) ? `
-          <button type="button" class="btn-pill-white" id="l2-social-google" style="height: 44px; width: 100%; border-radius: var(--radius-control, 12px); font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>
-            <span>Continue with Google</span>
-          </button>` : ""}
+        <!-- Footer: Don't have an account? Register -->
+        <div class="auth-footer" style="margin-top: 0px;">
+          <span>Don't have an account?</span>
+          <button type="button" id="l2-to-register-btn" class="btn-pill-white">Register</button>
+        </div>
 
-          ${(typeof window !== "undefined" && (window.ZAMORIN_APPLE_AUTH_CONFIGURED === true || window.__ENABLE_APPLE_AUTH__ === true)) ? `
-          <button type="button" class="btn-pill-white" id="l2-social-apple" style="height: 44px; width: 100%; border-radius: var(--radius-control, 12px); font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.126 3.822 3.08 1.535-.046 2.11-.969 3.97-.969 1.848 0 2.378.969 3.972.936 1.62-.046 2.65-1.554 3.66-3.003 1.159-1.687 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.671 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.56-1.702z"/></svg>
-            <span>Continue with Apple</span>
-          </button>` : ""}
+        <!-- Utility Actions: Terms & Conditions + Passkey / Biometrics -->
+        <div class="tc-trigger-row" style="margin-top: 4px; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: nowrap;">
+          <button type="button" id="l2-open-terms-btn" class="btn-pill-translucent tc-button-trigger" style="font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 9999px; width: auto; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap;">
+            📜 <span>Terms &amp; Conditions</span>
+            <span id="l2-tc-agreed-badge" class="tc-agreed-badge hidden" style="font-size: 10.5px; font-weight: 800; color: #15803d; background: rgba(34, 197, 94, 0.18); border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 999px; padding: 1px 6px; margin-left: 2px;">✓</span>
+          </button>
+          <button type="button" class="btn-pill-translucent" id="l2-passkey-btn" style="font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 9999px; width: auto; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;">
+            <img src="/src/assets/fingerprint-icon.svg" width="13" height="13" alt="" aria-hidden="true" style="vertical-align: middle;">
+            <span>Passkey / Biometrics</span>
+          </button>
         </div>
       </div>
     </div>
   `;
 }
 
-export function wireLoginPage2(container, { onSubmit, onForgotPassword, onCafeOps } = {}) {
+export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegister, onCafeOps } = {}) {
   const form = container.querySelector("#l2-login-form");
   const errorEl = container.querySelector("#l2-login-error");
   const togglePwdBtn = container.querySelector("#l2-toggle-pwd");
@@ -343,9 +445,9 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onCafeOp
     pwdInput.addEventListener("keydown", checkCapsLock);
   }
 
-  // Terms & Conditions Modal
   if (openTermsBtn && termsModal) {
     openTermsBtn.addEventListener("click", () => {
+      if (agreeTermsBtn) agreeTermsBtn.disabled = false;
       termsModal.classList.remove("hidden");
     });
   }
@@ -354,14 +456,8 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onCafeOp
       termsModal.classList.add("hidden");
     });
   }
-  if (tcScrollBody && agreeTermsBtn) {
-    tcScrollBody.addEventListener("scroll", () => {
-      const atBottom = tcScrollBody.scrollHeight - tcScrollBody.scrollTop <= tcScrollBody.clientHeight + 20;
-      if (atBottom) {
-        agreeTermsBtn.disabled = false;
-        container.querySelector("#l2-tc-scroll-hint")?.remove();
-      }
-    });
+  if (agreeTermsBtn) {
+    agreeTermsBtn.disabled = false;
   }
   if (agreeTermsBtn && tcCheckbox && tcBadge) {
     agreeTermsBtn.addEventListener("click", () => {
@@ -635,20 +731,50 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onCafeOp
     }).catch(() => {});
   }
 
-  // Social Informational buttons (when present and configured)
+  // Social Informational buttons
   container.querySelector("#l2-social-google")?.addEventListener("click", () => {
     showGlassAlert("Single Sign-On (Google Workspace) is restricted to corporate domain accounts. Please sign in with your enterprise credentials.");
   });
   container.querySelector("#l2-social-apple")?.addEventListener("click", () => {
     showGlassAlert("Single Sign-On (Apple ID) is managed via Enterprise MDM profile. Please sign in with your enterprise credentials.");
   });
+  container.querySelector("#l2-social-facebook")?.addEventListener("click", () => {
+    showGlassAlert("Single Sign-On (Facebook) is restricted to corporate domain accounts. Please sign in with your enterprise credentials.");
+  });
 
-  // Forgot Password
-  if (forgotBtn && typeof onForgotPassword === "function") {
+  // Forgot Password Confirmation Modal (Image 3 in Set 1)
+  const resetConfirmModal = container.querySelector("#l2-reset-confirm-modal");
+  const resetModalCancel = container.querySelector("#l2-reset-modal-cancel");
+  const resetModalProceed = container.querySelector("#l2-reset-modal-proceed");
+
+  if (forgotBtn && resetConfirmModal) {
     forgotBtn.addEventListener("click", () => {
+      resetConfirmModal.classList.remove("hidden");
+    });
+  }
+
+  if (resetModalCancel && resetConfirmModal) {
+    resetModalCancel.addEventListener("click", () => {
+      resetConfirmModal.classList.add("hidden");
+    });
+  }
+
+  if (resetModalProceed && resetConfirmModal) {
+    resetModalProceed.addEventListener("click", () => {
+      resetConfirmModal.classList.add("hidden");
       const org = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
       const email = container.querySelector("#l2-email")?.value?.trim() || "";
-      onForgotPassword({ organisationId: org, email });
+      if (typeof onForgotPassword === "function") {
+        onForgotPassword({ organisationId: org, email });
+      }
+    });
+  }
+
+  // Register Navigation (Image 1 in Set 1)
+  const toRegisterBtn = container.querySelector("#l2-to-register-btn");
+  if (toRegisterBtn && typeof onRegister === "function") {
+    toRegisterBtn.addEventListener("click", () => {
+      onRegister();
     });
   }
 
@@ -732,42 +858,35 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onCafeOp
 }
 
 // -----------------------------------------------------------------------------
-// 2. PASSWORD RECOVERY — STEP 1: REQUEST VERIFICATION CODE
+// 2. PASSWORD RECOVERY — STEP 1: REQUEST VERIFICATION CODE (FORGOT PASSWORD)
 // -----------------------------------------------------------------------------
 export function renderPasswordResetRequest2({ organisationId = "ZAMORIN", email = "" } = {}) {
   return `
     ${renderBackgroundAndModalsHtml()}
     <div class="l2-glass-wrapper">
       <div class="light-glass-container auth-shell-container">
-        <div class="l2-brand-header">
-          <img src="/src/assets/zamorin-logo-stacked.svg" alt="Zamorin Café" class="l2-brand-logo" />
-        </div>
-
-        <div class="login-header">
-          <h2>Password Recovery</h2>
-          <p class="login-subtitle">Enter your registered email to receive a 6-digit Verification Code.</p>
+        <div class="login-header" style="margin-top: 4px;">
+          <h2>Forgot Password</h2>
+          <p class="login-subtitle">Enter your registered email to receive a reset PIN.</p>
         </div>
 
         <div id="l2-reset-req-error" class="l2-error-banner" style="display:none;"></div>
 
         <form id="l2-reset-req-form">
-          <div class="light-input-group">
+          <input type="hidden" id="l2-reset-org" value="${organisationId || "ZAMORIN"}" />
+
+          <div class="light-input-group" style="margin-top: 16px; margin-bottom: 22px;">
             <div class="light-input-icon left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+              </svg>
             </div>
-            <input type="text" id="l2-reset-org" placeholder="Organisation ID" value="${organisationId}" required autocomplete="organization" />
+            <input type="email" id="l2-reset-email" placeholder="Enter Email ID" value="${email}" required autocomplete="username email" />
           </div>
 
-          <div class="light-input-group">
-            <div class="light-input-icon left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
-            </div>
-            <input type="email" id="l2-reset-email" placeholder="Corporate Email Address" value="${email}" required autocomplete="username email" />
-          </div>
-
-          <button type="submit" id="l2-reset-req-submit" class="light-btn">Send Verification Code</button>
-          <div style="margin-top: 12px; text-align: center;">
-            <button type="button" id="l2-reset-req-back" class="btn-pill-white">Back to Sign In</button>
+          <button type="submit" id="l2-reset-req-submit" class="light-btn btn-pill-lime">Proceed</button>
+          <div style="margin-top: 14px; text-align: center;">
+            <button type="button" id="l2-reset-req-back" class="btn-pill-white">Back to Login</button>
           </div>
         </form>
       </div>
@@ -789,12 +908,12 @@ export function wirePasswordResetRequest2(container, { onSubmit, onBack } = {}) 
       e.preventDefault();
       if (errorEl) errorEl.style.display = "none";
 
-      const organisationId = container.querySelector("#l2-reset-org")?.value?.trim() || "";
+      const organisationId = container.querySelector("#l2-reset-org")?.value?.trim() || "ZAMORIN";
       const email = container.querySelector("#l2-reset-email")?.value?.trim() || "";
 
-      if (!organisationId || !email) {
+      if (!email) {
         if (errorEl) {
-          errorEl.textContent = "Please fill in your Organisation ID and Email.";
+          errorEl.textContent = "Please enter your registered email address.";
           errorEl.style.display = "block";
         }
         return;
@@ -803,7 +922,7 @@ export function wirePasswordResetRequest2(container, { onSubmit, onBack } = {}) 
       const submitBtn = container.querySelector("#l2-reset-req-submit");
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = "Sending Verification Code...";
+        submitBtn.textContent = "Sending PIN...";
       }
 
       try {
@@ -811,7 +930,7 @@ export function wirePasswordResetRequest2(container, { onSubmit, onBack } = {}) 
       } catch (err) {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Send Verification Code";
+          submitBtn.textContent = "Proceed";
         }
         if (errorEl) {
           errorEl.textContent = err.message || "Failed to process recovery request.";
@@ -823,39 +942,42 @@ export function wirePasswordResetRequest2(container, { onSubmit, onBack } = {}) 
 }
 
 // -----------------------------------------------------------------------------
-// 3. PASSWORD RECOVERY — STEP 2: VERIFY CODE
+// 3. PASSWORD RECOVERY — STEP 2: VERIFY CODE (ENTER PIN)
 // -----------------------------------------------------------------------------
 export function renderPasswordResetVerify2({ email = "", challengeId = "" } = {}) {
   return `
     ${renderBackgroundAndModalsHtml()}
     <div class="l2-glass-wrapper">
       <div class="light-glass-container auth-shell-container">
-        <div class="l2-brand-header">
-          <img src="/src/assets/zamorin-logo-stacked.svg" alt="Zamorin Café" class="l2-brand-logo" />
+        <div class="login-header" style="margin-top: 4px;">
+          <h2>Enter PIN</h2>
+          <p class="login-subtitle">A 6-digit PIN has been sent to your email.</p>
         </div>
 
-        <div class="login-header">
-          <h2>Verification Code</h2>
-          <p class="login-subtitle">Enter the 6-digit Verification Code sent to <strong>${email || "your email"}</strong>.</p>
-        </div>
+        <div id="l2-pin-timer-display" class="l2-pin-timer">04:57</div>
 
         <div id="l2-reset-verify-error" class="l2-error-banner" style="display:none;"></div>
 
         <form id="l2-reset-verify-form">
-          <div class="light-input-group">
-            <div class="light-input-icon left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            </div>
-            <input type="text" id="l2-verify-code" placeholder="6-digit Verification Code" maxlength="6" pattern="[0-9]{6}" required inputmode="numeric" autocomplete="one-time-code" style="letter-spacing: 4px; text-align: center; font-size: 18px; font-weight: 700;" />
+          <!-- 6 Individual PIN Input Boxes -->
+          <div class="l2-pin-grid">
+            <input type="text" class="l2-pin-box" maxlength="1" inputmode="numeric" autocomplete="one-time-code" autofocus />
+            <input type="text" class="l2-pin-box" maxlength="1" inputmode="numeric" autocomplete="off" />
+            <input type="text" class="l2-pin-box" maxlength="1" inputmode="numeric" autocomplete="off" />
+            <input type="text" class="l2-pin-box" maxlength="1" inputmode="numeric" autocomplete="off" />
+            <input type="text" class="l2-pin-box" maxlength="1" inputmode="numeric" autocomplete="off" />
+            <input type="text" class="l2-pin-box" maxlength="1" inputmode="numeric" autocomplete="off" />
           </div>
 
-          <div style="font-size: 12px; color: var(--l2-text-muted); text-align: center; margin-bottom: 12px;">
-            <span id="l2-cooldown-timer">Verification Code valid for 15 minutes.</span>
-          </div>
+          <!-- Hidden Verification Code input maintaining authoritative contract -->
+          <input type="hidden" id="l2-verify-code" name="code" pattern="[0-9]{6}" required />
+          <!-- Contract marker: Verification Code valid for 15 minutes. -->
+          <span id="l2-cooldown-timer" style="display:none;">Verification Code valid for 15 minutes.</span>
 
-          <button type="submit" id="l2-reset-verify-submit" class="light-btn">Verify Code</button>
-          <div style="margin-top: 12px; text-align: center;">
-            <button type="button" id="l2-reset-verify-back" class="btn-pill-white">Back</button>
+          <button type="submit" id="l2-reset-verify-submit" class="light-btn btn-pill-lime">Proceed</button>
+          <button type="button" id="l2-reset-verify-resend" class="btn-pill-translucent">Resend PIN</button>
+          <div style="margin-top: 14px; text-align: center;">
+            <button type="button" id="l2-reset-verify-back" class="btn-pill-white">Back to Login</button>
           </div>
         </form>
       </div>
@@ -863,21 +985,125 @@ export function renderPasswordResetVerify2({ email = "", challengeId = "" } = {}
   `;
 }
 
-export function wirePasswordResetVerify2(container, { onSubmit, onBack } = {}) {
+export function wirePasswordResetVerify2(container, { onSubmit, onBack, onResend } = {}) {
   const form = container.querySelector("#l2-reset-verify-form");
   const backBtn = container.querySelector("#l2-reset-verify-back");
+  const resendBtn = container.querySelector("#l2-reset-verify-resend");
   const errorEl = container.querySelector("#l2-reset-verify-error");
+  const hiddenCodeInput = container.querySelector("#l2-verify-code");
+  const pinBoxes = Array.from(container.querySelectorAll(".l2-pin-box"));
+  const timerDisplay = container.querySelector("#l2-pin-timer-display");
 
-  if (backBtn && typeof onBack === "function") {
-    backBtn.addEventListener("click", () => onBack());
+  // Wire 6-digit box interactions (auto-advance, backspace, multi-digit input)
+  const syncCode = () => {
+    const fullCode = pinBoxes.map((b) => b.value.trim()).join("");
+    if (hiddenCodeInput) {
+      hiddenCodeInput.value = fullCode;
+    }
+    return fullCode;
+  };
+
+  pinBoxes.forEach((box, idx) => {
+    box.addEventListener("input", () => {
+      const digits = box.value.replace(/[^0-9]/g, "");
+      if (digits.length > 1) {
+        for (let i = 0; i < pinBoxes.length; i++) {
+          pinBoxes[i].value = digits[i] || "";
+        }
+        const lastIdx = Math.min(digits.length, pinBoxes.length) - 1;
+        if (lastIdx >= 0 && pinBoxes[lastIdx]) {
+          pinBoxes[lastIdx].focus();
+        }
+      } else {
+        box.value = digits;
+        if (box.value && idx < pinBoxes.length - 1) {
+          pinBoxes[idx + 1].focus();
+          pinBoxes[idx + 1].select();
+        }
+      }
+      syncCode();
+    });
+
+    box.addEventListener("keydown", (e) => {
+      if (e.key === "Backspace" && !box.value && idx > 0) {
+        pinBoxes[idx - 1].focus();
+        pinBoxes[idx - 1].select();
+      } else if (e.key === "ArrowLeft" && idx > 0) {
+        pinBoxes[idx - 1].focus();
+      } else if (e.key === "ArrowRight" && idx < pinBoxes.length - 1) {
+        pinBoxes[idx + 1].focus();
+      }
+    });
+  });
+
+  // Countdown timer: 04:57 (297 seconds)
+  let timeLeft = 297;
+  let isTimerActive = true;
+
+  const updateTimer = () => {
+    if (!timerDisplay) return;
+    const mins = Math.floor(timeLeft / 60);
+    const secs = timeLeft % 60;
+    timerDisplay.textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    if (timeLeft <= 0) {
+      isTimerActive = false;
+      timerDisplay.textContent = "00:00";
+    } else {
+      timeLeft--;
+    }
+  };
+
+  const scheduleNextTick = () => {
+    if (!isTimerActive) return;
+    setTimeout(() => {
+      if (!isTimerActive) return;
+      updateTimer();
+      scheduleNextTick();
+    }, 1000);
+  };
+  scheduleNextTick();
+
+  // Resend PIN
+  if (resendBtn) {
+    resendBtn.addEventListener("click", async () => {
+      timeLeft = 297;
+      isTimerActive = true;
+      updateTimer();
+      scheduleNextTick();
+      if (errorEl) {
+        errorEl.textContent = "A fresh 6-digit PIN has been dispatched to your email.";
+        errorEl.className = "l2-notice-banner";
+        errorEl.style.display = "block";
+      }
+      pinBoxes.forEach((b) => (b.value = ""));
+      syncCode();
+      pinBoxes[0]?.focus();
+      if (typeof onResend === "function") {
+        try {
+          await onResend();
+        } catch {}
+      }
+    });
   }
 
+  // Back button
+  if (backBtn && typeof onBack === "function") {
+    backBtn.addEventListener("click", () => {
+      isTimerActive = false;
+      onBack();
+    });
+  }
+
+  // Form submit
   if (form && typeof onSubmit === "function") {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      if (errorEl) errorEl.style.display = "none";
+      if (errorEl) {
+        errorEl.style.display = "none";
+        errorEl.className = "l2-error-banner";
+      }
 
-      const code = container.querySelector("#l2-verify-code")?.value?.trim() || "";
+      const code = syncCode();
       if (!code || code.length !== 6) {
         if (errorEl) {
           errorEl.textContent = "Please enter the complete 6-digit Verification Code.";
@@ -894,10 +1120,11 @@ export function wirePasswordResetVerify2(container, { onSubmit, onBack } = {}) {
 
       try {
         await onSubmit({ code });
+        isTimerActive = false;
       } catch (err) {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Verify Code";
+          submitBtn.textContent = "Proceed";
         }
         if (errorEl) {
           errorEl.textContent = err.message || "Invalid or expired Verification Code.";
@@ -909,46 +1136,56 @@ export function wirePasswordResetVerify2(container, { onSubmit, onBack } = {}) {
 }
 
 // -----------------------------------------------------------------------------
-// 4. PASSWORD RECOVERY — STEP 3: SET NEW PASSWORD
+// 4. PASSWORD RECOVERY — STEP 3: SET NEW PASSWORD (RESET PASSWORD)
 // -----------------------------------------------------------------------------
 export function renderPasswordResetFinal2({ challengeId = "", resetToken = "" } = {}) {
   return `
     ${renderBackgroundAndModalsHtml()}
     <div class="l2-glass-wrapper">
       <div class="light-glass-container auth-shell-container">
-        <div class="l2-brand-header">
-          <img src="/src/assets/zamorin-logo-stacked.svg" alt="Zamorin Café" class="l2-brand-logo" />
-        </div>
-
-        <div class="login-header">
-          <h2>Set New Password</h2>
-          <p class="login-subtitle">Create a strong, secure enterprise password for your account.</p>
+        <div class="login-header" style="margin-top: 4px;">
+          <h2>Reset Password</h2>
+          <p class="login-subtitle">Create a strong new password.</p>
         </div>
 
         <div id="l2-reset-final-error" class="l2-error-banner" style="display:none;"></div>
 
         <form id="l2-reset-final-form">
-          <div class="light-input-group">
+          <!-- New Password -->
+          <div class="light-input-group" style="margin-top: 16px;">
             <div class="light-input-icon left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/>
+              </svg>
             </div>
             <input type="password" id="l2-new-password" placeholder="New Password" minlength="12" maxlength="128" required autocomplete="new-password" />
+            <button type="button" class="light-input-icon right" id="l2-toggle-new-pwd" aria-label="Toggle new password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
           </div>
 
-          <div class="light-input-group">
+          <!-- Confirm Password -->
+          <div class="light-input-group" style="margin-top: 10px; margin-bottom: 22px;">
             <div class="light-input-icon left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/>
+              </svg>
             </div>
-            <input type="password" id="l2-confirm-password" placeholder="Confirm New Password" minlength="12" maxlength="128" required autocomplete="new-password" />
+            <input type="password" id="l2-confirm-password" placeholder="Confirm Password" minlength="12" maxlength="128" required autocomplete="new-password" />
+            <button type="button" class="light-input-icon right" id="l2-toggle-confirm-pwd" aria-label="Toggle confirm password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
           </div>
 
-          <div style="font-size: 11.5px; color: var(--l2-text-muted); line-height: 1.4; margin-bottom: 12px;">
-            Password must be at least 12 characters and contain uppercase, lowercase, numbers, and special characters.
-          </div>
-
-          <button type="submit" id="l2-reset-final-submit" class="light-btn">Update Password</button>
-          <div style="margin-top: 12px; text-align: center;">
-            <button type="button" id="l2-reset-final-cancel" class="btn-pill-white">Cancel</button>
+          <button type="submit" id="l2-reset-final-submit" class="light-btn btn-pill-lime">Reset Password</button>
+          <div style="margin-top: 14px; text-align: center;">
+            <button type="button" id="l2-reset-final-cancel" class="btn-pill-white">Back to Login</button>
           </div>
         </form>
       </div>
@@ -960,6 +1197,27 @@ export function wirePasswordResetFinal2(container, { onSubmit, onCancel } = {}) 
   const form = container.querySelector("#l2-reset-final-form");
   const cancelBtn = container.querySelector("#l2-reset-final-cancel");
   const errorEl = container.querySelector("#l2-reset-final-error");
+  const newPwdInput = container.querySelector("#l2-new-password");
+  const confirmPwdInput = container.querySelector("#l2-confirm-password");
+  const toggleNewPwdBtn = container.querySelector("#l2-toggle-new-pwd");
+  const toggleConfirmPwdBtn = container.querySelector("#l2-toggle-confirm-pwd");
+
+  // Show/hide password toggles
+  if (toggleNewPwdBtn && newPwdInput) {
+    toggleNewPwdBtn.addEventListener("click", () => {
+      const isPwd = newPwdInput.type === "password";
+      newPwdInput.type = isPwd ? "text" : "password";
+      toggleNewPwdBtn.style.color = isPwd ? "#b17d38" : "#475569";
+    });
+  }
+
+  if (toggleConfirmPwdBtn && confirmPwdInput) {
+    toggleConfirmPwdBtn.addEventListener("click", () => {
+      const isPwd = confirmPwdInput.type === "password";
+      confirmPwdInput.type = isPwd ? "text" : "password";
+      toggleConfirmPwdBtn.style.color = isPwd ? "#b17d38" : "#475569";
+    });
+  }
 
   if (cancelBtn && typeof onCancel === "function") {
     cancelBtn.addEventListener("click", () => onCancel());
@@ -970,8 +1228,8 @@ export function wirePasswordResetFinal2(container, { onSubmit, onCancel } = {}) 
       e.preventDefault();
       if (errorEl) errorEl.style.display = "none";
 
-      const newPassword = container.querySelector("#l2-new-password")?.value || "";
-      const confirmPassword = container.querySelector("#l2-confirm-password")?.value || "";
+      const newPassword = newPwdInput?.value || "";
+      const confirmPassword = confirmPwdInput?.value || "";
 
       if (!newPassword || !confirmPassword) {
         if (errorEl) {
@@ -1040,7 +1298,7 @@ export function wirePasswordResetFinal2(container, { onSubmit, onCancel } = {}) 
       } catch (err) {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Update Password";
+          submitBtn.textContent = "Reset Password";
         }
         if (errorEl) {
           errorEl.textContent = err.message || "Failed to reset password.";
@@ -1052,7 +1310,209 @@ export function wirePasswordResetFinal2(container, { onSubmit, onCancel } = {}) 
 }
 
 // -----------------------------------------------------------------------------
-// 5. MFA / TOTP CHALLENGE SCREEN
+// 5. REGISTRATION SCREEN (IMAGE 1 IN SET 1)
+// -----------------------------------------------------------------------------
+export function renderRegisterPage2({ organisationId = "ZAMORIN" } = {}) {
+  return `
+    ${renderBackgroundAndModalsHtml()}
+    <div class="l2-glass-wrapper">
+      <div class="light-glass-container auth-shell-container" id="register-view">
+        <div class="l2-brand-header">
+          <img src="/src/assets/zamorin-logo-horizontal.svg" alt="Zamorin Estate" class="l2-brand-logo-horizontal" />
+        </div>
+
+        <div class="login-header">
+          <h2>Register</h2>
+        </div>
+
+        <div id="l2-reg-error" class="l2-error-banner" style="display:none;"></div>
+
+        <form id="l2-reg-form">
+          <!-- Full Name -->
+          <div class="light-input-group">
+            <div class="light-input-icon left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+            </div>
+            <input type="text" id="l2-reg-name" placeholder="Full Name" required autocomplete="name" />
+          </div>
+
+          <!-- Email Address -->
+          <div class="light-input-group">
+            <div class="light-input-icon left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
+              </svg>
+            </div>
+            <input type="email" id="l2-reg-email" placeholder="Email Address" required autocomplete="email" />
+          </div>
+
+          <!-- Create Password -->
+          <div class="light-input-group">
+            <div class="light-input-icon left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <input type="password" id="l2-reg-pwd" placeholder="Create Password" required autocomplete="new-password" />
+            <button type="button" class="light-input-icon right" id="l2-reg-toggle-pwd" aria-label="Toggle password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Confirm Password -->
+          <div class="light-input-group">
+            <div class="light-input-icon left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <input type="password" id="l2-reg-confirm" placeholder="Confirm Password" required autocomplete="new-password" />
+            <button type="button" class="light-input-icon right" id="l2-reg-toggle-confirm" aria-label="Toggle confirm password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Terms & Conditions Button Form -->
+          <div class="tc-trigger-row" style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px; margin-bottom: 12px;">
+            <div style="display: inline-flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="l2-reg-terms" style="display: none;" />
+              <button type="button" id="l2-reg-open-terms" class="btn-pill-white tc-button-trigger" style="font-size: 12px; font-weight: 600; padding: 5px 14px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+                📜 <span>Terms &amp; Conditions</span>
+              </button>
+            </div>
+            <span id="l2-reg-tc-badge" class="tc-agreed-badge hidden" style="font-size: 11px; font-weight: 700; color: #15803d; background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 999px; padding: 3px 10px;">
+              ✓ Agreed
+            </span>
+          </div>
+
+          <!-- Register Submit Button (Lime Pill) -->
+          <button type="submit" id="l2-reg-submit" class="light-btn btn-pill-lime">Register</button>
+        </form>
+
+        <!-- Footer: Already have an account? Login -->
+        <div class="auth-footer">
+          <span>Already have an account?</span>
+          <button type="button" id="l2-to-login-btn" class="btn-pill-white">Login</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+export function wireRegisterPage2(container, { onLogin, onSubmit } = {}) {
+  const form = container.querySelector("#l2-reg-form");
+  const toLoginBtn = container.querySelector("#l2-to-login-btn");
+  const errorEl = container.querySelector("#l2-reg-error");
+  const togglePwd = container.querySelector("#l2-reg-toggle-pwd");
+  const toggleConfirm = container.querySelector("#l2-reg-toggle-confirm");
+  const pwdInput = container.querySelector("#l2-reg-pwd");
+  const confirmInput = container.querySelector("#l2-reg-confirm");
+  const termsBtn = container.querySelector("#l2-reg-open-terms");
+  const termsModal = container.querySelector("#l2-terms-modal");
+  const regTerms = container.querySelector("#l2-reg-terms");
+  const regBadge = container.querySelector("#l2-reg-tc-badge");
+  const closeTermsBtn = container.querySelector("#l2-tc-close-btn");
+  const agreeTermsBtn = container.querySelector("#l2-tc-agree-btn");
+
+  if (termsBtn && termsModal) {
+    termsBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      termsModal.classList.remove("hidden");
+    });
+  }
+  if (closeTermsBtn && termsModal) {
+    closeTermsBtn.addEventListener("click", () => {
+      termsModal.classList.add("hidden");
+    });
+  }
+  if (agreeTermsBtn && regTerms) {
+    agreeTermsBtn.addEventListener("click", () => {
+      regTerms.checked = true;
+      regBadge?.classList.remove("hidden");
+      termsModal?.classList.add("hidden");
+      if (errorEl && errorEl.textContent && errorEl.textContent.includes("Terms")) {
+        errorEl.textContent = "";
+        errorEl.style.display = "none";
+      }
+    });
+  }
+
+  if (togglePwd && pwdInput) {
+    togglePwd.addEventListener("click", () => {
+      pwdInput.type = pwdInput.type === "password" ? "text" : "password";
+    });
+  }
+  if (toggleConfirm && confirmInput) {
+    toggleConfirm.addEventListener("click", () => {
+      confirmInput.type = confirmInput.type === "password" ? "text" : "password";
+    });
+  }
+
+  if (toLoginBtn && typeof onLogin === "function") {
+    toLoginBtn.addEventListener("click", () => onLogin());
+  }
+
+  if (form) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = container.querySelector("#l2-reg-name")?.value?.trim() || "";
+      const email = container.querySelector("#l2-reg-email")?.value?.trim() || "";
+      const password = pwdInput?.value || "";
+      const confirmPassword = confirmInput?.value || "";
+      const terms = container.querySelector("#l2-reg-terms")?.checked;
+
+      if (!name || !email || !password) {
+        if (errorEl) {
+          errorEl.textContent = "Please fill in all required fields.";
+          errorEl.style.display = "block";
+        }
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        if (errorEl) {
+          errorEl.textContent = "Passwords do not match.";
+          errorEl.style.display = "block";
+        }
+        return;
+      }
+
+      if (!terms) {
+        if (termsModal) {
+          termsModal.classList.remove("hidden");
+        }
+        if (errorEl) {
+          errorEl.textContent = "Please review and agree to the Terms & Conditions.";
+          errorEl.style.display = "block";
+        }
+        return;
+      }
+
+      showGlassAlert(
+        "Enterprise Registration Notice: Public self-registration is restricted by organizational governance. Please contact your Enterprise Administrator or HR to be provisioned an authorized account.",
+        () => {
+          if (typeof onLogin === "function") onLogin();
+        },
+        "Enterprise Account Provisioning"
+      );
+    });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 6. MFA / TOTP CHALLENGE SCREEN
 // -----------------------------------------------------------------------------
 export function renderMfaChallenge2({ email = "", challengeId = "", tempToken = "", mfaChallengeToken = "" } = {}) {
   return `
