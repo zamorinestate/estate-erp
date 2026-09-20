@@ -460,6 +460,9 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     return window.btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
   };
 
+  let conditionalAbortController = null;
+  let explicitAbortController = null;
+
   const passkeyBtn = container.querySelector("#l2-passkey-btn");
   if (passkeyBtn) {
     passkeyBtn.addEventListener("click", async (e) => {
@@ -472,6 +475,22 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         );
         return;
       }
+
+      // Abort any ongoing conditional autofill request or previous attempt
+      if (conditionalAbortController) {
+        try {
+          conditionalAbortController.abort();
+        } catch {}
+        conditionalAbortController = null;
+      }
+      if (explicitAbortController) {
+        try {
+          explicitAbortController.abort();
+        } catch {}
+        explicitAbortController = null;
+      }
+      // Allow browser credential manager to release the pending request lock
+      await new Promise((resolve) => setTimeout(resolve, 60));
 
       const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
       let email = container.querySelector("#l2-email")?.value?.trim() || "";
@@ -534,13 +553,35 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
         // 2. Native Platform Authenticator Ceremony (Windows Hello / Touch ID / Face ID / Android)
         let credential;
+        explicitAbortController = new AbortController();
         try {
-          credential = await navigator.credentials.get({ publicKey: publicKeyOptions });
+          credential = await navigator.credentials.get({
+            publicKey: publicKeyOptions,
+            signal: explicitAbortController.signal,
+          });
         } catch (pkErr) {
+          // If browser still had a lock releasing, retry once cleanly
+          if (pkErr?.message?.toLowerCase().includes("pending") || pkErr?.name === "InvalidStateError") {
+            try {
+              explicitAbortController?.abort();
+            } catch {}
+            await new Promise((r) => setTimeout(r, 120));
+            explicitAbortController = new AbortController();
+            try {
+              credential = await navigator.credentials.get({
+                publicKey: publicKeyOptions,
+                signal: explicitAbortController.signal,
+              });
+            } catch (retryErr) {
+              pkErr = retryErr;
+            }
+          }
+
           const msg = pkErr?.message?.toLowerCase() || "";
           const name = pkErr?.name || "";
           const isCancel =
             name === "NotAllowedError" ||
+            name === "AbortError" ||
             msg.includes("cancel") ||
             msg.includes("not allowed") ||
             msg.includes("user denied") ||
@@ -673,9 +714,11 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
             } else {
               delete publicKeyOptions.allowCredentials;
             }
+            conditionalAbortController = new AbortController();
             const credential = await navigator.credentials.get({
               publicKey: publicKeyOptions,
               mediation: "conditional",
+              signal: conditionalAbortController.signal,
             });
             if (credential) {
               const verifyPayload = {
