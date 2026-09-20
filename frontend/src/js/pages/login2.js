@@ -151,26 +151,27 @@ function renderBackgroundAndModalsHtml() {
         <div id="l2-bio-options-list" class="biometric-options">
           <button type="button" class="light-bio-option" data-bio-type="faceId">
             <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 3H3v2"/>
-              <path d="M19 3h2v2"/>
-              <path d="M5 21H3v-2"/>
-              <path d="M19 21h2v-2"/>
-              <path d="M9 9h.01"/>
-              <path d="M15 9h.01"/>
-              <path d="M10 13c.5.5 1.5.5 2 0"/>
-              <path d="M8 17c1.5 1 4.5 1 6 0"/>
+              <path d="M4 7V5a2 2 0 0 1 2-2h2"/>
+              <path d="M16 3h2a2 2 0 0 1 2 2v2"/>
+              <path d="M20 17v2a2 2 0 0 1-2 2h-2"/>
+              <path d="M8 21H6a2 2 0 0 1-2-2v-2"/>
+              <path d="M9 8.5v2"/>
+              <path d="M15 8.5v2"/>
+              <path d="M12 11.5v2.2a.8.8 0 0 1-.8.8H11"/>
+              <path d="M8.5 16.8c1 1.4 2.2 1.9 3.5 1.9s2.5-.5 3.5-1.9"/>
             </svg>
             <span style="font-size: 13px; font-weight: 600;">Face ID</span>
           </button>
           <button type="button" class="light-bio-option" data-bio-type="fingerprint">
             <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/>
-              <path d="M5 19.5C5.5 18 6 15 6 12c0-.7.12-1.37.34-2"/>
-              <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02 0-3.3-2.7-6-6-6s-6 2.7-6 6c0 1.02-.1 2.51-.26 4"/>
               <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/>
-              <path d="M8.65 22c.21-.66.45-1.32.57-2"/>
               <path d="M14 13.12c0 2.38 0 6.38-1 8.88"/>
-              <path d="M21.8 16c.2-2 .13-4-.03-5A10 10 0 0 0 12 2"/>
+              <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/>
+              <path d="M2 12a10 10 0 0 1 18-6"/>
+              <path d="M2 16h.01"/>
+              <path d="M21.8 16c.2-2 .13-5.35 0-6"/>
+              <path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/>
+              <path d="M8.65 22c.21-.66.45-1.32.57-2"/>
               <path d="M9 6.8a6 6 0 0 1 9 5.2v2"/>
             </svg>
             <span style="font-size: 13px; font-weight: 600;">Fingerprint</span>
@@ -179,9 +180,9 @@ function renderBackgroundAndModalsHtml() {
             <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-              <circle cx="8" cy="16" r="1.2"/>
-              <circle cx="12" cy="16" r="1.2"/>
-              <circle cx="16" cy="16" r="1.2"/>
+              <circle cx="8" cy="16" r="1.2" fill="currentColor"/>
+              <circle cx="12" cy="16" r="1.2" fill="currentColor"/>
+              <circle cx="16" cy="16" r="1.2" fill="currentColor"/>
             </svg>
             <span style="font-size: 13px; font-weight: 600;">6-Digit PIN</span>
           </button>
