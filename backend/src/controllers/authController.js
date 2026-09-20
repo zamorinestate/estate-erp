@@ -943,6 +943,125 @@ const unlockWithAppPin = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Signs in user using their 6-digit application PIN and registered email.
+ */
+const loginWithAppPin = asyncHandler(async (req, res) => {
+  const { organisationId, email, pin, device } = req.body || {};
+  const orgId = String(organisationId || 'ZAMORIN').trim().toUpperCase();
+  const userEmail = String(email || '').trim().toLowerCase();
+  const pinStr = String(pin || '').trim();
+
+  if (!userEmail) {
+    throw new ApiError(400, 'EMAIL_REQUIRED', 'Please enter your email ID to sign in with your PIN.');
+  }
+
+  if (!pinStr || !/^\d{6}$/.test(pinStr)) {
+    throw new ApiError(400, 'INVALID_PIN_FORMAT', 'A valid 6-digit numeric PIN is required.');
+  }
+
+  const { User } = require('../models/User');
+  const user = await User.findOne({
+    organisationId: orgId,
+    email: userEmail,
+    accountStatus: 'ACTIVE',
+    archivedAt: null,
+  }).select('+appPinHash');
+
+  if (!user) {
+    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or PIN.');
+  }
+
+  if (!user.appPinEnabled || !user.appPinHash) {
+    throw new ApiError(400, 'APP_PIN_NOT_CONFIGURED', 'Application PIN is not configured for this account. Please sign in with your password, then set your PIN in Settings → Security & Sign-In.');
+  }
+
+  if (user.appPinLockedUntil && user.appPinLockedUntil > new Date()) {
+    const minutesLeft = Math.ceil((user.appPinLockedUntil.getTime() - Date.now()) / 60000);
+    throw new ApiError(423, 'APP_PIN_LOCKED', `Application PIN is locked due to repeated failed attempts. Please retry in ${minutesLeft} minute(s) or authenticate with your password.`);
+  }
+
+  const isValid = await bcrypt.compare(pinStr, user.appPinHash);
+  if (!isValid) {
+    user.appPinFailedAttempts = (user.appPinFailedAttempts || 0) + 1;
+    if (user.appPinFailedAttempts >= 5) {
+      user.appPinLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+    }
+    await user.save({ validateModifiedOnly: true });
+
+    const remaining = Math.max(0, 5 - user.appPinFailedAttempts);
+    const msg = remaining > 0
+      ? `Incorrect 6-digit PIN. ${remaining} attempt(s) remaining before lockout.`
+      : 'Application PIN is now locked for 15 minutes due to too many failed attempts. Please sign in with your password.';
+
+    try {
+      const { logSecurityEvent } = require('../services/securityLogger');
+      logSecurityEvent({
+        correlationId: req.correlationId || null,
+        organisationId: user.organisationId,
+        action: 'APP_PIN_LOGIN_FAILED',
+        outcome: 'FAILURE',
+        severity: 'WARN',
+        metadata: { userId: user.userId, email: user.email, failedAttempts: user.appPinFailedAttempts },
+      });
+    } catch {}
+
+    throw new ApiError(401, 'INVALID_APP_PIN', msg);
+  }
+
+  // Reset counters on success
+  user.appPinFailedAttempts = 0;
+  user.appPinLockedUntil = null;
+  await user.save({ validateModifiedOnly: true });
+
+  const authService = require('../services/authService');
+  const sessionResult = await authService.createSession({
+    user,
+    device: device || {
+      deviceId: req.headers['x-device-id'] || 'DEV-WEB-APP-PIN',
+      deviceType: 'DESKTOP',
+    },
+    network: {
+      ipAddress: req.ip || req.socket.remoteAddress || '',
+      userAgent: req.headers['user-agent'] || '',
+    },
+    mfaVerified: true,
+    createdBy: user.userId,
+  });
+
+  try {
+    const { logSecurityEvent } = require('../services/securityLogger');
+    logSecurityEvent({
+      correlationId: req.correlationId || null,
+      organisationId: user.organisationId,
+      action: 'APP_PIN_LOGIN_SUCCESS',
+      outcome: 'SUCCESS',
+      severity: 'INFO',
+      metadata: { userId: user.userId },
+    });
+  } catch {}
+
+  return res.status(200).json({
+    success: true,
+    message: 'Signed in with Application PIN successfully.',
+    data: {
+      accessToken: sessionResult.accessToken,
+      refreshToken: sessionResult.refreshToken,
+      session: sessionResult.session,
+      user: {
+        userId: user.userId,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        organisationId: user.organisationId,
+        isPrimaryMaster: Boolean(user.isPrimaryMaster),
+        primaryCafeId: user.primaryCafeId || null,
+        assignedCafeIds: user.assignedCafeIds || [],
+      },
+    },
+  });
+});
+
 const requestPasswordReset = asyncHandler(
   async (request, response) => {
     const organisationId = typeof request.body?.organisationId === 'string' ? request.body.organisationId.trim().toUpperCase() : '';
@@ -2246,5 +2365,6 @@ module.exports = {
   disableAppPin,
   getAppPinStatus,
   unlockWithAppPin,
+  loginWithAppPin,
 };
 

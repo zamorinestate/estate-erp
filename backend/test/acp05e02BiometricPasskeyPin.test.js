@@ -550,4 +550,74 @@ test('ACP-05E-02: BIOMETRIC, PASSKEY & SIX-DIGIT APP PIN REGRESSION & SECURITY S
       }
     );
   });
+
+  // 20. App PIN Login from login screen (unauthenticated context)
+  await t.test('20. App PIN login from login screen succeeds for configured user and generates session', async () => {
+    // Configure PIN for user
+    const pinUser = await User.findOne({ organisationId: TEST_ORG, email: 'master@zamorin.com' });
+    const salt = await bcrypt.genSalt(10);
+    pinUser.appPinHash = await bcrypt.hash('654321', salt);
+    pinUser.appPinEnabled = true;
+    pinUser.appPinFailedAttempts = 0;
+    pinUser.appPinLockedUntil = null;
+    await pinUser.save({ validateModifiedOnly: true });
+
+    let loginPayload = null;
+    const req = {
+      body: {
+        organisationId: TEST_ORG,
+        email: 'master@zamorin.com',
+        pin: '654321',
+      },
+      headers: { 'user-agent': 'TestRunner/1.0', 'x-device-id': 'DEV-PIN-TEST' },
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const res = {
+      status: (code) => {
+        assert.equal(code, 200);
+        return { json: (p) => { loginPayload = p; } };
+      },
+    };
+
+    await authController.loginWithAppPin(req, res);
+    assert.equal(loginPayload.success, true);
+    assert.ok(loginPayload.data.accessToken);
+    assert.equal(loginPayload.data.user.email, 'master@zamorin.com');
+  });
+
+  // 21. App PIN Login rejects invalid PIN or unconfigured accounts
+  await t.test('21. App PIN login rejects incorrect PIN and non-configured accounts', async () => {
+    const res = { status: () => ({ json: () => {} }) };
+
+    // Wrong PIN
+    await assert.rejects(
+      async () => {
+        await authController.loginWithAppPin({
+          body: { organisationId: TEST_ORG, email: 'master@zamorin.com', pin: '999999' },
+          headers: {},
+        }, res);
+      },
+      (err) => {
+        assert.equal(err.statusCode, 401);
+        assert.equal(err.code, 'INVALID_APP_PIN');
+        return true;
+      }
+    );
+
+    // Missing email
+    await assert.rejects(
+      async () => {
+        await authController.loginWithAppPin({
+          body: { organisationId: TEST_ORG, email: '', pin: '654321' },
+          headers: {},
+        }, res);
+      },
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'EMAIL_REQUIRED');
+        return true;
+      }
+    );
+  });
 });

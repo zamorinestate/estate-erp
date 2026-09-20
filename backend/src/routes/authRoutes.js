@@ -32,6 +32,7 @@ const {
   disableAppPin,
   getAppPinStatus,
   unlockWithAppPin,
+  loginWithAppPin,
 } = require('../controllers/authController');
 
 const {
@@ -60,7 +61,7 @@ function normalizeAccountKey(req, fallbackIdentifierKey = 'email') {
     ''
   ).trim().toLowerCase();
 
-  if (!rawIdentifier && !orgId) {
+  if (!rawIdentifier) {
     return `auth:acct:anon:${ipKeyGenerator(getTrustedClientIp(req))}`;
   }
 
@@ -184,7 +185,7 @@ const passwordResetAccountRateLimiter = createPasswordResetAccountRateLimiter();
 
 const passkeyIpRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: process.env.AUTH_RATE_LIMIT_PASSKEY_IP_MAX ? Number(process.env.AUTH_RATE_LIMIT_PASSKEY_IP_MAX) : 150,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(getTrustedClientIp(req)),
@@ -194,7 +195,7 @@ const passkeyIpRateLimiter = rateLimit({
 
 const passkeyAccountRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 15,
+  limit: process.env.AUTH_RATE_LIMIT_PASSKEY_MAX ? Number(process.env.AUTH_RATE_LIMIT_PASSKEY_MAX) : 80,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   keyGenerator: (req) => normalizeAccountKey(req, 'email'),
@@ -235,6 +236,7 @@ router.post('/app-pin/change', authenticate, changeAppPin);
 router.post('/app-pin/disable', authenticate, disableAppPin);
 router.get('/app-pin/status', authenticate, getAppPinStatus);
 router.post('/app-pin/unlock', authenticate, unlockWithAppPin);
+router.post('/app-pin/login', passkeyIpRateLimiter, passkeyAccountRateLimiter, loginWithAppPin);
 
 // Feature Gate: Passkeys / WebAuthn are enabled by default unless explicitly disabled
 const isPasskeyEnabled = () => process.env.ENABLE_PASSKEY_AUTH !== 'false';

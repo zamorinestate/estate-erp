@@ -135,6 +135,77 @@ function renderBackgroundAndModalsHtml() {
         </div>
       </div>
     </div>
+
+    <!-- Biometrics & PIN Chooser Modal -->
+    <div id="l2-biometrics-modal" class="modal-overlay hidden">
+      <div class="light-modal-content" style="max-width: 440px; position: relative;">
+        <button id="l2-close-bio-modal" type="button" class="light-close-btn" aria-label="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+        <h3 style="font-size: 19px; font-weight: 700; margin-bottom: 4px; color: #fff;">Choose Sign-In Method</h3>
+        <p style="font-size: 13px; color: var(--l2-text-muted); margin-bottom: 18px;">Authenticate securely using your device biometrics or personal application PIN.</p>
+        
+        <div id="l2-bio-options-list" class="biometric-options">
+          <button type="button" class="light-bio-option" data-bio-type="faceId">
+            <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 3H3v2"/>
+              <path d="M19 3h2v2"/>
+              <path d="M5 21H3v-2"/>
+              <path d="M19 21h2v-2"/>
+              <path d="M9 9h.01"/>
+              <path d="M15 9h.01"/>
+              <path d="M10 13c.5.5 1.5.5 2 0"/>
+              <path d="M8 17c1.5 1 4.5 1 6 0"/>
+            </svg>
+            <span style="font-size: 13px; font-weight: 600;">Face ID</span>
+          </button>
+          <button type="button" class="light-bio-option" data-bio-type="fingerprint">
+            <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/>
+              <path d="M5 19.5C5.5 18 6 15 6 12c0-.7.12-1.37.34-2"/>
+              <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02 0-3.3-2.7-6-6-6s-6 2.7-6 6c0 1.02-.1 2.51-.26 4"/>
+              <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/>
+              <path d="M8.65 22c.21-.66.45-1.32.57-2"/>
+              <path d="M14 13.12c0 2.38 0 6.38-1 8.88"/>
+              <path d="M21.8 16c.2-2 .13-4-.03-5A10 10 0 0 0 12 2"/>
+              <path d="M9 6.8a6 6 0 0 1 9 5.2v2"/>
+            </svg>
+            <span style="font-size: 13px; font-weight: 600;">Fingerprint</span>
+          </button>
+          <button type="button" class="light-bio-option" data-bio-type="appPin">
+            <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              <circle cx="8" cy="16" r="1.2"/>
+              <circle cx="12" cy="16" r="1.2"/>
+              <circle cx="16" cy="16" r="1.2"/>
+            </svg>
+            <span style="font-size: 13px; font-weight: 600;">6-Digit PIN</span>
+          </button>
+        </div>
+
+        <!-- 6-Digit PIN Entry Section (revealed when 6-Digit PIN is clicked) -->
+        <div id="l2-app-pin-section" class="hidden" style="margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 16px;">
+          <p style="font-size: 13px; color: var(--l2-text-muted); margin-bottom: 12px; text-align: center;">Enter your 6-digit personal application PIN</p>
+          <div id="l2-modal-pin-error" class="l2-error-banner" style="display:none; margin-bottom: 12px; font-size: 12px;"></div>
+          <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 16px;">
+            <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+          </div>
+          <div style="display: flex; gap: 10px; justify-content: center;">
+            <button type="button" id="l2-modal-pin-back" class="btn-pill-white" style="padding: 8px 18px; font-size: 13px;">Back</button>
+            <button type="button" id="l2-modal-pin-submit" class="light-btn btn-pill-lime" style="padding: 8px 24px; font-size: 13px;">Unlock &amp; Sign In</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -464,207 +535,390 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
   let explicitAbortController = null;
 
   const passkeyBtn = container.querySelector("#l2-passkey-btn");
-  if (passkeyBtn) {
-    passkeyBtn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      if (!window.PublicKeyCredential) {
+  const bioModal = container.querySelector("#l2-biometrics-modal");
+  const closeBioBtn = container.querySelector("#l2-close-bio-modal");
+  const bioOptionsList = container.querySelector("#l2-bio-options-list");
+  const appPinSection = container.querySelector("#l2-app-pin-section");
+  const pinInputs = Array.from(container.querySelectorAll(".l2-pin-input-box"));
+  const pinBackBtn = container.querySelector("#l2-modal-pin-back");
+  const pinSubmitBtn = container.querySelector("#l2-modal-pin-submit");
+  const pinError = container.querySelector("#l2-modal-pin-error");
+
+  const triggerNativePasskeyAuth = async ({ preferredType = "fingerprint" } = {}) => {
+    if (!window.PublicKeyCredential) {
+      showGlassAlert(
+        "Passkey and biometric authentication are not supported by this browser. Please use your standard password.",
+        null,
+        "Device Not Supported"
+      );
+      return;
+    }
+
+    // Abort any ongoing conditional autofill request or previous attempt
+    if (conditionalAbortController) {
+      try {
+        conditionalAbortController.abort();
+      } catch {}
+      conditionalAbortController = null;
+    }
+    if (explicitAbortController) {
+      try {
+        explicitAbortController.abort();
+      } catch {}
+      explicitAbortController = null;
+    }
+    // Allow browser credential manager to release the pending request lock
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
+    let email = container.querySelector("#l2-email")?.value?.trim() || "";
+
+    // Fallback to remembered device email if input is blank
+    if (!email) {
+      try {
+        const raw = localStorage.getItem("zamorin_remembered_device");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.email) email = parsed.email;
+        }
+      } catch {}
+    }
+
+    const originalHtml = passkeyBtn ? passkeyBtn.innerHTML : "";
+    if (passkeyBtn) {
+      passkeyBtn.disabled = true;
+      passkeyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d4a359" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 0 20" stroke-dasharray="62.8" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></path></svg> <span>Verifying…</span>`;
+    }
+
+    try {
+      const { apiPost, setAccessToken } = await import("../apiClient.js");
+
+      // 1. Fetch challenge & options from server
+      const optRes = await apiPost("/auth/passkeys/authenticate/options", {
+        organisationId: orgId,
+        ...(email ? { email } : {}),
+      });
+
+      const options = optRes?.data?.options;
+      const challengeId = optRes?.data?.challengeId;
+
+      if (!options || !challengeId) {
+        throw new Error("Unable to retrieve passkey authentication challenge from server.");
+      }
+
+      // If email was provided and user explicitly has 0 registered credentials:
+      if (email && Array.isArray(options.allowCredentials) && options.allowCredentials.length === 0) {
         showGlassAlert(
-          "Passkey and biometric authentication are not supported by this browser. Please use your standard password.",
+          "No passkey has been registered for this account yet. Please sign in with your enterprise password, then configure biometrics in Settings → Security & Sign-In.",
           null,
-          "Device Not Supported"
+          "Passkey Not Configured"
         );
         return;
       }
 
-      // Abort any ongoing conditional autofill request or previous attempt
-      if (conditionalAbortController) {
-        try {
-          conditionalAbortController.abort();
-        } catch {}
-        conditionalAbortController = null;
-      }
-      if (explicitAbortController) {
-        try {
-          explicitAbortController.abort();
-        } catch {}
-        explicitAbortController = null;
-      }
-      // Allow browser credential manager to release the pending request lock
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      const publicKeyOptions = {
+        ...options,
+        challenge: base64urlToBuffer(options.challenge),
+        userVerification: options.userVerification || "preferred",
+      };
 
-      const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
-      let email = container.querySelector("#l2-email")?.value?.trim() || "";
-
-      // Fallback to remembered device email if input is blank
-      if (!email) {
-        try {
-          const raw = localStorage.getItem("zamorin_remembered_device");
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (parsed?.email) email = parsed.email;
-          }
-        } catch {}
+      if (Array.isArray(options.allowCredentials) && options.allowCredentials.length > 0) {
+        publicKeyOptions.allowCredentials = options.allowCredentials.map((cred) => ({
+          ...cred,
+          id: base64urlToBuffer(cred.id),
+        }));
+      } else {
+        delete publicKeyOptions.allowCredentials;
       }
 
-      const originalHtml = passkeyBtn.innerHTML;
-      passkeyBtn.disabled = true;
-      passkeyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d4a359" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 0 20" stroke-dasharray="62.8" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></path></svg> <span>Verifying…</span>`;
-
+      // 2. Native Platform Authenticator Ceremony (Windows Hello / Touch ID / Face ID / Android)
+      let credential;
+      explicitAbortController = new AbortController();
       try {
-        const { apiPost, setAccessToken } = await import("../apiClient.js");
-
-        // 1. Fetch challenge & options from server
-        const optRes = await apiPost("/auth/passkeys/authenticate/options", {
-          organisationId: orgId,
-          ...(email ? { email } : {}),
+        credential = await navigator.credentials.get({
+          publicKey: publicKeyOptions,
+          signal: explicitAbortController.signal,
         });
-
-        const options = optRes?.data?.options;
-        const challengeId = optRes?.data?.challengeId;
-
-        if (!options || !challengeId) {
-          throw new Error("Unable to retrieve passkey authentication challenge from server.");
-        }
-
-        // If email was provided and user explicitly has 0 registered credentials:
-        if (email && Array.isArray(options.allowCredentials) && options.allowCredentials.length === 0) {
-          showGlassAlert(
-            "No passkey has been registered for this account yet. Please sign in with your enterprise password, then configure biometrics in Settings → Security & Sign-In.",
-            null,
-            "Passkey Not Configured"
-          );
-          return;
-        }
-
-        const publicKeyOptions = {
-          ...options,
-          challenge: base64urlToBuffer(options.challenge),
-          userVerification: options.userVerification || "required",
-        };
-
-        if (Array.isArray(options.allowCredentials) && options.allowCredentials.length > 0) {
-          publicKeyOptions.allowCredentials = options.allowCredentials.map((cred) => ({
-            ...cred,
-            id: base64urlToBuffer(cred.id),
-          }));
-        } else {
-          delete publicKeyOptions.allowCredentials;
-        }
-
-        // 2. Native Platform Authenticator Ceremony (Windows Hello / Touch ID / Face ID / Android)
-        let credential;
-        explicitAbortController = new AbortController();
-        try {
-          credential = await navigator.credentials.get({
-            publicKey: publicKeyOptions,
-            signal: explicitAbortController.signal,
-          });
-        } catch (pkErr) {
-          // If browser still had a lock releasing, retry once cleanly
-          if (pkErr?.message?.toLowerCase().includes("pending") || pkErr?.name === "InvalidStateError") {
-            try {
-              explicitAbortController?.abort();
-            } catch {}
-            await new Promise((r) => setTimeout(r, 120));
-            explicitAbortController = new AbortController();
-            try {
-              credential = await navigator.credentials.get({
-                publicKey: publicKeyOptions,
-                signal: explicitAbortController.signal,
-              });
-            } catch (retryErr) {
-              pkErr = retryErr;
-            }
-          }
-
-          const msg = pkErr?.message?.toLowerCase() || "";
-          const name = pkErr?.name || "";
-          const isCancel =
-            name === "NotAllowedError" ||
-            name === "AbortError" ||
-            msg.includes("cancel") ||
-            msg.includes("not allowed") ||
-            msg.includes("user denied") ||
-            msg.includes("abort");
-
-          if (isCancel) {
-            return; // Graceful user cancellation
-          }
-
-          const isNoDevice =
-            name === "NotSupportedError" ||
-            name === "InvalidStateError" ||
-            msg.includes("could not be completed") ||
-            msg.includes("no credentials") ||
-            msg.includes("no passkey");
-
-          throw new Error(
-            isNoDevice
-              ? "No matching passkey found on this device for this account. Sign in with your password, then register this device in Settings → Security & Sign-In."
-              : (pkErr.message || "Biometric authentication failed. Please sign in with your password.")
-          );
-        }
-
-        if (!credential) {
-          return;
-        }
-
-        // 3. Assemble signed assertion
-        const verifyPayload = {
-          id: credential.id,
-          rawId: bufferToBase64url(credential.rawId),
-          type: credential.type,
-          response: {
-            clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
-            authenticatorData: bufferToBase64url(credential.response.authenticatorData),
-            signature: bufferToBase64url(credential.response.signature),
-            userHandle: credential.response.userHandle
-              ? bufferToBase64url(credential.response.userHandle)
-              : null,
-          },
-        };
-
-        // 4. Server assertion verification
-        const verifyRes = await apiPost("/auth/passkeys/authenticate/verify", {
-          organisationId: orgId,
-          response: verifyPayload,
-          challengeId,
-        });
-
-        const accessToken = verifyRes?.data?.accessToken;
-        const user = verifyRes?.data?.user;
-
-        if (accessToken) {
-          setAccessToken(accessToken);
-        }
-
-        if (user) {
+      } catch (pkErr) {
+        // If browser still had a lock releasing, retry once cleanly
+        if (pkErr?.message?.toLowerCase().includes("pending") || pkErr?.name === "InvalidStateError") {
           try {
-            localStorage.setItem("zamorin_user", JSON.stringify(user));
-            if (user.email) {
-              localStorage.setItem("zamorin_remembered_device", JSON.stringify({ email: user.email, organisationId: orgId }));
-            }
+            explicitAbortController?.abort();
           } catch {}
-
-          if (typeof onPasskeySuccess === "function") {
-            onPasskeySuccess(user);
-          } else {
-            window.location.hash = user.role === "STAFF" ? "#staff-home" : "#dashboard";
-            window.location.reload();
+          await new Promise((r) => setTimeout(r, 120));
+          explicitAbortController = new AbortController();
+          try {
+            credential = await navigator.credentials.get({
+              publicKey: publicKeyOptions,
+              signal: explicitAbortController.signal,
+            });
+          } catch (retryErr) {
+            pkErr = retryErr;
           }
         }
-      } catch (err) {
-        showGlassAlert(
-          err?.message || "Passkey authentication failed. Please sign in with your password.",
-          null,
-          "Authentication Notice"
+
+        const msg = pkErr?.message?.toLowerCase() || "";
+        const name = pkErr?.name || "";
+        const isCancel =
+          name === "NotAllowedError" ||
+          name === "AbortError" ||
+          msg.includes("cancel") ||
+          msg.includes("not allowed") ||
+          msg.includes("user denied") ||
+          msg.includes("abort");
+
+        if (isCancel) {
+          return; // Graceful user cancellation
+        }
+
+        const isNoDevice =
+          name === "NotSupportedError" ||
+          name === "InvalidStateError" ||
+          msg.includes("could not be completed") ||
+          msg.includes("no credentials") ||
+          msg.includes("no passkey");
+
+        throw new Error(
+          isNoDevice
+            ? "No matching passkey found on this device for this account. Sign in with your password, then register this device in Settings → Security & Sign-In."
+            : (pkErr.message || "Biometric authentication failed. Please sign in with your password.")
         );
-      } finally {
-        if (passkeyBtn) {
-          passkeyBtn.disabled = false;
-          passkeyBtn.innerHTML = originalHtml;
+      }
+
+      if (!credential) {
+        return;
+      }
+
+      // 3. Assemble signed assertion
+      const verifyPayload = {
+        id: credential.id,
+        rawId: bufferToBase64url(credential.rawId),
+        type: credential.type,
+        response: {
+          clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+          authenticatorData: bufferToBase64url(credential.response.authenticatorData),
+          signature: bufferToBase64url(credential.response.signature),
+          userHandle: credential.response.userHandle
+            ? bufferToBase64url(credential.response.userHandle)
+            : null,
+        },
+      };
+
+      // 4. Server assertion verification
+      const verifyRes = await apiPost("/auth/passkeys/authenticate/verify", {
+        organisationId: orgId,
+        response: verifyPayload,
+        challengeId,
+      });
+
+      const accessToken = verifyRes?.data?.accessToken;
+      const user = verifyRes?.data?.user;
+
+      if (accessToken) {
+        setAccessToken(accessToken);
+      }
+
+      if (user) {
+        try {
+          localStorage.setItem("zamorin_user", JSON.stringify(user));
+          if (user.email) {
+            localStorage.setItem("zamorin_remembered_device", JSON.stringify({ email: user.email, organisationId: orgId }));
+          }
+        } catch {}
+
+        if (typeof onPasskeySuccess === "function") {
+          onPasskeySuccess(user);
+        } else {
+          window.location.hash = user.role === "STAFF" ? "#staff-home" : "#dashboard";
+          window.location.reload();
         }
       }
+    } catch (err) {
+      showGlassAlert(
+        err?.message || "Passkey authentication failed. Please sign in with your password.",
+        null,
+        "Authentication Notice"
+      );
+    } finally {
+      if (passkeyBtn) {
+        passkeyBtn.disabled = false;
+        passkeyBtn.innerHTML = originalHtml;
+      }
+    }
+  };
+
+  // Open Biometrics & PIN Chooser Modal when Passkey / Biometrics is clicked
+  if (passkeyBtn && bioModal) {
+    passkeyBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      bioOptionsList?.classList.remove("hidden");
+      appPinSection?.classList.add("hidden");
+      if (pinError) {
+        pinError.textContent = "";
+        pinError.style.display = "none";
+      }
+      pinInputs.forEach((inp) => { inp.value = ""; });
+      bioModal.classList.remove("hidden");
+    });
+  }
+
+  // Close Chooser Modal
+  if (closeBioBtn && bioModal) {
+    closeBioBtn.addEventListener("click", () => {
+      bioModal.classList.add("hidden");
+    });
+  }
+
+  // Handle Option Clicks (Face ID, Fingerprint, 6-Digit PIN)
+  container.querySelectorAll(".light-bio-option").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const bioType = btn.getAttribute("data-bio-type");
+      if (bioType === "faceId" || bioType === "fingerprint") {
+        bioModal?.classList.add("hidden");
+        await triggerNativePasskeyAuth({ preferredType: bioType });
+      } else if (bioType === "appPin") {
+        bioOptionsList?.classList.add("hidden");
+        appPinSection?.classList.remove("hidden");
+        if (pinInputs[0]) pinInputs[0].focus();
+      }
+    });
+  });
+
+  // Handle PIN Back button
+  if (pinBackBtn && bioOptionsList && appPinSection) {
+    pinBackBtn.addEventListener("click", () => {
+      appPinSection.classList.add("hidden");
+      bioOptionsList.classList.remove("hidden");
+      if (pinError) {
+        pinError.textContent = "";
+        pinError.style.display = "none";
+      }
+    });
+  }
+
+  // Handle 6-Digit PIN Submission
+  const submitAppPin = async (pin) => {
+    if (!pin || pin.length !== 6) {
+      if (pinError) {
+        pinError.textContent = "Please enter all 6 digits of your PIN.";
+        pinError.style.display = "block";
+      }
+      return;
+    }
+
+    const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
+    let email = container.querySelector("#l2-email")?.value?.trim() || "";
+    if (!email) {
+      try {
+        const raw = localStorage.getItem("zamorin_remembered_device");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.email) email = parsed.email;
+        }
+      } catch {}
+    }
+
+    if (!email) {
+      if (pinError) {
+        pinError.textContent = "Please enter your Email ID in the login form to sign in with your PIN.";
+        pinError.style.display = "block";
+      }
+      return;
+    }
+
+    if (pinSubmitBtn) {
+      pinSubmitBtn.disabled = true;
+      pinSubmitBtn.textContent = "Verifying…";
+    }
+
+    try {
+      const { apiPost, setAccessToken } = await import("../apiClient.js");
+      const res = await apiPost("/auth/app-pin/login", {
+        organisationId: orgId,
+        email,
+        pin,
+      });
+
+      const accessToken = res?.data?.accessToken;
+      const user = res?.data?.user;
+
+      if (accessToken) setAccessToken(accessToken);
+      if (user) {
+        try {
+          localStorage.setItem("zamorin_user", JSON.stringify(user));
+          const remember = container.querySelector("#l2-remember-device")?.checked;
+          if (remember && user.email) {
+            localStorage.setItem("zamorin_remembered_device", JSON.stringify({ email: user.email, organisationId: orgId }));
+          }
+        } catch {}
+
+        bioModal?.classList.add("hidden");
+        if (typeof onPasskeySuccess === "function") {
+          onPasskeySuccess(user);
+        } else {
+          window.location.hash = user.role === "STAFF" ? "#staff-home" : "#dashboard";
+          window.location.reload();
+        }
+      }
+    } catch (err) {
+      if (pinError) {
+        pinError.textContent = err.message || "Invalid 6-digit PIN. Please try again.";
+        pinError.style.display = "block";
+      }
+      pinInputs.forEach((inp) => { inp.value = ""; });
+      if (pinInputs[0]) pinInputs[0].focus();
+    } finally {
+      if (pinSubmitBtn) {
+        pinSubmitBtn.disabled = false;
+        pinSubmitBtn.textContent = "Unlock & Sign In";
+      }
+    }
+  };
+
+  // Wire PIN digit boxes
+  pinInputs.forEach((input, idx) => {
+    input.addEventListener("input", (e) => {
+      const rawVal = e.target.value.replace(/\D/g, "");
+      if (rawVal.length > 1) {
+        // Multi-digit entry / clipboard fill
+        const digits = rawVal.slice(0, 6).split("");
+        digits.forEach((d, i) => {
+          if (pinInputs[i]) pinInputs[i].value = d;
+        });
+        if (pinInputs[Math.min(digits.length, 5)]) {
+          pinInputs[Math.min(digits.length, 5)].focus();
+        }
+        const fullPin = pinInputs.map((i) => i.value).join("");
+        if (fullPin.length === 6) {
+          submitAppPin(fullPin);
+        }
+        return;
+      }
+      e.target.value = rawVal;
+      if (pinError) {
+        pinError.textContent = "";
+        pinError.style.display = "none";
+      }
+      if (e.target.value && idx < pinInputs.length - 1) {
+        pinInputs[idx + 1].focus();
+      }
+      const fullPin = pinInputs.map((i) => i.value).join("");
+      if (fullPin.length === 6) {
+        submitAppPin(fullPin);
+      }
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Backspace" && !input.value && idx > 0) {
+        pinInputs[idx - 1].focus();
+      }
+    });
+  });
+
+  if (pinSubmitBtn) {
+    pinSubmitBtn.addEventListener("click", () => {
+      const fullPin = pinInputs.map((i) => i.value).join("");
+      submitAppPin(fullPin);
     });
   }
 
