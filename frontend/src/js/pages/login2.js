@@ -7,6 +7,8 @@
 
 "use strict";
 
+import { apiPost, setAccessToken } from "../apiClient.js";
+
 export const BACKGROUND_IMAGES = [
   "navy-gradient-standard",
   "/src/assets/estate-bg-1.jpg",
@@ -106,9 +108,9 @@ function renderBackgroundAndModalsHtml() {
             <line x1="12" y1="16" x2="12.01" y2="16"/>
           </svg>
         </div>
-        <h3 id="l2-glass-alert-title" class="glass-alert-title">Notice</h3>
-        <p id="l2-glass-alert-msg" class="glass-alert-text"></p>
-        <button id="l2-glass-alert-ok" type="button" class="light-btn glass-alert-ok">OK</button>
+        <h3 id="l2-glass-alert-title" class="glass-alert-title" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Notice</h3>
+        <p id="l2-glass-alert-msg" class="glass-alert-text" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;"></p>
+        <button id="l2-glass-alert-ok" type="button" class="light-btn glass-alert-ok" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">OK</button>
       </div>
     </div>
 
@@ -116,7 +118,7 @@ function renderBackgroundAndModalsHtml() {
     <div id="l2-terms-modal" class="modal-overlay hidden">
       <div class="tc-modal-content">
         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 12px;">
-          <h3 style="margin: 0; font-size: 20px; font-weight: 800; color: #fff;">Terms &amp; Conditions</h3>
+          <h3 style="margin: 0; font-size: 20px; font-weight: 800; color: #fff; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Terms &amp; Conditions</h3>
           <button type="button" id="l2-tc-close-x" style="background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; font-size: 20px; line-height: 1; padding: 4px 8px;">✕</button>
         </div>
         <div id="l2-tc-scroll-body" class="tc-scroll-body">
@@ -145,8 +147,8 @@ function renderBackgroundAndModalsHtml() {
             <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
         </button>
-        <h3 style="font-size: 19px; font-weight: 700; margin-bottom: 4px; color: #fff;">Choose Sign-In Method</h3>
-        <p style="font-size: 13px; color: var(--l2-text-muted); margin-bottom: 18px;">Authenticate securely using your device biometrics or personal application PIN.</p>
+        <h3 style="font-size: 19px; font-weight: 700; margin-bottom: 4px; color: #fff; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Choose Sign-In Method</h3>
+        <p style="font-size: 13px; color: var(--l2-text-muted); margin-bottom: 18px; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Authenticate securely using your device biometrics or personal application PIN.</p>
         
         <div id="l2-bio-options-list" class="biometric-options">
           <button type="button" class="light-bio-option" data-bio-type="faceId">
@@ -190,8 +192,8 @@ function renderBackgroundAndModalsHtml() {
 
         <!-- 6-Digit PIN Entry Section (revealed when 6-Digit PIN is clicked) -->
         <div id="l2-app-pin-section" class="hidden" style="margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 16px;">
-          <p style="font-size: 13px; color: var(--l2-text-muted); margin-bottom: 12px; text-align: center;">Enter your 6-digit personal application PIN</p>
-          <div id="l2-modal-pin-error" class="l2-error-banner" style="display:none; margin-bottom: 12px; font-size: 12px;"></div>
+          <p style="font-size: 13px; color: var(--l2-text-muted); margin-bottom: 12px; text-align: center; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Enter your 6-digit personal application PIN</p>
+          <div id="l2-modal-pin-error" class="l2-error-banner" style="display:none; margin-bottom: 12px; font-size: 12px; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;"></div>
           <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 16px;">
             <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
             <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
@@ -201,8 +203,8 @@ function renderBackgroundAndModalsHtml() {
             <input type="password" class="l2-pin-input-box" maxlength="1" inputmode="numeric" pattern="[0-9]" />
           </div>
           <div style="display: flex; gap: 10px; justify-content: center;">
-            <button type="button" id="l2-modal-pin-back" class="btn-pill-white" style="padding: 8px 18px; font-size: 13px;">Back</button>
-            <button type="button" id="l2-modal-pin-submit" class="light-btn btn-pill-lime" style="padding: 8px 24px; font-size: 13px;">Unlock &amp; Sign In</button>
+            <button type="button" id="l2-modal-pin-back" class="btn-pill-white" style="padding: 8px 18px; font-size: 13px; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Back</button>
+            <button type="button" id="l2-modal-pin-submit" class="light-btn btn-pill-lime" style="padding: 8px 24px; font-size: 13px; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Unlock &amp; Sign In</button>
           </div>
         </div>
       </div>
@@ -534,6 +536,29 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
   let conditionalAbortController = null;
   let explicitAbortController = null;
+  let cachedAuthData = null;
+  let prefetchPromise = null;
+
+  const prefetchPasskeyOptions = async (email = "") => {
+    const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
+    if (conditionalAbortController) {
+      try {
+        conditionalAbortController.abort();
+      } catch {}
+      conditionalAbortController = null;
+    }
+    try {
+      const optRes = await apiPost("/auth/passkeys/authenticate/options", {
+        organisationId: orgId,
+        ...(email ? { email } : {}),
+      }, { allowRefreshRetry: false });
+      cachedAuthData = optRes?.data || null;
+      return cachedAuthData;
+    } catch {
+      cachedAuthData = null;
+      return null;
+    }
+  };
 
   const passkeyBtn = container.querySelector("#l2-passkey-btn");
   const bioModal = container.querySelector("#l2-biometrics-modal");
@@ -555,7 +580,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       return;
     }
 
-    // Abort any ongoing conditional autofill request or previous attempt
+    // Ensure previous abort controllers are terminated cleanly
     if (conditionalAbortController) {
       try {
         conditionalAbortController.abort();
@@ -568,8 +593,6 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       } catch {}
       explicitAbortController = null;
     }
-    // Allow browser credential manager to release the pending request lock
-    await new Promise((resolve) => setTimeout(resolve, 60));
 
     const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
     let email = container.querySelector("#l2-email")?.value?.trim() || "";
@@ -586,22 +609,30 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     }
 
     const originalHtml = passkeyBtn ? passkeyBtn.innerHTML : "";
+    const labelText = preferredType === "faceId" ? "Scanning Face ID…" : "Scanning Fingerprint…";
     if (passkeyBtn) {
       passkeyBtn.disabled = true;
-      passkeyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d4a359" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 0 20" stroke-dasharray="62.8" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></path></svg> <span>Verifying…</span>`;
+      passkeyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d4a359" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 0 20" stroke-dasharray="62.8" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></path></svg> <span>${labelText}</span>`;
     }
 
     try {
-      const { apiPost, setAccessToken } = await import("../apiClient.js");
+      // 1. Retrieve prefetched challenge & options from server (or fetch immediately if none)
+      let authData = cachedAuthData;
+      if (!authData && prefetchPromise) {
+        authData = await prefetchPromise;
+      }
+      if (!authData) {
+        const optRes = await apiPost("/auth/passkeys/authenticate/options", {
+          organisationId: orgId,
+          ...(email ? { email } : {}),
+        }, { allowRefreshRetry: false });
+        authData = optRes?.data;
+      }
+      cachedAuthData = null;
+      prefetchPromise = null;
 
-      // 1. Fetch challenge & options from server
-      const optRes = await apiPost("/auth/passkeys/authenticate/options", {
-        organisationId: orgId,
-        ...(email ? { email } : {}),
-      });
-
-      const options = optRes?.data?.options;
-      const challengeId = optRes?.data?.challengeId;
+      const options = authData?.options;
+      const challengeId = authData?.challengeId;
 
       if (!options || !challengeId) {
         throw new Error("Unable to retrieve passkey authentication challenge from server.");
@@ -610,9 +641,9 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       // If email was provided and user explicitly has 0 registered credentials:
       if (email && Array.isArray(options.allowCredentials) && options.allowCredentials.length === 0) {
         showGlassAlert(
-          "No passkey has been registered for this account yet. Please sign in with your enterprise password, then configure biometrics in Settings → Security & Sign-In.",
+          `No passkey or biometric has been enrolled for ${email} yet.\n\nPlease sign in with your enterprise password or PIN, then register your fingerprint or Face ID in Settings → Security & Sign-In.`,
           null,
-          "Passkey Not Configured"
+          "Biometric Not Registered"
         );
         return;
       }
@@ -641,12 +672,12 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
           signal: explicitAbortController.signal,
         });
       } catch (pkErr) {
-        // If browser still had a lock releasing, retry once cleanly
+        // If browser still had a pending lock releasing, retry once cleanly
         if (pkErr?.message?.toLowerCase().includes("pending") || pkErr?.name === "InvalidStateError") {
           try {
             explicitAbortController?.abort();
           } catch {}
-          await new Promise((r) => setTimeout(r, 120));
+          await new Promise((r) => setTimeout(r, 60));
           explicitAbortController = new AbortController();
           try {
             credential = await navigator.credentials.get({
@@ -681,7 +712,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
         throw new Error(
           isNoDevice
-            ? "No matching passkey found on this device for this account. Sign in with your password, then register this device in Settings → Security & Sign-In."
+            ? "No matching biometric passkey found on this device. Sign in with your password, then register this device in Settings → Security & Sign-In."
             : (pkErr.message || "Biometric authentication failed. Please sign in with your password.")
         );
       }
@@ -705,12 +736,12 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         },
       };
 
-      // 4. Server assertion verification
+      // 4. Server assertion verification (explicitly disallow refresh retry on login endpoint)
       const verifyRes = await apiPost("/auth/passkeys/authenticate/verify", {
         organisationId: orgId,
         response: verifyPayload,
         challengeId,
-      });
+      }, { allowRefreshRetry: false });
 
       const accessToken = verifyRes?.data?.accessToken;
       const user = verifyRes?.data?.user;
@@ -735,11 +766,27 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         }
       }
     } catch (err) {
-      showGlassAlert(
-        err?.message || "Passkey authentication failed. Please sign in with your password.",
-        null,
-        "Authentication Notice"
-      );
+      const errMsg = err?.message || "";
+      if (
+        errMsg.includes("not recognized") ||
+        errMsg.includes("revoked") ||
+        errMsg.includes("Passkey credential") ||
+        errMsg.includes("No matching biometric") ||
+        errMsg.includes("SESSION_EXPIRED") ||
+        errMsg.includes("session has expired")
+      ) {
+        showGlassAlert(
+          "This biometric credential (fingerprint / Face ID) is not registered with your Zamorin ERP account yet.\n\nPlease sign in with your enterprise password or 6-digit PIN, then register your fingerprint or Face ID in Settings → Security & Sign-In.",
+          null,
+          "Biometric Not Registered"
+        );
+      } else {
+        showGlassAlert(
+          errMsg || "Biometric authentication failed. Please sign in with your password.",
+          null,
+          "Authentication Notice"
+        );
+      }
     } finally {
       if (passkeyBtn) {
         passkeyBtn.disabled = false;
@@ -760,6 +807,20 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       }
       pinInputs.forEach((inp) => { inp.value = ""; });
       bioModal.classList.remove("hidden");
+
+      // Pre-abort background conditional lock & prefetch challenge options immediately
+      let email = container.querySelector("#l2-email")?.value?.trim() || "";
+      if (!email) {
+        try {
+          const raw = localStorage.getItem("zamorin_remembered_device");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed?.email) email = parsed.email;
+          }
+        } catch {}
+      }
+      cachedAuthData = null;
+      prefetchPromise = prefetchPasskeyOptions(email);
     });
   }
 
@@ -833,12 +894,11 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     }
 
     try {
-      const { apiPost, setAccessToken } = await import("../apiClient.js");
       const res = await apiPost("/auth/app-pin/login", {
         organisationId: orgId,
         email,
         pin,
-      });
+      }, { allowRefreshRetry: false });
 
       const accessToken = res?.data?.accessToken;
       const user = res?.data?.user;
@@ -933,12 +993,11 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     window.PublicKeyCredential.isConditionalMediationAvailable().then(async (available) => {
       if (available) {
         try {
-          const { apiPost, setAccessToken } = await import("../apiClient.js");
           const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
           const optRes = await apiPost("/auth/passkeys/authenticate/options", {
             organisationId: orgId,
             email: undefined,
-          });
+          }, { allowRefreshRetry: false });
           const options = optRes?.data?.options;
           const challengeId = optRes?.data?.challengeId;
           if (options && challengeId) {
@@ -991,7 +1050,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
                 organisationId: orgId,
                 response: verifyPayload,
                 challengeId,
-              });
+              }, { allowRefreshRetry: false });
               const accessToken = verifyRes?.data?.accessToken;
               const user = verifyRes?.data?.user;
               if (accessToken) setAccessToken(accessToken);

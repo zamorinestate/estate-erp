@@ -76,14 +76,20 @@
   color: rgba(255, 255, 255, 0.75);
 }
 
-/* Guarantee ZERO page scrolling ONLY when login screen is active */
+/* Guarantee ZERO page scrolling and universal clean sans-serif typography ONLY when login screen is active */
 html:has(#app.auth-screen),
 body:has(#app.auth-screen) {
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
   height: 100vh;
   height: 100dvh;
   margin: 0 !important;
   padding: 0 !important;
   overflow: hidden !important;
+}
+
+#app.auth-screen,
+#app.auth-screen * {
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
 }
 
 #app.auth-screen {
@@ -923,6 +929,7 @@ body:has(#app.auth-screen) {
   color: #ffffff;
   margin: 0;
   letter-spacing: -0.2px;
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
 }
 
 .glass-alert-text {
@@ -930,11 +937,35 @@ body:has(#app.auth-screen) {
   line-height: 1.55;
   color: #c0c6d0;
   margin: 0;
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
 }
 
 .glass-alert-ok {
   min-width: 140px;
   margin-top: 6px;
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
+}
+
+/* Modal and Alert Typography Enforcement (ACP-05E-02) */
+.modal-overlay,
+.modal-overlay *,
+.light-modal-content,
+.light-modal-content *,
+.glass-alert-box,
+.glass-alert-box *,
+.l2-confirm-modal-box,
+.l2-confirm-modal-box *,
+#l2-biometrics-modal,
+#l2-biometrics-modal *,
+#l2-glass-alert-modal,
+#l2-glass-alert-modal *,
+#l2-terms-modal,
+#l2-terms-modal *,
+#l2-app-pin-section,
+#l2-app-pin-section *,
+.l2-error-banner,
+.l2-pin-input-box {
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
 }
 
 .hidden {

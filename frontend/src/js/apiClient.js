@@ -905,6 +905,14 @@ const NON_REFRESHABLE_AUTH_PATHS = new Set([
   "/auth/mfa/verify",
   "/auth/password/change",
   "/auth/step-up",
+  "/auth/passkeys/authenticate/options",
+  "/auth/passkeys/authenticate/verify",
+  "/auth/passkeys/register/options",
+  "/auth/passkeys/register/verify",
+  "/auth/app-pin/login",
+  "/auth/password/reset-request",
+  "/auth/password/reset-verify",
+  "/auth/password/reset",
 ]);
 
 export async function requestJson(
@@ -987,6 +995,8 @@ export async function requestJson(
     if (
       response.status === 401 &&
       allowRefreshRetry &&
+      !normalized.startsWith("/auth/passkeys/") &&
+      !normalized.startsWith("/auth/app-pin/") &&
       !NON_REFRESHABLE_AUTH_PATHS.has(normalized)
     ) {
       try {

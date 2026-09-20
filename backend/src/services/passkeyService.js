@@ -288,6 +288,8 @@ async function generatePasskeyAuthenticationOptions({ organisationId, email }) {
           id: cred.credentialId,
           transports: cred.transports || [],
         }));
+      } else {
+        allowCredentials = [];
       }
     }
   }
