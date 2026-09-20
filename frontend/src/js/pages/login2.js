@@ -132,6 +132,7 @@ function renderBackgroundAndModalsHtml() {
         <div class="tc-footer">
           <button id="l2-tc-close-btn" type="button" class="btn-pill-white">Close</button>
           <button id="l2-tc-agree-btn" type="button" class="light-btn btn-pill-lime">I Agree</button>
+        </div>
       </div>
     </div>
   `;
