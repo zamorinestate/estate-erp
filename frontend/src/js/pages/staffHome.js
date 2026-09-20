@@ -87,8 +87,27 @@ export const DEFAULT_STAFF_DATA = {
 export const STAFF_DIRECTORY = [];
 export let activeStaffEmployeeId = "";
 
+export function getInitialStaffData() {
+  const u = state.user || state.auth?.user || {};
+  if (u.name || u.userId) {
+    return {
+      ...DEFAULT_STAFF_DATA,
+      employee: {
+        id: u.userId || "",
+        badgeId: u.userId || "STAFF",
+        name: u.name || u.fullName || "Staff Member",
+        preferredName: u.preferredName || u.name || "Staff",
+        avatarInitials: u.name ? u.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase() : "ST",
+        designation: u.designation || "Team Member",
+        cafeName: u.primaryCafeName || (u.primaryCafeId ? `Outlet ${u.primaryCafeId}` : "Zamorin Cafe"),
+      },
+    };
+  }
+  return DEFAULT_STAFF_DATA;
+}
+
 export function renderStaffHome() {
-  const currentData = STAFF_DIRECTORY.find((s) => s.employee.id === activeStaffEmployeeId) || DEFAULT_STAFF_DATA;
+  const currentData = (activeStaffEmployeeId && STAFF_DIRECTORY.find((s) => s.employee.id === activeStaffEmployeeId)) || getInitialStaffData();
   return `
     <div class="page-enter staff-dashboard-root" id="staff-dashboard-container" style="max-width:1240px; margin:0 auto; padding:12px 16px 40px 16px;">
       <!-- Dynamic Dashboard Mount -->
@@ -150,7 +169,8 @@ function renderDashboardBody(data) {
       </div>
 
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <!-- Employee Switcher for Primary Master / Admin / Privileged Roles -->
+        <!-- Employee Switcher for Primary Master / Admin / Privileged Roles ONLY -->
+        ${(Boolean(state.isPrimaryMaster) || state.role === "master" || state.role === "owner") && STAFF_DIRECTORY.length > 1 ? `
         <div class="flex items-center gap-xs" style="background:var(--surface); border:1px solid var(--border-subtle); padding:4px 10px; border-radius:var(--radius-md, 8px); box-shadow:var(--shadow-xs);">
           <label for="staff-employee-switcher" style="font-size:11.5px; font-weight:700; color:var(--brand-gold, #c89d5c); display:flex; align-items:center; gap:4px; margin:0; white-space:nowrap;">
             <span>👤</span> Viewing Staff:
@@ -165,6 +185,7 @@ function renderDashboardBody(data) {
             ).join("")}
           </select>
         </div>
+        ` : ""}
 
         <button class="btn btn-secondary" id="btn-open-schedule-request" type="button" style="font-size:12px; padding:6px 12px;">
           🗓️ Schedule Request
@@ -637,7 +658,7 @@ export function wireStaffHome(root) {
   }
 
   // Bind interactions immediately with default/pre-rendered state
-  const initialData = STAFF_DIRECTORY.find((s) => s.employee.id === activeStaffEmployeeId) || DEFAULT_STAFF_DATA;
+  const initialData = (activeStaffEmployeeId && STAFF_DIRECTORY.find((s) => s.employee.id === activeStaffEmployeeId)) || getInitialStaffData();
   bindDashboardInteractions(contentEl, initialData);
 
   // Load live data from aggregated endpoint in background with graceful fallback

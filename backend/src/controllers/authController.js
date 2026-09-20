@@ -1,5 +1,6 @@
 'use strict';
 
+const bcrypt = require('bcryptjs');
 const { User } = require('../models/User');
 const { PasswordResetChallenge } = require('../models/PasswordResetChallenge');
 const passwordResetService = require('../services/passwordResetService');
@@ -608,6 +609,339 @@ const login = asyncHandler(
     });
   }
 );
+
+// =============================================================================
+// ACP-05E-02: PERSONAL SIX-DIGIT APPLICATION PIN LIFECYCLE
+// =============================================================================
+
+const TRIVIAL_SIX_DIGIT_PINS = new Set([
+  '000000', '111111', '222222', '333333', '444444',
+  '555555', '666666', '777777', '888888', '999999',
+  '012345', '123456', '234567', '345678', '456789', '567890',
+  '987654', '876543', '765432', '654321', '543210',
+  '121212', '123123', '696969',
+]);
+
+function validateSixDigitPinPolicy(pin) {
+  if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
+    throw new ApiError(400, 'INVALID_PIN_FORMAT', 'Application PIN must be exactly 6 numeric digits.');
+  }
+  if (TRIVIAL_SIX_DIGIT_PINS.has(pin)) {
+    throw new ApiError(400, 'TRIVIAL_PIN_REJECTED', 'Trivially guessable or sequential PINs are not permitted.');
+  }
+}
+
+/**
+ * POST /api/v1/auth/app-pin/setup
+ * Sets up a personal 6-digit PIN for an authenticated user with password reauthentication.
+ */
+const setupAppPin = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw new ApiError(401, 'AUTHENTICATION_REQUIRED', 'Active session required.');
+  }
+
+  const { password, pin, confirmPin } = req.body || {};
+  if (!password) {
+    throw new ApiError(400, 'PASSWORD_REQUIRED', 'Current password is required to configure an Application PIN.');
+  }
+
+  if (pin !== confirmPin) {
+    throw new ApiError(400, 'PIN_MISMATCH', 'PIN confirmation does not match.');
+  }
+
+  validateSixDigitPinPolicy(pin);
+
+  const { User } = require('../models/User');
+  const user = await User.findOne({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    accountStatus: 'ACTIVE',
+  }).select('+passwordHash +appPinHash');
+
+  if (!user) {
+    throw new ApiError(404, 'USER_NOT_FOUND', 'User account not found.');
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isPasswordValid) {
+    throw new ApiError(401, 'INVALID_PASSWORD', 'Current password verification failed.');
+  }
+
+  const pinHash = await bcrypt.hash(pin, 10);
+  user.appPinHash = pinHash;
+  user.appPinEnabled = true;
+  user.appPinSetAt = new Date();
+  user.appPinFailedAttempts = 0;
+  user.appPinLockedUntil = null;
+  await user.save();
+
+  try {
+    const { logSecurityEvent } = require('../services/securityLogger');
+    logSecurityEvent({
+      correlationId: req.correlationId || null,
+      organisationId: user.organisationId,
+      action: 'APP_PIN_CONFIGURED',
+      outcome: 'SUCCESS',
+      severity: 'INFO',
+      metadata: { userId: user.userId },
+    });
+  } catch {}
+
+  return res.status(200).json({
+    success: true,
+    message: 'Six-digit application PIN configured successfully.',
+    data: {
+      appPinEnabled: true,
+      appPinSetAt: user.appPinSetAt,
+    },
+  });
+});
+
+/**
+ * POST /api/v1/auth/app-pin/change
+ * Changes existing 6-digit application PIN.
+ */
+const changeAppPin = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw new ApiError(401, 'AUTHENTICATION_REQUIRED', 'Active session required.');
+  }
+
+  const { password, currentPin, newPin, confirmNewPin } = req.body || {};
+  if (!password && !currentPin) {
+    throw new ApiError(400, 'VERIFICATION_REQUIRED', 'Current password or current PIN is required.');
+  }
+
+  if (newPin !== confirmNewPin) {
+    throw new ApiError(400, 'PIN_MISMATCH', 'New PIN confirmation does not match.');
+  }
+
+  validateSixDigitPinPolicy(newPin);
+
+  const { User } = require('../models/User');
+  const user = await User.findOne({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    accountStatus: 'ACTIVE',
+  }).select('+passwordHash +appPinHash');
+
+  if (!user) {
+    throw new ApiError(404, 'USER_NOT_FOUND', 'User account not found.');
+  }
+
+  let verified = false;
+  if (password) {
+    verified = await bcrypt.compare(password, user.passwordHash);
+  } else if (currentPin && user.appPinHash) {
+    verified = await bcrypt.compare(currentPin, user.appPinHash);
+  }
+
+  if (!verified) {
+    throw new ApiError(401, 'INVALID_VERIFICATION', 'Current credentials could not be verified.');
+  }
+
+  user.appPinHash = await bcrypt.hash(newPin, 10);
+  user.appPinEnabled = true;
+  user.appPinSetAt = new Date();
+  user.appPinFailedAttempts = 0;
+  user.appPinLockedUntil = null;
+  await user.save();
+
+  try {
+    const { logSecurityEvent } = require('../services/securityLogger');
+    logSecurityEvent({
+      correlationId: req.correlationId || null,
+      organisationId: user.organisationId,
+      action: 'APP_PIN_CHANGED',
+      outcome: 'SUCCESS',
+      severity: 'INFO',
+      metadata: { userId: user.userId },
+    });
+  } catch {}
+
+  return res.status(200).json({
+    success: true,
+    message: 'Six-digit application PIN updated successfully.',
+    data: {
+      appPinEnabled: true,
+      appPinSetAt: user.appPinSetAt,
+    },
+  });
+});
+
+/**
+ * POST /api/v1/auth/app-pin/disable
+ * Disables 6-digit application PIN after password verification.
+ */
+const disableAppPin = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw new ApiError(401, 'AUTHENTICATION_REQUIRED', 'Active session required.');
+  }
+
+  const { password } = req.body || {};
+  if (!password) {
+    throw new ApiError(400, 'PASSWORD_REQUIRED', 'Current password is required to disable Application PIN.');
+  }
+
+  const { User } = require('../models/User');
+  const user = await User.findOne({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    accountStatus: 'ACTIVE',
+  }).select('+passwordHash +appPinHash');
+
+  if (!user) {
+    throw new ApiError(404, 'USER_NOT_FOUND', 'User account not found.');
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isPasswordValid) {
+    throw new ApiError(401, 'INVALID_PASSWORD', 'Current password verification failed.');
+  }
+
+  user.appPinHash = null;
+  user.appPinEnabled = false;
+  user.appPinSetAt = null;
+  user.appPinFailedAttempts = 0;
+  user.appPinLockedUntil = null;
+  await user.save();
+
+  try {
+    const { logSecurityEvent } = require('../services/securityLogger');
+    logSecurityEvent({
+      correlationId: req.correlationId || null,
+      organisationId: user.organisationId,
+      action: 'APP_PIN_DISABLED',
+      outcome: 'SUCCESS',
+      severity: 'INFO',
+      metadata: { userId: user.userId },
+    });
+  } catch {}
+
+  return res.status(200).json({
+    success: true,
+    message: 'Six-digit application PIN disabled successfully.',
+    data: {
+      appPinEnabled: false,
+    },
+  });
+});
+
+/**
+ * GET /api/v1/auth/app-pin/status
+ * Returns current PIN configuration status for authenticated user.
+ */
+const getAppPinStatus = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw new ApiError(401, 'AUTHENTICATION_REQUIRED', 'Active session required.');
+  }
+
+  const { User } = require('../models/User');
+  const user = await User.findOne({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    accountStatus: 'ACTIVE',
+  }).select('+appPinHash');
+
+  const isConfigured = Boolean(user && user.appPinEnabled && user.appPinHash);
+  const isLocked = Boolean(user?.appPinLockedUntil && user.appPinLockedUntil > new Date());
+
+  return res.status(200).json({
+    success: true,
+    data: {
+      appPinEnabled: isConfigured,
+      appPinSetAt: user?.appPinSetAt || null,
+      isLocked,
+    },
+  });
+});
+
+/**
+ * POST /api/v1/auth/app-pin/unlock
+ * Verifies 6-digit application PIN for an existing active session.
+ */
+const unlockWithAppPin = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw new ApiError(401, 'SESSION_EXPIRED', 'Active authenticated session required to unlock application.');
+  }
+
+  const pin = String(req.body?.pin || '').trim();
+  if (!pin || !/^\d{6}$/.test(pin)) {
+    throw new ApiError(400, 'INVALID_PIN_FORMAT', 'Valid 6-digit PIN required.');
+  }
+
+  const { User } = require('../models/User');
+  const user = await User.findOne({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    accountStatus: 'ACTIVE',
+    archivedAt: null,
+  }).select('+appPinHash');
+
+  if (!user || !user.appPinEnabled || !user.appPinHash) {
+    throw new ApiError(400, 'APP_PIN_NOT_CONFIGURED', 'Application PIN is not configured for this account.');
+  }
+
+  // Check lockout
+  if (user.appPinLockedUntil && user.appPinLockedUntil > new Date()) {
+    const minutesLeft = Math.ceil((user.appPinLockedUntil.getTime() - Date.now()) / 60000);
+    throw new ApiError(423, 'APP_PIN_LOCKED', `Application PIN is locked due to repeated failed attempts. Please retry in ${minutesLeft} minute(s) or authenticate with your password.`);
+  }
+
+  const isValid = await bcrypt.compare(pin, user.appPinHash);
+  if (!isValid) {
+    user.appPinFailedAttempts = (user.appPinFailedAttempts || 0) + 1;
+    if (user.appPinFailedAttempts >= 5) {
+      user.appPinLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+    }
+    await user.save({ validateModifiedOnly: true });
+
+    const remaining = Math.max(0, 5 - user.appPinFailedAttempts);
+    const message = remaining > 0
+      ? `Incorrect 6-digit PIN. ${remaining} attempt(s) remaining before lockout.`
+      : 'Application PIN is now locked for 15 minutes due to too many failed attempts. Please sign in with your password.';
+
+    try {
+      const { logSecurityEvent } = require('../services/securityLogger');
+      logSecurityEvent({
+        correlationId: req.correlationId || null,
+        organisationId: user.organisationId,
+        action: 'APP_PIN_UNLOCK_FAILED',
+        outcome: 'FAILURE',
+        severity: 'WARN',
+        metadata: { userId: user.userId, failedAttempts: user.appPinFailedAttempts },
+      });
+    } catch {}
+
+    throw new ApiError(401, 'INVALID_APP_PIN', message);
+  }
+
+  // Reset counters on successful PIN verification
+  user.appPinFailedAttempts = 0;
+  user.appPinLockedUntil = null;
+  await user.save({ validateModifiedOnly: true });
+
+  try {
+    const { logSecurityEvent } = require('../services/securityLogger');
+    logSecurityEvent({
+      correlationId: req.correlationId || null,
+      organisationId: user.organisationId,
+      action: 'APP_PIN_UNLOCK_SUCCESS',
+      outcome: 'SUCCESS',
+      severity: 'INFO',
+      metadata: { userId: user.userId },
+    });
+  } catch {}
+
+  return res.status(200).json({
+    success: true,
+    message: 'Application unlocked successfully.',
+    data: {
+      unlocked: true,
+      user: user.toJSON(),
+    },
+    correlationId: req.correlationId || null,
+  });
+});
 
 const requestPasswordReset = asyncHandler(
   async (request, response) => {
@@ -1581,11 +1915,13 @@ const getCurrentUser = asyncHandler(
       userId: user.userId,
       organisationId: user.organisationId,
       name: user.name,
+      email: user.email,
       preferredName: user.preferredName || null,
       role: user.role,
       accountStatus: user.accountStatus,
       isPrimaryMaster: Boolean(user.isPrimaryMaster),
       primaryCafeId: user.primaryCafeId || null,
+      primaryCafeName: user.primaryCafeName || null,
       assignedCafeIds: Array.isArray(user.assignedCafeIds)
         ? [...user.assignedCafeIds]
         : [],
@@ -1905,5 +2241,10 @@ module.exports = {
   revokeTrustedDevice,
   revokeAllTrustedDevices,
   getSelfPrivacySecurity,
+  setupAppPin,
+  changeAppPin,
+  disableAppPin,
+  getAppPinStatus,
+  unlockWithAppPin,
 };
 

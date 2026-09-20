@@ -172,7 +172,9 @@ export function renderTopbar({ scopeChip } = {}) {
   const currentTheme = document.documentElement.dataset.theme || "paper";
   const user = state.auth?.user || state.user || {};
   const role = state.role || ROLES.MASTER;
-  const initials = ROLE_INITIALS[role] || "MU";
+  const initials = user.name
+    ? user.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
+    : (ROLE_INITIALS[role] || "ZU");
   const isStaff = role === ROLES.STAFF;
   const isCafeOps = role === ROLES.CAFE_ADMIN;
 
@@ -332,9 +334,9 @@ export function renderTopbar({ scopeChip } = {}) {
       <div class="profile-card-top">
         <div class="user-avatar lg">${initials}</div>
         <div class="profile-details">
-          <div class="user-name">${user.name || "Master Administrator"}</div>
-          <div class="user-sub">${ROLE_LABELS[role] || "Master Account"} · ${user.userId || "MU-0001"}</div>
-          <div class="user-email">${user.email || "master@zamorin.cafe"}</div>
+          <div class="user-name">${user.name || user.fullName || (isStaff ? "Staff Member" : isCafeOps ? "Café Administrator" : "Master Administrator")}</div>
+          <div class="user-sub">${ROLE_LABELS[role] || (isStaff ? "Staff Member" : "Master Account")}${user.userId ? ` · ${user.userId}` : ""}</div>
+          <div class="user-email">${user.email || ""}</div>
         </div>
       </div>
       <div class="popover-menu">
@@ -349,6 +351,9 @@ export function renderTopbar({ scopeChip } = {}) {
         </button>
         <button class="popover-menu-item" data-profile-action="security">
           ${icon("shield")} Security &amp; MFA
+        </button>
+        <button class="popover-menu-item" data-profile-action="lock-screen">
+          ${icon("lock")} Lock Application
         </button>
         <div class="popover-divider"></div>
         <button class="popover-menu-item logout" data-profile-action="logout">
@@ -576,6 +581,8 @@ export function wireBell(root) {
         } else if (action === "settings") {
           setSettingsActiveSection("overview");
           navigate(state.role === ROLES.STAFF ? "staff-settings" : "settings");
+        } else if (action === "lock-screen") {
+          openApplicationLockModal();
         }
       });
     });
@@ -1230,6 +1237,88 @@ export function openOperatorLockModal() {
   modalEl?.querySelector("#lock-switch-btn")?.addEventListener("click", () => {
     closeModal();
     openSwitchOperatorModal();
+  });
+}
+
+/**
+ * ACP-05E-02: Workstation App Lock & Personal Six-Digit Application PIN Unlock
+ */
+export function openApplicationLockModal() {
+  const user = state.auth?.user || state.user || {};
+  const userName = user.name || user.fullName || "User";
+  const userEmail = user.email || "";
+
+  const content = `
+    <div style="max-width:440px; margin:0 auto; padding:10px 0; text-align:center;">
+      <div style="width:56px; height:56px; border-radius:50%; background:var(--surface-sunken); display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:24px; border:1px solid var(--border-subtle);">
+        🔒
+      </div>
+      <h3 style="font-size:18px; font-weight:800; color:var(--ink); margin:0 0 6px;">Application Locked</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin:0 0 16px;">
+        Active Session: <strong>${userName}</strong> ${userEmail ? `(${userEmail})` : ""}
+      </p>
+
+      <div style="background:var(--surface-sunken); border:1px solid var(--line); border-radius:var(--radius-md, 8px); padding:12px 14px; margin-bottom:16px; text-align:left;">
+        <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;">Security Notice</div>
+        <div style="font-size:12px; color:var(--ink); margin-top:2px;">
+          Enter your personal 6-digit Application PIN to unlock this session.
+        </div>
+      </div>
+
+      <div class="form-group" style="text-align:left; margin-bottom:16px;">
+        <label class="label" style="font-weight:700; font-size:12px;">Six-Digit App PIN*</label>
+        <input type="password" id="app-lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:46px;" autofocus required />
+        <div id="app-lock-error" style="color:var(--danger, #b23b35); font-size:12px; margin-top:6px; display:none;"></div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button class="btn btn-primary" id="app-lock-unlock-btn" type="button" style="height:42px; font-weight:700; font-size:13.5px;">Unlock Session</button>
+        <button class="btn btn-ghost" id="app-lock-signout-btn" type="button" style="font-size:12px; color:var(--muted);">Sign in with Password</button>
+      </div>
+    </div>
+  `;
+
+  openModal(content);
+  const modalEl = document.getElementById("zamorin-global-modal");
+  const pinInput = modalEl?.querySelector("#app-lock-pin-input");
+  const errEl = modalEl?.querySelector("#app-lock-error");
+
+  const submitUnlock = async () => {
+    const pin = pinInput?.value?.trim();
+    if (!pin || pin.length !== 6) {
+      if (errEl) { errEl.textContent = "Please enter your 6-digit Application PIN."; errEl.style.display = "block"; }
+      return;
+    }
+
+    try {
+      const unlockBtn = modalEl?.querySelector("#app-lock-unlock-btn");
+      if (unlockBtn) { unlockBtn.disabled = true; unlockBtn.textContent = "Verifying..."; }
+      await apiPost("/auth/app-pin/unlock", { pin });
+      showToast("Application unlocked.", "mint");
+      closeModal();
+    } catch (err) {
+      if (errEl) {
+        errEl.textContent = err?.message || "Incorrect PIN.";
+        errEl.style.display = "block";
+      }
+      if (pinInput) pinInput.value = "";
+      const unlockBtn = modalEl?.querySelector("#app-lock-unlock-btn");
+      if (unlockBtn) { unlockBtn.disabled = false; unlockBtn.textContent = "Unlock Session"; }
+    }
+  };
+
+  modalEl?.querySelector("#app-lock-unlock-btn")?.addEventListener("click", submitUnlock);
+  pinInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitUnlock();
+  });
+
+  modalEl?.querySelector("#app-lock-signout-btn")?.addEventListener("click", async () => {
+    closeModal();
+    try { await apiPost("/auth/logout"); } catch {}
+    clearAllAuthTokens();
+    clearApiCacheAndInFlight();
+    window.location.hash = "#login";
+    window.location.reload();
   });
 }
 

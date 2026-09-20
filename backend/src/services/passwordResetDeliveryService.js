@@ -55,24 +55,27 @@ async function deliverPasswordResetCode({
     );
   }
 
+  const provider = getGmailProvider();
+  const providerConfigured = provider.isConfigured();
+
   if (isDevelopmentCodeLoggingEnabled()) {
     console.info(
-      '[PASSWORD_RESET_DEV] challenge=%s recipient=%s code=%s',
+      '[PASSWORD_RESET_DEV] sender=zamorinestatepvtltd.erp@gmail.com challenge=%s recipient=%s code=%s expires=5m',
       challengeId,
       recipientEmail,
       code
     );
 
-    return {
-      delivered: true,
-      channel: 'DEVELOPMENT_LOG',
-      providerMessageId: null,
-    };
+    if (!providerConfigured) {
+      return {
+        delivered: true,
+        channel: 'DEVELOPMENT_LOG',
+        providerMessageId: null,
+      };
+    }
   }
 
-  const provider = getGmailProvider();
-
-  if (!provider.isConfigured()) {
+  if (!providerConfigured) {
     return {
       delivered: false,
       channel: null,
@@ -92,7 +95,7 @@ async function deliverPasswordResetCode({
     '',
     `Your recovery code is: ${code}`,
     '',
-    'This code expires in 10 minutes.',
+    'This code expires in 5 minutes.',
     '',
     'If you did not request a password reset, you can ignore this email.',
     '',
@@ -122,7 +125,7 @@ async function deliverPasswordResetCode({
         ${safeCode}
       </div>
 
-      <p><strong>This code expires in 10 minutes.</strong></p>
+      <p><strong>This code expires in 5 minutes.</strong></p>
 
       <p>
         If you did not request a password reset, you can safely ignore
@@ -138,15 +141,24 @@ async function deliverPasswordResetCode({
   try {
     const result = await provider.sendEmail({
       to: recipientEmail,
+      from: 'Zamorin Cafe ERP <zamorinestatepvtltd.erp@gmail.com>',
+      replyTo: 'zamorinestatepvtltd.erp@gmail.com',
       subject,
       text,
       html,
       isDraft: false,
     });
 
+    console.info(
+      '[PASSWORD_RESET_DELIVERY] Successfully sent live recovery email to %s via %s (messageId: %s)',
+      recipientEmail,
+      result?.channel || 'GMAIL_SMTP',
+      result?.providerMessageId || 'N/A'
+    );
+
     return {
       delivered: Boolean(result?.delivered),
-      channel: 'GMAIL_API',
+      channel: result?.channel || 'GMAIL_API',
       providerMessageId:
         result?.providerMessageId || null,
     };

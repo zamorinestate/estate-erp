@@ -28,6 +28,8 @@ import {
   setAccessToken,
   clearAllAuthTokens,
   addSessionExpirationListener,
+  setSessionState,
+  SessionState,
 } from "./apiClient.js";
 import { registerServiceWorker } from "./updateManager.js";
 import { initLanguage } from "./i18n.js";
@@ -351,10 +353,10 @@ export function getSafeInternalRedirect(target) {
 function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
-  if (rawRole === "MASTER") {
+  if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
     return {
       role: "master",
-      isPrimaryMaster: Boolean(user?.isPrimaryMaster),
+      isPrimaryMaster: rawRole === "PRIMARY_MASTER" || Boolean(user?.isPrimaryMaster),
     };
   }
 
@@ -442,6 +444,9 @@ export function mountAuthScreen(screen = "login", params = {}) {
       },
       onCafeOps: () => {
         window.location.href = "/cafe-operations/cafe-operations.html";
+      },
+      onPasskeySuccess: (user) => {
+        handleAuthenticatedUserSession(user);
       }
     });
   } else if (screen === "mfa") {
@@ -513,6 +518,15 @@ export function mountAuthScreen(screen = "login", params = {}) {
           resetToken: res.resetToken,
           challengeId: res.challengeId
         });
+      },
+      onResend: async () => {
+        const res = await handlePasswordResetRequest({
+          organisationId: params.organisationId || "ZAMORIN",
+          email: params.email,
+        });
+        if (res?.data?.challengeId) {
+          params.challengeId = res.data.challengeId;
+        }
       },
       onBack: () => mountAuthScreen("forgot")
     });
@@ -596,7 +610,13 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
       handleAuthenticatedUserSession(user);
       return { success: true, user };
     }
-    window.location.hash = "#dashboard";
+    if (typeof window !== "undefined") {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", "/#dashboard");
+      } else {
+        window.location.hash = "#dashboard";
+      }
+    }
     boot();
     return { success: true };
   } catch (err) {
@@ -642,6 +662,16 @@ function handleAuthenticatedUserSession(user) {
     }
   }
 
+  // Clear any residual dev/preview role overrides so the authenticated employee profile is strictly authoritative
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("zamorin-dev-role");
+      localStorage.setItem("zamorin_user", JSON.stringify(user));
+    }
+  } catch {}
+
+  setSessionState(SessionState.AUTHENTICATED);
+
   setState({
     auth: { authenticated: true, user, loading: false },
     user,
@@ -650,8 +680,17 @@ function handleAuthenticatedUserSession(user) {
     route: targetRoute,
   });
 
-  window.location.hash = `#${targetRoute}`;
-  boot();
+  if (typeof window !== "undefined") {
+    if (window.history && window.history.replaceState) {
+      // Transition browser out of /login into root single-page route
+      window.history.replaceState(null, "", `/#${targetRoute}`);
+    } else {
+      window.location.hash = `#${targetRoute}`;
+    }
+  }
+
+  renderShell();
+  registerServiceWorker().catch(() => {});
 }
 
 function renderDevPreviewBanner() {
@@ -786,6 +825,12 @@ function applyAuthenticatedUser(
     route: initialRoute,
   });
 
+  try {
+    if (typeof localStorage !== "undefined" && user) {
+      localStorage.setItem("zamorin_user", JSON.stringify(user));
+    }
+  } catch {}
+
   return {
     role,
     isPrimaryMaster,
@@ -853,7 +898,32 @@ async function boot() {
     }
   }
 
-  const isLoginRoute = urlHash === "login" || urlHash === "login2" || pathname === "/login" || pathname === "/login2" || params?.get("auth") === "login";
+  // If already authenticated in memory, mount the app shell immediately
+  if (state.auth?.authenticated && state.user) {
+    if (pathname === "/login" || pathname === "/login2") {
+      if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", `/#${state.route || "dashboard"}`);
+      }
+    }
+    renderShell();
+    registerServiceWorker().catch(() => {});
+    return;
+  }
+
+  const isExplicitAppHash = Boolean(
+    urlHash &&
+    !["login", "login2", "forgot", "mfa", "register", "cafe-gateway"].includes(urlHash) &&
+    !urlHash.startsWith("cafe-access/") &&
+    !urlHash.startsWith("c/")
+  );
+
+  const isLoginRoute = !isExplicitAppHash && (
+    urlHash === "login" ||
+    urlHash === "login2" ||
+    pathname === "/login" ||
+    pathname === "/login2" ||
+    params?.get("auth") === "login"
+  );
 
   if (isLoginRoute) {
     mountAuthScreen("login");
@@ -873,6 +943,11 @@ async function boot() {
     const payload = await apiGet("/auth/me");
     if (payload?.data?.user) {
       applyAuthenticatedUser(payload.data.user, urlHash);
+      if (pathname === "/login" || pathname === "/login2") {
+        if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+          window.history.replaceState(null, "", `/#${urlHash || state.route || "dashboard"}`);
+        }
+      }
       renderShell();
       registerServiceWorker().catch(() => {});
       return;

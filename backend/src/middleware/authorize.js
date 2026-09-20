@@ -388,7 +388,10 @@ function authorize(
           request
         );
       }
-      if (!roles.includes(String(request.auth.role).toUpperCase())) {
+      const authRole = String(request.auth.role).toUpperCase();
+      const isMasterRole = authRole === 'MASTER' || authRole === 'PRIMARY_MASTER' || Boolean(request.auth.isPrimaryMaster);
+      const isRoleAllowed = roles.includes(authRole) || (roles.includes('MASTER') && isMasterRole);
+      if (!isRoleAllowed) {
         return sendAuthorizationError(
           response,
           'PERMISSION_DENIED',

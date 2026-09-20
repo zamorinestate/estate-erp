@@ -122,6 +122,8 @@ async function authenticate(
 
     request.auth = {
       userId: user.userId,
+      email: user.email,
+      name: user.name || user.email,
       organisationId: user.organisationId,
       role: user.role,
       isPrimaryMaster: Boolean(user.isPrimaryMaster),

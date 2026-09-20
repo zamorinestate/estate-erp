@@ -1187,6 +1187,23 @@ function renderSecurity() {
     </div>
     ` : ""}
 
+    <!-- Six-Digit Application PIN (ACP-05E-02) -->
+    <div class="settings-section-card" id="settings-app-pin-card">
+      <div class="settings-card-header">
+        <div>
+          <h2 class="settings-card-title">Six-Digit App PIN</h2>
+          <div class="settings-card-subtitle">Personal 6-digit numeric PIN to quickly unlock your application session on this device.</div>
+        </div>
+        <div id="settings-app-pin-badge">
+          <span class="settings-status-chip" style="font-size:9.5px;">Loading...</span>
+        </div>
+      </div>
+
+      <div id="settings-app-pin-content" style="padding:14px 16px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:var(--radius-sm, 8px);">
+        <div style="color:var(--muted); font-size:13px;">Checking PIN configuration status...</div>
+      </div>
+    </div>
+
     <!-- Security Activity -->
     <div class="settings-section-card">
       <div class="settings-card-header">
@@ -2824,12 +2841,17 @@ function _wireSecurity(root) {
           throw new Error("Failed to receive registration challenge from server.");
         }
 
+        const userEntityName = options.user?.name || state.user?.email || state.user?.name || "Zamorin Employee";
+        const userEntityDisplayName = options.user?.displayName || state.user?.name || state.user?.email || "Zamorin Employee";
+
         const publicKeyOptions = {
           ...options,
           challenge: base64urlToBuffer(options.challenge),
           user: {
             ...options.user,
             id: base64urlToBuffer(options.user.id),
+            name: userEntityName,
+            displayName: userEntityDisplayName,
           },
           excludeCredentials: options.excludeCredentials?.map((c) => ({
             ...c,
@@ -2840,9 +2862,26 @@ function _wireSecurity(root) {
         if (registerBtn) registerBtn.textContent = "Touch Sensor / Scan Face...";
 
         // 2. Browser platform authenticator ceremony
-        const credential = await navigator.credentials.create({
-          publicKey: publicKeyOptions,
-        });
+        let credential;
+        try {
+          credential = await navigator.credentials.create({
+            publicKey: publicKeyOptions,
+          });
+        } catch (credErr) {
+          const msg = credErr?.message?.toLowerCase() || "";
+          const name = credErr?.name || "";
+          const isUserCancel =
+            name === "NotAllowedError" ||
+            msg.includes("cancel") ||
+            msg.includes("not allowed") ||
+            msg.includes("user denied") ||
+            msg.includes("abort");
+
+          if (isUserCancel) {
+            return; // Graceful silent cancel
+          }
+          throw credErr;
+        }
 
         if (!credential) {
           throw new Error("Biometric enrollment cancelled.");
@@ -2913,6 +2952,275 @@ function _wireSecurity(root) {
       showToast("Recovery codes: contact your system administrator to generate new codes securely.", "mint");
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Personal Six-Digit Application PIN Management (ACP-05E-02)
+  // ---------------------------------------------------------------------------
+  const pinContent = root.querySelector("#settings-app-pin-content");
+  const pinBadge = root.querySelector("#settings-app-pin-badge");
+
+  const TRIVIAL_PINS = new Set([
+    "000000", "111111", "222222", "333333", "444444",
+    "555555", "666666", "777777", "888888", "999999",
+    "012345", "123456", "234567", "345678", "456789", "567890",
+    "987654", "876543", "765432", "654321", "543210",
+    "121212", "123123", "696969"
+  ]);
+
+  const loadAppPinStatus = async () => {
+    if (!pinContent || !pinBadge) return;
+    try {
+      const res = await apiGet("/auth/app-pin/status");
+      const { appPinEnabled, appPinSetAt, isLocked } = res?.data || {};
+
+      if (appPinEnabled) {
+        pinBadge.innerHTML = `<span class="settings-status-chip success" style="font-size:9.5px;">Configured &amp; Active</span>`;
+        const setAtStr = appPinSetAt ? new Date(appPinSetAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Recently";
+        pinContent.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="font-size:13.5px; font-weight:700; color:var(--ink);">Personal Application PIN is Active</div>
+              <div class="settings-field-helper" style="margin-top:2px;">Configured on ${escHtml(setAtStr)}. Your active session can be rapidly unlocked using this 6-digit PIN.</div>
+              ${isLocked ? `<div style="color:var(--danger, #b23b35); font-size:12px; font-weight:600; margin-top:4px;">⚠ Application PIN is temporarily locked due to repeated incorrect entries.</div>` : ""}
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <button class="btn btn-ghost btn-sm" id="settings-change-app-pin-btn" type="button" style="color:var(--ink);">
+                ✏️ Change PIN
+              </button>
+              <button class="btn btn-ghost btn-sm" id="settings-disable-app-pin-btn" type="button" style="color:var(--danger, #b23b35);">
+                🚫 Disable PIN
+              </button>
+            </div>
+          </div>
+          <div id="settings-pin-action-container" style="margin-top:12px; display:none;"></div>
+        `;
+
+        pinContent.querySelector("#settings-change-app-pin-btn")?.addEventListener("click", () => {
+          renderChangePinForm();
+        });
+
+        pinContent.querySelector("#settings-disable-app-pin-btn")?.addEventListener("click", () => {
+          renderDisablePinForm();
+        });
+      } else {
+        pinBadge.innerHTML = `<span class="settings-status-chip" style="font-size:9.5px; background:rgba(255,255,255,0.08); color:var(--muted);">Not Configured</span>`;
+        pinContent.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="font-size:13.5px; font-weight:700; color:var(--ink);">Application PIN (Optional)</div>
+              <div class="settings-field-helper" style="margin-top:2px;">Enrolling a personal 6-digit PIN allows quick workstation unlock without re-typing your full password.</div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="settings-setup-app-pin-btn" type="button">
+              ➕ Configure 6-Digit PIN
+            </button>
+          </div>
+          <div id="settings-pin-action-container" style="margin-top:12px; display:none;"></div>
+        `;
+
+        pinContent.querySelector("#settings-setup-app-pin-btn")?.addEventListener("click", () => {
+          renderSetupPinForm();
+        });
+      }
+    } catch (err) {
+      pinBadge.innerHTML = `<span class="settings-status-chip" style="font-size:9.5px;">Unavailable</span>`;
+      pinContent.innerHTML = `<div style="color:var(--muted); font-size:13px;">Unable to load PIN status. (${escHtml(err?.message || "Offline")})</div>`;
+    }
+  };
+
+  function renderSetupPinForm() {
+    const actionContainer = pinContent.querySelector("#settings-pin-action-container");
+    if (!actionContainer) return;
+    actionContainer.style.display = "block";
+    actionContainer.innerHTML = `
+      <div style="padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm, 6px); margin-top:8px;">
+        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:10px;">Create Personal Six-Digit App PIN</div>
+        <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Current Account Password (Reauthentication)</label>
+            <input type="password" id="pin-setup-password" class="settings-input" placeholder="Enter your current password" autocomplete="current-password" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">New 6-Digit PIN</label>
+            <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-new" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Confirm 6-Digit PIN</label>
+            <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-confirm" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+          </div>
+          <div style="font-size:11.5px; color:var(--muted);">PIN must be exactly 6 numeric digits. Repeated (e.g. 111111) or consecutive sequences (e.g. 123456) are rejected.</div>
+          <div id="pin-setup-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button type="button" class="btn btn-primary btn-sm" id="pin-setup-submit-btn">Save Application PIN</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="pin-setup-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    actionContainer.querySelector("#pin-setup-cancel-btn")?.addEventListener("click", () => {
+      actionContainer.style.display = "none";
+      actionContainer.innerHTML = "";
+    });
+
+    actionContainer.querySelector("#pin-setup-submit-btn")?.addEventListener("click", async () => {
+      const pwd = actionContainer.querySelector("#pin-setup-password")?.value || "";
+      const pin = actionContainer.querySelector("#pin-setup-new")?.value?.trim() || "";
+      const confirmPin = actionContainer.querySelector("#pin-setup-confirm")?.value?.trim() || "";
+      const errEl = actionContainer.querySelector("#pin-setup-error");
+
+      const showError = (msg) => {
+        if (errEl) {
+          errEl.textContent = msg;
+          errEl.style.display = "block";
+        }
+      };
+
+      if (!pwd) return showError("Current account password is required.");
+      if (!/^\d{6}$/.test(pin)) return showError("PIN must be exactly 6 numeric digits.");
+      if (TRIVIAL_PINS.has(pin)) return showError("Trivially guessable or sequential PINs are not permitted.");
+      if (pin !== confirmPin) return showError("PIN confirmation does not match.");
+
+      try {
+        const btn = actionContainer.querySelector("#pin-setup-submit-btn");
+        btn.disabled = true;
+        btn.textContent = "Configuring...";
+        await apiPost("/auth/app-pin/setup", { password: pwd, pin, confirmPin });
+        showToast("✓ Six-digit application PIN configured successfully.", "mint");
+        if (state.user) state.user.appPinEnabled = true;
+        loadAppPinStatus();
+      } catch (err) {
+        showError(err?.message || "Failed to configure PIN.");
+        const btn = actionContainer.querySelector("#pin-setup-submit-btn");
+        if (btn) { btn.disabled = false; btn.textContent = "Save Application PIN"; }
+      }
+    });
+  }
+
+  function renderChangePinForm() {
+    const actionContainer = pinContent.querySelector("#settings-pin-action-container");
+    if (!actionContainer) return;
+    actionContainer.style.display = "block";
+    actionContainer.innerHTML = `
+      <div style="padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm, 6px); margin-top:8px;">
+        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:10px;">Change Six-Digit Application PIN</div>
+        <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Current PIN or Password</label>
+            <input type="password" id="pin-change-current" class="settings-input" placeholder="Current PIN or account password" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">New 6-Digit PIN</label>
+            <input type="password" inputmode="numeric" maxlength="6" id="pin-change-new" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Confirm New 6-Digit PIN</label>
+            <input type="password" inputmode="numeric" maxlength="6" id="pin-change-confirm" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+          </div>
+          <div id="pin-change-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button type="button" class="btn btn-primary btn-sm" id="pin-change-submit-btn">Update PIN</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="pin-change-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    actionContainer.querySelector("#pin-change-cancel-btn")?.addEventListener("click", () => {
+      actionContainer.style.display = "none";
+      actionContainer.innerHTML = "";
+    });
+
+    actionContainer.querySelector("#pin-change-submit-btn")?.addEventListener("click", async () => {
+      const current = actionContainer.querySelector("#pin-change-current")?.value || "";
+      const newPin = actionContainer.querySelector("#pin-change-new")?.value?.trim() || "";
+      const confirmNewPin = actionContainer.querySelector("#pin-change-confirm")?.value?.trim() || "";
+      const errEl = actionContainer.querySelector("#pin-change-error");
+
+      const showError = (msg) => {
+        if (errEl) {
+          errEl.textContent = msg;
+          errEl.style.display = "block";
+        }
+      };
+
+      if (!current) return showError("Current PIN or password is required.");
+      if (!/^\d{6}$/.test(newPin)) return showError("New PIN must be exactly 6 numeric digits.");
+      if (TRIVIAL_PINS.has(newPin)) return showError("Trivially guessable or sequential PINs are not permitted.");
+      if (newPin !== confirmNewPin) return showError("New PIN confirmation does not match.");
+
+      const isCurrentNumericPin = /^\d{6}$/.test(current);
+      const payload = isCurrentNumericPin
+        ? { currentPin: current, newPin, confirmNewPin }
+        : { password: current, newPin, confirmNewPin };
+
+      try {
+        const btn = actionContainer.querySelector("#pin-change-submit-btn");
+        btn.disabled = true;
+        btn.textContent = "Updating...";
+        await apiPost("/auth/app-pin/change", payload);
+        showToast("✓ Application PIN updated successfully.", "mint");
+        loadAppPinStatus();
+      } catch (err) {
+        showError(err?.message || "Failed to update PIN.");
+        const btn = actionContainer.querySelector("#pin-change-submit-btn");
+        if (btn) { btn.disabled = false; btn.textContent = "Update PIN"; }
+      }
+    });
+  }
+
+  function renderDisablePinForm() {
+    const actionContainer = pinContent.querySelector("#settings-pin-action-container");
+    if (!actionContainer) return;
+    actionContainer.style.display = "block";
+    actionContainer.innerHTML = `
+      <div style="padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm, 6px); margin-top:8px;">
+        <div style="font-size:13px; font-weight:700; color:var(--danger, #b23b35); margin-bottom:8px;">Disable Application PIN</div>
+        <div style="font-size:12.5px; color:var(--muted); margin-bottom:10px;">To remove this PIN, please reauthenticate by entering your account password.</div>
+        <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Account Password</label>
+            <input type="password" id="pin-disable-password" class="settings-input" placeholder="Account password" style="width:100%;">
+          </div>
+          <div id="pin-disable-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button type="button" class="btn btn-danger btn-sm" id="pin-disable-submit-btn">Disable PIN</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="pin-disable-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    actionContainer.querySelector("#pin-disable-cancel-btn")?.addEventListener("click", () => {
+      actionContainer.style.display = "none";
+      actionContainer.innerHTML = "";
+    });
+
+    actionContainer.querySelector("#pin-disable-submit-btn")?.addEventListener("click", async () => {
+      const pwd = actionContainer.querySelector("#pin-disable-password")?.value || "";
+      const errEl = actionContainer.querySelector("#pin-disable-error");
+
+      if (!pwd) {
+        if (errEl) { errEl.textContent = "Password is required."; errEl.style.display = "block"; }
+        return;
+      }
+
+      try {
+        const btn = actionContainer.querySelector("#pin-disable-submit-btn");
+        btn.disabled = true;
+        btn.textContent = "Disabling...";
+        await apiPost("/auth/app-pin/disable", { password: pwd });
+        showToast("Application PIN disabled successfully.", "mint");
+        if (state.user) state.user.appPinEnabled = false;
+        loadAppPinStatus();
+      } catch (err) {
+        if (errEl) { errEl.textContent = err?.message || "Failed to disable PIN."; errEl.style.display = "block"; }
+        const btn = actionContainer.querySelector("#pin-disable-submit-btn");
+        if (btn) { btn.disabled = false; btn.textContent = "Disable PIN"; }
+      }
+    });
+  }
+
+  loadAppPinStatus();
 }
 
 function _wireRecovery(root) {

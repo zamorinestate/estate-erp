@@ -27,6 +27,11 @@ const {
   revokeTrustedDevice,
   revokeAllTrustedDevices,
   getSelfPrivacySecurity,
+  setupAppPin,
+  changeAppPin,
+  disableAppPin,
+  getAppPinStatus,
+  unlockWithAppPin,
 } = require('../controllers/authController');
 
 const {
@@ -223,6 +228,13 @@ router.post('/password/forgot', passwordResetIpRateLimiter, passwordResetAccount
 router.post('/password/reset/verify', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, verifyPasswordResetCode);
 router.post('/password/reset', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, resetPassword);
 router.post('/refresh', refreshSession);
+
+// Personal Six-Digit Application PIN Endpoints (ACP-05E-02)
+router.post('/app-pin/setup', authenticate, setupAppPin);
+router.post('/app-pin/change', authenticate, changeAppPin);
+router.post('/app-pin/disable', authenticate, disableAppPin);
+router.get('/app-pin/status', authenticate, getAppPinStatus);
+router.post('/app-pin/unlock', authenticate, unlockWithAppPin);
 
 // Feature Gate: Passkeys / WebAuthn are enabled by default unless explicitly disabled
 const isPasskeyEnabled = () => process.env.ENABLE_PASSKEY_AUTH !== 'false';

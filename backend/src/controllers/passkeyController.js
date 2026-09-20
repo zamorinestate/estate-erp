@@ -15,7 +15,7 @@ const getRegistrationOptions = asyncHandler(async (req, res) => {
   }
 
   const result = await passkeyService.generatePasskeyRegistrationOptions({
-    user: req.user,
+    user: req.authenticatedUser || req.user,
   });
 
   return res.status(200).json({
@@ -40,7 +40,7 @@ const verifyRegistration = asyncHandler(async (req, res) => {
   }
 
   const result = await passkeyService.verifyPasskeyRegistration({
-    user: req.user,
+    user: req.authenticatedUser || req.user,
     response,
     challengeId,
     friendlyName,

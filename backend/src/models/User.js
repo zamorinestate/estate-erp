@@ -977,6 +977,35 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Personal Six-Digit Application PIN (ACP-05E-02: Isolated from operatorPinHash)
+    appPinHash: {
+      type: String,
+      select: false,
+      default: null,
+    },
+
+    appPinFailedAttempts: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    appPinLockedUntil: {
+      type: Date,
+      default: null,
+    },
+
+    appPinSetAt: {
+      type: Date,
+      default: null,
+    },
+
+    appPinEnabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     operatorPinHash: {
       type: String,
       select: false,

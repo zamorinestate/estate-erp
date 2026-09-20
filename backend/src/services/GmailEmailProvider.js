@@ -13,6 +13,7 @@
  * - Graceful fallback to ConsoleTest in local non-prod environments without credentials
  */
 
+const nodemailer = require('nodemailer');
 const { EmailProvider } = require('./EmailProvider');
 
 class GmailEmailProvider extends EmailProvider {
@@ -27,12 +28,17 @@ class GmailEmailProvider extends EmailProvider {
   }
 
   isConfigured() {
-    return Boolean(
+    const hasSmtp = Boolean(
+      (process.env.GMAIL_APP_PASSWORD && process.env.GMAIL_APP_PASSWORD.trim()) ||
+      (process.env.SMTP_PASS && process.env.SMTP_PASS.trim())
+    );
+    const hasOAuth = Boolean(
       this.accessToken ||
       process.env.GMAIL_API_ACCESS_TOKEN ||
       (this.refreshToken && this.clientId && this.clientSecret) ||
       (process.env.GMAIL_REFRESH_TOKEN && process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET)
     );
+    return hasSmtp || hasOAuth;
   }
 
   /**
@@ -123,6 +129,43 @@ class GmailEmailProvider extends EmailProvider {
       .replace(/=+$/, '');
   }
 
+  async sendViaSmtp(options, smtpPass) {
+    const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+    const port = Number(process.env.SMTP_PORT) || 465;
+    const secure = port === 465;
+    const user = process.env.SMTP_USER || process.env.GMAIL_USER || this.operationsEmail;
+    const cleanPass = smtpPass.replace(/\s+/g, '');
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass: cleanPass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      tls: {
+        rejectUnauthorized: process.env.NODE_ENV === 'production',
+      },
+    });
+
+    const info = await transporter.sendMail({
+      from: options.from || `Zamorin Cafe ERP <${this.operationsEmail}>`,
+      to: options.to,
+      replyTo: options.replyTo || this.operationsEmail,
+      subject: options.subject,
+      text: options.text,
+      html: options.html,
+    });
+
+    return {
+      delivered: true,
+      providerMessageId: info.messageId || `SMTP-${Date.now()}`,
+      providerDraftId: null,
+      channel: 'GMAIL_SMTP',
+    };
+  }
+
   async sendEmail(options) {
     if (!this.isConfigured()) {
       if (process.env.NODE_ENV !== 'production') {
@@ -138,6 +181,11 @@ class GmailEmailProvider extends EmailProvider {
       const error = new Error('Gmail API provider is not configured with access tokens.');
       error.code = 'GMAIL_AUTH_NOT_CONFIGURED';
       throw error;
+    }
+
+    const smtpPass = (process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || '').trim();
+    if (smtpPass) {
+      return await this.sendViaSmtp(options, smtpPass);
     }
 
     const token = await this.getValidAccessToken();
@@ -266,8 +314,42 @@ class GmailEmailProvider extends EmailProvider {
         healthy: false,
         status: 'AUTH_REQUIRED',
         latencyMs: 0,
-        error: 'OAuth tokens not present in environment.',
+        error: 'Email credentials (OAuth tokens or App Password) not present in environment.',
       };
+    }
+
+    const smtpPass = (process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || '').trim();
+    if (smtpPass) {
+      const start = Date.now();
+      try {
+        const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+        const port = Number(process.env.SMTP_PORT) || 465;
+        const secure = port === 465;
+        const user = process.env.SMTP_USER || process.env.GMAIL_USER || this.operationsEmail;
+        const cleanPass = smtpPass.replace(/\s+/g, '');
+        const transporter = nodemailer.createTransport({
+          host,
+          port,
+          secure,
+          auth: { user, pass: cleanPass },
+          connectionTimeout: 8000,
+        });
+        await transporter.verify();
+        return {
+          healthy: true,
+          status: 'HEALTHY',
+          latencyMs: Date.now() - start,
+          channel: 'SMTP',
+        };
+      } catch (err) {
+        return {
+          healthy: false,
+          status: 'DEGRADED',
+          latencyMs: Date.now() - start,
+          error: err.message,
+          channel: 'SMTP',
+        };
+      }
     }
 
     const start = Date.now();

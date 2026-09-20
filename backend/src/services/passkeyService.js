@@ -94,12 +94,32 @@ async function generatePasskeyRegistrationOptions({ user }) {
     transports: cred.transports || [],
   }));
 
+  let userName = user.email;
+  let userDisplayName = user.name || user.email;
+
+  if (!userName || !userDisplayName) {
+    try {
+      const { User } = require('../models/User');
+      const userDoc = await User.findOne({
+        organisationId: user.organisationId,
+        userId: user.userId,
+      }).lean();
+      if (userDoc) {
+        userName = userName || userDoc.email || user.userId;
+        userDisplayName = userDisplayName || userDoc.name || userDoc.email || user.userId;
+      }
+    } catch {}
+  }
+
+  userName = userName || user.userId || 'user';
+  userDisplayName = userDisplayName || userName;
+
   const options = await generateRegistrationOptions({
     rpName,
     rpID,
     userID: Buffer.from(user.userId, 'utf-8'),
-    userName: user.email,
-    userDisplayName: user.name || user.email,
+    userName,
+    userDisplayName,
     attestationType: 'none',
     excludeCredentials,
     authenticatorSelection: {
