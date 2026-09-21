@@ -223,6 +223,22 @@ export function renderOwnerDashboard() {
         </div>
       </div>
 
+      <!-- Daily Close Packs Management Modal (Hidden by default) -->
+      <div id="occ-daily-close-modal" class="occ-modal-backdrop" style="display: none;">
+        <div class="occ-modal-card occ-modal-lg">
+          <div class="occ-modal-header">
+            <div class="flex items-center gap-2">
+              ${icon("tasks", 20)}
+              <h3>Daily Café Close Packs & Variance Reviews</h3>
+            </div>
+            <button id="occ-close-daily-close-modal" class="btn btn-ghost btn-sm">✕</button>
+          </div>
+          <div class="occ-modal-body" id="occ-daily-close-modal-content">
+            <!-- Loaded dynamically via openDailyClosePacksModal() -->
+          </div>
+        </div>
+      </div>
+
       <!-- Health Strip (Section 15 Operational Context) -->
       <div class="occ-health-strip" id="occ-health-strip">
         <div class="occ-hs-item">
@@ -270,6 +286,13 @@ export function renderOwnerDashboard() {
           <div>
             <div class="occ-sc-title">Cash Drawers</div>
             <div class="occ-sc-sub">Float, Safe Drops & Variances</div>
+          </div>
+        </button>
+        <button class="occ-shortcut-btn" id="occ-btn-daily-close-shortcut" title="Review Daily Café Close Packs & Variance">
+          ${icon("tasks", 18)}
+          <div>
+            <div class="occ-sc-title">Daily Close Packs</div>
+            <div class="occ-sc-sub">Manager Shift Review & Acknowledgment</div>
           </div>
         </button>
         <button class="occ-shortcut-btn" data-route="finance" title="Open Corporate Finance & Accounts">
@@ -516,6 +539,8 @@ export function hydrateOwnerDashboard(container) {
       const anchor = btn.dataset.anchor;
       if (btn.id === "occ-btn-manage-drawers-shortcut") {
         openCashDrawerManagement();
+      } else if (btn.id === "occ-btn-daily-close-shortcut") {
+        openDailyClosePacksModal();
       } else if (route) {
         navigate(route);
       } else if (anchor) {
@@ -1369,6 +1394,188 @@ function getHealthExplanation(cafe) {
   if (cafe.targetAchievementPct !== null && cafe.targetAchievementPct < 70) reasons.push(`Target pace at ${cafe.targetAchievementPct}%`);
   if (reasons.length === 0) return "All operational indicators within normal ranges.";
   return reasons.join(" · ");
+}
+
+// ─── Daily Close Packs Management Modal Logic ─────────────────────────────────
+
+async function openDailyClosePacksModal() {
+  const modal = document.getElementById("occ-daily-close-modal");
+  const content = document.getElementById("occ-daily-close-modal-content");
+  if (!modal || !content) return;
+
+  modal.style.display = "flex";
+  content.innerHTML = `
+    <div class="text-center py-8">
+      <div class="spinner mb-2"></div>
+      <p class="text-slate-400">Loading Daily Café Close Packs...</p>
+    </div>
+  `;
+
+  const closeBtn = document.getElementById("occ-close-daily-close-modal");
+  if (closeBtn) {
+    closeBtn.onclick = () => { modal.style.display = "none"; };
+  }
+
+  try {
+    const targetCafe = ownerDashboardState.selectedCafeId || '';
+    const queryStr = targetCafe ? `?cafeId=${encodeURIComponent(targetCafe)}` : '';
+    const res = await apiGet(`/daily-close${queryStr}`);
+    const packs = (res && res.data) ? res.data : [];
+
+    if (!packs.length) {
+      content.innerHTML = `
+        <div class="occ-dm-card text-center py-8">
+          <p class="text-slate-300 font-semibold mb-1">No Daily Close Packs Submitted</p>
+          <p class="text-slate-500 text-xs">Managers submit daily close packs upon shift close and bank deposit.</p>
+        </div>
+      `;
+      return;
+    }
+
+    const pendingCount = packs.filter(p => p.status === 'PENDING_REVIEW').length;
+
+    content.innerHTML = `
+      <div class="occ-drawer-mgmt-layout">
+        <div class="flex justify-between items-center mb-3">
+          <div class="text-xs text-slate-400">
+            Total Packs: <strong class="text-slate-200">${packs.length}</strong> · 
+            Pending Owner Review: <strong class="text-amber-400">${pendingCount}</strong>
+          </div>
+          <button id="occ-refresh-close-packs" class="btn btn-secondary btn-sm">Refresh List</button>
+        </div>
+
+        <div class="space-y-3" style="max-height: 550px; overflow-y: auto;">
+          ${packs.map(p => {
+            const hasVariance = p.variancePaisa !== 0;
+            const statusColor = p.status === 'ACKNOWLEDGED' ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' :
+              p.status === 'RETURNED' ? 'text-rose-400 border-rose-500/30 bg-rose-500/10' :
+              'text-amber-400 border-amber-500/30 bg-amber-500/10';
+
+            return `
+              <div class="occ-dm-card" style="border: 1px solid rgba(255,255,255,0.08); padding: 14px; border-radius: 8px; margin-bottom: 12px;">
+                <div class="flex justify-between items-start mb-2">
+                  <div>
+                    <span class="font-mono text-xs text-amber-400 font-bold">${p.packId}</span>
+                    <span class="text-slate-300 font-semibold ml-2">Café ${p.cafeId}</span>
+                    <span class="text-slate-400 text-xs ml-2">· Date: <strong class="text-slate-200">${p.businessDate}</strong></span>
+                  </div>
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded border ${statusColor}">
+                    ${p.status}
+                  </span>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-2 py-2 bg-slate-900/40 rounded px-2">
+                  <div><span class="text-slate-500">Gross Sales:</span> <strong class="text-slate-200">${fmtInr(p.grossSalesPaisa)}</strong></div>
+                  <div><span class="text-slate-500">Cash Counted:</span> <strong class="text-slate-200">${fmtInr(p.cashCountedPaisa)}</strong></div>
+                  <div><span class="text-slate-500">Cash Expected:</span> <strong class="text-slate-200">${fmtInr(p.cashCollectedPaisa)}</strong></div>
+                  <div>
+                    <span class="text-slate-500">Variance:</span> 
+                    <strong class="${hasVariance ? 'text-rose-400' : 'text-emerald-400'}">${hasVariance ? (p.variancePaisa > 0 ? '+' : '') + fmtInr(p.variancePaisa) : '₹0 (Balanced)'}</strong>
+                  </div>
+                </div>
+
+                ${p.varianceExplanation ? `
+                  <div class="text-xs text-rose-300 mb-2 p-1.5 bg-rose-500/10 rounded border border-rose-500/20">
+                    <strong>Variance Explanation:</strong> ${p.varianceExplanation}
+                  </div>
+                ` : ''}
+
+                <div class="flex flex-wrap items-center gap-3 text-xs text-slate-400 mb-3">
+                  ${p.depositChallanNumber ? `<span>Challan: <strong class="text-slate-300">${p.depositChallanNumber}</strong></span>` : ''}
+                  ${p.bankName ? `<span>Bank: <strong class="text-slate-300">${p.bankName}</strong></span>` : ''}
+                  ${p.depositAmountPaisa ? `<span>Deposit: <strong class="text-slate-300">${fmtInr(p.depositAmountPaisa)}</strong></span>` : ''}
+                  <span>Slip: <strong class="${p.depositSlipAttached ? 'text-emerald-400' : 'text-slate-500'}">${p.depositSlipAttached ? '📎 Attached' : 'Not attached'}</strong></span>
+                </div>
+
+                ${p.reviewNotes ? `
+                  <div class="text-xs text-slate-300 mb-2 p-1.5 bg-slate-800/60 rounded">
+                    <span class="text-slate-500">Review Note (${p.reviewedByUserId || 'Owner'}):</span> ${p.reviewNotes}
+                  </div>
+                ` : ''}
+
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                  <button class="btn btn-secondary btn-sm occ-btn-return-pack" data-pack-id="${p.packId}">
+                    Return with Notes
+                  </button>
+                  <button class="btn btn-primary btn-sm occ-btn-ack-pack" data-pack-id="${p.packId}" ${p.status === 'ACKNOWLEDGED' ? 'disabled' : ''}>
+                    ${p.status === 'ACKNOWLEDGED' ? '✓ Acknowledged' : 'Acknowledge Close'}
+                  </button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+
+    document.getElementById("occ-refresh-close-packs")?.addEventListener("click", () => {
+      openDailyClosePacksModal();
+    });
+
+    // Wire Acknowledge Buttons
+    content.querySelectorAll(".occ-btn-ack-pack").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const packId = btn.dataset.packId;
+        if (!packId) return;
+        btn.disabled = true;
+        try {
+          const r = await apiPost(`/daily-close/${encodeURIComponent(packId)}/review`, {
+            action: 'ACKNOWLEDGE',
+            reviewNotes: 'Daily close reviewed and acknowledged by Owner.'
+          });
+          if (r && r.success) {
+            showToast(`Daily Close Pack ${packId} acknowledged.`, "success");
+            openDailyClosePacksModal();
+            loadDashboardData(true);
+          } else {
+            showToast(r?.message || "Failed to acknowledge pack.", "error");
+            btn.disabled = false;
+          }
+        } catch (e) {
+          showToast(e.message || "Failed to acknowledge pack.", "error");
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Wire Return Buttons
+    content.querySelectorAll(".occ-btn-return-pack").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const packId = btn.dataset.packId;
+        if (!packId) return;
+        const notes = prompt(`Please enter notes explaining why Pack ${packId} is being returned:`, "Please re-verify cash count and attach deposit challan.");
+        if (notes === null) return;
+        if (!notes.trim()) {
+          showToast("Notes are required to return a close pack.", "error");
+          return;
+        }
+        btn.disabled = true;
+        apiPost(`/daily-close/${encodeURIComponent(packId)}/review`, {
+          action: 'RETURN',
+          reviewNotes: notes.trim()
+        }).then(r => {
+          if (r && r.success) {
+            showToast(`Daily Close Pack ${packId} returned with notes.`, "info");
+            openDailyClosePacksModal();
+            loadDashboardData(true);
+          } else {
+            showToast(r?.message || "Failed to return pack.", "error");
+            btn.disabled = false;
+          }
+        }).catch(e => {
+          showToast(e.message || "Failed to return pack.", "error");
+          btn.disabled = false;
+        });
+      });
+    });
+
+  } catch (err) {
+    content.innerHTML = `
+      <div class="text-center py-6 text-rose-400">
+        <p>Failed to load daily close packs: ${err.message}</p>
+      </div>
+    `;
+  }
 }
 
 // ─── Cash Drawer Management Modal Logic ───────────────────────────────────────

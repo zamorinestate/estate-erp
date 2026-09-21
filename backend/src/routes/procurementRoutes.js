@@ -19,6 +19,10 @@ const {
   listOrders,
   getOrder,
   createOrder,
+  editOrder,
+  verifyDeliveryAndSubmitBill,
+  masterApproveOrderAndBill,
+  downloadOrderReceiptBill,
   submitOrder,
   approveOrder,
   orderSent,
@@ -200,16 +204,16 @@ router.get(
   getMatchingSummary
 );
 
-// Orders Reads: MASTER, OWNER, CAFE_ADMIN
+// Orders Reads: MASTER, OWNER, CAFE_ADMIN, STAFF
 router.get(
   '/orders',
-  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
   listOrders
 );
 
 router.get(
   '/orders/:purchaseOrderId',
-  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
   getOrder
 );
 
@@ -258,16 +262,28 @@ router.get(
   getPoDocumentMatchingStatus
 );
 
-// Writes: MASTER, CAFE_ADMIN
+// Writes: MASTER, CAFE_ADMIN, STAFF
 router.post(
   '/orders',
-  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN'] }),
+  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
   createOrder
+);
+
+router.put(
+  '/orders/:purchaseOrderId/edit',
+  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
+  editOrder
+);
+
+router.post(
+  '/orders/:purchaseOrderId/edit',
+  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
+  editOrder
 );
 
 router.post(
   '/orders/:purchaseOrderId/submit',
-  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN'] }),
+  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
   submitOrder
 );
 
@@ -278,15 +294,40 @@ router.post(
 );
 
 router.post(
+  '/orders/:purchaseOrderId/master-approve',
+  authorize('PROCUREMENT_APPROVE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  masterApproveOrderAndBill
+);
+
+router.post(
   '/orders/:purchaseOrderId/order',
-  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN'] }),
+  authorize('PROCUREMENT_WRITE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
   orderSent
 );
 
 router.post(
   '/orders/:purchaseOrderId/receive',
-  authorize('PROCUREMENT_RECEIVE', { allowedRoles: ['MASTER', 'CAFE_ADMIN'] }),
+  authorize('PROCUREMENT_RECEIVE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
   receiveOrder
+);
+
+router.post(
+  '/orders/:purchaseOrderId/verify-delivery',
+  authorize('PROCUREMENT_RECEIVE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
+  upload.single('file'),
+  verifyDeliveryAndSubmitBill
+);
+
+router.get(
+  '/orders/:purchaseOrderId/receipt-bill',
+  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
+  downloadOrderReceiptBill
+);
+
+router.get(
+  '/orders/:purchaseOrderId/receipt-bill/:attachmentId',
+  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
+  downloadOrderReceiptBill
 );
 
 router.post(

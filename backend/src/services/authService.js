@@ -529,11 +529,13 @@ async function authenticatePassword({
   const normalizedOrganisationId =
     normalizeIdentifier(organisationId);
 
-  const normalizedEmail = normalizeEmail(email);
+  const rawIdentifier = String(email || '').trim();
+  const normalizedEmail = rawIdentifier.toLowerCase();
+  const canonicalId = rawIdentifier.toUpperCase();
 
   if (
     !normalizedOrganisationId ||
-    !normalizedEmail ||
+    !rawIdentifier ||
     !password
   ) {
     throw new Error(
@@ -543,7 +545,12 @@ async function authenticatePassword({
 
   const user = await User.findOne({
     organisationId: normalizedOrganisationId,
-    email: normalizedEmail,
+    $or: [
+      { email: normalizedEmail },
+      { userId: canonicalId },
+      { employeeId: canonicalId },
+      { employeeNumber: canonicalId },
+    ],
   }).select(
     '+passwordHash +passwordHistoryHashes'
   );

@@ -696,8 +696,9 @@ function renderMovementsTab() {
             <div style="font-size:12px; color:var(--muted); margin-top:2px;">Track all intermediate till drops, bank deposits, and petty cash disbursements.</div>
           </div>
           ${canWrite() ? `
-            <div style="display:flex; gap:8px;">
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <button class="btn btn-secondary btn-sm" id="btn-movement-safedrop" type="button">New Safe Drop</button>
+              <button class="btn btn-secondary btn-sm" id="btn-movement-bankdeposit" type="button">🏦 Bank Deposit Drop</button>
               <button class="btn btn-secondary btn-sm" id="btn-movement-petty" type="button">New Petty Cash</button>
               <button class="btn btn-primary btn-sm" id="btn-movement-topup" type="button">Float Top-up</button>
             </div>
@@ -741,7 +742,7 @@ function renderMovementsTab() {
             </thead>
             <tbody>
               ${(() => {
-                const movements = _transactions.filter(t => ['SAFE_DROP', 'PAID_OUT', 'PAID_IN'].includes(t.type));
+                const movements = _transactions.filter(t => ['SAFE_DROP', 'PAID_OUT', 'PAID_IN', 'BANK_DEPOSIT'].includes(t.type) || t.category === 'BANK_DEPOSIT');
                 if (movements.length === 0) {
                   return '<tr><td colspan="8" style="padding:24px; text-align:center; color:var(--muted); font-size:13px;">No movements recorded for this session yet.</td></tr>';
                 }
@@ -1332,6 +1333,9 @@ function attachTabEvents(root) {
   const btnMoveSafe = root.querySelector("#btn-movement-safedrop");
   if (btnMoveSafe) btnMoveSafe.onclick = () => openSafeDropModal();
 
+  const btnMoveBank = root.querySelector("#btn-movement-bankdeposit");
+  if (btnMoveBank) btnMoveBank.onclick = () => openBankDepositModal();
+
   const btnMovePetty = root.querySelector("#btn-movement-petty");
   if (btnMovePetty) btnMovePetty.onclick = () => openMovementModal();
 
@@ -1575,6 +1579,106 @@ function openSafeDropModal() {
         }
       } catch (err) {
         showToast("Error: " + err.message, "coral");
+      }
+    };
+  }
+}
+
+function openBankDepositModal() {
+  const modalRoot = _root?.querySelector("#scb-modal-root") || document.getElementById("scb-modal-root");
+  if (!modalRoot) return;
+
+  modalRoot.innerHTML = `
+    <div id="scb-modal-overlay" style="position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,0.65);">
+      <div class="card" style="width:100%; max-width:480px; padding:22px 24px; background:var(--surface); border-radius:var(--radius-lg);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <h3 style="font-size:17px; font-weight:800; margin:0; color:var(--ink);">Bank Deposit Acknowledgment</h3>
+          <button class="btn btn-ghost btn-sm" id="modal-close" style="font-size:16px; padding:4px 8px;">✕</button>
+        </div>
+
+        <form id="bank-deposit-form" style="display:flex; flex-direction:column; gap:12px;">
+          <div>
+            <label style="font-size:12px; font-weight:700; color:var(--muted); display:block; margin-bottom:3px;">Deposit Amount (₹) *</label>
+            <input type="number" id="bd-amount" class="input input-sm" placeholder="e.g. 25000" min="100" step="100" required style="width:100%; font-size:16px; font-weight:800;" />
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <label style="font-size:12px; font-weight:700; color:var(--muted); display:block; margin-bottom:3px;">Beneficiary Bank *</label>
+              <select id="bd-bank" class="select input-sm" style="width:100%; font-weight:600;" required>
+                <option value="HDFC_BANK">HDFC Bank (Current A/c 5020...)</option>
+                <option value="SBI">State Bank of India (A/c 3819...)</option>
+                <option value="FEDERAL_BANK">Federal Bank (A/c 1421...)</option>
+                <option value="ICICI_BANK">ICICI Bank (A/c 0039...)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:12px; font-weight:700; color:var(--muted); display:block; margin-bottom:3px;">Challan / Acknowledgment No. *</label>
+              <input type="text" id="bd-challan" class="input input-sm" placeholder="e.g. CHL-2026-9901" required style="width:100%; font-weight:700;" />
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <label style="font-size:12px; font-weight:700; color:var(--muted); display:block; margin-bottom:3px;">Deposited By (Staff) *</label>
+              <input type="text" id="bd-staff" class="input input-sm" value="${state.user?.name || 'Store Manager'}" required style="width:100%;" />
+            </div>
+            <div>
+              <label style="font-size:12px; font-weight:700; color:var(--muted); display:block; margin-bottom:3px;">Bank Branch</label>
+              <input type="text" id="bd-branch" class="input input-sm" placeholder="e.g. Beach Road Branch" style="width:100%;" />
+            </div>
+          </div>
+
+          <div>
+            <label style="font-size:12px; font-weight:700; color:var(--muted); display:block; margin-bottom:3px;">Deposit Notes &amp; Verification Evidence</label>
+            <input type="text" id="bd-notes" class="input input-sm" placeholder="Stamped deposit counterfoil retained in store register..." style="width:100%;" />
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:8px;">
+            <button type="button" class="btn btn-secondary" id="modal-cancel" style="flex:1;">Cancel</button>
+            <button type="submit" class="btn btn-primary" style="flex:1; font-weight:700;">Acknowledge &amp; Post Deposit</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  const close = () => { modalRoot.innerHTML = ""; };
+  const btnClose = modalRoot.querySelector("#modal-close");
+  if (btnClose) btnClose.onclick = close;
+  const btnCancel = modalRoot.querySelector("#modal-cancel");
+  if (btnCancel) btnCancel.onclick = close;
+
+  const form = modalRoot.querySelector("#bank-deposit-form");
+  if (form) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const amount = Number(modalRoot.querySelector("#bd-amount")?.value);
+      const bank = modalRoot.querySelector("#bd-bank")?.value;
+      const challan = modalRoot.querySelector("#bd-challan")?.value;
+      const staff = modalRoot.querySelector("#bd-staff")?.value;
+      const branch = modalRoot.querySelector("#bd-branch")?.value;
+      const notes = modalRoot.querySelector("#bd-notes")?.value;
+      try {
+        await apiPost("/cash-transactions", {
+          cafeId: _selectedCafe || getDefaultCafe(),
+          transactionType: "BANK_DEPOSIT",
+          category: "BANK_DEPOSIT",
+          amount: amount,
+          paymentMethod: "BANK_TRANSFER",
+          reference: challan,
+          description: `Bank Drop to ${bank} (${branch || 'Main'}). Challan: ${challan}. Deposited by: ${staff}. ${notes}`,
+        });
+        _sessionInfo.totalSafeDrops += amount;
+        showToast(`Bank deposit of ₹${amount} acknowledged against Challan ${challan}.`, "mint");
+        close();
+        if (_root) {
+          _root.innerHTML = renderCashBook();
+          attachEvents(_root);
+          loadData();
+        }
+      } catch (err) {
+        showToast("Error recording deposit: " + err.message, "coral");
       }
     };
   }

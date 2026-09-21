@@ -67,7 +67,7 @@ const THEMES = [
 ];
 
 const FONT_SIZES = [
-  { code: "small",       label: "S",  name: "Small (13px)" },
+  { code: "compact",     label: "S",  name: "Compact (13px)" },
   { code: "standard",    label: "M",  name: "Standard (14.5px)" },
   { code: "large",       label: "L",  name: "Large (16px)" },
   { code: "extra-large", label: "XL", name: "Extra Large (18px)" },
@@ -261,6 +261,16 @@ export const SETTINGS_DESTINATIONS = {
     keywords: "admin administration organisation governance defaults roles audit",
     permission: "master_only",
   },
+  templates: {
+    id: "templates",
+    label: "Café Configuration Templates",
+    route: "settings/templates",
+    category: "ORGANISATION GOVERNANCE",
+    icon: "📋",
+    desc: "Manage blueprint templates for new cafés, approval limits, business day cutoffs & packaging rules.",
+    keywords: "template cafe blueprint cutoff packaging receipt approval limits configuration",
+    permission: "master_only",
+  },
 };
 
 // Active sub-section within Settings
@@ -403,6 +413,7 @@ function renderSettingsShell(sectionId, innerContentHtml, options = {}) {
         items: [
           SETTINGS_DESTINATIONS.trash,
           SETTINGS_DESTINATIONS.admin,
+          SETTINGS_DESTINATIONS.templates,
         ],
       });
     }
@@ -561,6 +572,7 @@ function renderOverview() {
         items: [
           SETTINGS_DESTINATIONS.trash,
           SETTINGS_DESTINATIONS.admin,
+          SETTINGS_DESTINATIONS.templates,
         ],
       });
     }
@@ -1183,6 +1195,11 @@ function renderSecurity() {
 
       <div id="settings-passkeys-container" style="display:flex; flex-direction:column; gap:8px;">
         <div style="color:var(--muted); font-size:13px; padding:12px 0;">Loading registered biometric passkeys...</div>
+      </div>
+      <div id="settings-revoke-all-passkeys-wrap" style="display:none; margin-top:10px; text-align:right;">
+        <button id="settings-revoke-all-passkeys-btn" class="btn btn-ghost btn-sm" type="button" style="color:var(--danger, #b23b35); font-size:12px;">
+          🗑️ Revoke All Passkeys (clear all registered devices)
+        </button>
       </div>
     </div>
     ` : ""}
@@ -2200,6 +2217,109 @@ function renderUpdatesSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RENDER: Café Configuration Templates (SCR-023 / Chapter 22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderTemplatesSection() {
+  const content = `
+    <!-- Template Management Intro Card -->
+    <div class="settings-section-card">
+      <div class="settings-card-header">
+        <div>
+          <h2 class="settings-card-title">Café Configuration Templates (Blueprints)</h2>
+          <div class="settings-card-subtitle">Standardized operational parameters for new and existing branches: Cutoff hours, approval limits, and packaging defaults.</div>
+        </div>
+        <button id="settings-create-template-toggle" class="btn btn-primary btn-sm" style="font-weight:700;">
+          + Create Blueprint Template
+        </button>
+      </div>
+
+      <!-- Create Template Form (Hidden by default) -->
+      <div id="settings-create-template-form" style="display:none; margin-top:16px; padding:16px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
+        <h3 style="font-size:14px; font-weight:700; color:var(--ink); margin-bottom:12px;">New Café Template</h3>
+        <form id="settings-new-template-form" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-name">Template Name *</label>
+            <input type="text" id="tpl-name" class="settings-field-input" placeholder="e.g. Standard Metro Café" required />
+          </div>
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-cutoff">Business-Day Cutoff Hour (0-12 IST) *</label>
+            <input type="number" id="tpl-cutoff" class="settings-field-input" value="4" min="0" max="12" required />
+            <span class="settings-field-helper">Orders before this hour map to the previous business trading date.</span>
+          </div>
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-po-limit">Max PO Auto-Approval Limit (₹)</label>
+            <input type="number" id="tpl-po-limit" class="settings-field-input" value="25000" min="0" />
+          </div>
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-inv-limit">Inventory Adjustment Auto-Approval (₹)</label>
+            <input type="number" id="tpl-inv-limit" class="settings-field-input" value="5000" min="0" />
+          </div>
+          <div class="settings-field-group" style="grid-column: 1 / -1; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="tpl-default" />
+            <label for="tpl-default" style="font-size:13px; color:var(--ink); cursor:pointer;">Set as default blueprint for newly onboarded cafés</label>
+          </div>
+          <div style="grid-column: 1 / -1; display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            <button type="button" id="settings-cancel-template-btn" class="btn btn-secondary btn-sm">Cancel</button>
+            <button type="submit" id="settings-save-template-btn" class="btn btn-primary btn-sm">Save Template</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Templates List Container -->
+      <div id="settings-templates-list" style="margin-top:16px;">
+        <div style="color:var(--muted); font-size:13px; padding:12px 0;">Loading configuration templates...</div>
+      </div>
+    </div>
+
+    <!-- Apply Template to Café & Preview Overrides Card -->
+    <div class="settings-section-card">
+      <div class="settings-card-header">
+        <div>
+          <h2 class="settings-card-title">Apply Blueprint to Café &amp; Preview Overrides</h2>
+          <div class="settings-card-subtitle">Safely preview changes and overrides before applying a blueprint to an operational café.</div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:12px; align-items:end; margin-bottom:16px;">
+        <div class="settings-field-group">
+          <label class="settings-field-label" for="tpl-apply-cafe-select">Select Target Café *</label>
+          <select id="tpl-apply-cafe-select" class="settings-field-input">
+            <option value="">Choose a café...</option>
+          </select>
+        </div>
+        <div class="settings-field-group">
+          <label class="settings-field-label" for="tpl-apply-template-select">Select Template *</label>
+          <select id="tpl-apply-template-select" class="settings-field-input">
+            <option value="">Choose a template...</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" id="tpl-preview-btn" class="btn btn-secondary btn-sm" style="height:38px;">
+            Preview Overrides
+          </button>
+          <button type="button" id="tpl-apply-btn" class="btn btn-primary btn-sm" style="height:38px;">
+            Apply Blueprint
+          </button>
+        </div>
+      </div>
+
+      <div id="tpl-preview-result" style="display:none; padding:12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
+        <!-- Loaded on preview click -->
+      </div>
+    </div>
+  `;
+
+  return renderSettingsShell("templates", content, {
+    wide: true,
+    statusChip: {
+      type: "success",
+      label: "Governed Blueprints",
+    },
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN DISPATCH & WIRE
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2251,6 +2371,7 @@ export function renderSettingsShared() {
     case "connected":     return renderConnected();
     case "updates":       return renderUpdatesSection();
     case "help":          return renderHelp();
+    case "templates":     return renderTemplatesSection();
     default:              return renderOverview();
   }
 }
@@ -2396,6 +2517,10 @@ async function _wireCurrentSection(root) {
 
     case "help":
       _wireHelp(root);
+      break;
+
+    case "templates":
+      await _wireTemplates(root);
       break;
   }
 }
@@ -2730,7 +2855,8 @@ function _wireSecurity(root) {
 
       try {
         const res = await apiGet("/auth/passkeys");
-        const passkeys = res?.data?.passkeys || [];
+        // API returns { success: true, data: [...] } — data is the array directly
+        const passkeys = Array.isArray(res?.data) ? res.data : (res?.data?.passkeys || []);
 
         if (passkeys.length === 0) {
           container.innerHTML = `
@@ -2742,7 +2868,8 @@ function _wireSecurity(root) {
         }
 
         container.innerHTML = passkeys.map((p) => {
-          const isMobile = /iphone|ipad|android/i.test(p.deviceName || "");
+          const name = p.friendlyName || p.deviceName || "Registered Biometric Authenticator";
+          const isMobile = /iphone|ipad|android/i.test(name);
           const icon = isMobile ? "📱" : "💻";
           const createdStr = p.createdAt ? new Date(p.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Recently";
           const lastUsedStr = p.lastUsedAt ? new Date(p.lastUsedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "Never";
@@ -2752,13 +2879,13 @@ function _wireSecurity(root) {
               <div style="display:flex; align-items:center; gap:12px;">
                 <div style="font-size:20px;">${icon}</div>
                 <div>
-                  <div style="font-size:13.5px; font-weight:700; color:var(--ink);">${escHtml(p.deviceName || "Registered Biometric Authenticator")}</div>
+                  <div style="font-size:13.5px; font-weight:700; color:var(--ink);">${escHtml(name)}</div>
                   <div class="settings-field-helper">Enrolled: ${escHtml(createdStr)} · Last used: ${escHtml(lastUsedStr)}</div>
                 </div>
               </div>
               <div style="display:flex; align-items:center; gap:8px;">
                 <span class="settings-status-chip success" style="font-size:9.5px;">Active</span>
-                <button class="btn btn-ghost btn-sm" data-rename-passkey="${escHtml(p.credentialId)}" data-current-name="${escHtml(p.deviceName || p.friendlyName || 'Passkey Device')}" type="button" style="color:var(--ink-secondary, #475569);">
+                <button class="btn btn-ghost btn-sm" data-rename-passkey="${escHtml(p.credentialId)}" data-current-name="${escHtml(name)}" type="button" style="color:var(--ink-secondary, #475569);">
                   ✏️ Rename
                 </button>
                 <button class="btn btn-ghost btn-sm" data-revoke-passkey="${escHtml(p.credentialId)}" type="button" style="color:var(--danger, #b23b35);">
@@ -2768,6 +2895,10 @@ function _wireSecurity(root) {
             </div>
           `;
         }).join("");
+
+        // Revoke All button (shown when at least one passkey exists)
+        const revokeAllWrap = root.querySelector("#settings-revoke-all-passkeys-wrap");
+        if (revokeAllWrap) revokeAllWrap.style.display = "block";
 
         // Wire rename buttons
         container.querySelectorAll("[data-rename-passkey]").forEach((btn) => {
@@ -2815,7 +2946,25 @@ function _wireSecurity(root) {
 
     loadPasskeys();
 
-    // Register Passkey on This Device
+    // Revoke All Passkeys (clears orphaned / corrupted credentials)
+    root.querySelector("#settings-revoke-all-passkeys-btn")?.addEventListener("click", () => {
+      confirmAction(
+        "Revoke ALL biometric passkeys on all devices? You will need to re-enroll each device to use biometric sign-in again.",
+        async () => {
+            try {
+              await apiDelete("/auth/passkeys");
+              const wrap = root.querySelector("#settings-revoke-all-passkeys-wrap");
+              if (wrap) wrap.style.display = "none";
+              showToast("All passkeys removed. You can now register fresh.", "mint");
+              loadPasskeys();
+            } catch (err) {
+              showToast(err.message || "Failed to revoke all passkeys.", "amber");
+            }
+          }
+        );
+      });
+
+
     root.querySelector("#settings-register-passkey-btn")?.addEventListener("click", async () => {
       if (!window.PublicKeyCredential) {
         showToast("WebAuthn biometric authentication is not supported by this browser.", "amber");
@@ -3933,6 +4082,223 @@ async function _wireUpdates(root) {
         _updatesData = null;
         _rerenderInPlace(root);
       }
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIRE: Café Configuration Templates (SCR-023 / Chapter 22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _wireTemplates(root) {
+  const listContainer = root.querySelector("#settings-templates-list");
+  const cafeSelect = root.querySelector("#tpl-apply-cafe-select");
+  const templateSelect = root.querySelector("#tpl-apply-template-select");
+  const formToggle = root.querySelector("#settings-create-template-toggle");
+  const formCard = root.querySelector("#settings-create-template-form");
+  const cancelBtn = root.querySelector("#settings-cancel-template-btn");
+  const form = root.querySelector("#settings-new-template-form");
+  const previewBtn = root.querySelector("#tpl-preview-btn");
+  const applyBtn = root.querySelector("#tpl-apply-btn");
+  const previewResult = root.querySelector("#tpl-preview-result");
+
+  if (formToggle && formCard) {
+    formToggle.addEventListener("click", () => {
+      formCard.style.display = formCard.style.display === "none" ? "block" : "none";
+    });
+  }
+  if (cancelBtn && formCard) {
+    cancelBtn.addEventListener("click", () => {
+      formCard.style.display = "none";
+    });
+  }
+
+  // Load Templates & Cafes
+  try {
+    const [tplRes, cafesRes] = await Promise.all([
+      apiGet("/cafes/templates"),
+      apiGet("/cafes")
+    ]);
+
+    const templates = (tplRes && tplRes.data) ? tplRes.data : [];
+    const cafes = (cafesRes && cafesRes.data) ? (Array.isArray(cafesRes.data) ? cafesRes.data : cafesRes.data.cafes || []) : [];
+
+    // Populate Cafes select
+    if (cafeSelect) {
+      cafeSelect.innerHTML = `<option value="">Choose a café...</option>` +
+        cafes.map(c => `<option value="${c.cafeId}">${escHtml(c.name || c.cafeId)} (${c.cafeId})</option>`).join('');
+    }
+
+    // Populate Templates select
+    if (templateSelect) {
+      templateSelect.innerHTML = `<option value="">Choose a template...</option>` +
+        templates.map(t => `<option value="${t.templateId}">${escHtml(t.name)} (${t.templateId})</option>`).join('');
+    }
+
+    // Render Templates List
+    if (listContainer) {
+      if (!templates.length) {
+        listContainer.innerHTML = `
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:13px;">
+            No café templates created yet. Click "+ Create Blueprint Template" above to establish standard operating defaults.
+          </div>
+        `;
+      } else {
+        listContainer.innerHTML = `
+          <div style="overflow-x:auto;">
+            <table style="width:100%; font-size:13px; border-collapse:collapse;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--line); color:var(--muted); text-align:left;">
+                  <th style="padding:8px 6px;">Template ID</th>
+                  <th style="padding:8px 6px;">Name</th>
+                  <th style="padding:8px 6px;">Cutoff Hour</th>
+                  <th style="padding:8px 6px;">PO Auto Limit</th>
+                  <th style="padding:8px 6px;">Inv Limit</th>
+                  <th style="padding:8px 6px;">Default?</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${templates.map(t => `
+                  <tr style="border-bottom:1px solid var(--line-dim, rgba(255,255,255,0.05));">
+                    <td style="padding:8px 6px; font-family:monospace; font-weight:bold; color:var(--gold, #d4af37);">${escHtml(t.templateId)}</td>
+                    <td style="padding:8px 6px; font-weight:600; color:var(--ink);">${escHtml(t.name)}</td>
+                    <td style="padding:8px 6px; color:var(--ink);">${t.businessDayCutoffHour !== undefined ? t.businessDayCutoffHour + ':00 IST' : '4:00 IST'}</td>
+                    <td style="padding:8px 6px; color:var(--ink);">${t.approvalLimits?.purchaseOrderPaisa ? '₹' + (t.approvalLimits.purchaseOrderPaisa/100).toLocaleString('en-IN') : '₹25,000'}</td>
+                    <td style="padding:8px 6px; color:var(--ink);">${t.approvalLimits?.inventoryAdjustmentPaisa ? '₹' + (t.approvalLimits.inventoryAdjustmentPaisa/100).toLocaleString('en-IN') : '₹5,000'}</td>
+                    <td style="padding:8px 6px;">
+                      ${t.isDefault ? '<span class="settings-status-chip success" style="font-size:9.5px;">DEFAULT</span>' : '<span style="color:var(--muted); font-size:12px;">—</span>'}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+    }
+  } catch (err) {
+    if (listContainer) {
+      listContainer.innerHTML = `<div style="color:#ef4444; font-size:13px;">Failed to load templates: ${escHtml(err.message)}</div>`;
+    }
+  }
+
+  // Handle Form Submit
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = root.querySelector("#tpl-name")?.value?.trim();
+      const cutoff = Number(root.querySelector("#tpl-cutoff")?.value) || 4;
+      const poLimit = Number(root.querySelector("#tpl-po-limit")?.value) || 0;
+      const invLimit = Number(root.querySelector("#tpl-inv-limit")?.value) || 0;
+      const isDefault = root.querySelector("#tpl-default")?.checked || false;
+
+      if (!name) {
+        showToast("Template name is required", "coral");
+        return;
+      }
+
+      try {
+        const res = await apiPost("/cafes/templates", {
+          name,
+          businessDayCutoffHour: cutoff,
+          approvalLimits: {
+            purchaseOrderPaisa: poLimit * 100,
+            inventoryAdjustmentPaisa: invLimit * 100
+          },
+          isDefault
+        });
+
+        if (res && res.success) {
+          showToast(`Template "${name}" created successfully!`, "mint");
+          formCard.style.display = "none";
+          form.reset();
+          _wireTemplates(root); // reload list
+        } else {
+          showToast(res?.message || "Failed to create template", "coral");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to create template", "coral");
+      }
+    });
+  }
+
+  // Handle Preview
+  if (previewBtn && previewResult) {
+    previewBtn.addEventListener("click", async () => {
+      const cafeId = cafeSelect?.value;
+      const templateId = templateSelect?.value;
+      if (!cafeId) {
+        showToast("Please select a target café to preview", "coral");
+        return;
+      }
+      previewBtn.disabled = true;
+      try {
+        const query = templateId ? `?templateId=${encodeURIComponent(templateId)}` : '';
+        const res = await apiGet(`/cafes/${encodeURIComponent(cafeId)}/template-preview${query}`);
+        if (res && res.success && res.data) {
+          const d = res.data;
+          previewResult.style.display = "block";
+          previewResult.innerHTML = `
+            <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:8px;">
+              Blueprint Preview for Café ${escHtml(d.cafeId)}:
+            </div>
+            <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">
+              Assigned Template: <strong style="color:var(--ink);">${escHtml(d.templateId || 'None (Default applied)')}</strong>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:12px;">
+              <div style="background:var(--surface); padding:8px; border-radius:6px; border:1px solid var(--line);">
+                <strong style="color:var(--gold, #d4af37);">Inherited Parameters:</strong>
+                <pre style="font-size:11px; margin-top:4px; color:var(--ink); overflow-x:auto;">${JSON.stringify(d.inheritedParameters || {}, null, 2)}</pre>
+              </div>
+              <div style="background:var(--surface); padding:8px; border-radius:6px; border:1px solid var(--line);">
+                <strong style="color:var(--muted);">Specific Overrides:</strong>
+                <pre style="font-size:11px; margin-top:4px; color:var(--ink); overflow-x:auto;">${JSON.stringify(d.overrides || {}, null, 2)}</pre>
+              </div>
+            </div>
+          `;
+        } else {
+          showToast(res?.message || "Failed to preview template overrides", "coral");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to preview template overrides", "coral");
+      } finally {
+        previewBtn.disabled = false;
+      }
+    });
+  }
+
+  // Handle Apply
+  if (applyBtn) {
+    applyBtn.addEventListener("click", async () => {
+      const cafeId = cafeSelect?.value;
+      const templateId = templateSelect?.value;
+      if (!cafeId || !templateId) {
+        showToast("Please select both a target café and a template", "coral");
+        return;
+      }
+
+      confirmAction({
+        title: "Apply Blueprint Template",
+        description: `Apply template <strong>${templateId}</strong> to café <strong>${cafeId}</strong>?<br>Non-overridden configuration values will update to the template defaults.`,
+        confirmLabel: "Apply Blueprint",
+        danger: false,
+        onConfirm: async () => {
+          applyBtn.disabled = true;
+          try {
+            const res = await apiPost(`/cafes/${encodeURIComponent(cafeId)}/apply-template`, { templateId });
+            if (res && res.success) {
+              showToast(`Template ${templateId} applied to Café ${cafeId}!`, "mint");
+              if (previewBtn) previewBtn.click();
+            } else {
+              showToast(res?.message || "Failed to apply template", "coral");
+            }
+          } catch (err) {
+            showToast(err.message || "Failed to apply template", "coral");
+          } finally {
+            applyBtn.disabled = false;
+          }
+        }
+      });
     });
   }
 }

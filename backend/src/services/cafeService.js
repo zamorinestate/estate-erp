@@ -24,6 +24,7 @@ const {
   hashOpaqueToken,
 } = require('./cafeAccessCryptoService');
 const { ApiError } = require('../utils/ApiError');
+const { verifyPassword } = require('./authService');
 const {
   INDIAN_STATE_CODES,
   resolveStateByCode,
@@ -1745,7 +1746,7 @@ class CafeService {
       throw new ApiError(401, 'INVALID_CREDENTIALS', 'Reauthentication failed.');
     }
 
-    const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+    const validPassword = await verifyPassword(currentPassword, user.passwordHash);
     if (!validPassword) {
       throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
     }
@@ -1802,7 +1803,7 @@ class CafeService {
         organisationId: String(organisationId).toUpperCase(),
       }).select('+passwordHash');
       if (user && user.passwordHash) {
-        const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
         if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
       }
     }
@@ -1888,7 +1889,7 @@ class CafeService {
         organisationId: String(organisationId).toUpperCase(),
       }).select('+passwordHash');
       if (user && user.passwordHash) {
-        const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
         if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
       }
     }
@@ -1977,7 +1978,7 @@ class CafeService {
         organisationId: String(organisationId).toUpperCase(),
       }).select('+passwordHash');
       if (user && user.passwordHash) {
-        const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
         if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
       }
     }
@@ -2046,7 +2047,7 @@ class CafeService {
         organisationId: String(organisationId).toUpperCase(),
       }).select('+passwordHash');
       if (user && user.passwordHash) {
-        const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
         if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
       }
     }

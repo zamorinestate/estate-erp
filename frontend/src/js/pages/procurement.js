@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from '../apiClient.js';
+import { apiGet, apiPost, apiPut, downloadFile } from '../apiClient.js';
 import { showToast, skeleton, openModal, closeModal, confirmAction, renderCafeContextStrip, renderFileUploadZone, wireFileUploadZone, openUniversalDocumentModal } from '../components.js';
 import { state } from '../state.js';
 import { ROLES } from '../navigation.js';
@@ -31,6 +31,7 @@ const STATUS_PILLS = {
   ORDERED: 'pill-sky',
   PARTIALLY_RECEIVED: 'pill-amber',
   RECEIVED: 'pill-mint',
+  VERIFIED_PENDING_MASTER_APPROVAL: 'pill-amber',
   CLOSED: 'pill-dark',
   CANCELLED: 'pill-coral',
   OPEN: 'pill-sky',
@@ -231,7 +232,7 @@ async function renderActiveTab(root) {
       title: 'Purchase Orders',
       icon: '📑',
       desc: 'Legally binding PO releases, dispatch status and delivery tracking.',
-      actionsHtml: `<button class="btn btn-sm btn-primary" id="btn-child-new-po" type="button">+ New PO</button>`
+      actionsHtml: `<button class="btn btn-sm btn-primary" id="btn-child-new-po" type="button" style="display:inline-flex;align-items:center;gap:6px;"><span>📦</span> + Order from Vendor</button>`
     },
     agreements: {
       title: 'Blanket Agreements',
@@ -576,6 +577,29 @@ async function loadOrdersSubtabData(root) {
   renderFilteredOrders(root);
 }
 
+function downloadOrderBill(poId) {
+  const downloadUrl = `/api/v1/procurement/orders/${poId}/download-receipt-bill`;
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+async function executeMasterApprove(root, poId) {
+  try {
+    await apiPost(`/procurement/orders/${poId}/master-approve`, {
+      notes: 'Approved by Master after verifying counts, missing items, and vendor bill.',
+    });
+    showToast(`Order ${poId} and attached bills approved! Process complete.`, 'mint');
+    await loadOrdersSubtabData(root);
+    await loadProcurementOverview(root);
+  } catch (err) {
+    showToast(err.message || 'Failed to approve order', 'coral');
+  }
+}
+
 function renderFilteredOrders(root) {
   const wrap = root.querySelector('#orders-table-wrapper');
   if (!wrap) return;
@@ -591,8 +615,15 @@ function renderFilteredOrders(root) {
     return;
   }
 
-  const canApprove = [ROLES.MASTER].includes(state.role);
-  const canReceive = [ROLES.MASTER, ROLES.CAFE_ADMIN].includes(state.role);
+  const userRole = state?.user?.role || state.role || 'STAFF';
+  const canApprove = [ROLES.MASTER].includes(userRole);
+  const canEdit = ['MASTER', 'CAFE_ADMIN', 'STAFF'].includes(userRole);
+  const canVerify = ['MASTER', 'CAFE_ADMIN', 'STAFF'].includes(userRole);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowStr = tomorrowDate.toISOString().slice(0, 10);
 
   wrap.innerHTML = `
     <table class="glass-table" style="width:100%;font-size:12px;">
@@ -601,42 +632,84 @@ function renderFilteredOrders(root) {
           <th>PO Number</th>
           <th>Supplier</th>
           <th>Café</th>
-          <th>Order Date</th>
-          <th>Status</th>
+          <th>Delivery Schedule</th>
+          <th>Status &amp; Audit</th>
+          <th>Vendor Bill / Receipt</th>
           <th style="text-align:right;">Order Total</th>
           <th style="text-align:center;">Actions</th>
         </tr>
       </thead>
       <tbody>
-        ${filtered.map((o) => `
+        ${filtered.map((o) => {
+          const expDate = o.expectedDeliveryDate ? o.expectedDeliveryDate.split('T')[0] : '';
+          let deliveryBadge = `<span style="color:var(--muted);font-size:11px;">${expDate || '—'}</span>`;
+          if (expDate === todayStr) {
+            deliveryBadge = `<span class="badge" style="background:rgba(245,158,11,0.15);color:#b45309;font-weight:700;font-size:10px;">☀️ Today</span>`;
+          } else if (expDate === tomorrowStr) {
+            deliveryBadge = `<span class="badge" style="background:rgba(59,130,246,0.15);color:#1d4ed8;font-weight:700;font-size:10px;">📅 Tomorrow</span>`;
+          }
+
+          const hasBill = o.receiptAttachments && o.receiptAttachments.length > 0;
+          const isEditable = !['CLOSED', 'CANCELLED'].includes(o.status);
+          const isVerifiable = canVerify && ['SUBMITTED', 'APPROVED', 'ORDERED', 'PARTIALLY_RECEIVED', 'VERIFIED_PENDING_MASTER_APPROVAL'].includes(o.status);
+          const isApprovable = canApprove && (['SUBMITTED', 'VERIFIED_PENDING_MASTER_APPROVAL'].includes(o.status) || o.needsReapproval);
+
+          return `
           <tr data-po-row="${o.purchaseOrderId}">
-            <td style="font-family:var(--font-mono);font-weight:700;color:var(--ink);">${o.purchaseOrderId}</td>
+            <td style="font-family:var(--font-mono);font-weight:700;color:var(--ink);">
+              ${o.purchaseOrderId}
+              ${o.timingType ? `<div style="font-size:9.5px;color:var(--muted);font-weight:normal;">${o.timingType}</div>` : ''}
+            </td>
             <td><strong>${o.vendorName || o.vendorId}</strong></td>
             <td style="color:var(--muted);">${o.cafeId || '—'}</td>
-            <td style="color:var(--muted);">${o.orderDate ? o.orderDate.split('T')[0] : '—'}</td>
+            <td>${deliveryBadge}</td>
             <td>
-              ${renderStatusPill(o.status)}
-              <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
-                ${o.invoices && o.invoices.length > 0 ? `<span class="badge" style="font-size:9px;background:rgba(16,185,129,0.12);color:#10b981;">📄 ${o.invoices.length} Inv</span>` : ''}
-                ${o.deliveryChallanIds && o.deliveryChallanIds.length > 0 ? `<span class="badge" style="font-size:9px;background:rgba(59,130,246,0.12);color:#3b82f6;">📦 Challan</span>` : ''}
-                ${o.threeWayMatch?.matchStatus === 'MATCHED' ? `<span class="badge" style="font-size:9px;background:rgba(16,185,129,0.12);color:#10b981;">✓ Matched</span>` : ''}
-                ${o.threeWayMatch?.matchStatus && ['QUANTITY_VARIANCE', 'PRICE_VARIANCE', 'TAX_VARIANCE'].includes(o.threeWayMatch.matchStatus) ? `<span class="badge" style="font-size:9px;background:rgba(239,68,68,0.12);color:#ef4444;">⚠️ Variance</span>` : ''}
+              <div>${renderStatusPill(o.status)}</div>
+              <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
+                ${(o.editCountBeforeApproval || 0) > 0 ? `
+                  <span class="badge" style="background:rgba(59,130,246,0.12);color:#2563eb;font-size:9px;" title="Edits made before Master approval">
+                    ✏️ ${o.editCountBeforeApproval} edit(s) pre-approval
+                  </span>
+                ` : ''}
+                ${(o.editCountAfterApproval || 0) > 0 ? `
+                  <span class="badge" style="background:rgba(239,68,68,0.15);color:#dc2626;font-size:9px;font-weight:700;" title="Edits made after approval">
+                    ⚠️ ${o.editCountAfterApproval} post-approval edit(s)
+                  </span>
+                ` : ''}
+                ${o.needsReapproval ? `
+                  <span class="badge" style="background:rgba(245,158,11,0.2);color:#b45309;font-size:9px;font-weight:800;">
+                    ⚠️ Re-approval Mandated
+                  </span>
+                ` : ''}
               </div>
+            </td>
+            <td>
+              ${hasBill ? `
+                <button class="btn btn-sm btn-ghost" data-download-receipt="${o.purchaseOrderId}" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mint, #10b981);display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(16,185,129,0.3);border-radius:4px;" title="Download vendor bill / receipt for accounts handoff">
+                  📥 Bill Attached (${o.receiptAttachments[0].filename ? (o.receiptAttachments[0].filename.length > 14 ? o.receiptAttachments[0].filename.slice(0, 12) + '...' : o.receiptAttachments[0].filename) : 'File'})
+                </button>
+              ` : `
+                <span style="color:var(--muted);font-size:11px;">No bill attached</span>
+              `}
             </td>
             <td style="text-align:right;font-weight:700;">${formatPaise(o.totalAmountPaisa)}</td>
             <td style="text-align:center;">
-              <div style="display:flex;gap:4px;justify-content:center;">
+              <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">
                 <button class="btn btn-sm btn-ghost" data-view-po="${o.purchaseOrderId}" style="padding:3px 8px;font-size:11px;" title="View 360 Detail">🔍 View</button>
-                ${o.status === 'SUBMITTED' && canApprove ? `
-                  <button class="btn btn-sm btn-primary" data-approve-po="${o.purchaseOrderId}" style="padding:3px 8px;font-size:11px;">Approve</button>
+                ${canEdit && isEditable ? `
+                  <button class="btn btn-sm btn-ghost" data-edit-po="${o.purchaseOrderId}" style="padding:3px 8px;font-size:11px;" title="Rectify or update order request">✏️ Edit</button>
                 ` : ''}
-                ${o.status === 'ORDERED' && canReceive ? `
-                  <button class="btn btn-sm btn-secondary" data-receive-po="${o.purchaseOrderId}" style="padding:3px 8px;font-size:11px;">Receive GRN</button>
+                ${isVerifiable ? `
+                  <button class="btn btn-sm btn-secondary" data-verify-po="${o.purchaseOrderId}" style="padding:3px 8px;font-size:11px;background:rgba(16,185,129,0.12);color:#047857;border-color:rgba(16,185,129,0.3);" title="Count items, report shortages and submit vendor bill">📦 Verify Delivery</button>
+                ` : ''}
+                ${isApprovable ? `
+                  <button class="btn btn-sm btn-primary" data-master-approve-po="${o.purchaseOrderId}" style="padding:3px 8px;font-size:11px;background:#059669;border-color:#059669;" title="Approve order and bills for accounts payment">✅ Approve</button>
                 ` : ''}
               </div>
             </td>
           </tr>
-        `).join('')}
+          `;
+        }).join('')}
       </tbody>
     </table>
   `;
@@ -648,6 +721,28 @@ function renderFilteredOrders(root) {
     });
   });
 
+  wrap.querySelectorAll('[data-edit-po]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const po = cachedOrders.find((x) => x.purchaseOrderId === btn.dataset.editPo);
+      if (po) openEditOrderModal(root, po);
+    });
+  });
+
+  wrap.querySelectorAll('[data-verify-po]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const po = cachedOrders.find((x) => x.purchaseOrderId === btn.dataset.verifyPo);
+      if (po) openVerifyDeliveryModal(root, po);
+    });
+  });
+
+  wrap.querySelectorAll('[data-master-approve-po]').forEach((btn) => {
+    btn.addEventListener('click', () => executeMasterApprove(root, btn.dataset.masterApprovePo));
+  });
+
+  wrap.querySelectorAll('[data-download-receipt]').forEach((btn) => {
+    btn.addEventListener('click', () => downloadOrderBill(btn.dataset.downloadReceipt));
+  });
+
   wrap.querySelectorAll('[data-approve-po]').forEach((btn) => {
     btn.addEventListener('click', () => executePoAction(root, btn.dataset.approvePo, 'approve'));
   });
@@ -655,7 +750,7 @@ function renderFilteredOrders(root) {
   wrap.querySelectorAll('[data-receive-po]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const po = cachedOrders.find((x) => x.purchaseOrderId === btn.dataset.receivePo);
-      if (po) openReceiveGrnModal(root, po);
+      if (po) openVerifyDeliveryModal(root, po);
     });
   });
 }
@@ -1155,87 +1250,505 @@ function renderExceptionsSubtab(root, container) {
 
 // ── Modals ──────────────────────────────────────────────────────────────────
 
-function openNewPoModal(root, preselectedSku = null) {
+/**
+ * 1. Place Vendor Order Request Modal (Same Day / Next Day / Custom Date)
+ * Allows Cashier and Café Admin to place replenishment requests to vendors.
+ * Immediately notifies Master window and displays the request with items & quantities.
+ */
+function openPlaceOrderRequestModal(root, preselectedSku = null) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowStr = tomorrowDate.toISOString().slice(0, 10);
+
+  let selectedDeliveryDate = tomorrowStr;
+  let timingType = 'NEXT_DAY';
+
+  let orderItems = [
+    {
+      itemId: preselectedSku || 'ITM-MILK-01',
+      baseUnit: 'liter',
+      qty: 20,
+      unitPriceRupees: 60,
+    }
+  ];
+
+  function renderItemsTable() {
+    const tbody = document.getElementById('order-items-tbody');
+    const totalEl = document.getElementById('order-summary-total');
+    if (!tbody) return;
+
+    let grandTotalRupees = 0;
+
+    tbody.innerHTML = orderItems.map((it, idx) => {
+      const lineSubtotal = (Number(it.qty) || 0) * (Number(it.unitPriceRupees) || 0);
+      grandTotalRupees += lineSubtotal;
+
+      return `
+        <tr data-item-idx="${idx}">
+          <td style="padding:6px 8px;">
+            <input type="text" class="input item-sku-input" data-field="itemId" style="font-size:11.5px;padding:4px 8px;width:100%;" value="${it.itemId}" placeholder="SKU e.g. ITM-MILK-01">
+          </td>
+          <td style="padding:6px 8px;">
+            <select class="select item-unit-select" data-field="baseUnit" style="font-size:11.5px;padding:4px 6px;">
+              <option value="liter" ${it.baseUnit === 'liter' ? 'selected' : ''}>liter</option>
+              <option value="kg" ${it.baseUnit === 'kg' ? 'selected' : ''}>kg</option>
+              <option value="pack" ${it.baseUnit === 'pack' ? 'selected' : ''}>pack</option>
+              <option value="box" ${it.baseUnit === 'box' ? 'selected' : ''}>box</option>
+              <option value="units" ${it.baseUnit === 'units' ? 'selected' : ''}>units</option>
+            </select>
+          </td>
+          <td style="padding:6px 8px;">
+            <input type="number" class="input item-qty-input" data-field="qty" min="1" step="any" style="font-size:11.5px;padding:4px 8px;width:75px;text-align:right;" value="${it.qty}">
+          </td>
+          <td style="padding:6px 8px;">
+            <input type="number" class="input item-price-input" data-field="unitPriceRupees" min="0" step="any" style="font-size:11.5px;padding:4px 8px;width:85px;text-align:right;" value="${it.unitPriceRupees}">
+          </td>
+          <td style="padding:6px 8px;text-align:right;font-weight:700;color:var(--ink);">
+            ₹${lineSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </td>
+          <td style="padding:6px 8px;text-align:center;">
+            ${orderItems.length > 1 ? `
+              <button class="btn btn-sm btn-ghost btn-remove-item" data-idx="${idx}" style="padding:2px 6px;color:var(--coral, #ef4444);font-size:12px;" type="button" title="Remove line item">✕</button>
+            ` : '—'}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    if (totalEl) {
+      totalEl.textContent = '₹' + grandTotalRupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    tbody.querySelectorAll('input, select').forEach((elem) => {
+      elem.addEventListener('input', (e) => {
+        const row = e.target.closest('tr');
+        const idx = Number(row.dataset.itemIdx);
+        const field = e.target.dataset.field;
+        orderItems[idx][field] = e.target.value;
+        renderItemsTable();
+      });
+    });
+
+    tbody.querySelectorAll('.btn-remove-item').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.idx);
+        orderItems.splice(idx, 1);
+        renderItemsTable();
+      });
+    });
+  }
+
   const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:540px;">
-      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Create Direct Purchase Order</h2>
-      <p style="font-size:12px;color:var(--muted);margin:-8px 0 0 0;">Issue a commercial commitment to an approved supplier</p>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div>
-          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Vendor ID *</label>
-          <input type="text" id="modal-po-vendor" class="input" style="font-size:12px;width:100%;" value="VEND-0001" placeholder="e.g. VEND-0001">
+    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:680px;" class="proc-order-request-modal">
+      <div style="border-bottom:1px solid var(--line);padding-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <h2 style="font-size:18px;font-weight:800;color:var(--ink);margin:0;">📦 Place Vendor Order Request</h2>
+          <span class="badge" style="background:rgba(59,130,246,0.12);color:#2563eb;font-weight:700;font-size:11px;">Café Staff / Admin</span>
         </div>
-        <div>
-          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Destination Café *</label>
-          <input type="text" id="modal-po-cafe" class="input" style="font-size:12px;width:100%;" value="${state.currentCafeId || state.selectedCafeId || ''}" placeholder="e.g. Cafe ID">
+        <p style="font-size:12.5px;color:var(--muted);margin:4px 0 0 0;">
+          Create a replenishment order for today or tomorrow. The request will instantly appear in the Master window with items and quantities.
+        </p>
+      </div>
+
+      <!-- Timing Selector -->
+      <div style="background:var(--surface-sunken);border:1px solid var(--line);border-radius:8px;padding:12px;">
+        <label style="font-size:11px;font-weight:800;text-transform:uppercase;color:var(--muted);letter-spacing:0.5px;display:block;margin-bottom:8px;">
+          Order Timing &amp; Required Delivery Schedule
+        </label>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;cursor:pointer;">
+            <input type="radio" name="order-timing" value="SAME_DAY" id="timing-opt-today">
+            ☀️ Same Day (Today)
+          </label>
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;cursor:pointer;">
+            <input type="radio" name="order-timing" value="NEXT_DAY" id="timing-opt-tomorrow" checked>
+            📅 Next Day (Tomorrow)
+          </label>
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;cursor:pointer;">
+            <input type="radio" name="order-timing" value="CUSTOM" id="timing-opt-custom">
+            🗓️ Custom Date:
+          </label>
+          <input type="date" id="modal-order-delivery-date" class="input" style="font-size:12px;padding:4px 8px;width:140px;" value="${tomorrowStr}">
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px;">
+      <!-- Scope & Vendor Selection -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div>
-          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Item SKU *</label>
-          <input type="text" id="modal-po-item" class="input" style="font-size:12px;width:100%;" value="${preselectedSku || 'ITM-COF-01'}" placeholder="e.g. ITM-COF-01">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Supplying Vendor *</label>
+          <input type="text" id="modal-order-vendor" class="input" style="font-size:12px;width:100%;" value="VEN-0001" placeholder="e.g. VEN-0001 / Malabar Fresh">
         </div>
         <div>
-          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Qty *</label>
-          <input type="number" id="modal-po-qty" class="input" style="font-size:12px;width:100%;" value="25" min="1">
-        </div>
-        <div>
-          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Unit Price (₹) *</label>
-          <input type="number" id="modal-po-price" class="input" style="font-size:12px;width:100%;" value="620" min="1">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Requesting Café *</label>
+          <input type="text" id="modal-order-cafe" class="input" style="font-size:12px;width:100%;" value="${state.currentCafeId || state.selectedCafeId || ''}" placeholder="e.g. CAFE-PATIO-01">
         </div>
       </div>
 
+      <!-- Items Table -->
       <div>
-        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Internal Notes / Purpose</label>
-        <textarea id="modal-po-notes" class="input" style="font-size:12px;width:100%;height:60px;resize:none;" placeholder="Delivery instructions or reason..."></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <label style="font-size:11.5px;font-weight:700;color:var(--ink);">Requested Items &amp; Quantities *</label>
+          <button class="btn btn-sm btn-ghost" id="btn-add-order-item" style="font-size:11px;font-weight:700;color:var(--accent);" type="button">+ Add Item Row</button>
+        </div>
+        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface);">
+          <table class="glass-table" style="width:100%;font-size:11px;margin:0;">
+            <thead>
+              <tr style="background:var(--surface-sunken);">
+                <th>Item / SKU</th>
+                <th style="width:85px;">Unit</th>
+                <th style="width:80px;text-align:right;">Quantity</th>
+                <th style="width:90px;text-align:right;">Rate (₹)</th>
+                <th style="width:100px;text-align:right;">Subtotal</th>
+                <th style="width:40px;text-align:center;"></th>
+              </tr>
+            </thead>
+            <tbody id="order-items-tbody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px;padding:6px 12px;background:var(--surface-sunken);border-radius:6px;">
+          <span style="font-size:12px;color:var(--muted);font-weight:600;">Estimated Order Value:</span>
+          <strong style="font-size:15px;color:var(--accent);" id="order-summary-total">₹0.00</strong>
+        </div>
       </div>
 
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
-        <button class="btn btn-ghost" id="modal-po-cancel" style="font-size:12px;" type="button">Cancel</button>
-        <button class="btn btn-primary" id="modal-po-submit" style="font-size:12px;font-weight:700;" type="button">Save Draft PO</button>
+      <!-- Delivery Instructions -->
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Delivery Instructions / Notes for Vendor</label>
+        <textarea id="modal-order-notes" class="input" style="font-size:12px;width:100%;height:52px;resize:none;" placeholder="e.g. Delivery required early morning at 6:30 AM before customer doors open..."></textarea>
+      </div>
+
+      <!-- Action Buttons -->
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:10px;margin-top:4px;">
+        <button class="btn btn-ghost" id="modal-order-cancel" style="font-size:12px;" type="button">Cancel</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary" id="modal-order-draft" style="font-size:12px;" type="button">Save as Draft</button>
+          <button class="btn btn-primary" id="modal-order-submit" style="font-size:12.5px;font-weight:800;background:#2563eb;border-color:#2563eb;" type="button">
+            🚀 Submit Request to Master &amp; Vendor
+          </button>
+        </div>
       </div>
     </div>
   `;
 
   openModal(modalHtml);
+  renderItemsTable();
 
-  document.getElementById('modal-po-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('modal-po-submit')?.addEventListener('click', async () => {
-    const vendorId = document.getElementById('modal-po-vendor')?.value;
-    const cafeId = document.getElementById('modal-po-cafe')?.value;
-    const itemId = document.getElementById('modal-po-item')?.value;
-    const qty = Number(document.getElementById('modal-po-qty')?.value);
-    const unitPriceRupees = Number(document.getElementById('modal-po-price')?.value);
-    const notes = document.getElementById('modal-po-notes')?.value;
+  const radioToday = document.getElementById('timing-opt-today');
+  const radioTomorrow = document.getElementById('timing-opt-tomorrow');
+  const radioCustom = document.getElementById('timing-opt-custom');
+  const dateInput = document.getElementById('modal-order-delivery-date');
 
-    if (!vendorId || !cafeId || !itemId || !qty || !unitPriceRupees) {
-      showToast('Please fill all mandatory fields.', 'coral');
+  radioToday?.addEventListener('change', () => {
+    if (radioToday.checked) {
+      selectedDeliveryDate = todayStr;
+      timingType = 'SAME_DAY';
+      dateInput.value = todayStr;
+    }
+  });
+
+  radioTomorrow?.addEventListener('change', () => {
+    if (radioTomorrow.checked) {
+      selectedDeliveryDate = tomorrowStr;
+      timingType = 'NEXT_DAY';
+      dateInput.value = tomorrowStr;
+    }
+  });
+
+  radioCustom?.addEventListener('change', () => {
+    if (radioCustom.checked) {
+      timingType = 'CUSTOM';
+    }
+  });
+
+  dateInput?.addEventListener('change', () => {
+    selectedDeliveryDate = dateInput.value;
+    if (dateInput.value === todayStr) {
+      if (radioToday) radioToday.checked = true;
+      timingType = 'SAME_DAY';
+    } else if (dateInput.value === tomorrowStr) {
+      if (radioTomorrow) radioTomorrow.checked = true;
+      timingType = 'NEXT_DAY';
+    } else {
+      if (radioCustom) radioCustom.checked = true;
+      timingType = 'CUSTOM';
+    }
+  });
+
+  document.getElementById('btn-add-order-item')?.addEventListener('click', () => {
+    orderItems.push({
+      itemId: 'ITM-CREAM-01',
+      baseUnit: 'pack',
+      qty: 10,
+      unitPriceRupees: 120,
+    });
+    renderItemsTable();
+  });
+
+  document.getElementById('modal-order-cancel')?.addEventListener('click', closeModal);
+
+  async function handleOrderSubmission(submitDirectly = true) {
+    const vendorId = document.getElementById('modal-order-vendor')?.value?.trim();
+    const cafeId = document.getElementById('modal-order-cafe')?.value?.trim();
+    const notes = document.getElementById('modal-order-notes')?.value?.trim() || '';
+    const deliveryDate = dateInput?.value || selectedDeliveryDate;
+
+    if (!vendorId || !cafeId) {
+      showToast('Vendor ID and Café ID are required.', 'coral');
+      return;
+    }
+
+    if (!orderItems.length || orderItems.some((i) => !i.itemId || Number(i.qty) <= 0)) {
+      showToast('Please provide valid items and quantities greater than zero.', 'coral');
       return;
     }
 
     try {
+      const lineItems = orderItems.map((i) => ({
+        itemId: i.itemId.toUpperCase(),
+        orderedQuantityBase: Number(i.qty),
+        unitPricePaisa: Math.round(Number(i.unitPriceRupees || 0) * 100),
+        baseUnit: i.baseUnit || 'units',
+      }));
+
       const payload = {
         vendorId,
         cafeId,
-        lineItems: [
-          {
-            itemId,
-            orderedQuantityBase: qty,
-            unitPricePaisa: Math.round(unitPriceRupees * 100),
-            baseUnit: 'kg',
-          },
-        ],
+        expectedDeliveryDate: deliveryDate,
+        timingType,
+        status: submitDirectly ? 'SUBMITTED' : 'DRAFT',
+        submitDirectly,
+        lineItems,
         notes,
       };
+
       await apiPost('/procurement/orders', payload);
       closeModal();
-      showToast('Purchase Order created successfully.', 'mint');
+      showToast(
+        submitDirectly
+          ? '🚀 Order request submitted! Master window notified and request is live.'
+          : 'Draft order saved successfully.',
+        'mint'
+      );
       await loadOrdersSubtabData(root);
       await loadProcurementOverview(root);
     } catch (err) {
-      showToast(err.message || 'Failed to create Purchase Order', 'coral');
+      showToast(err.message || 'Failed to submit order request', 'coral');
+    }
+  }
+
+  document.getElementById('modal-order-submit')?.addEventListener('click', () => handleOrderSubmission(true));
+  document.getElementById('modal-order-draft')?.addEventListener('click', () => handleOrderSubmission(false));
+}
+
+function openNewPoModal(root, preselectedSku = null) {
+  openPlaceOrderRequestModal(root, preselectedSku);
+}
+
+/**
+ * 2. Edit Order Request Modal (Rectify mistakes before/after approval)
+ * If edited after approval, resets status to SUBMITTED, alerts Master, and mandates re-approval.
+ */
+function openEditOrderModal(root, po) {
+  const isApproved = po.status === 'APPROVED' || !!po.masterApproval?.approvedAt;
+  const currentItems = (po.lineItems || []).map((li) => ({
+    itemId: li.itemId,
+    name: li.itemNameSnapshot || li.itemId,
+    baseUnit: li.baseUnit || 'units',
+    qty: li.orderedQuantityBase,
+    unitPriceRupees: (li.unitPricePaisa || 0) / 100,
+  }));
+
+  let editItems = currentItems.length > 0 ? [...currentItems] : [
+    { itemId: 'ITM-MILK-01', baseUnit: 'liter', qty: 10, unitPriceRupees: 60 }
+  ];
+
+  function renderEditItemsTable() {
+    const tbody = document.getElementById('edit-items-tbody');
+    const totalEl = document.getElementById('edit-summary-total');
+    if (!tbody) return;
+
+    let grandTotal = 0;
+    tbody.innerHTML = editItems.map((it, idx) => {
+      const lineSubtotal = (Number(it.qty) || 0) * (Number(it.unitPriceRupees) || 0);
+      grandTotal += lineSubtotal;
+
+      return `
+        <tr data-edit-idx="${idx}">
+          <td style="padding:6px 8px;">
+            <input type="text" class="input" data-field="itemId" style="font-size:11.5px;padding:4px 8px;width:100%;" value="${it.itemId}">
+          </td>
+          <td style="padding:6px 8px;">
+            <select class="select" data-field="baseUnit" style="font-size:11.5px;padding:4px 6px;">
+              <option value="liter" ${it.baseUnit === 'liter' ? 'selected' : ''}>liter</option>
+              <option value="kg" ${it.baseUnit === 'kg' ? 'selected' : ''}>kg</option>
+              <option value="pack" ${it.baseUnit === 'pack' ? 'selected' : ''}>pack</option>
+              <option value="box" ${it.baseUnit === 'box' ? 'selected' : ''}>box</option>
+              <option value="units" ${it.baseUnit === 'units' ? 'selected' : ''}>units</option>
+            </select>
+          </td>
+          <td style="padding:6px 8px;">
+            <input type="number" class="input" data-field="qty" min="1" step="any" style="font-size:11.5px;padding:4px 8px;width:75px;text-align:right;" value="${it.qty}">
+          </td>
+          <td style="padding:6px 8px;">
+            <input type="number" class="input" data-field="unitPriceRupees" min="0" step="any" style="font-size:11.5px;padding:4px 8px;width:85px;text-align:right;" value="${it.unitPriceRupees}">
+          </td>
+          <td style="padding:6px 8px;text-align:right;font-weight:700;color:var(--ink);">
+            ₹${lineSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </td>
+          <td style="padding:6px 8px;text-align:center;">
+            ${editItems.length > 1 ? `
+              <button class="btn btn-sm btn-ghost btn-remove-edit-item" data-idx="${idx}" style="padding:2px 6px;color:var(--coral, #ef4444);font-size:12px;" type="button">✕</button>
+            ` : '—'}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    if (totalEl) {
+      totalEl.textContent = '₹' + grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    tbody.querySelectorAll('input, select').forEach((el) => {
+      el.addEventListener('input', (e) => {
+        const row = e.target.closest('tr');
+        const idx = Number(row.dataset.editIdx);
+        const field = e.target.dataset.field;
+        editItems[idx][field] = e.target.value;
+        renderEditItemsTable();
+      });
+    });
+
+    tbody.querySelectorAll('.btn-remove-edit-item').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.idx);
+        editItems.splice(idx, 1);
+        renderEditItemsTable();
+      });
+    });
+  }
+
+  const modalHtml = `
+    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:660px;">
+      <div style="border-bottom:1px solid var(--line);padding-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h2 style="font-size:17px;font-weight:800;color:var(--ink);margin:0;">✏️ Edit Order Request: ${po.purchaseOrderId}</h2>
+          ${renderStatusPill(po.status)}
+        </div>
+        <div style="display:flex;gap:12px;margin-top:6px;font-size:12px;color:var(--muted);flex-wrap:wrap;">
+          <span>Café: <strong>${po.cafeId}</strong></span>
+          <span>Supplier: <strong>${po.vendorName || po.vendorId}</strong></span>
+          <span>Edits Before Approval: <strong>${po.editCountBeforeApproval || 0}</strong></span>
+          <span>Edits After Approval: <strong style="${(po.editCountAfterApproval || 0) > 0 ? 'color:#ef4444;' : ''}">${po.editCountAfterApproval || 0}</strong></span>
+        </div>
+      </div>
+
+      ${isApproved ? `
+        <div style="padding:10px 14px;background:rgba(239,68,68,0.1);border:1px solid #ef4444;border-radius:6px;color:#b91c1c;font-size:12px;line-height:1.5;">
+          <strong>⚠️ High Priority Governance Warning:</strong><br/>
+          This order was previously approved by Master. Editing it now will immediately revoke the existing approval, increment the post-approval edit counter, send an urgent notification to the Master window, and require Master re-approval before delivery or payment can proceed.
+        </div>
+      ` : ''}
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Expected Delivery Date</label>
+          <input type="date" id="modal-edit-date" class="input" style="font-size:12px;width:100%;" value="${po.expectedDeliveryDate ? po.expectedDeliveryDate.split('T')[0] : ''}">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Delivery Timing / Type</label>
+          <input type="text" id="modal-edit-timing" class="input" style="font-size:12px;width:100%;" value="${po.timingType || 'NEXT_DAY'}" placeholder="SAME_DAY / NEXT_DAY">
+        </div>
+      </div>
+
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <label style="font-size:11.5px;font-weight:700;color:var(--ink);">Items &amp; Quantities to Rectify</label>
+          <button class="btn btn-sm btn-ghost" id="btn-add-edit-item" style="font-size:11px;color:var(--accent);font-weight:700;" type="button">+ Add Line</button>
+        </div>
+        <div style="max-height:200px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface);">
+          <table class="glass-table" style="width:100%;font-size:11px;margin:0;">
+            <thead>
+              <tr style="background:var(--surface-sunken);">
+                <th>Item / SKU</th>
+                <th style="width:85px;">Unit</th>
+                <th style="width:80px;text-align:right;">Quantity</th>
+                <th style="width:90px;text-align:right;">Rate (₹)</th>
+                <th style="width:100px;text-align:right;">Subtotal</th>
+                <th style="width:40px;text-align:center;"></th>
+              </tr>
+            </thead>
+            <tbody id="edit-items-tbody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:6px;padding:4px 10px;background:var(--surface-sunken);border-radius:4px;">
+          <span style="font-size:12px;color:var(--muted);font-weight:600;">Updated Total:</span>
+          <strong style="font-size:14px;color:var(--accent);" id="edit-summary-total">₹0.00</strong>
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">
+          Reason for Modification / Rectification * <span style="color:#ef4444;">(Mandatory for Master Audit)</span>
+        </label>
+        <textarea id="modal-edit-reason" class="input" style="font-size:12px;width:100%;height:54px;resize:none;" placeholder="Explain why the order is being edited (e.g. Rectified milk quantity due to updated footfall estimation)..."></textarea>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:10px;">
+        <button class="btn btn-ghost" id="modal-edit-cancel" style="font-size:12px;" type="button">Cancel</button>
+        <button class="btn btn-primary" id="modal-edit-submit" style="font-size:12.5px;font-weight:700;" type="button">
+          💾 Save Changes &amp; Notify Master
+        </button>
+      </div>
+    </div>
+  `;
+
+  openModal(modalHtml);
+  renderEditItemsTable();
+
+  document.getElementById('btn-add-edit-item')?.addEventListener('click', () => {
+    editItems.push({ itemId: 'ITM-NEW-01', baseUnit: 'units', qty: 1, unitPriceRupees: 100 });
+    renderEditItemsTable();
+  });
+
+  document.getElementById('modal-edit-cancel')?.addEventListener('click', closeModal);
+
+  document.getElementById('modal-edit-submit')?.addEventListener('click', async () => {
+    const reason = document.getElementById('modal-edit-reason')?.value?.trim();
+    if (!reason) {
+      showToast('Reason for modification is mandatory to maintain governance audit.', 'coral');
+      return;
+    }
+
+    if (!editItems.length || editItems.some((i) => !i.itemId || Number(i.qty) <= 0)) {
+      showToast('Please ensure all items have valid SKUs and positive quantities.', 'coral');
+      return;
+    }
+
+    const expectedDeliveryDate = document.getElementById('modal-edit-date')?.value || po.expectedDeliveryDate;
+    const timingType = document.getElementById('modal-edit-timing')?.value || po.timingType;
+
+    const lineItems = editItems.map((i) => ({
+      itemId: i.itemId.toUpperCase(),
+      orderedQuantityBase: Number(i.qty),
+      unitPricePaisa: Math.round(Number(i.unitPriceRupees || 0) * 100),
+      baseUnit: i.baseUnit || 'units',
+    }));
+
+    try {
+      await apiPut(`/procurement/orders/${po.purchaseOrderId}/edit`, {
+        reason,
+        expectedDeliveryDate,
+        timingType,
+        lineItems,
+      });
+
+      closeModal();
+      showToast(`Order ${po.purchaseOrderId} updated successfully. Master notified.`, 'mint');
+      await loadOrdersSubtabData(root);
+      await loadProcurementOverview(root);
+    } catch (err) {
+      showToast(err.message || 'Failed to edit order', 'coral');
     }
   });
 }
@@ -1346,74 +1859,331 @@ function openNewRfqModal(root) {
   });
 }
 
-function openReceiveGrnModal(root, po) {
+/**
+ * 3. Verify Delivery & Vendor Bill / Receipt Submission Modal
+ * Features: Counting items, calculating missing/short quantities live, entering discrepancy reasons,
+ * submitting vendor bills/receipts (PDF or JPEG/PNG), auto-updating inventory, and notifying Master for approval.
+ */
+function openVerifyDeliveryModal(root, po) {
+  let attachedFileBase64 = null;
+  let attachedFileName = null;
+  let attachedFileType = null;
+  let attachedFileSize = 0;
+
+  const deliveries = (po.lineItems || []).map((li) => ({
+    itemId: li.itemId,
+    name: li.itemNameSnapshot || li.itemId,
+    baseUnit: li.baseUnit || 'units',
+    orderedQty: Number(li.orderedQuantityBase || 0),
+    deliveredQty: Number(li.orderedQuantityBase || 0),
+    acceptedQty: Number(li.orderedQuantityBase || 0),
+    missingQty: 0,
+    discrepancyReason: '',
+    lotNumber: '',
+  }));
+
+  function renderDeliveryTable() {
+    const tbody = document.getElementById('verify-delivery-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = deliveries.map((d, idx) => {
+      const missing = Math.max(0, d.orderedQty - d.acceptedQty);
+      d.missingQty = missing;
+
+      return `
+        <tr data-del-idx="${idx}">
+          <td style="padding:6px 8px;">
+            <strong style="color:var(--ink);">${d.name}</strong>
+            <div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);">${d.itemId}</div>
+          </td>
+          <td style="padding:6px 8px;text-align:right;font-weight:700;">
+            ${d.orderedQty} <span style="font-size:10px;color:var(--muted);">${d.baseUnit}</span>
+          </td>
+          <td style="padding:6px 8px;">
+            <input type="number" class="input del-delivered-input" min="0" step="any" style="font-size:11.5px;padding:4px 6px;width:70px;text-align:right;" value="${d.deliveredQty}">
+          </td>
+          <td style="padding:6px 8px;">
+            <input type="number" class="input del-accepted-input" min="0" step="any" style="font-size:11.5px;padding:4px 6px;width:70px;text-align:right;border-color:var(--mint);" value="${d.acceptedQty}">
+          </td>
+          <td style="padding:6px 8px;text-align:right;">
+            ${missing > 0 ? `
+              <span class="badge" style="background:#fee2e2;color:#b91c1c;font-weight:800;font-size:11px;">
+                ⚠️ ${missing} Short
+              </span>
+            ` : `
+              <span class="badge" style="background:rgba(16,185,129,0.12);color:#047857;font-size:10px;">
+                ✓ Full
+              </span>
+            `}
+          </td>
+          <td style="padding:6px 8px;">
+            <input type="text" class="input del-reason-input" style="font-size:11px;padding:4px 6px;width:100%;${missing > 0 && !d.discrepancyReason ? 'border-color:#ef4444;background:#fff5f5;' : ''}" value="${d.discrepancyReason}" placeholder="${missing > 0 ? 'Explain shortage reason (mandatory)' : 'Optional notes'}">
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('.del-delivered-input').forEach((input, idx) => {
+      input.addEventListener('input', (e) => {
+        deliveries[idx].deliveredQty = Number(e.target.value) || 0;
+        if (deliveries[idx].acceptedQty > deliveries[idx].deliveredQty) {
+          deliveries[idx].acceptedQty = deliveries[idx].deliveredQty;
+        }
+        renderDeliveryTable();
+      });
+    });
+
+    tbody.querySelectorAll('.del-accepted-input').forEach((input, idx) => {
+      input.addEventListener('input', (e) => {
+        deliveries[idx].acceptedQty = Number(e.target.value) || 0;
+        renderDeliveryTable();
+      });
+    });
+
+    tbody.querySelectorAll('.del-reason-input').forEach((input, idx) => {
+      input.addEventListener('input', (e) => {
+        deliveries[idx].discrepancyReason = e.target.value;
+      });
+    });
+  }
+
   const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:500px;">
-      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Receive Goods Note (GRN)</h2>
-      <p style="font-size:12px;color:var(--muted);margin:-8px 0 0 0;">Record physical delivery for ${po.purchaseOrderId}</p>
-
-      <div>
-        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Supplier Delivery Note #</label>
-        <input type="text" id="modal-grn-dnote" class="input" style="font-size:12px;width:100%;" placeholder="e.g. DN-WOE-9941">
+    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:740px;" class="proc-verify-delivery-modal">
+      <div style="border-bottom:1px solid var(--line);padding-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h2 style="font-size:18px;font-weight:800;color:var(--ink);margin:0;">📦 Delivery Counting, Verification &amp; Bill Submission</h2>
+          ${renderStatusPill(po.status)}
+        </div>
+        <div style="display:flex;gap:14px;margin-top:6px;font-size:12px;color:var(--muted);flex-wrap:wrap;">
+          <span>PO ID: <strong style="color:var(--ink);">${po.purchaseOrderId}</strong></span>
+          <span>Supplier: <strong>${po.vendorName || po.vendorId}</strong></span>
+          <span>Café: <strong>${po.cafeId}</strong></span>
+          <span>Expected Delivery: <strong>${po.expectedDeliveryDate ? po.expectedDeliveryDate.split('T')[0] : '—'}</strong></span>
+        </div>
       </div>
 
-      <div>
-        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Physical Condition</label>
-        <select id="modal-grn-condition" class="select" style="font-size:12px;width:100%;">
-          <option value="GOOD">Good / Intact / Compliant</option>
-          <option value="DAMAGED">Damaged Packaging</option>
-          <option value="SHORTAGE">Quantity Shortage</option>
-        </select>
+      <!-- Reference Inputs -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Supplier Delivery Challan / Note #</label>
+          <input type="text" id="modal-verify-dnote" class="input" style="font-size:12px;width:100%;" placeholder="e.g. DN-9841 / DC-004">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Vendor Invoice / Bill #</label>
+          <input type="text" id="modal-verify-invoice" class="input" style="font-size:12px;width:100%;" placeholder="e.g. INV-2026-9841">
+        </div>
       </div>
 
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
-        <button class="btn btn-ghost" id="modal-grn-cancel" style="font-size:12px;" type="button">Cancel</button>
-        <button class="btn btn-primary" id="modal-grn-submit" style="font-size:12px;font-weight:700;" type="button">Complete GRN</button>
+      <!-- Item Count & Verification Table -->
+      <div>
+        <label style="font-size:11.5px;font-weight:700;color:var(--ink);display:block;margin-bottom:4px;">
+          Item Count &amp; Discrepancy Verification (Ordered vs Delivered vs Accepted)
+        </label>
+        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface);">
+          <table class="glass-table" style="width:100%;font-size:11px;margin:0;">
+            <thead>
+              <tr style="background:var(--surface-sunken);">
+                <th>Item / SKU</th>
+                <th style="width:75px;text-align:right;">Ordered</th>
+                <th style="width:75px;text-align:right;">Delivered</th>
+                <th style="width:75px;text-align:right;">Accepted</th>
+                <th style="width:85px;text-align:right;">Shortage</th>
+                <th style="width:180px;">Discrepancy Reason</th>
+              </tr>
+            </thead>
+            <tbody id="verify-delivery-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Document Submission Section (PDF / JPEG) -->
+      <div style="background:var(--surface-sunken);border:1px solid var(--line);border-radius:8px;padding:12px;">
+        <label style="font-size:11.5px;font-weight:800;color:var(--ink);display:block;margin-bottom:2px;">
+          📎 Vendor Bill &amp; Physical Receipt Submission (PDF or JPEG/PNG)
+        </label>
+        <p style="font-size:11px;color:var(--muted);margin:0 0 8px 0;">
+          Submit the vendor's bill or receipt. Master can download this file and hand over to the Accounts Department for payment.
+        </p>
+
+        <div id="file-dropzone" style="border:2px dashed var(--line);border-radius:6px;padding:14px;text-align:center;cursor:pointer;background:var(--surface);transition:all 0.2s;">
+          <input type="file" id="modal-verify-file" accept=".pdf, .jpg, .jpeg, .png, application/pdf, image/jpeg, image/png" style="display:none;">
+          <div id="dropzone-prompt">
+            <div style="font-size:22px;margin-bottom:4px;">📄</div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink);">Click or drag &amp; drop Vendor Bill / Receipt here</div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">Supports PDF, JPEG, PNG format</div>
+          </div>
+          <div id="dropzone-preview" style="display:none;align-items:center;justify-content:space-between;padding:4px 8px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="preview-icon" style="font-size:20px;">📑</span>
+              <div style="text-align:left;">
+                <strong id="preview-filename" style="font-size:12px;color:var(--ink);display:block;"></strong>
+                <span id="preview-filesize" style="font-size:10.5px;color:var(--muted);"></span>
+              </div>
+            </div>
+            <button class="btn btn-sm btn-ghost" id="btn-remove-file" style="color:var(--coral, #ef4444);font-size:11px;" type="button">✕ Remove</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dual Immediate Automatic Actions Banner -->
+      <div style="padding:10px 14px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:6px;font-size:11.5px;color:#065f46;line-height:1.5;">
+        <strong style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+          <span>⚡</span> Dual Immediate System Actions upon Submission:
+        </strong>
+        <ol style="margin:0 0 0 16px;padding:0;">
+          <li><strong>Inventory Instantly Added:</strong> Accepted items will automatically be added to café inventory stock levels and ledger with FEFO lot tracking.</li>
+          <li><strong>Master Approval Module:</strong> Master window will receive an immediate notification with this delivery verification report and attached vendor bill to approve for Accounts handoff.</li>
+        </ol>
+      </div>
+
+      <!-- Action Buttons -->
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:10px;">
+        <button class="btn btn-ghost" id="modal-verify-cancel" style="font-size:12px;" type="button">Cancel</button>
+        <button class="btn btn-primary" id="modal-verify-submit" style="font-size:12.5px;font-weight:800;background:#059669;border-color:#059669;" type="button">
+          📦 Submit Verification &amp; Auto-Post to Inventory
+        </button>
       </div>
     </div>
   `;
 
   openModal(modalHtml);
+  renderDeliveryTable();
 
-  document.getElementById('modal-grn-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('modal-grn-submit')?.addEventListener('click', async () => {
-    const dnote = document.getElementById('modal-grn-dnote')?.value;
-    const condition = document.getElementById('modal-grn-condition')?.value;
+  const dropzone = document.getElementById('file-dropzone');
+  const fileInput = document.getElementById('modal-verify-file');
+  const promptEl = document.getElementById('dropzone-prompt');
+  const previewEl = document.getElementById('dropzone-preview');
+  const filenameEl = document.getElementById('preview-filename');
+  const filesizeEl = document.getElementById('preview-filesize');
+  const iconEl = document.getElementById('preview-icon');
+  const removeBtn = document.getElementById('btn-remove-file');
+
+  dropzone?.addEventListener('click', (e) => {
+    if (e.target.id !== 'btn-remove-file') {
+      fileInput?.click();
+    }
+  });
+
+  dropzone?.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--accent)';
+  });
+
+  dropzone?.addEventListener('dragleave', () => {
+    dropzone.style.borderColor = 'var(--line)';
+  });
+
+  dropzone?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--line)';
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleSelectedFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  fileInput?.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleSelectedFile(e.target.files[0]);
+    }
+  });
+
+  function handleSelectedFile(file) {
+    attachedFileName = file.name;
+    attachedFileType = file.type;
+    attachedFileSize = file.size;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      attachedFileBase64 = result.includes(',') ? result.split(',')[1] : result;
+
+      if (promptEl) promptEl.style.display = 'none';
+      if (previewEl) previewEl.style.display = 'flex';
+      if (filenameEl) filenameEl.textContent = file.name;
+      if (filesizeEl) filesizeEl.textContent = (file.size > 1048576 ? (file.size / 1048576).toFixed(1) + ' MB' : Math.round(file.size / 1024) + ' KB');
+      if (iconEl) iconEl.textContent = file.type.includes('pdf') ? '📄' : '🖼️';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  removeBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    attachedFileBase64 = null;
+    attachedFileName = null;
+    attachedFileType = null;
+    if (fileInput) fileInput.value = '';
+    if (promptEl) promptEl.style.display = 'block';
+    if (previewEl) previewEl.style.display = 'none';
+  });
+
+  document.getElementById('modal-verify-cancel')?.addEventListener('click', closeModal);
+
+  document.getElementById('modal-verify-submit')?.addEventListener('click', async () => {
+    for (const d of deliveries) {
+      if (d.missingQty > 0 && !d.discrepancyReason.trim()) {
+        showToast(`Please enter discrepancy reason for item ${d.name} (${d.missingQty} units missing).`, 'coral');
+        return;
+      }
+    }
+
+    const dnote = document.getElementById('modal-verify-dnote')?.value?.trim() || '';
+    const invoiceNum = document.getElementById('modal-verify-invoice')?.value?.trim() || '';
+
+    const payload = {
+      deliveryNoteNumber: dnote,
+      vendorInvoiceNumber: invoiceNum,
+      deliveries: deliveries.map((d) => ({
+        itemId: d.itemId,
+        deliveredQty: Number(d.deliveredQty),
+        acceptedQty: Number(d.acceptedQty),
+        missingQty: Number(d.missingQty),
+        discrepancyReason: d.discrepancyReason,
+      })),
+      fileName: attachedFileName,
+      fileType: attachedFileType,
+      fileBase64: attachedFileBase64,
+    };
 
     try {
-      await apiPost(`/procurement/orders/${po.purchaseOrderId}/receive`, {
-        receivedItems: po.lineItems?.map((l) => ({
-          itemId: l.itemId,
-          receivedQuantityBase: l.orderedQuantityBase,
-        })) || [],
-        deliveryNote: dnote,
-        condition,
-      });
+      await apiPost(`/procurement/orders/${po.purchaseOrderId}/verify-delivery`, payload);
       closeModal();
-      showToast(`GRN completed for ${po.purchaseOrderId}`, 'mint');
+      showToast(
+        `⚡ Delivery verified! Items auto-added to inventory & Master notified with attached bill for review.`,
+        'mint'
+      );
       await loadOrdersSubtabData(root);
       await loadProcurementOverview(root);
     } catch (err) {
-      showToast(err.message || 'Failed to complete GRN', 'coral');
+      showToast(err.message || 'Failed to verify delivery', 'coral');
     }
   });
+}
+
+function openReceiveGrnModal(root, po) {
+  openVerifyDeliveryModal(root, po);
 }
 
 function openPo360Modal(root, po) {
   const userRole = state?.user?.role || 'STAFF';
   const assignedCafes = state?.user?.assignedCafeIds || [];
   const canAttach = userRole === 'MASTER' || (userRole === 'CAFE_ADMIN' && assignedCafes.includes(po.cafeId));
+  const isMaster = userRole === 'MASTER';
   const isStaff = userRole === 'STAFF';
 
+  const totalEdits = (po.editCountBeforeApproval || 0) + (po.editCountAfterApproval || 0);
+
   const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:760px;" class="po-360-modal-container">
+    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:800px;" class="po-360-modal-container">
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding-bottom:10px;">
         <div>
           <div style="display:flex;align-items:center;gap:8px;">
             <h2 style="font-size:17px;font-weight:800;color:var(--ink);margin:0;">PO 360° Inspector: ${po.purchaseOrderId}</h2>
             ${renderStatusPill(po.status)}
+            ${po.needsReapproval ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:10px;">Re-approval Mandated</span>` : ''}
           </div>
-          <span style="font-size:12px;color:var(--muted);margin-top:2px;display:block;">Supplier: <strong>${po.vendorName || po.vendorId}</strong> · Café: <strong>${po.cafeId}</strong></span>
+          <span style="font-size:12px;color:var(--muted);margin-top:2px;display:block;">
+            Supplier: <strong>${po.vendorName || po.vendorId}</strong> · Café: <strong>${po.cafeId}</strong> · Timing: <strong>${po.timingType || 'NORMAL'}</strong>
+          </span>
         </div>
         <div style="text-align:right;">
           <span style="font-size:11px;color:var(--muted);display:block;">Order Value</span>
@@ -1422,10 +2192,11 @@ function openPo360Modal(root, po) {
       </div>
 
       <!-- Navigation Tabs -->
-      <div style="display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:6px;">
+      <div style="display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:6px;overflow-x:auto;">
         <button class="btn btn-sm btn-ghost active" id="tab-po-items" style="font-size:12px;font-weight:700;" type="button">📋 Line Items</button>
-        <button class="btn btn-sm btn-ghost" id="tab-po-documents" style="font-size:12px;font-weight:700;" type="button">📎 Documents &amp; Evidence <span class="badge" id="po-doc-count-badge" style="font-size:9px;margin-left:4px;">0</span></button>
+        <button class="btn btn-sm btn-ghost" id="tab-po-documents" style="font-size:12px;font-weight:700;" type="button">📎 Vendor Bills &amp; Docs <span class="badge" id="po-doc-count-badge" style="font-size:9px;margin-left:4px;">${(po.receiptAttachments || []).length}</span></button>
         <button class="btn btn-sm btn-ghost" id="tab-po-matching" style="font-size:12px;font-weight:700;" type="button">⚖️ 3-Way Reconciliation</button>
+        <button class="btn btn-sm btn-ghost" id="tab-po-history" style="font-size:12px;font-weight:700;" type="button">📜 Audit &amp; Edits <span class="badge" style="font-size:9px;margin-left:4px;">${totalEdits}</span></button>
       </div>
 
       <!-- TAB 1: Line Items -->
@@ -1458,8 +2229,25 @@ function openPo360Modal(root, po) {
 
       <!-- TAB 2: Documents & Evidence -->
       <div id="po-tab-content-documents" style="display:none;">
+        ${(po.receiptAttachments && po.receiptAttachments.length > 0) ? `
+          <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:6px;padding:12px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:16px;">📑</span>
+                <strong style="color:#065f46;font-size:12.5px;">Attached Vendor Bill / Receipt: ${po.receiptAttachments[0].filename}</strong>
+              </div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                Uploaded by: <strong>${po.receiptAttachments[0].uploadedByUserId} (${po.receiptAttachments[0].uploadedByRole || 'STAFF'})</strong> · Download for Accounts handoff.
+              </div>
+            </div>
+            <button class="btn btn-sm btn-primary" id="btn-download-bill-accounts" style="font-size:11.5px;font-weight:700;background:#059669;border-color:#059669;display:flex;align-items:center;gap:6px;" type="button">
+              📥 Download Vendor Bill for Accounts
+            </button>
+          </div>
+        ` : ''}
+
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:12px;color:var(--muted);">Audited procurement evidence (Invoices, Delivery Challans, Receipts, Quotations)</span>
+          <span style="font-size:12px;color:var(--muted);">Procurement evidence (Invoices, Delivery Challans, Vendor Bills, Receipts)</span>
           ${canAttach ? `
             <button class="btn btn-sm btn-primary" id="btn-po-attach-document" style="font-size:11px;font-weight:700;" type="button">📎 Attach Document</button>
           ` : (isStaff ? `<span class="badge warning" style="font-size:10px;">Staff: No Attachment Access</span>` : '')}
@@ -1476,9 +2264,74 @@ function openPo360Modal(root, po) {
         </div>
       </div>
 
+      <!-- TAB 4: Audit & Edit History -->
+      <div id="po-tab-content-history" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span style="font-size:12px;color:var(--muted);">Audit trail of modifications made before and after Master approval</span>
+          <div style="display:flex;gap:8px;">
+            <span class="badge" style="background:rgba(59,130,246,0.12);color:#2563eb;font-size:10.5px;">
+              ✏️ ${po.editCountBeforeApproval || 0} Pre-Approval Edit(s)
+            </span>
+            <span class="badge" style="background:rgba(239,68,68,0.15);color:#dc2626;font-size:10.5px;font-weight:700;">
+              ⚠️ ${po.editCountAfterApproval || 0} Post-Approval Edit(s)
+            </span>
+          </div>
+        </div>
+
+        ${po.needsReapproval ? `
+          <div style="padding:10px 14px;background:rgba(239,68,68,0.1);border:1px solid #ef4444;border-radius:6px;color:#b91c1c;font-size:12px;margin-bottom:10px;line-height:1.4;">
+            ⚠️ <strong>Re-approval Required:</strong> This purchase order was modified after prior Master approval. Master must verify changes and approve again.
+          </div>
+        ` : ''}
+
+        <div style="max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface);">
+          ${(po.editHistory && po.editHistory.length > 0) ? `
+            <table class="glass-table" style="width:100%;font-size:11px;margin:0;">
+              <thead>
+                <tr style="background:var(--surface-sunken);">
+                  <th>Date &amp; Time</th>
+                  <th>Modified By</th>
+                  <th>Timing</th>
+                  <th>Reason for Edit</th>
+                  <th>Changes Summary</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${po.editHistory.map((h) => `
+                  <tr>
+                    <td style="color:var(--muted);white-space:nowrap;">${h.editedAt ? new Date(h.editedAt).toLocaleString('en-IN') : '—'}</td>
+                    <td><strong>${h.editedByUserId}</strong> <span class="badge" style="font-size:9px;">${h.editedByRole}</span></td>
+                    <td>
+                      ${h.wasApproved ? `
+                        <span class="badge" style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:9px;">⚠️ Post-Approval</span>
+                      ` : `
+                        <span class="badge" style="background:#dbeafe;color:#1e40af;font-size:9px;">Pre-Approval</span>
+                      `}
+                    </td>
+                    <td style="color:var(--ink);">${h.reason || '—'}</td>
+                    <td style="color:var(--muted);">${h.changesSummary || '—'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : `
+            <div style="text-align:center;padding:24px;color:var(--muted);font-size:12px;">
+              No modifications recorded for this order request.
+            </div>
+          `}
+        </div>
+      </div>
+
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;border-top:1px solid var(--line);padding-top:8px;">
         <button class="btn btn-sm btn-ghost" id="modal-po360-print" style="font-size:12px;" type="button">🖨️ Print PO</button>
-        <button class="btn btn-ghost" id="modal-po360-close" style="font-size:12px;" type="button">Close</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${isMaster && (['SUBMITTED', 'VERIFIED_PENDING_MASTER_APPROVAL'].includes(po.status) || po.needsReapproval) ? `
+            <button class="btn btn-sm btn-primary" id="modal-po360-approve" style="font-size:12px;font-weight:700;background:#059669;border-color:#059669;" type="button">
+              ✅ Approve Order &amp; Bills
+            </button>
+          ` : ''}
+          <button class="btn btn-ghost" id="modal-po360-close" style="font-size:12px;" type="button">Close</button>
+        </div>
       </div>
     </div>
   `;
@@ -1488,13 +2341,15 @@ function openPo360Modal(root, po) {
   const tabItemsBtn = document.getElementById('tab-po-items');
   const tabDocsBtn = document.getElementById('tab-po-documents');
   const tabMatchBtn = document.getElementById('tab-po-matching');
+  const tabHistBtn = document.getElementById('tab-po-history');
   const contentItems = document.getElementById('po-tab-content-items');
   const contentDocs = document.getElementById('po-tab-content-documents');
   const contentMatch = document.getElementById('po-tab-content-matching');
+  const contentHist = document.getElementById('po-tab-content-history');
 
   function setPoTab(active) {
-    [tabItemsBtn, tabDocsBtn, tabMatchBtn].forEach((b) => b?.classList.remove('active'));
-    [contentItems, contentDocs, contentMatch].forEach((c) => { if (c) c.style.display = 'none'; });
+    [tabItemsBtn, tabDocsBtn, tabMatchBtn, tabHistBtn].forEach((b) => b?.classList.remove('active'));
+    [contentItems, contentDocs, contentMatch, contentHist].forEach((c) => { if (c) c.style.display = 'none'; });
 
     if (active === 'items') {
       tabItemsBtn?.classList.add('active');
@@ -1507,15 +2362,28 @@ function openPo360Modal(root, po) {
       tabMatchBtn?.classList.add('active');
       if (contentMatch) contentMatch.style.display = 'block';
       loadPoMatching(po);
+    } else if (active === 'history') {
+      tabHistBtn?.classList.add('active');
+      if (contentHist) contentHist.style.display = 'block';
     }
   }
 
   tabItemsBtn?.addEventListener('click', () => setPoTab('items'));
   tabDocsBtn?.addEventListener('click', () => setPoTab('documents'));
   tabMatchBtn?.addEventListener('click', () => setPoTab('matching'));
+  tabHistBtn?.addEventListener('click', () => setPoTab('history'));
 
   document.getElementById('modal-po360-close')?.addEventListener('click', closeModal);
   document.getElementById('modal-po360-print')?.addEventListener('click', () => window.print());
+
+  document.getElementById('btn-download-bill-accounts')?.addEventListener('click', () => {
+    downloadOrderBill(po.purchaseOrderId);
+  });
+
+  document.getElementById('modal-po360-approve')?.addEventListener('click', async () => {
+    await executeMasterApprove(root, po.purchaseOrderId);
+    closeModal();
+  });
 
   document.getElementById('btn-po-attach-document')?.addEventListener('click', () => {
     openAttachPoDocumentModal(root, po, () => {

@@ -21,6 +21,10 @@ export const state = {
     lastSync: Date.now(),
   },
   role: null, // Derived from backend authenticated identity (/auth/me)
+  originalRole: null,
+  activeWorkspace: null,
+  supervisedEmployeeId: null,
+  isTrainingMode: false,
   route: "dashboard",
   attendance: {
     status: "not_checked_in", // not_checked_in | checked_in | checked_out

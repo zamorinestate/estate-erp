@@ -28,6 +28,7 @@ const PAYMENT_METHODS = [
   'CARD',
   'CREDIT',
   'COMPLIMENTARY',
+  'STAFF_MEAL',
   'MIXED',
   'SPLIT',
 ];
@@ -38,6 +39,8 @@ const ORDER_TYPES = [
   'TAKEAWAY',
   'DELIVERY',
   'SCHEDULED_PICKUP',
+  'STAFF_MEAL',
+  'COMPLIMENTARY',
 ];
 
 const TAX_CLASSIFICATIONS = [
@@ -425,6 +428,13 @@ const billSchema = new mongoose.Schema(
       index: true,
     },
 
+    businessDate: {
+      type: String,
+      trim: true,
+      index: true,
+      default: null, // YYYY-MM-DD operational business trading day
+    },
+
     orderType: {
       type: String,
       enum: ORDER_TYPES,
@@ -533,6 +543,12 @@ const billSchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
       default: '',
+    },
+
+    isTraining: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
 
     taxConfigVersion: {

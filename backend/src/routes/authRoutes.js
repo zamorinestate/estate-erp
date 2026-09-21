@@ -258,6 +258,7 @@ router.post('/passkeys/register/verify', passkeyFeatureGate, authenticate, passk
 router.post('/passkeys/authenticate/options', passkeyFeatureGate, passkeyIpRateLimiter, passkeyAccountRateLimiter, passkeyController.getAuthenticationOptions);
 router.post('/passkeys/authenticate/verify', passkeyFeatureGate, passkeyIpRateLimiter, passkeyAccountRateLimiter, passkeyController.verifyAuthentication);
 router.get('/passkeys', passkeyFeatureGate, authenticate, passkeyController.listUserPasskeys);
+router.delete('/passkeys', passkeyFeatureGate, authenticate, passkeyController.revokeAllUserPasskeys);
 router.patch('/passkeys/:credentialId', passkeyFeatureGate, authenticate, passkeyController.renameUserPasskey);
 router.delete('/passkeys/:credentialId', passkeyFeatureGate, authenticate, passkeyController.revokeUserPasskey);
 
@@ -287,6 +288,7 @@ router.post(
 );
 
 router.post('/password/change', authenticate, changePassword);
+router.post('/change-password', authenticate, changePassword);
 router.post('/logout', authenticate, logout);
 router.post('/logout-all', authenticate, logoutAll);
 router.get('/sessions', authenticate, getSessions);

@@ -160,7 +160,8 @@
   --font-scale: 1;
 }
 
-[data-font-size="small"]      { --font-scale: 0.9;  }
+[data-font-size="small"],
+[data-font-size="compact"]    { --font-scale: 0.9;  }
 [data-font-size="standard"]   { --font-scale: 1;    }
 [data-font-size="large"]      { --font-scale: 1.15; }
 [data-font-size="extra-large"]{ --font-scale: 1.3;  }

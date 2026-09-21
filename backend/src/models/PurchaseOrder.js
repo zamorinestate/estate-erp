@@ -30,6 +30,7 @@ const PO_STATUSES = [
   'DISPATCHED',
   'PARTIALLY_RECEIVED',
   'RECEIVED_PENDING_FINAL_POSTING',
+  'VERIFIED_PENDING_MASTER_APPROVAL',
   'RECEIVED',
   'CLOSED',
   'CANCELLED',
@@ -314,6 +315,8 @@ const grnItemSchema = new mongoose.Schema(
     deliveredQty: { type: Number, required: true, min: 0 },
     acceptedQty: { type: Number, required: true, min: 0 },
     rejectedQty: { type: Number, min: 0, default: 0 },
+    missingQty: { type: Number, min: 0, default: 0 },
+    discrepancyReason: { type: String, trim: true, default: '' },
     lotNumber: { type: String, trim: true, default: null },
     manufacturingDate: { type: Date, default: null },
     expiryDate: { type: Date, default: null },
@@ -328,6 +331,35 @@ const grnItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const receiptAttachmentSchema = new mongoose.Schema(
+  {
+    attachmentId: { type: String, required: true, trim: true, uppercase: true },
+    filename: { type: String, required: true, trim: true },
+    mimeType: { type: String, required: true, trim: true },
+    sizeBytes: { type: Number, min: 0, default: 0 },
+    storagePath: { type: String, trim: true, default: '' },
+    dataBase64: { type: String, default: null },
+    uploadedAt: { type: Date, default: Date.now },
+    uploadedByUserId: { type: String, required: true, trim: true, uppercase: true },
+    uploadedByRole: { type: String, trim: true, uppercase: true, default: 'STAFF' },
+    note: { type: String, trim: true, default: '' },
+  },
+  { _id: true }
+);
+
+const poEditHistorySchema = new mongoose.Schema(
+  {
+    editedAt: { type: Date, default: Date.now },
+    editedByUserId: { type: String, required: true, trim: true, uppercase: true },
+    editedByRole: { type: String, required: true, trim: true, uppercase: true },
+    reason: { type: String, trim: true, default: '' },
+    wasApproved: { type: Boolean, default: false },
+    changesSummary: { type: String, trim: true, default: '' },
+    previousSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+  },
+  { _id: true }
+);
+
 const grnSchema = new mongoose.Schema(
   {
     grnId: { type: String, required: true, trim: true, uppercase: true },
@@ -336,6 +368,7 @@ const grnSchema = new mongoose.Schema(
     receivedAt: { type: Date, default: Date.now },
     receivedByUserId: { type: String, required: true, trim: true, uppercase: true },
     items: [grnItemSchema],
+    receiptAttachments: [receiptAttachmentSchema],
     notes: { type: String, trim: true, default: '' },
     status: { type: String, enum: ['ACCEPTED', 'PARTIAL', 'REJECTED'], default: 'ACCEPTED' },
   },
@@ -579,6 +612,31 @@ const purchaseOrderSchema = new mongoose.Schema(
     quotationIds: [{ type: String, trim: true }],
     creditDebitNoteIds: [{ type: String, trim: true }],
     invoices: [supplierInvoiceRefSchema],
+    receiptAttachments: {
+      type: [receiptAttachmentSchema],
+      default: [],
+    },
+
+    // ── Edit Governance & Counters ───────────────────────────────────────────
+    editCountBeforeApproval: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    editCountAfterApproval: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    needsReapproval: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    editHistory: {
+      type: [poEditHistorySchema],
+      default: [],
+    },
 
     // ── 3-Way Match & MASTER Approval & Inventory Posting ─────────────────────
     threeWayMatch: {

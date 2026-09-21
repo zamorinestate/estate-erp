@@ -7,6 +7,8 @@
  */
 
 const ownerMenuPricingService = require('../services/ownerMenuPricingService');
+const MenuPriceProposalModule = require('../models/MenuPriceProposal');
+const MenuPriceProposal = MenuPriceProposalModule.MenuPriceProposal || MenuPriceProposalModule;
 
 class OwnerMenuPricingController {
   _getAuth(req) {
@@ -79,6 +81,22 @@ class OwnerMenuPricingController {
       return res.status(200).json({ success: true, data: updated });
     } catch (err) {
       return res.status(400).json({ success: false, error: err.message });
+    }
+  }
+
+  async listPriceProposals(req, res) {
+    try {
+      const { organisationId } = this._getAuth(req);
+      if (!organisationId) return res.status(401).json({ success: false, error: 'ORGANISATION_REQUIRED' });
+
+      const query = { $or: [{ organisationId }, { organisationId: organisationId.toString() }] };
+      if (req.query.cafeId) query.cafeId = req.query.cafeId;
+      if (req.query.status) query.status = req.query.status;
+
+      const proposals = await MenuPriceProposal.find(query).sort({ createdAt: -1 });
+      return res.status(200).json({ success: true, data: proposals });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
     }
   }
 

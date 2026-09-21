@@ -662,7 +662,7 @@ const setupAppPin = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'USER_NOT_FOUND', 'User account not found.');
   }
 
-  const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+  const isPasswordValid = await verifyPassword(password, user.passwordHash);
   if (!isPasswordValid) {
     throw new ApiError(401, 'INVALID_PASSWORD', 'Current password verification failed.');
   }
@@ -730,7 +730,7 @@ const changeAppPin = asyncHandler(async (req, res) => {
 
   let verified = false;
   if (password) {
-    verified = await bcrypt.compare(password, user.passwordHash);
+    verified = await verifyPassword(password, user.passwordHash);
   } else if (currentPin && user.appPinHash) {
     verified = await bcrypt.compare(currentPin, user.appPinHash);
   }
@@ -793,7 +793,7 @@ const disableAppPin = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'USER_NOT_FOUND', 'User account not found.');
   }
 
-  const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+  const isPasswordValid = await verifyPassword(password, user.passwordHash);
   if (!isPasswordValid) {
     throw new ApiError(401, 'INVALID_PASSWORD', 'Current password verification failed.');
   }
@@ -1065,8 +1065,8 @@ const loginWithAppPin = asyncHandler(async (req, res) => {
 const requestPasswordReset = asyncHandler(
   async (request, response) => {
     const organisationId = typeof request.body?.organisationId === 'string' ? request.body.organisationId.trim().toUpperCase() : '';
-    const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : '';
-    if (!organisationId || !email) throw new ApiError(400, 'PASSWORD_RESET_FIELDS_REQUIRED', 'Organisation ID and email are required.');
+    const rawIdentifier = typeof request.body?.email === 'string' ? request.body.email.trim() : (typeof request.body?.identifier === 'string' ? request.body.identifier.trim() : '');
+    if (!organisationId || !rawIdentifier) throw new ApiError(400, 'PASSWORD_RESET_FIELDS_REQUIRED', 'Organisation ID and email or user identifier are required.');
 
     const message = 'If an eligible account exists, a password reset message has been sent.';
 
@@ -1086,14 +1086,24 @@ const requestPasswordReset = asyncHandler(
           action: 'PASSWORD_RESET_DELIVERY_UNCONFIGURED',
           outcome: 'FAILURE',
           severity: 'WARN',
-          metadata: { emailMasked: maskEmail(email), reason: 'EMAIL_DELIVERY_NOT_CONFIGURED' },
+          metadata: { emailMasked: maskEmail(rawIdentifier), reason: 'EMAIL_DELIVERY_NOT_CONFIGURED' },
         });
       } catch {}
       // Never expose raw backend configuration text to users
       throw new ApiError(503, 'PASSWORD_RECOVERY_UNAVAILABLE', 'Password recovery is temporarily unavailable. Please try again later or contact support.');
     }
 
-    const user = await User.findOne({ organisationId, email });
+    const normalizedEmail = rawIdentifier.toLowerCase();
+    const canonicalId = rawIdentifier.toUpperCase();
+    const user = await User.findOne({
+      organisationId,
+      $or: [
+        { email: normalizedEmail },
+        { userId: canonicalId },
+        { employeeId: canonicalId },
+        { employeeNumber: canonicalId },
+      ],
+    });
     if (!passwordResetService.isResetEligibleUser(user)) {
       return response.status(202).json({ success: true, message, correlationId: request.correlationId || null });
     }

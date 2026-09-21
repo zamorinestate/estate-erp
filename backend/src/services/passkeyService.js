@@ -539,6 +539,43 @@ async function revokeUserPasskey({ organisationId, userId, credentialId, revoked
   return { success: true, credentialId };
 }
 
+/**
+ * Revoke or purge all passkeys for an authenticated user.
+ */
+async function revokeAllUserPasskeys({ organisationId, userId, revokedBy, hardDelete = true }) {
+  if (hardDelete) {
+    const result = await PasskeyCredential.deleteMany({
+      organisationId,
+      userId,
+    });
+    return { success: true, count: result.deletedCount };
+  }
+
+  const result = await PasskeyCredential.updateMany(
+    {
+      organisationId,
+      userId,
+      status: 'ACTIVE',
+    },
+    {
+      $set: {
+        status: 'REVOKED',
+        revokedAt: new Date(),
+        revokedBy: revokedBy || userId,
+      },
+    }
+  );
+
+  await recordPasskeyAudit({
+    organisationId,
+    actorUserId: userId,
+    action: 'ALL_PASSKEYS_REVOKED',
+    result: 'SUCCESS',
+  });
+
+  return { success: true, count: result.modifiedCount };
+}
+
 module.exports = {
   getWebAuthnConfig,
   generatePasskeyRegistrationOptions,
@@ -547,5 +584,6 @@ module.exports = {
   verifyPasskeyAuthentication,
   listUserPasskeys,
   revokeUserPasskey,
+  revokeAllUserPasskeys,
   renameUserPasskey,
 };

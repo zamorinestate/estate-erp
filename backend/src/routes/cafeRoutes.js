@@ -27,6 +27,10 @@ const {
   provisionCafe,
   verifyCafe,
   activateCafe,
+  listCafeTemplates,
+  createCafeTemplate,
+  previewTemplateOverrides,
+  applyTemplateToCafe,
 } = require('../controllers/cafeController');
 
 const router = express.Router();
@@ -34,6 +38,10 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/compliance/alerts', getComplianceAlerts);
+
+// Café Configuration Templates
+router.get('/templates', listCafeTemplates);
+router.post('/templates', createCafeTemplate);
 
 // REC-02: Multi-stage New Café Onboarding Lifecycle Endpoints
 router.post('/validate', validateCafe);
@@ -43,6 +51,10 @@ router.put('/:cafeId/draft', updateDraft);
 router.post('/:cafeId/provision', provisionCafe);
 router.post('/:cafeId/verify', verifyCafe);
 router.post('/:cafeId/activate', activateCafe);
+
+// Template preview and apply per cafe
+router.get('/:cafeId/template-preview', previewTemplateOverrides);
+router.post('/:cafeId/apply-template', applyTemplateToCafe);
 
 router
   .route('/')

@@ -1663,6 +1663,7 @@ async function renderCountsTab(wrap) {
             <h3 style="font-size:16px; font-weight:700; margin:0; color:var(--ink); font-family:var(--font-heading);">Cycle Counts &amp; Stocktakes</h3>
             <p style="font-size:12.5px; color:var(--muted); margin:4px 0 0;">Review blind counted batches and post audited variance adjustments to general ledger.</p>
           </div>
+          <button id="btn-new-count" class="btn btn-primary btn-sm" style="font-weight:700;" type="button">+ Record Stocktake</button>
         </div>
 
         <div id="counts-table-container">
@@ -1673,7 +1674,7 @@ async function renderCountsTab(wrap) {
   `;
 
   wrap.querySelector("#inventory-back-to-hub-btn")?.addEventListener("click", () => navigate("inventory"));
-  wrap.querySelector("#btn-new-count")?.addEventListener("click", () => openCreateCountModal(wrap));
+  wrap.querySelector("#btn-new-count")?.addEventListener("click", () => openSubmitCountModal(wrap));
 
   await loadCountsData(wrap);
 }
@@ -2824,7 +2825,7 @@ function openSubmitCountModal(wrap) {
   const effectiveCafe = cachedCafes[0]?.cafeId || state.user?.primaryCafeId || "";
   const modalHtml = `
     <div style="padding:6px;">
-      <h3 style="font-size:18px; font-weight:800; margin:0 0 16px; color:var(--ink);">Record Physical Cycle Count</h3>
+      <h3 style="font-size:18px; font-weight:800; margin:0 0 16px; color:var(--ink);">Record Physical Cycle Count / Stocktake</h3>
       <form id="form-submit-count">
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
           <div>
@@ -2843,18 +2844,28 @@ function openSubmitCountModal(wrap) {
           </div>
         </div>
 
+        <div style="margin-bottom:12px; padding:10px 12px; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--line);">
+          <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:700; cursor:pointer; color:var(--ink);">
+            <input type="checkbox" id="chk-blind-count" name="isBlindCount" checked style="width:16px; height:16px;">
+            <span>Blind Audit Mode (Hides system quantity from counter to eliminate counting bias)</span>
+          </label>
+        </div>
+
         <div style="border-top:1px solid var(--border-color); padding-top:10px; margin-bottom:12px;">
           <div style="font-size:12px; font-weight:700; margin-bottom:6px;">Audited Item</div>
-          <div style="display:grid; grid-template-columns:2fr 1fr 1fr; gap:8px;">
-            <input type="text" name="itemId" class="form-input" placeholder="Item Code" required>
-            <input type="number" name="systemQty" class="form-input" placeholder="System" required>
-            <input type="number" name="countedQty" class="form-input" placeholder="Counted" required>
+          <div id="count-input-row" style="display:grid; grid-template-columns:2fr 1fr; gap:8px;">
+            <input type="text" name="itemId" class="form-input" placeholder="Item Code / SKU" required>
+            <input type="number" name="countedQty" class="form-input" placeholder="Physical Counted Qty" required min="0" step="any">
+            <input type="hidden" name="systemQty" id="input-system-qty" value="0">
+          </div>
+          <div id="blind-note" style="font-size:11px; color:var(--muted); margin-top:4px; font-style:italic;">
+            Expected quantity is hidden from the store counter. The system will compute variance automatically for supervisor review.
           </div>
         </div>
 
-        <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:14px;">
           <button type="button" class="btn btn-secondary" onclick="document.querySelector('#modal-root').innerHTML=''">Cancel</button>
-          <button type="submit" class="btn btn-primary">Submit Count for Approval</button>
+          <button type="submit" class="btn btn-primary" style="font-weight:700;">Submit Count for Supervisor Approval</button>
         </div>
       </form>
     </div>
@@ -2862,24 +2873,45 @@ function openSubmitCountModal(wrap) {
 
   openModal(modalHtml);
 
+  const chkBlind = document.querySelector("#chk-blind-count");
+  const countRow = document.querySelector("#count-input-row");
+  const sysInput = document.querySelector("#input-system-qty");
+  const blindNote = document.querySelector("#blind-note");
+  if (chkBlind && countRow && sysInput) {
+    chkBlind.addEventListener("change", () => {
+      if (chkBlind.checked) {
+        countRow.style.gridTemplateColumns = "2fr 1fr";
+        sysInput.type = "hidden";
+        if (blindNote) blindNote.style.display = "block";
+      } else {
+        countRow.style.gridTemplateColumns = "2fr 1fr 1fr";
+        sysInput.type = "number";
+        sysInput.placeholder = "System Expected";
+        if (blindNote) blindNote.style.display = "none";
+      }
+    });
+  }
+
   const form = document.querySelector("#form-submit-count");
   if (form) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
+      const isBlind = Boolean(chkBlind?.checked);
       try {
         await apiPost("/inventory/counts", {
           cafeId: fd.get("cafeId"),
           countType: fd.get("countType"),
+          isBlind,
           items: [
             {
               itemId: fd.get("itemId"),
-              systemQty: Number(fd.get("systemQty")),
+              systemQty: isBlind ? null : Number(fd.get("systemQty")),
               countedQty: Number(fd.get("countedQty")),
             },
           ],
         });
-        showToast("Physical count submitted.", "success");
+        showToast("Physical stocktake submitted for supervisor review.", "success");
         document.querySelector("#modal-root").innerHTML = "";
         renderCountsTab(wrap);
       } catch (err) {

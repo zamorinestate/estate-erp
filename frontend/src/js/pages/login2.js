@@ -110,7 +110,10 @@ function renderBackgroundAndModalsHtml() {
         </div>
         <h3 id="l2-glass-alert-title" class="glass-alert-title" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Notice</h3>
         <p id="l2-glass-alert-msg" class="glass-alert-text" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;"></p>
-        <button id="l2-glass-alert-ok" type="button" class="light-btn glass-alert-ok" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">OK</button>
+        <div id="l2-glass-alert-actions" style="display: flex; gap: 10px; justify-content: center; align-items: center; width: 100%; margin-top: 8px;">
+          <button id="l2-glass-alert-ok" type="button" class="light-btn glass-alert-ok" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">OK</button>
+          <button id="l2-glass-alert-action-btn" type="button" class="light-btn btn-pill-lime hidden" style="font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important; padding: 10px 22px; font-size: 13.5px;"></button>
+        </div>
       </div>
     </div>
 
@@ -239,11 +242,12 @@ if (typeof document !== "undefined" && !window._zamorin_tc_modal_delegated) {
   });
 }
 
-export function showGlassAlert(message, callback, title = "Notice") {
+export function showGlassAlert(message, callback, title = "Notice", actionOptions = null) {
   const modal = document.getElementById("l2-glass-alert-modal");
   const titleEl = document.getElementById("l2-glass-alert-title");
   const msgEl = document.getElementById("l2-glass-alert-msg");
   const okBtn = document.getElementById("l2-glass-alert-ok");
+  const actionBtn = document.getElementById("l2-glass-alert-action-btn");
   if (!modal || !msgEl) {
     console.warn(message);
     if (typeof callback === "function") callback();
@@ -253,14 +257,34 @@ export function showGlassAlert(message, callback, title = "Notice") {
     titleEl.textContent = title || "Notice";
   }
   msgEl.textContent = message;
+
+  if (actionBtn && actionOptions && actionOptions.label) {
+    actionBtn.textContent = actionOptions.label;
+    actionBtn.classList.remove("hidden");
+    actionBtn.onclick = (e) => {
+      e.preventDefault();
+      modal.classList.add("hidden");
+      actionBtn.classList.add("hidden");
+      actionBtn.onclick = null;
+      if (typeof actionOptions.onClick === "function") actionOptions.onClick();
+    };
+  } else if (actionBtn) {
+    actionBtn.classList.add("hidden");
+    actionBtn.onclick = null;
+  }
+
   modal.classList.remove("hidden");
 
   const closeHandler = () => {
     modal.classList.add("hidden");
+    if (actionBtn) {
+      actionBtn.classList.add("hidden");
+      actionBtn.onclick = null;
+    }
     okBtn?.removeEventListener("click", closeHandler);
     if (typeof callback === "function") callback();
   };
-  okBtn?.addEventListener("click", closeHandler);
+  okBtn.onclick = closeHandler;
 }
 
 // -----------------------------------------------------------------------------
@@ -641,7 +665,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       // If email was provided and user explicitly has 0 registered credentials:
       if (email && Array.isArray(options.allowCredentials) && options.allowCredentials.length === 0) {
         showGlassAlert(
-          `No passkey or biometric has been enrolled for ${email} yet.\n\nPlease sign in with your enterprise password or PIN, then register your fingerprint or Face ID in Settings → Security & Sign-In.`,
+          `No passkey or biometric is registered for ${email} on this device.\n\nSign in with your password or 6-digit PIN, then go to Settings → Security & Sign-In to register your fingerprint or Face ID.`,
           null,
           "Biometric Not Registered"
         );
@@ -776,7 +800,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         errMsg.includes("session has expired")
       ) {
         showGlassAlert(
-          "This biometric credential (fingerprint / Face ID) is not registered with your Zamorin ERP account yet.\n\nPlease sign in with your enterprise password or 6-digit PIN, then register your fingerprint or Face ID in Settings → Security & Sign-In.",
+          "This device's biometric is not yet linked to your Zamorin ERP account.\n\nPlease sign in with your password or 6-digit PIN, then go to Settings → Security & Sign-In to register your fingerprint or Face ID.",
           null,
           "Biometric Not Registered"
         );
@@ -923,7 +947,22 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       }
     } catch (err) {
       if (pinError) {
-        pinError.textContent = err.message || "Invalid 6-digit PIN. Please try again.";
+        const raw = err?.message?.toLowerCase() || "";
+        let msg;
+        if (!raw || raw.includes("authentication") || raw.includes("unauthorized") || raw.includes("401") || raw.includes("invalid pin") || raw.includes("incorrect pin") || raw.includes("wrong pin")) {
+          msg = "Incorrect PIN. Please try again.";
+        } else if (raw.includes("too many") || raw.includes("rate limit") || raw.includes("429") || raw.includes("attempts")) {
+          msg = "Too many incorrect attempts. Please wait a moment, then try again.";
+        } else if (raw.includes("no pin") || raw.includes("pin not set") || raw.includes("not found") || raw.includes("not configured")) {
+          msg = "No PIN has been set for this account. Please sign in with your password instead.";
+        } else if (raw.includes("expired") || raw.includes("session")) {
+          msg = "Your PIN session has expired. Please sign in with your password to continue.";
+        } else if (raw.includes("network") || raw.includes("fetch") || raw.includes("could not be reached")) {
+          msg = "Could not reach the server. Please check your connection and try again.";
+        } else {
+          msg = err.message || "Incorrect PIN. Please try again.";
+        }
+        pinError.textContent = msg;
         pinError.style.display = "block";
       }
       pinInputs.forEach((inp) => { inp.value = ""; });

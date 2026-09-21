@@ -35,6 +35,12 @@ router.post(
 );
 
 // Governed Price Proposals
+router.get(
+  '/proposals',
+  authorize('ADMIN_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  (req, res) => controller.listPriceProposals(req, res)
+);
+
 router.post(
   '/proposals',
   authorize('ADMIN_WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),

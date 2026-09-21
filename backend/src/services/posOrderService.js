@@ -103,13 +103,39 @@ function computeRequestFingerprint(orderPayload = {}) {
   return crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex');
 }
 
-function getIstBusinessDate(date = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
+function getIstBusinessDate(date = new Date(), cutoffHour = 4) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const getPart = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+    const hour = getPart('hour');
+
+    const d = new Date(date.getTime());
+    if (cutoffHour > 0 && hour < cutoffHour) {
+      d.setTime(d.getTime() - 24 * 60 * 60 * 1000);
+    }
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+  } catch (_) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
 }
 
 class PosOrderService {
@@ -587,13 +613,15 @@ class PosOrderService {
 
     const cafeId = normalizeId(orderPayload.cafeId);
     const orgId = normalizeId(authContext.organisationId || 'ORG-ZAMORIN');
-    const businessDate = orderPayload.businessDate || getIstBusinessDate();
-    const datePart = businessDate.replace(/-/g, '');
+    let cutoffHour = 4;
 
     // REC-13: Validate café operational status before financial commit
     if (cafeId) {
       try {
         const cafeDoc = await Cafe.findOne({ organisationId: orgId, cafeId });
+        if (cafeDoc && typeof cafeDoc.businessDayCutoffHour === 'number') {
+          cutoffHour = cafeDoc.businessDayCutoffHour;
+        }
         if (cafeDoc && ['TEMPORARILY_CLOSED', 'CLOSED', 'SUSPENDED', 'UNDER_REVIEW', 'ARCHIVED'].includes(cafeDoc.status)) {
           throw new ApiError(
             409,
@@ -605,6 +633,9 @@ class PosOrderService {
         if (cafeErr.statusCode === 409) throw cafeErr;
       }
     }
+
+    const businessDate = orderPayload.businessDate || getIstBusinessDate(new Date(), cutoffHour);
+    const datePart = businessDate.replace(/-/g, '');
 
     // REC-13: Validate catalog pricing version if supplied
     if (orderPayload.catalogVersion && String(orderPayload.catalogVersion).toUpperCase().startsWith('EXPIRED')) {
@@ -759,6 +790,7 @@ class PosOrderService {
       tenders,
       reprints: [],
       refunds: [],
+      isTraining: Boolean(orderPayload.isTraining || options.isTraining),
       printStatus: action === 'SAVE_AND_PRINT' ? 'PRINT_PENDING' : 'NOT_REQUESTED',
       printJobs: [],
       businessDate,
@@ -804,53 +836,54 @@ class PosOrderService {
       throw saveErr;
     }
 
-    // 6.5. Inventory Depletion via FEFO — Executed exactly once per committed sale
-    // REC-04A: BOM is now properly imported (destructured). Failure sets bomDepletionStatus
-    // to 'FAILED' and creates a durable PosReconciliationJob — bill remains COMPLETED.
-    try {
-      const bomResult = await BomDepletionService.depleteOrderBOM({
-        organisationId: orgId,
-        cafeId,
-        lineItems: totals.lineItems,
-        billId,
-        referenceType: 'POS_SALE',
-        userId: authContext.userId || 'CASHIER-01',
-        businessDate,
-      });
-      // Mark successful depletion on bill
-      const deplStatus = bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED';
+    // 6.5. Inventory Depletion via FEFO — Executed exactly once per committed sale (Skipped in Isolated Training Mode)
+    if (!billDoc.isTraining) {
       try {
-        billDoc.bomDepletionStatus = deplStatus;
-        await billDoc.save();
-      } catch { /* non-fatal — status update failure does not reverse the depletion */ }
-    } catch (invErr) {
-      // Explicit reconciliation state — bill is COMPLETED (payment is real) but
-      // stock was NOT consumed. Operations must reconcile via PosReconciliationJob.
-      console.warn('[POS] BOM depletion failed for bill', billId, invErr?.message);
-      try {
-        billDoc.bomDepletionStatus = 'FAILED';
-        billDoc.bomDepletionError = String(invErr?.message || 'UNKNOWN').slice(0, 250);
-        await billDoc.save();
-      } catch { /* non-fatal — bill record stands, FAILED status update is best-effort */ }
-
-      try {
-        await PosReconciliationService.recordReconciliationFailure({
+        const bomResult = await BomDepletionService.depleteOrderBOM({
           organisationId: orgId,
           cafeId,
+          lineItems: totals.lineItems,
           billId,
-          invoiceNumber,
-          effectType: 'BOM_DEPLETION',
-          error: invErr,
-          expectedAmount: 0,
-          payloadSnapshot: { lineItems: totals.lineItems, businessDate },
+          referenceType: 'POS_SALE',
+          userId: authContext.userId || 'CASHIER-01',
+          businessDate,
         });
-      } catch (recErr) {
-        console.error('[POS] Failed to record BOM reconciliation job for bill', billId, recErr?.message);
+        // Mark successful depletion on bill
+        const deplStatus = bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED';
+        try {
+          billDoc.bomDepletionStatus = deplStatus;
+          await billDoc.save();
+        } catch { /* non-fatal */ }
+      } catch (invErr) {
+        console.warn('[POS] BOM depletion failed for bill', billId, invErr?.message);
+        try {
+          billDoc.bomDepletionStatus = 'FAILED';
+          billDoc.bomDepletionError = String(invErr?.message || 'UNKNOWN').slice(0, 250);
+          await billDoc.save();
+        } catch { /* non-fatal */ }
+
+        try {
+          await PosReconciliationService.recordReconciliationFailure({
+            organisationId: orgId,
+            cafeId,
+            billId,
+            invoiceNumber,
+            effectType: 'BOM_DEPLETION',
+            error: invErr,
+            expectedAmount: 0,
+            payloadSnapshot: { lineItems: totals.lineItems, businessDate },
+          });
+        } catch (recErr) {
+          console.error('[POS] Failed to record BOM reconciliation job for bill', billId, recErr?.message);
+        }
       }
+    } else {
+      billDoc.bomDepletionStatus = 'TRAINING_MODE_SKIPPED';
+      await billDoc.save().catch(() => {});
     }
 
-    // 7. Post-save operations: Register Session & Cash Book
-    if (orderPayload.registerSessionId) {
+    // 7. Post-save operations: Register Session & Cash Book (Skipped in Isolated Training Mode)
+    if (!billDoc.isTraining && orderPayload.registerSessionId) {
       try {
         const session = await RegisterSession.findOne({
           registerSessionId: orderPayload.registerSessionId,
@@ -1296,8 +1329,13 @@ class PosOrderService {
       rawBuffer: printResult.rawBuffer,
     };
   }
+
+  static getIstBusinessDate(date = new Date(), cutoffHour = 4) {
+    return getIstBusinessDate(date, cutoffHour);
+  }
 }
 
 module.exports = PosOrderService;
 module.exports.PosOrderService = PosOrderService;
+module.exports.getIstBusinessDate = getIstBusinessDate;
 

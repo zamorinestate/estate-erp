@@ -187,7 +187,42 @@ export function renderTopbar({ scopeChip } = {}) {
   }
 
   let cafeScopeHtml = '';
-  if (isCafeOps) {
+  const isPrimaryMasterUser = Boolean(
+    (state.auth?.user?.role === 'master' || state.user?.role === 'master' || state.role === 'master' || state.originalRole === 'master') &&
+    (state.auth?.user?.isPrimaryMaster !== false && state.user?.isPrimaryMaster !== false && state.isPrimaryMaster !== false)
+  );
+
+  if (isPrimaryMasterUser) {
+    const currentWs = state.activeWorkspace || (state.role === 'master' ? (state.isPrimaryMaster === false ? 'master-normal' : 'master-primary') : state.role);
+    const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
+    const empOptions = (state.employees || []).map(emp => `<option value="${emp.id || emp.employeeId || emp.userId}" ${(state.supervisedEmployeeId === (emp.id || emp.employeeId || emp.userId)) ? 'selected' : ''}>👤 ${emp.name || emp.fullName || emp.userId} (${emp.employeeId || emp.id || ''})</option>`).join('');
+
+    cafeScopeHtml = `
+      <div class="primary-master-topbar-controls" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <div class="workspace-scope-dropdown">
+          <select id="global-workspace-selector" class="select-scope" aria-label="Selected Workspace Window" style="font-weight:700;">
+            <option value="master-primary" ${currentWs === 'master-primary' ? 'selected' : ''}>🛡️ Primary Master</option>
+            <option value="master-normal" ${currentWs === 'master-normal' ? 'selected' : ''}>⚖️ Normal Master</option>
+            <option value="owner" ${currentWs === 'owner' ? 'selected' : ''}>👑 Owner Portal</option>
+            <option value="cafe_admin" ${currentWs === 'cafe_admin' ? 'selected' : ''}>☕ Café Operations</option>
+            <option value="staff" ${currentWs === 'staff' ? 'selected' : ''}>👤 Staff Preview</option>
+          </select>
+        </div>
+        <div class="cafe-scope-dropdown">
+          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope">
+            <option value="ALL">🏠 All Cafés (Global Portfolio)</option>
+            ${cafeOptions}
+          </select>
+        </div>
+        <div class="supervised-employee-dropdown">
+          <select id="global-supervised-employee-selector" class="select-scope" aria-label="Supervised Employee Scope">
+            <option value="NONE" ${!state.supervisedEmployeeId ? 'selected' : ''}>👥 Supervise: None (Self)</option>
+            ${empOptions}
+          </select>
+        </div>
+      </div>
+    `;
+  } else if (isCafeOps) {
     const operatorName = user.name || "Operations Lead";
     const operatorId = user.userId || "";
     const cafeName = user.primaryCafeName || (state.currentCafeId ? `Outlet ${state.currentCafeId}` : "Assigned Outlet");
@@ -247,6 +282,18 @@ export function renderTopbar({ scopeChip } = {}) {
       </div>
 
       <div class="topbar-right">
+        ${state.isTrainingMode ? `
+          <div class="training-mode-badge" style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:var(--radius-sm); background:#fef3c7; border:1px solid #f59e0b; color:#92400e; font-size:11px; font-weight:700;">
+            <span>🎓 Training Mode</span>
+          </div>
+        ` : ''}
+        ${state.supervisedEmployeeId ? `
+          <div class="supervised-preview-badge" style="display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:var(--radius-sm); background:rgba(59,130,246,0.12); border:1px solid #3b82f6; color:#1d4ed8; font-size:11.5px; font-weight:700;">
+            <span>👁️ Viewing employee record: <strong style="font-family:var(--font-mono);">${state.supervisedEmployeeId}</strong></span>
+            <button id="exit-supervised-employee-btn" class="btn btn-ghost" type="button" style="padding:1px 6px; font-size:10.5px; height:auto; color:#1d4ed8; text-decoration:underline; font-weight:700; cursor:pointer;" title="Exit Employee Preview">Exit</button>
+          </div>
+        ` : ''}
+
         <!-- Live System Status Indicator -->
         <div class="system-status-indicator online" id="topbar-system-status" title="System Connected & Synced">
           <span style="font-size:10px;">●</span> Online
@@ -436,6 +483,96 @@ export function wireBell(root) {
     };
     window.addEventListener('online', updateConnectivityBadge);
     window.addEventListener('offline', updateConnectivityBadge);
+  }
+
+  // Global Workspace Window Selector (Primary Master 3-Way Topbar Shell)
+  const globalWsSel = root.querySelector("#global-workspace-selector");
+  if (globalWsSel) {
+    globalWsSel.addEventListener("change", (e) => {
+      const targetWs = e.target.value;
+      if (!state.originalRole) {
+        state.originalRole = state.role || ROLES.MASTER;
+      }
+      if (targetWs === "master-primary") {
+        state.role = ROLES.MASTER;
+        state.isPrimaryMaster = true;
+        state.activeWorkspace = "master-primary";
+        showToast("Switched workspace to Primary Master", "info");
+        navigate("dashboard");
+      } else if (targetWs === "master-normal") {
+        state.role = ROLES.MASTER;
+        state.isPrimaryMaster = false;
+        state.activeWorkspace = "master-normal";
+        showToast("Switched workspace to Normal Master (Operational)", "info");
+        navigate("dashboard");
+      } else if (targetWs === "owner") {
+        state.role = ROLES.OWNER;
+        state.activeWorkspace = "owner";
+        showToast("Switched workspace to Owner Portal", "info");
+        navigate("dashboard");
+      } else if (targetWs === "cafe_admin") {
+        state.role = ROLES.CAFE_ADMIN;
+        state.activeWorkspace = "cafe_admin";
+        showToast("Switched workspace to Café Operations", "info");
+        navigate("pos");
+      } else if (targetWs === "staff") {
+        state.role = ROLES.STAFF;
+        state.activeWorkspace = "staff";
+        showToast("Switched workspace to Staff Self-Service Preview", "info");
+        navigate("staff-home");
+      }
+    });
+  }
+
+  // Global Supervised Employee Selector
+  const globalSupervisedSel = root.querySelector("#global-supervised-employee-selector");
+  if (globalSupervisedSel) {
+    if (state.supervisedEmployeeId) {
+      globalSupervisedSel.value = state.supervisedEmployeeId;
+    }
+    // Asynchronously populate employees if empty
+    if (!state.employees || !state.employees.length) {
+      apiGet("/employees").then((res) => {
+        const empList = res?.data?.employees || res?.data || [];
+        if (Array.isArray(empList) && empList.length) {
+          state.employees = empList;
+          const currentVal = globalSupervisedSel.value;
+          globalSupervisedSel.innerHTML = `
+            <option value="NONE" ${!state.supervisedEmployeeId ? 'selected' : ''}>👥 Supervise: None (Self)</option>
+            ${empList.map(emp => `<option value="${emp.id || emp.employeeId || emp.userId}" ${(state.supervisedEmployeeId === (emp.id || emp.employeeId || emp.userId)) ? 'selected' : ''}>👤 ${emp.name || emp.fullName || emp.userId} (${emp.employeeId || emp.id || ''})</option>`).join('')}
+          `;
+          if (currentVal && currentVal !== "NONE") {
+            globalSupervisedSel.value = currentVal;
+          }
+        }
+      }).catch(() => {});
+    }
+
+    globalSupervisedSel.addEventListener("change", (e) => {
+      const empId = e.target.value;
+      state.supervisedEmployeeId = empId === "NONE" ? null : empId;
+      const optText = globalSupervisedSel.options[globalSupervisedSel.selectedIndex]?.textContent || empId;
+      if (state.supervisedEmployeeId) {
+        showToast(`Supervising employee: ${optText} (Session identity preserved)`, "info");
+      } else {
+        showToast("Supervised employee cleared (Personal/Self mode)", "info");
+      }
+      if (state.route) {
+        navigate(state.route);
+      }
+    });
+
+    const exitSupervisedBtn = root.querySelector("#exit-supervised-employee-btn");
+    if (exitSupervisedBtn) {
+      exitSupervisedBtn.addEventListener("click", () => {
+        state.supervisedEmployeeId = null;
+        globalSupervisedSel.value = "NONE";
+        showToast("Exited employee supervision mode (Self)", "info");
+        if (state.route) {
+          navigate(state.route);
+        }
+      });
+    }
   }
 
   // Global Café Scope Dropdown Selector

@@ -26,18 +26,35 @@ const {
 } = require('./seedInitialData');
 
 async function main() {
-  console.log('[dev] Starting in-memory MongoDB...');
+  let uri = process.env.MONGODB_URI;
+  let mongod = null;
 
-  const mongod = await MongoMemoryServer.create({
-    instance: { dbName: 'zamorin_cafe_erp' },
-  });
+  if (!uri) {
+    const net = require('net');
+    const isLocalMongo = await new Promise((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(800);
+      socket.on('connect', () => { socket.destroy(); resolve(true); });
+      socket.on('timeout', () => { socket.destroy(); resolve(false); });
+      socket.on('error', () => { resolve(false); });
+      socket.connect(27017, '127.0.0.1');
+    });
 
-  const uri = mongod.getUri();
+    if (isLocalMongo) {
+      uri = 'mongodb://127.0.0.1:27017/zamorin_cafe_erp';
+      console.log(`[dev] Persistent local MongoDB detected at ${uri}`);
+    } else {
+      console.log('[dev] Starting in-memory MongoDB...');
+      mongod = await MongoMemoryServer.create({
+        instance: { dbName: 'zamorin_cafe_erp' },
+      });
+      uri = mongod.getUri();
+      console.log(`[dev] In-memory MongoDB ready at ${uri}`);
+    }
+  }
 
   // Override MONGODB_URI so the environment validator accepts it
   process.env.MONGODB_URI = uri;
-
-  console.log(`[dev] MongoDB ready at ${uri}`);
 
   // Connect once for seeding
   await connectDatabase({ uri });
@@ -87,7 +104,7 @@ async function main() {
 
   // Keep mongod alive for the server lifetime
   process.on('exit', async () => {
-    await mongod.stop();
+    if (mongod) await mongod.stop();
   });
 }
 

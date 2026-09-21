@@ -14,6 +14,7 @@ const { BusinessLicence } = require('../models/BusinessLicence');
 const { ComplianceObligation } = require('../models/ComplianceObligation');
 const { MasterDuplicateCandidate } = require('../models/MasterDuplicateCandidate');
 const { MasterChangeRequest } = require('../models/MasterChangeRequest');
+const CafeTemplate = require('../models/CafeTemplate');
 
 const cafeService = require('../services/cafeService');
 
@@ -748,6 +749,155 @@ const activateCafe = asyncHandler(async (request, response) => {
   });
 });
 
+const listCafeTemplates = asyncHandler(async (request, response) => {
+  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  const templates = await CafeTemplate.find({ organisationId, isActive: true }).lean();
+  return response.status(200).json({
+    success: true,
+    data: templates,
+  });
+});
+
+const createCafeTemplate = asyncHandler(async (request, response) => {
+  const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
+  if (role !== 'MASTER') {
+    throw new ApiError(403, 'MASTER_ROLE_REQUIRED', 'Only Master can create café configuration templates.');
+  }
+  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  const {
+    name,
+    description,
+    establishmentCategory,
+    businessDayCutoffHour,
+    defaultOpeningTime,
+    defaultClosingTime,
+    receiptConfig,
+    approvalLimits,
+    packagingRules,
+    isDefault,
+  } = request.body;
+
+  if (!name || typeof name !== 'string') {
+    throw new ApiError(400, 'TEMPLATE_NAME_REQUIRED', 'A valid template name is required.');
+  }
+
+  const count = await CafeTemplate.countDocuments({ organisationId });
+  const templateId = `CTPL-${String(count + 1).padStart(3, '0')}`;
+
+  if (isDefault) {
+    await CafeTemplate.updateMany({ organisationId }, { isDefault: false });
+  }
+
+  const template = await CafeTemplate.create({
+    templateId,
+    organisationId,
+    name: name.trim(),
+    description: description || '',
+    establishmentCategory: establishmentCategory || 'Café',
+    businessDayCutoffHour: typeof businessDayCutoffHour === 'number' ? businessDayCutoffHour : 4,
+    defaultOpeningTime: defaultOpeningTime || '07:00',
+    defaultClosingTime: defaultClosingTime || '23:00',
+    receiptConfig: receiptConfig || {},
+    approvalLimits: approvalLimits || {},
+    packagingRules: Array.isArray(packagingRules) ? packagingRules : [],
+    isDefault: Boolean(isDefault),
+    createdByUserId: request.auth?.userId || 'MASTER',
+  });
+
+  return response.status(201).json({
+    success: true,
+    data: template,
+  });
+});
+
+const previewTemplateOverrides = asyncHandler(async (request, response) => {
+  const cafeId = normalizeIdentifier(request.params.cafeId);
+  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  assertCafeAccess(request, cafeId);
+
+  const cafe = await Cafe.findOne({ organisationId, cafeId }).lean();
+  if (!cafe) {
+    throw new ApiError(404, 'CAFE_NOT_FOUND', `Café ${cafeId} not found.`);
+  }
+
+  const templateId = request.query.templateId || cafe.templateId;
+  let template = null;
+  if (templateId) {
+    template = await CafeTemplate.findOne({ organisationId, templateId }).lean();
+  }
+
+  const comparison = {
+    cafeId,
+    templateId: template?.templateId || null,
+    templateName: template?.name || 'No Template Assigned',
+    inheritedValues: {
+      businessDayCutoffHour: template?.businessDayCutoffHour ?? 4,
+      defaultOpeningTime: template?.defaultOpeningTime ?? '07:00',
+      defaultClosingTime: template?.defaultClosingTime ?? '23:00',
+      receiptFooter: template?.receiptConfig?.footerText ?? '',
+      poApprovalLimitPaisa: template?.approvalLimits?.poApprovalThresholdPaisa ?? 500000,
+    },
+    cafeOverrides: {
+      businessDayCutoffHour: cafe.businessDayCutoffHour,
+      templateOverrides: cafe.templateOverrides || {},
+    },
+    effectiveValues: {
+      businessDayCutoffHour: cafe.businessDayCutoffHour ?? template?.businessDayCutoffHour ?? 4,
+      defaultOpeningTime: cafe.templateOverrides?.defaultOpeningTime ?? template?.defaultOpeningTime ?? '07:00',
+      defaultClosingTime: cafe.templateOverrides?.defaultClosingTime ?? template?.defaultClosingTime ?? '23:00',
+      receiptFooter: cafe.templateOverrides?.receiptFooter ?? template?.receiptConfig?.footerText ?? '',
+      poApprovalLimitPaisa: cafe.templateOverrides?.poApprovalLimitPaisa ?? template?.approvalLimits?.poApprovalThresholdPaisa ?? 500000,
+    },
+  };
+
+  return response.status(200).json({
+    success: true,
+    data: comparison,
+  });
+});
+
+const applyTemplateToCafe = asyncHandler(async (request, response) => {
+  const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
+  if (role !== 'MASTER' && role !== 'OWNER') {
+    throw new ApiError(403, 'GOVERNANCE_ROLE_REQUIRED', 'Only Master and Owner can apply templates to cafés.');
+  }
+  const cafeId = normalizeIdentifier(request.params.cafeId);
+  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  assertCafeAccess(request, cafeId);
+
+  const { templateId, overrides } = request.body;
+  const template = await CafeTemplate.findOne({ organisationId, templateId }).lean();
+  if (!template) {
+    throw new ApiError(404, 'TEMPLATE_NOT_FOUND', `Template ${templateId} not found.`);
+  }
+
+  const cafe = await Cafe.findOne({ organisationId, cafeId });
+  if (!cafe) {
+    throw new ApiError(404, 'CAFE_NOT_FOUND', `Café ${cafeId} not found.`);
+  }
+
+  cafe.templateId = template.templateId;
+  cafe.businessDayCutoffHour = overrides?.businessDayCutoffHour ?? template.businessDayCutoffHour;
+  if (overrides) {
+    cafe.templateOverrides = {
+      ...(cafe.templateOverrides || {}),
+      ...overrides,
+    };
+  }
+  await cafe.save();
+
+  return response.status(200).json({
+    success: true,
+    message: `Template ${template.name} applied to café ${cafeId} successfully.`,
+    data: {
+      cafeId,
+      templateId: cafe.templateId,
+      businessDayCutoffHour: cafe.businessDayCutoffHour,
+      templateOverrides: cafe.templateOverrides,
+    },
+  });
+});
+
 module.exports = {
   listCafes,
   getCafe,
@@ -769,4 +919,8 @@ module.exports = {
   provisionCafe,
   verifyCafe,
   activateCafe,
+  listCafeTemplates,
+  createCafeTemplate,
+  previewTemplateOverrides,
+  applyTemplateToCafe,
 };

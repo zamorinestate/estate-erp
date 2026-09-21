@@ -58,12 +58,12 @@ let _menuCatalogue = [];
 
 // POS State
 let cart = []; // Array of { lineId, item, qty, modifiers, notes }
-let activeServiceMode = "QUICK_SALE"; // QUICK_SALE | DINE_IN | TAKEAWAY
+let activeServiceMode = "QUICK_SALE"; // QUICK_SALE | DINE_IN | TAKEAWAY | STAFF_MEAL | COMPLIMENTARY
 let activeTable = "Table 01 (Indoor)";
 let activeToken = "A-101";
 let guestCovers = 2;
 let activeCategory = "ALL";
-let activeTender = "UPI"; // UPI | CASH | CARD | SPLIT
+let activeTender = "UPI"; // UPI | CASH | CARD | COMPLIMENTARY | SPLIT
 let searchQuery = "";
 let isCompactMode = false;
 let discountPaisa = 0;
@@ -137,10 +137,11 @@ function renderTerminalView() {
     return acc + (line.item.price + modPrice) * line.qty;
   }, 0);
 
-  const discount = Math.round(discountPaisa / 100);
+  const isZeroCollectMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || activeTender === "COMPLIMENTARY" || activeTender === "STAFF_MEAL");
+  const discount = isZeroCollectMode ? subtotal : Math.round(discountPaisa / 100);
   const taxableAmount = Math.max(0, subtotal - discount);
-  const gst = Math.round(taxableAmount * 0.05);
-  const grandTotal = taxableAmount + gst;
+  const gst = isZeroCollectMode ? 0 : Math.round(taxableAmount * 0.05);
+  const grandTotal = isZeroCollectMode ? 0 : (taxableAmount + gst);
 
   const categories = ["ALL", "Hot Coffees", "Cold Brews", "Bakery & Viennoiserie", "Savouries & Mains", "Desserts"];
   const totalItemCount = cart.reduce((a, c) => a + c.qty, 0);
@@ -152,6 +153,13 @@ function renderTerminalView() {
         <span>⚠️ TERMINAL OFFLINE — Cached menu active. Cash payments only permitted. Card/UPI disabled.</span>
         <span style="font-family:var(--font-mono);font-size:11px;">0 Pending Sync</span>
       </div>
+
+      ${state.isTrainingMode ? `
+        <div id="pos-training-banner" style="display:flex;background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:8px 14px;border-radius:var(--radius-sm);align-items:center;justify-content:space-between;font-size:12px;font-weight:700;">
+          <span>⚠️ ISOLATED TRAINING MODE ACTIVE — Practice orders do not post to live General Ledger or register cash.</span>
+          <button id="exit-training-mode-banner-btn" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:#f59e0b;color:#ffffff;font-weight:700;" type="button">Exit Training</button>
+        </div>
+      ` : ""}
 
       <!-- Area 1: Fixed Operational Context Bar (§10, §17, §18) -->
       <div class="card" style="padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:var(--surface);border:1px solid var(--line);">
@@ -174,11 +182,13 @@ function renderTerminalView() {
           </div>
 
           <!-- Service Mode Button Group (§19–§23) -->
-          <div class="pos-service-btn-group" style="display:inline-flex;align-items:center;gap:6px;">
+          <div class="pos-service-btn-group" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
             ${[
               { id: "QUICK_SALE", icon: "⚡", label: "Quick Sale" },
               { id: "DINE_IN", icon: "🍽️", label: "Dine-In" },
               { id: "TAKEAWAY", icon: "🛍️", label: "Takeaway" },
+              { id: "STAFF_MEAL", icon: "🥗", label: "Staff Meal" },
+              { id: "COMPLIMENTARY", icon: "🎁", label: "Complimentary" },
             ].map((m) => `
               <button
                 class="pos-service-mode-btn ${activeServiceMode === m.id ? "active" : ""}"
@@ -190,8 +200,8 @@ function renderTerminalView() {
                   border:1.5px solid ${activeServiceMode === m.id ? "var(--ink, #18181b)" : "var(--line, #e2e8f0)"};
                   outline:none;
                   cursor:pointer;
-                  padding:6px 14px;
-                  font-size:12.5px;
+                  padding:6px 12px;
+                  font-size:12px;
                   font-weight:700;
                   font-family:inherit;
                   border-radius:8px;
@@ -209,7 +219,7 @@ function renderTerminalView() {
             `).join("")}
           </div>
 
-          <!-- Dine-In / Takeaway Metadata Controls -->
+          <!-- Dine-In / Takeaway / Special Metadata Controls -->
           ${activeServiceMode === "DINE_IN" ? `
             <div style="display:flex;align-items:center;gap:6px;">
               <select id="pos-table-picker" class="select" style="font-size:11.5px;padding:3px 8px;font-weight:700;">
@@ -229,11 +239,26 @@ function renderTerminalView() {
                 Token: ${activeToken}
               </span>
             </div>
+          ` : activeServiceMode === "STAFF_MEAL" ? `
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;font-weight:700;color:var(--success);background:var(--surface-sunken);padding:3px 8px;border-radius:4px;border:1px solid var(--line);">
+                🥗 100% Staff Meal · Zero Collection
+              </span>
+            </div>
+          ` : activeServiceMode === "COMPLIMENTARY" ? `
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;font-weight:700;color:var(--bronze-600);background:var(--surface-sunken);padding:3px 8px;border-radius:4px;border:1px solid var(--line);">
+                🎁 Complimentary / Sampling · Zero Collection
+              </span>
+            </div>
           ` : ""}
         </div>
 
         <!-- Top Right Actions -->
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <button class="pos-service-mode-btn ${state.isTrainingMode ? 'active' : ''}" id="toggle-training-mode-btn" style="padding:6px 12px;font-size:12px; ${state.isTrainingMode ? 'background:#fef3c7; color:#92400e; border-color:#f59e0b;' : ''}" type="button" title="Toggle Isolated Training Mode (Practice without affecting live sales)">
+            🎓 ${state.isTrainingMode ? 'Training ACTIVE' : 'Training Mode'}
+          </button>
           <button class="pos-service-mode-btn" id="open-tickets-btn" style="padding:6px 12px;font-size:12px;" type="button">
             📋 Open Tickets ${openTicketsList.length ? `<span class="badge warning" style="font-size:9.5px;margin-left:4px;">${openTicketsList.length}</span>` : ""}
           </button>
@@ -427,11 +452,12 @@ function renderTerminalView() {
             </div>
 
             <!-- Tenders Grid (§71–§85) -->
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px;">
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:8px;">
               ${[
                 { id: "UPI", label: "📱 UPI" },
                 { id: "CASH", label: "💵 Cash" },
                 { id: "CARD", label: "💳 Card" },
+                { id: "COMPLIMENTARY", label: "🎁 Free" },
                 { id: "SPLIT", label: "✂️ Split" },
               ].map((t) => `
                 <button
@@ -446,7 +472,7 @@ function renderTerminalView() {
                     outline:none;
                     cursor:pointer;
                     padding:7px 4px;
-                    font-size:11.5px;
+                    font-size:11px;
                     font-weight:700;
                     font-family:inherit;
                     border-radius:8px;
@@ -481,14 +507,14 @@ function renderTerminalView() {
 
             <!-- Action Buttons Grid: Preview, Save, and Save & Print with Duplicate-Lock -->
             <div style="display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:6px;">
-              <button class="btn btn-secondary" id="preview-receipt-btn" ${grandTotal <= 0 ? "disabled" : ""} style="padding:10px 4px;font-size:12px;font-weight:700;min-height:46px;border-radius:8px;" type="button">
+              <button class="btn btn-secondary" id="preview-receipt-btn" ${!cart.length || (grandTotal <= 0 && !isZeroCollectMode) ? "disabled" : ""} style="padding:10px 4px;font-size:12px;font-weight:700;min-height:46px;border-radius:8px;" type="button">
                 👁️ Preview
               </button>
-              <button class="btn btn-secondary" id="pos-save-only-btn" ${grandTotal <= 0 || isPaymentInProgress ? "disabled" : ""} style="padding:10px 4px;font-size:12px;font-weight:700;min-height:46px;border-radius:8px;" type="button">
+              <button class="btn btn-secondary" id="pos-save-only-btn" ${!cart.length || (grandTotal <= 0 && !isZeroCollectMode) || isPaymentInProgress ? "disabled" : ""} style="padding:10px 4px;font-size:12px;font-weight:700;min-height:46px;border-radius:8px;" type="button">
                 💾 Save
               </button>
-              <button class="btn btn-primary" id="process-charge-btn" ${grandTotal <= 0 || isPaymentInProgress ? "disabled" : ""} style="padding:10px 6px;font-size:12.5px;font-weight:800;min-height:46px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.15);" type="button">
-                ${isPaymentInProgress ? "Finalizing…" : `⚡ Save & Print ₹${grandTotal.toLocaleString("en-IN")}`}
+              <button class="btn btn-primary" id="process-charge-btn" ${!cart.length || (grandTotal <= 0 && !isZeroCollectMode) || isPaymentInProgress ? "disabled" : ""} style="padding:10px 6px;font-size:12.5px;font-weight:800;min-height:46px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.15);" type="button">
+                ${isPaymentInProgress ? "Finalizing…" : (isZeroCollectMode ? `🎁 Finalize ${activeServiceMode === 'STAFF_MEAL' ? 'Staff Meal' : 'Complimentary'}` : `⚡ Save & Print ₹${grandTotal.toLocaleString("en-IN")}`)}
               </button>
             </div>
           </div>
@@ -1034,9 +1060,35 @@ function wirePOSEventListeners(root) {
   root.querySelectorAll("[data-service-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       activeServiceMode = btn.dataset.serviceMode;
+      if (activeServiceMode === "STAFF_MEAL") {
+        activeTender = "STAFF_MEAL";
+      } else if (activeServiceMode === "COMPLIMENTARY") {
+        activeTender = "COMPLIMENTARY";
+      } else if (activeTender === "STAFF_MEAL" || activeTender === "COMPLIMENTARY") {
+        activeTender = "UPI";
+      }
       refreshPOSView(root);
     });
   });
+
+  // Isolated Training Mode Toggle
+  const trainingBtn = root.querySelector("#toggle-training-mode-btn");
+  if (trainingBtn) {
+    trainingBtn.addEventListener("click", () => {
+      state.isTrainingMode = !state.isTrainingMode;
+      showToast(state.isTrainingMode ? "🎓 Isolated Training Mode ACTIVE" : "Exited Training Mode", state.isTrainingMode ? "warning" : "info");
+      refreshPOSView(root);
+    });
+  }
+
+  const exitTrainingBtn = root.querySelector("#exit-training-mode-banner-btn");
+  if (exitTrainingBtn) {
+    exitTrainingBtn.addEventListener("click", () => {
+      state.isTrainingMode = false;
+      showToast("Exited Training Mode", "info");
+      refreshPOSView(root);
+    });
+  }
 
   // Table Picker
   const tablePicker = root.querySelector("#pos-table-picker");
@@ -1331,6 +1383,13 @@ function wirePOSEventListeners(root) {
     saveOnlyBtn.addEventListener("click", async () => {
       if (!cart.length || isPaymentInProgress) return;
 
+      const isZeroMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || activeTender === "COMPLIMENTARY" || activeTender === "STAFF_MEAL");
+      if (isZeroMode) {
+        const tenderType = activeServiceMode === "STAFF_MEAL" ? "STAFF_MEAL" : "COMPLIMENTARY";
+        await executeFinalSale(0, tenderType, root, tenderType === "STAFF_MEAL" ? "Staff Meal" : "Complimentary Item", null, "SAVE");
+        return;
+      }
+
       const subtotal = cart.reduce((acc, l) => {
         const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
         return acc + (l.item.price + modPrice) * l.qty;
@@ -1357,6 +1416,13 @@ function wirePOSEventListeners(root) {
   if (chargeBtn) {
     chargeBtn.addEventListener("click", async () => {
       if (!cart.length || isPaymentInProgress) return;
+
+      const isZeroMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || activeTender === "COMPLIMENTARY" || activeTender === "STAFF_MEAL");
+      if (isZeroMode) {
+        const tenderType = activeServiceMode === "STAFF_MEAL" ? "STAFF_MEAL" : "COMPLIMENTARY";
+        await executeFinalSale(0, tenderType, root, tenderType === "STAFF_MEAL" ? "Staff Meal" : "Complimentary Item", null, "SAVE_AND_PRINT");
+        return;
+      }
 
       const subtotal = cart.reduce((acc, l) => {
         const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
@@ -1759,11 +1825,14 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       return acc + (l.item.price + modPrice) * l.qty;
     }, 0);
 
+    const isZeroCollectMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || tender === "COMPLIMENTARY" || tender === "STAFF_MEAL");
+    const effectiveDiscountPaisa = isZeroCollectMode ? subtotal * 100 : discountPaisa;
+
     const tendersList = customTenders || [
       {
         paymentMethod: tender,
         amountPaisa: grandTotal * 100,
-        provider: tender === "UPI" ? "BHIM_UPI" : tender === "CARD" ? "PINELABS_TERMINAL" : "CASH_REGISTER",
+        provider: tender === "UPI" ? "BHIM_UPI" : tender === "CARD" ? "PINELABS_TERMINAL" : isZeroCollectMode ? "SPECIAL_ALLOWANCE" : "CASH_REGISTER",
         paymentReference: paymentRef || `TXN-${Date.now()}`,
       },
     ];
@@ -1787,12 +1856,13 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       tableNumber: activeServiceMode === "DINE_IN" ? activeTable : "",
       tableToken: activeServiceMode === "TAKEAWAY" ? activeToken : "",
       guestCovers,
-      discountPaisa,
+      discountPaisa: effectiveDiscountPaisa,
       paymentMethod: tender,
       registerId: "REG-01",
       registerSessionId: activeRegisterSession?.registerSessionId || "",
       idempotencyKey,
       saleAttemptId,
+      isTraining: Boolean(state.isTrainingMode),
       lineItems: cartEntries.map((l) => ({
         menuItemId: l.item.id,
         quantity: l.qty,
@@ -1805,9 +1875,9 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
 
     // REC-13: Upfront offline detection — tender policy enforcement
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      if (tender !== "CASH") {
+      if (tender !== "CASH" && !isZeroCollectMode) {
         isPaymentInProgress = false;
-        showToast(`Network connection required for ${tender}. Offline capture permitted for CASH only.`, "error");
+        showToast(`Network connection required for ${tender}. Offline capture permitted for CASH / Zero-collect only.`, "error");
         return;
       }
 

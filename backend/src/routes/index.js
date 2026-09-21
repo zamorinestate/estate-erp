@@ -570,9 +570,17 @@ router.use(
 const sharedInfrastructureRoutes =
   require('./sharedInfrastructureRoutes');
 
+const dailyCloseRoutes =
+  require('./dailyCloseRoutes');
+
 router.use(
   '/shared-infra',
   sharedInfrastructureRoutes
+);
+
+router.use(
+  '/daily-close',
+  dailyCloseRoutes
 );
 
 router.use(

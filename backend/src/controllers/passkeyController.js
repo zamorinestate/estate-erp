@@ -180,6 +180,29 @@ const renameUserPasskey = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * DELETE /api/v1/auth/passkeys
+ * Revokes / purges all passkey credentials for authenticated user.
+ */
+const revokeAllUserPasskeys = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw ApiError.unauthorized('Authentication required to revoke passkeys.');
+  }
+
+  const result = await passkeyService.revokeAllUserPasskeys({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    revokedBy: req.user.userId,
+    hardDelete: true,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'All passkeys purged successfully.',
+    data: result,
+  });
+});
+
 module.exports = {
   getRegistrationOptions,
   verifyRegistration,
@@ -187,5 +210,6 @@ module.exports = {
   verifyAuthentication,
   listUserPasskeys,
   revokeUserPasskey,
+  revokeAllUserPasskeys,
   renameUserPasskey,
 };

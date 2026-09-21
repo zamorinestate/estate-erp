@@ -267,6 +267,26 @@ const cafeSchema = new mongoose.Schema(
       default: '',
     },
 
+    templateId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+      index: true,
+    },
+
+    templateOverrides: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
+    businessDayCutoffHour: {
+      type: Number,
+      default: 4,
+      min: 0,
+      max: 12,
+    },
+
     legalConstitution: {
       constitution: {
         type: String,

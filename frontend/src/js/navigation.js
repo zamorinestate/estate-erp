@@ -245,11 +245,23 @@ export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
       return STAFF_ALLOWED_SETTINGS.has(sub);
     }
     // Organisation governance / trash subroutes are restricted to MASTER
-    if (sub === "trash" || sub === "data-recovery" || sub === "admin" || sub === "system-administration") {
+    if (sub === "trash" || sub === "data-recovery" || sub === "admin" || sub === "system-administration" || sub === "templates") {
       return role === ROLES.MASTER;
     }
     // All personal preference and identity subroutes are accessible to all authenticated profiles
     return true;
+  }
+
+  // OF03: Allow OWNER read-only drill-down access into operational modules for assigned cafés
+  if (role === ROLES.OWNER || role === 'owner') {
+    const OWNER_OPERATIONAL_DRILLDOWN_ROUTES = new Set([
+      'dept-orders',
+      'inventory',
+      'procurement',
+      'expenses',
+      'customers',
+    ]);
+    if (OWNER_OPERATIONAL_DRILLDOWN_ROUTES.has(route)) return true;
   }
 
   const navConfig = NAVIGATION[role];
