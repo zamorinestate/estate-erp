@@ -1,0 +1,16 @@
+# Exclude backend — Vercel only hosts the frontend
+backend/
+
+# Exclude all node_modules
+node_modules/
+**/node_modules/
+
+# Exclude dev/test artifacts
+**/.env
+**/.env.*
+**/test/
+**/tests/
+**/backups/
+**/uploads/
+**/*.log
+**/*.bundle

@@ -48,7 +48,7 @@ import {
   wireRegisterPage2,
   showGlassAlert,
   abortActivePasskeyRequests,
-} from "./pages/login2.js?v=3.4.4";
+} from "./pages/login2.js?v=3.5.0";
 import { mountPublicCafeGateway } from "./pages/cafeGatewayPage.js";
 import "./responsiveAuditor.js";
 

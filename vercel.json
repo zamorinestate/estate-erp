@@ -65,7 +65,8 @@
         "X-Frame-Options": "SAMEORIGIN",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Permissions-Policy": "camera=(self), microphone=(), geolocation=(self)"
+        "Permissions-Policy": "camera=(self), microphone=(), geolocation=(self)",
+        "Clear-Site-Data": "\"cache\""
       }
     }
   ]
