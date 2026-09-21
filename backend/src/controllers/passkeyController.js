@@ -14,8 +14,12 @@ const getRegistrationOptions = asyncHandler(async (req, res) => {
     throw ApiError.unauthorized('Authentication required to register a passkey.');
   }
 
+  const { authenticatorType, authenticatorAttachment } = req.body || {};
+
   const result = await passkeyService.generatePasskeyRegistrationOptions({
     user: req.authenticatedUser || req.user,
+    authenticatorType,
+    authenticatorAttachment,
   });
 
   return res.status(200).json({
@@ -33,7 +37,7 @@ const verifyRegistration = asyncHandler(async (req, res) => {
     throw ApiError.unauthorized('Authentication required to register a passkey.');
   }
 
-  const { response, challengeId, friendlyName } = req.body || {};
+  const { response, challengeId, friendlyName, deviceName } = req.body || {};
 
   if (!response || !challengeId) {
     throw ApiError.badRequest('response payload and challengeId are required.');
@@ -43,7 +47,7 @@ const verifyRegistration = asyncHandler(async (req, res) => {
     user: req.authenticatedUser || req.user,
     response,
     challengeId,
-    friendlyName,
+    friendlyName: friendlyName || deviceName || 'Passkey Device',
   });
 
   return res.status(201).json({

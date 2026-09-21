@@ -75,7 +75,11 @@ async function recordPasskeyAudit({
 /**
  * Generate Registration Options for an authenticated user.
  */
-async function generatePasskeyRegistrationOptions({ user }) {
+async function generatePasskeyRegistrationOptions({
+  user,
+  authenticatorType,
+  authenticatorAttachment,
+}) {
   if (!user || !user.userId || !user.organisationId) {
     throw ApiError.unauthorized('Authenticated user context is required for passkey registration.');
   }
@@ -114,6 +118,17 @@ async function generatePasskeyRegistrationOptions({ user }) {
   userName = userName || user.userId || 'user';
   userDisplayName = userDisplayName || userName;
 
+  const authSelection = {
+    residentKey: 'preferred',
+    userVerification: 'required',
+  };
+
+  if (authenticatorType === 'PLATFORM' || authenticatorAttachment === 'platform') {
+    authSelection.authenticatorAttachment = 'platform';
+  } else if (authenticatorType === 'CROSS_PLATFORM' || authenticatorAttachment === 'cross-platform') {
+    authSelection.authenticatorAttachment = 'cross-platform';
+  }
+
   const options = await generateRegistrationOptions({
     rpName,
     rpID,
@@ -122,10 +137,7 @@ async function generatePasskeyRegistrationOptions({ user }) {
     userDisplayName,
     attestationType: 'none',
     excludeCredentials,
-    authenticatorSelection: {
-      residentKey: 'preferred',
-      userVerification: 'required',
-    },
+    authenticatorSelection: authSelection,
   });
 
   const challengeId = `PKC-REG-${Date.now()}-${crypto.randomInt(1000, 9999)}`;

@@ -454,6 +454,31 @@ export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notic
   `;
 }
 
+// =============================================================================
+// GLOBAL WEBAUTHN REQUEST COORDINATOR (ACP-07B)
+// =============================================================================
+let activeConditionalAbortController = null;
+let activeExplicitAbortController = null;
+
+export function abortActivePasskeyRequests() {
+  if (activeConditionalAbortController) {
+    try {
+      activeConditionalAbortController.abort();
+    } catch {}
+    activeConditionalAbortController = null;
+  }
+  if (activeExplicitAbortController) {
+    try {
+      activeExplicitAbortController.abort();
+    } catch {}
+    activeExplicitAbortController = null;
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.__ZAMORIN_ABORT_WEBAUTHN__ = abortActivePasskeyRequests;
+}
+
 export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegister, onCafeOps, onPasskeySuccess } = {}) {
   const form = container.querySelector("#l2-login-form");
   const errorEl = container.querySelector("#l2-login-error");
@@ -565,12 +590,8 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
   const prefetchPasskeyOptions = async (email = "") => {
     const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
-    if (conditionalAbortController) {
-      try {
-        conditionalAbortController.abort();
-      } catch {}
-      conditionalAbortController = null;
-    }
+    abortActivePasskeyRequests();
+    conditionalAbortController = null;
     try {
       const optRes = await apiPost("/auth/passkeys/authenticate/options", {
         organisationId: orgId,
@@ -605,18 +626,9 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     }
 
     // Ensure previous abort controllers are terminated cleanly
-    if (conditionalAbortController) {
-      try {
-        conditionalAbortController.abort();
-      } catch {}
-      conditionalAbortController = null;
-    }
-    if (explicitAbortController) {
-      try {
-        explicitAbortController.abort();
-      } catch {}
-      explicitAbortController = null;
-    }
+    abortActivePasskeyRequests();
+    conditionalAbortController = null;
+    explicitAbortController = null;
 
     const orgId = container.querySelector("#l2-org-id")?.value?.trim() || "ZAMORIN";
     let email = container.querySelector("#l2-email")?.value?.trim() || "";
@@ -690,6 +702,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       // 2. Native Platform Authenticator Ceremony (Windows Hello / Touch ID / Face ID / Android)
       let credential;
       explicitAbortController = new AbortController();
+      activeExplicitAbortController = explicitAbortController;
       try {
         credential = await navigator.credentials.get({
           publicKey: publicKeyOptions,
@@ -703,6 +716,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
           } catch {}
           await new Promise((r) => setTimeout(r, 60));
           explicitAbortController = new AbortController();
+          activeExplicitAbortController = explicitAbortController;
           try {
             credential = await navigator.credentials.get({
               publicKey: publicKeyOptions,
@@ -812,6 +826,8 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         );
       }
     } finally {
+      explicitAbortController = null;
+      activeExplicitAbortController = null;
       if (passkeyBtn) {
         passkeyBtn.disabled = false;
         passkeyBtn.innerHTML = originalHtml;
@@ -851,6 +867,11 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
   // Close Chooser Modal
   if (closeBioBtn && bioModal) {
     closeBioBtn.addEventListener("click", () => {
+      if (explicitAbortController) {
+        try { explicitAbortController.abort(); } catch {}
+        explicitAbortController = null;
+        activeExplicitAbortController = null;
+      }
       bioModal.classList.add("hidden");
     });
   }
@@ -884,6 +905,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
   // Handle 6-Digit PIN Submission
   const submitAppPin = async (pin) => {
+    abortActivePasskeyRequests();
     if (!pin || pin.length !== 6) {
       if (pinError) {
         pinError.textContent = "Please enter all 6 digits of your PIN.";
@@ -1068,12 +1090,22 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
               delete publicKeyOptions.allowCredentials;
             }
             conditionalAbortController = new AbortController();
-            const credential = await navigator.credentials.get({
-              publicKey: publicKeyOptions,
-              mediation: "conditional",
-              signal: conditionalAbortController.signal,
-            });
+            activeConditionalAbortController = conditionalAbortController;
+            let credential;
+            try {
+              credential = await navigator.credentials.get({
+                publicKey: publicKeyOptions,
+                mediation: "conditional",
+                signal: conditionalAbortController.signal,
+              });
+            } catch (condErr) {
+              return;
+            }
+            if (conditionalAbortController?.signal?.aborted || activeConditionalAbortController !== conditionalAbortController) {
+              return;
+            }
             if (credential) {
+              if (conditionalAbortController?.signal?.aborted) return;
               const verifyPayload = {
                 id: credential.id,
                 rawId: bufferToBase64url(credential.rawId),
@@ -1159,6 +1191,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      abortActivePasskeyRequests();
       if (isSubmitting) return;
 
       if (errorEl) errorEl.style.display = "none";

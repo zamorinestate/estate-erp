@@ -47,6 +47,7 @@ import {
   renderRegisterPage2,
   wireRegisterPage2,
   showGlassAlert,
+  abortActivePasskeyRequests,
 } from "./pages/login2.js?v=3.4.4";
 import { mountPublicCafeGateway } from "./pages/cafeGatewayPage.js";
 import "./responsiveAuditor.js";
@@ -416,6 +417,7 @@ export function triggerBackendWarmup() {
 
 export function mountAuthScreen(screen = "login", params = {}) {
   if (typeof document === "undefined") return;
+  abortActivePasskeyRequests();
 
   const appEl = document.getElementById("app");
   if (!appEl) return;
@@ -649,6 +651,7 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
 }
 
 function handleAuthenticatedUserSession(user) {
+  abortActivePasskeyRequests();
   const { role, isPrimaryMaster } = resolveAuthenticatedRole(user);
   const landingRoute = (role === "staff") ? "staff-home" : "dashboard";
 
@@ -783,6 +786,7 @@ function applyAuthenticatedUser(
   user,
   requestedRoute = ""
 ) {
+  abortActivePasskeyRequests();
   const {
     role,
     isPrimaryMaster,
@@ -1009,6 +1013,7 @@ async function boot() {
 
 if (typeof window !== "undefined") {
   window.addEventListener("hashchange", () => {
+    abortActivePasskeyRequests();
     const rawHash = window.location.hash.replace(/^#/, "");
     if (rawHash === "login" || rawHash === "login2") {
       if (rawHash === "login2" && typeof window !== "undefined" && window.history && window.history.replaceState) {

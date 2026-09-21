@@ -2965,11 +2965,19 @@ function _wireSecurity(root) {
       });
 
 
+    let isRegisteringPasskey = false;
+    let activeRegistrationAbortController = null;
+
     root.querySelector("#settings-register-passkey-btn")?.addEventListener("click", async () => {
       if (!window.PublicKeyCredential) {
         showToast("WebAuthn biometric authentication is not supported by this browser.", "amber");
         return;
       }
+
+      if (isRegisteringPasskey) {
+        return; // Prevent duplicate button clicks
+      }
+      isRegisteringPasskey = true;
 
       const registerBtn = root.querySelector("#settings-register-passkey-btn");
       if (registerBtn) {
@@ -2977,10 +2985,26 @@ function _wireSecurity(root) {
         registerBtn.textContent = "Requesting Handshake...";
       }
 
+      // Pre-ceremony teardown: abort any lingering passkey operations and yield event loop
+      if (typeof window !== "undefined" && typeof window.__ZAMORIN_ABORT_WEBAUTHN__ === "function") {
+        window.__ZAMORIN_ABORT_WEBAUTHN__();
+      }
+      if (activeRegistrationAbortController) {
+        try {
+          activeRegistrationAbortController.abort();
+        } catch {}
+        activeRegistrationAbortController = null;
+      }
+      activeRegistrationAbortController = new AbortController();
+
+      // Brief microtask yield to ensure browser WebAuthn coordinator clears prior state
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
       try {
         // 1. Get registration options from server
         const optRes = await apiPost("/auth/passkeys/register/options", {
           authenticatorType: "PLATFORM",
+          authenticatorAttachment: "platform",
         });
 
         const options = optRes?.data?.options;
@@ -3015,20 +3039,53 @@ function _wireSecurity(root) {
         try {
           credential = await navigator.credentials.create({
             publicKey: publicKeyOptions,
+            signal: activeRegistrationAbortController.signal,
           });
         } catch (credErr) {
           const msg = credErr?.message?.toLowerCase() || "";
           const name = credErr?.name || "";
+
+          // Application abort / navigation
+          if (activeRegistrationAbortController?.signal?.aborted || name === "AbortError") {
+            return;
+          }
+
+          // Competing WebAuthn operation in browser
+          if (
+            msg.includes("already pending") ||
+            msg.includes("request is pending") ||
+            msg.includes("concurrent") ||
+            name === "InvalidStateError"
+          ) {
+            throw new Error("Another authentication request is currently active. Please wait a moment and try again.");
+          }
+
+          // Timeout
+          if (name === "TimeoutError" || msg.includes("timeout") || msg.includes("timed out")) {
+            throw new Error("Biometric verification timed out. Please try again.");
+          }
+
+          // Hardware / Platform unsupported
+          if (name === "NotSupportedError" || msg.includes("not supported")) {
+            throw new Error("Windows Hello / Biometrics is not supported or not enabled in this browser.");
+          }
+
+          // Genuine user cancellation in native OS prompt
           const isUserCancel =
-            name === "NotAllowedError" ||
-            msg.includes("cancel") ||
-            msg.includes("not allowed") ||
-            msg.includes("user denied") ||
-            msg.includes("abort");
+            name === "NotAllowedError" && (
+              msg.includes("cancel") ||
+              msg.includes("canceled") ||
+              msg.includes("cancelled") ||
+              msg.includes("user denied") ||
+              msg.includes("user dismissed") ||
+              msg.includes("privacy-considerations") ||
+              msg.includes("not allowed")
+            );
 
           if (isUserCancel) {
             return; // Graceful silent cancel
           }
+
           throw credErr;
         }
 
@@ -3060,6 +3117,7 @@ function _wireSecurity(root) {
           response: verifyPayload,
           challengeId,
           deviceName,
+          friendlyName: deviceName,
         });
 
         showToast("🎉 Passkey registered successfully on this device!", "mint");
@@ -3067,6 +3125,8 @@ function _wireSecurity(root) {
       } catch (err) {
         showToast(err.message || "Passkey registration was cancelled or not completed.", "amber");
       } finally {
+        isRegisteringPasskey = false;
+        activeRegistrationAbortController = null;
         if (registerBtn) {
           registerBtn.disabled = false;
           registerBtn.textContent = "➕ Register New Passkey";
