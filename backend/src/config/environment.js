@@ -23,9 +23,13 @@ function requireConfiguredValue(name, value) {
   }
 
   const placeholderMarkers = [
-    'USERNAME',
-    'PASSWORD',
-    'CLUSTER.mongodb.net',
+    '<db_user>',
+    '<db_password>',
+    '<cluster_host>',
+    'YOUR_ATLAS_PASSWORD',
+    'DB_USER',
+    'DB_PASSWORD',
+    'ATLAS_CLUSTER_HOST',
     'replace-with',
     'changeme',
     'change-me',
