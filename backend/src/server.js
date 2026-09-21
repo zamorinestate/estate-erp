@@ -37,6 +37,20 @@ const { getTrustedClientIp, getTrustedProxies } = require('./utils/clientIp');
 const SERVICE_NAME =
   'zamorin-cafe-erp-api';
 
+function isAllowedVercelOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return false;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:') return false;
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === 'zamorin-cafe-erp.vercel.app' || hostname === 'estate-erp.vercel.app') return true;
+    if (hostname.endsWith('.vercel.app') && (hostname.includes('zamorin') || hostname.includes('estate'))) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function createCorsOptions(environment) {
   const allowedOrigins =
     new Set(environment.allowedOrigins || []);
@@ -49,6 +63,7 @@ function createCorsOptions(environment) {
         !origin ||
         allowedOrigins.has('*') ||
         allowedOrigins.has(origin) ||
+        isAllowedVercelOrigin(origin) ||
         (!environment.production && !environment.staging && (
           origin === 'http://localhost:3000' ||
           origin === 'http://127.0.0.1:3000' ||
@@ -147,6 +162,7 @@ function createCsrfOriginProtection(environment) {
     if (
       !allowedOrigins.has('*') &&
       !allowedOrigins.has(normalizedOrigin) &&
+      !isAllowedVercelOrigin(normalizedOrigin) &&
       !(
         !environment.production && !environment.staging && (
           normalizedOrigin === 'http://localhost:3000' ||
