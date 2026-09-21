@@ -148,21 +148,17 @@ function parseAllowedOrigins(
 function loadEnvironment(
   source = process.env
 ) {
-  const nodeEnvironment = String(
-    source.NODE_ENV || 'development'
+  const rawEnv = String(
+    source.NODE_ENV || (source.RENDER ? 'staging' : 'development')
   )
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
     .trim()
     .toLowerCase();
 
-  if (
-    !VALID_NODE_ENVIRONMENTS.has(
-      nodeEnvironment
-    )
-  ) {
-    throw new Error(
-      'NODE_ENV must be development, test, staging or production.'
-    );
-  }
+  const nodeEnvironment = VALID_NODE_ENVIRONMENTS.has(rawEnv)
+    ? rawEnv
+    : (source.RENDER ? 'staging' : 'development');
 
   const production =
     nodeEnvironment === 'production';
@@ -171,8 +167,10 @@ function loadEnvironment(
 
   const privateStorageDriver = String(
     source.PRIVATE_STORAGE_DRIVER ||
-      (production ? 'cloudinary' : 'local')
+      (source.CLOUDINARY_CLOUD_NAME ? 'cloudinary' : 'local')
   )
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
     .trim()
     .toLowerCase();
 
