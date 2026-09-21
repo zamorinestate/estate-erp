@@ -1341,7 +1341,12 @@ export function openOperatorLockModal() {
 
       <div class="form-group" style="text-align:left; margin-bottom:20px;">
         <label class="label" style="font-weight:700;">Enter 6-Digit Operator PIN*</label>
-        <input type="password" id="lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:48px;" autofocus required />
+        <div style="position:relative; display:flex; align-items:center;">
+          <input type="password" id="lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:48px; padding-right:42px; box-sizing:border-box;" autofocus required />
+          <button type="button" data-toggle-visibility="lock-pin-input" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+            ${icon("eye", 16)}
+          </button>
+        </div>
       </div>
 
       <div style="display:flex; flex-direction:column; gap:10px;">
@@ -1354,6 +1359,18 @@ export function openOperatorLockModal() {
   openModal(content);
   const modalEl = document.getElementById("zamorin-global-modal");
   const pinInput = modalEl?.querySelector("#lock-pin-input");
+
+  modalEl?.querySelector("[data-toggle-visibility=\"lock-pin-input\"]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    if (!pinInput) return;
+    const isPwd = pinInput.type === "password";
+    pinInput.type = isPwd ? "text" : "password";
+    btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+    btn.setAttribute("title", isPwd ? "Hide PIN" : "Show PIN");
+    btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+  });
 
   modalEl?.querySelector("#lock-unlock-btn")?.addEventListener("click", async () => {
     const pin = pinInput?.value?.trim();
@@ -1404,7 +1421,12 @@ export function openApplicationLockModal() {
 
       <div class="form-group" style="text-align:left; margin-bottom:16px;">
         <label class="label" style="font-weight:700; font-size:12px;">Six-Digit App PIN*</label>
-        <input type="password" id="app-lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:46px;" autofocus required />
+        <div style="position:relative; display:flex; align-items:center;">
+          <input type="password" id="app-lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:46px; padding-right:42px; box-sizing:border-box;" autofocus required />
+          <button type="button" data-toggle-visibility="app-lock-pin-input" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+            ${icon("eye", 16)}
+          </button>
+        </div>
         <div id="app-lock-error" style="color:var(--danger, #b23b35); font-size:12px; margin-top:6px; display:none;"></div>
       </div>
 
@@ -1419,6 +1441,18 @@ export function openApplicationLockModal() {
   const modalEl = document.getElementById("zamorin-global-modal");
   const pinInput = modalEl?.querySelector("#app-lock-pin-input");
   const errEl = modalEl?.querySelector("#app-lock-error");
+
+  modalEl?.querySelector("[data-toggle-visibility=\"app-lock-pin-input\"]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    if (!pinInput) return;
+    const isPwd = pinInput.type === "password";
+    pinInput.type = isPwd ? "text" : "password";
+    btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+    btn.setAttribute("title", isPwd ? "Hide PIN" : "Show PIN");
+    btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+  });
 
   const submitUnlock = async () => {
     const pin = pinInput?.value?.trim();
@@ -1486,7 +1520,12 @@ export function openSwitchOperatorModal() {
 
       <div class="form-group">
         <label class="label">Incoming Operator 6-Digit PIN*</label>
-        <input type="password" id="sw-pin" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:18px; letter-spacing:6px; font-family:var(--font-mono);" required />
+        <div style="position:relative; display:flex; align-items:center;">
+          <input type="password" id="sw-pin" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:18px; letter-spacing:6px; font-family:var(--font-mono); padding-right:42px; box-sizing:border-box;" required />
+          <button type="button" data-toggle-visibility="sw-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+            ${icon("eye", 16)}
+          </button>
+        </div>
       </div>
 
       <div class="form-group">
@@ -1503,6 +1542,19 @@ export function openSwitchOperatorModal() {
 
   openModal(content);
   const modalEl = document.getElementById("zamorin-global-modal");
+
+  const swPinInput = modalEl?.querySelector("#sw-pin");
+  modalEl?.querySelector("[data-toggle-visibility=\"sw-pin\"]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    if (!swPinInput) return;
+    const isPwd = swPinInput.type === "password";
+    swPinInput.type = isPwd ? "text" : "password";
+    btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+    btn.setAttribute("title", isPwd ? "Hide PIN" : "Show PIN");
+    btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+  });
 
   modalEl?.querySelector("#sw-cancel-btn")?.addEventListener("click", () => closeModal());
   modalEl?.querySelector("#sw-submit-btn")?.addEventListener("click", async () => {

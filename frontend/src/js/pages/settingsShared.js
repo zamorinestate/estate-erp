@@ -31,6 +31,7 @@ import { renderStaffPayslips, wireStaffPayslips } from "./staffPayslips.js";
 import { renderStaffLoansAdvances, wireStaffLoansAdvances } from "./staffLoansAdvances.js";
 import { setupModalA11y } from "../utils/modalA11y.js";
 import { openChangePasswordModal } from "../components/changePasswordModal.js";
+import { icon } from "../icons.js";
 
 // ── 23 supported languages (English + 22 Eighth Schedule Indian Languages) ───
 const ALL_LANGUAGES = [
@@ -3236,6 +3237,25 @@ function _wireSecurity(root) {
     }
   };
 
+  const wireFieldVisibilityToggles = (container) => {
+    if (!container) return;
+    container.querySelectorAll("[data-toggle-visibility]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetId = btn.getAttribute("data-toggle-visibility");
+        const input = container.querySelector(`#${targetId}`);
+        if (!input) return;
+        const isPwd = input.type === "password";
+        input.type = isPwd ? "text" : "password";
+        btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+        btn.setAttribute("title", isPwd ? "Hide" : "Show");
+        btn.setAttribute("aria-label", isPwd ? "Hide" : "Show");
+        btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+      });
+    });
+  };
+
   function renderSetupPinForm() {
     const actionContainer = pinContent.querySelector("#settings-pin-action-container");
     if (!actionContainer) return;
@@ -3246,15 +3266,30 @@ function _wireSecurity(root) {
         <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Current Account Password (Reauthentication)</label>
-            <input type="password" id="pin-setup-password" class="settings-input" placeholder="Enter your current password" autocomplete="current-password" style="width:100%;">
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-setup-password" class="settings-input" placeholder="Enter your current password" autocomplete="current-password" style="width:100%; padding-right:38px; box-sizing:border-box;">
+              <button type="button" data-toggle-visibility="pin-setup-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">New 6-Digit PIN</label>
-            <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-new" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-new" class="settings-input" placeholder="••••••" style="width:100%; padding-right:38px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" data-toggle-visibility="pin-setup-new" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Confirm 6-Digit PIN</label>
-            <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-confirm" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-confirm" class="settings-input" placeholder="••••••" style="width:100%; padding-right:38px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" data-toggle-visibility="pin-setup-confirm" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
           <div style="font-size:11.5px; color:var(--muted);">PIN must be exactly 6 numeric digits. Repeated (e.g. 111111) or consecutive sequences (e.g. 123456) are rejected.</div>
           <div id="pin-setup-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
@@ -3265,6 +3300,8 @@ function _wireSecurity(root) {
         </div>
       </div>
     `;
+
+    wireFieldVisibilityToggles(actionContainer);
 
     actionContainer.querySelector("#pin-setup-cancel-btn")?.addEventListener("click", () => {
       actionContainer.style.display = "none";
@@ -3315,15 +3352,30 @@ function _wireSecurity(root) {
         <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Current PIN or Password</label>
-            <input type="password" id="pin-change-current" class="settings-input" placeholder="Current PIN or account password" style="width:100%;">
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-change-current" class="settings-input" placeholder="Current PIN or account password" style="width:100%; padding-right:38px; box-sizing:border-box;">
+              <button type="button" data-toggle-visibility="pin-change-current" title="Show value" aria-label="Show value" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">New 6-Digit PIN</label>
-            <input type="password" inputmode="numeric" maxlength="6" id="pin-change-new" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-change-new" class="settings-input" placeholder="••••••" style="width:100%; padding-right:38px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" data-toggle-visibility="pin-change-new" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Confirm New 6-Digit PIN</label>
-            <input type="password" inputmode="numeric" maxlength="6" id="pin-change-confirm" class="settings-input" placeholder="••••••" style="width:100%; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-change-confirm" class="settings-input" placeholder="••••••" style="width:100%; padding-right:38px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" data-toggle-visibility="pin-change-confirm" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
           <div id="pin-change-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
           <div style="display:flex; gap:8px; margin-top:6px;">
@@ -3333,6 +3385,8 @@ function _wireSecurity(root) {
         </div>
       </div>
     `;
+
+    wireFieldVisibilityToggles(actionContainer);
 
     actionContainer.querySelector("#pin-change-cancel-btn")?.addEventListener("click", () => {
       actionContainer.style.display = "none";
@@ -3388,7 +3442,12 @@ function _wireSecurity(root) {
         <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Account Password</label>
-            <input type="password" id="pin-disable-password" class="settings-input" placeholder="Account password" style="width:100%;">
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-disable-password" class="settings-input" placeholder="Account password" style="width:100%; padding-right:38px; box-sizing:border-box;">
+              <button type="button" data-toggle-visibility="pin-disable-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
           <div id="pin-disable-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
           <div style="display:flex; gap:8px; margin-top:6px;">
@@ -3398,6 +3457,8 @@ function _wireSecurity(root) {
         </div>
       </div>
     `;
+
+    wireFieldVisibilityToggles(actionContainer);
 
     actionContainer.querySelector("#pin-disable-cancel-btn")?.addEventListener("click", () => {
       actionContainer.style.display = "none";
