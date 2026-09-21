@@ -21,7 +21,8 @@ const CHALLENGE_TTL_MINUTES = 5;
  */
 function getWebAuthnConfig() {
   const rpName = process.env.WEBAUTHN_RP_NAME || 'Zamorin Cafe ERP';
-  const rpID = process.env.WEBAUTHN_RP_ID || (process.env.NODE_ENV === 'production' ? 'zamorin-cafe-erp.vercel.app' : 'localhost');
+  const isCloudDeployment = process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
+  const rpID = process.env.WEBAUTHN_RP_ID || (isCloudDeployment ? 'zamorin-cafe-erp.vercel.app' : 'localhost');
   
   const rawOrigins = process.env.WEBAUTHN_ORIGIN
     ? process.env.WEBAUTHN_ORIGIN.split(',').map((o) => o.trim())
