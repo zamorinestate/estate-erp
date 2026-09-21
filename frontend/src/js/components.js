@@ -1343,7 +1343,7 @@ export function openOperatorLockModal() {
         <label class="label" style="font-weight:700;">Enter 6-Digit Operator PIN*</label>
         <div style="position:relative; display:flex; align-items:center;">
           <input type="password" id="lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:48px; padding-right:42px; box-sizing:border-box;" autofocus required />
-          <button type="button" data-toggle-visibility="lock-pin-input" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+          <button type="button" class="pin-visibility-toggle" data-toggle-visibility="lock-pin-input" title="Show PIN" aria-label="Show PIN">
             ${icon("eye", 16)}
           </button>
         </div>
@@ -1423,7 +1423,7 @@ export function openApplicationLockModal() {
         <label class="label" style="font-weight:700; font-size:12px;">Six-Digit App PIN*</label>
         <div style="position:relative; display:flex; align-items:center;">
           <input type="password" id="app-lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:46px; padding-right:42px; box-sizing:border-box;" autofocus required />
-          <button type="button" data-toggle-visibility="app-lock-pin-input" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+          <button type="button" class="pin-visibility-toggle" data-toggle-visibility="app-lock-pin-input" title="Show PIN" aria-label="Show PIN">
             ${icon("eye", 16)}
           </button>
         </div>
@@ -1522,7 +1522,7 @@ export function openSwitchOperatorModal() {
         <label class="label">Incoming Operator 6-Digit PIN*</label>
         <div style="position:relative; display:flex; align-items:center;">
           <input type="password" id="sw-pin" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:18px; letter-spacing:6px; font-family:var(--font-mono); padding-right:42px; box-sizing:border-box;" required />
-          <button type="button" data-toggle-visibility="sw-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+          <button type="button" class="pin-visibility-toggle" data-toggle-visibility="sw-pin" title="Show PIN" aria-label="Show PIN">
             ${icon("eye", 16)}
           </button>
         </div>

@@ -5,6 +5,22 @@ backend/
 node_modules/
 **/node_modules/
 
+# Exclude native platforms & build dirs
+windows/
+android/
+apple/
+LOGIN-PAGE-2.0-main/
+.tmp/
+scratch/
+artifacts/
+hard-testing/
+docs/
+scripts/
+
+# Exclude browser testing & profiles
+.chrome*
+.tmp_chrome*
+
 # Exclude dev/test artifacts
 **/.env
 **/.env.*
@@ -14,3 +30,4 @@ node_modules/
 **/uploads/
 **/*.log
 **/*.bundle
+

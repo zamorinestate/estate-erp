@@ -713,7 +713,7 @@ function renderPinSetupView() {
             <label class="label" style="font-weight:700;">New 6-Digit PIN*</label>
             <div style="position:relative; display:flex; align-items:center;">
               <input type="password" id="pin-new-code" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:20px; letter-spacing:6px; font-family:var(--font-mono); padding-right:42px; box-sizing:border-box;" required />
-              <button type="button" data-toggle-visibility="pin-new-code" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-new-code" title="Show PIN" aria-label="Show PIN">
                 ${icon("eye", 16)}
               </button>
             </div>
@@ -724,7 +724,7 @@ function renderPinSetupView() {
             <label class="label" style="font-weight:700;">Confirm 6-Digit PIN*</label>
             <div style="position:relative; display:flex; align-items:center;">
               <input type="password" id="pin-confirm-code" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:20px; letter-spacing:6px; font-family:var(--font-mono); padding-right:42px; box-sizing:border-box;" required />
-              <button type="button" data-toggle-visibility="pin-confirm-code" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; line-height:1;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-confirm-code" title="Show PIN" aria-label="Show PIN">
                 ${icon("eye", 16)}
               </button>
             </div>

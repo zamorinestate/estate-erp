@@ -1520,6 +1520,40 @@
 .settings-field-helper { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 .settings-readonly-field { padding: 9px 12px; border-radius: var(--radius-sm); background: var(--surface-sunken); border: 1px solid var(--line); color: var(--ink); font-size: 13.5px; font-weight: 500; }
 
+/* Password / PIN eye toggle button */
+.pin-visibility-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--muted, #6f6a5c);
+  cursor: pointer;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm, 4px);
+  line-height: 1;
+  z-index: 10;
+  pointer-events: auto;
+  transition: color var(--motion-fast, 0.15s) ease, background var(--motion-fast, 0.15s) ease;
+}
+.pin-visibility-toggle:hover {
+  color: var(--ink, #1f1d1a);
+  background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+}
+.pin-visibility-toggle:focus-visible {
+  outline: 2px solid var(--bronze-500, #c9933e);
+  outline-offset: 2px;
+}
+.pin-visibility-toggle svg {
+  display: block;
+  pointer-events: none;
+}
+
+
 /* Settings toggle row */
 .settings-toggle-row {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
