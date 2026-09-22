@@ -8,6 +8,7 @@ import { showToast, openModal, renderModuleErrorState } from "../components.js";
 import { state } from "../state.js";
 import { navigate } from "../router.js";
 import { exportCentreModal } from "../components/exportCentreModal.js";
+import { icon } from "../icons.js";
 
 let activeSubpanel = "overview";
 let liveOverview = null;
@@ -460,6 +461,7 @@ function renderDirectorySubpanel() {
                   </span>
                 </td>
                 <td style="padding:12px 14px; text-align:right; white-space:nowrap;">
+                  <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Login Password & POS PIN">🔑 Login &amp; PIN</button>
                   <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
                   <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
                   <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
@@ -934,6 +936,16 @@ export async function wireEmployees(container = document, subroute) {
 }
 
 function attachDirectoryRowListeners() {
+  // Open Manage Credentials Modal (Password & PIN)
+  document.querySelectorAll(".open-credentials-modal-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const userId = btn.getAttribute("data-user-id");
+      const name = btn.getAttribute("data-name");
+      const email = btn.getAttribute("data-email");
+      openManageCredentialsModal(userId, name, email);
+    });
+  });
+
   // Open Employee 360
   document.querySelectorAll(".open-employee-360-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1069,52 +1081,159 @@ function openOnboardingWizard() {
           </div>
         </div>
 
+        <!-- Account Access & Credentials -->
+        <div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:11.5px; font-weight:700; color:#475569; text-transform:uppercase;">Account Access &amp; Credentials</div>
+            <div style="font-size:11px; color:#64748b;">(Enables ERP &amp; POS Login)</div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">Web ERP Password</label>
+                <button type="button" class="btn btn-ghost" id="ob-gen-pwd-btn" style="font-size:10.5px; padding:1px 5px; color:#b45309; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="ob-password" placeholder="Leave blank to auto-generate" minlength="8" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="ob-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10px; color:#64748b; margin-top:2px;">Min 8 chars. Auto-generated if left blank.</div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">6-Digit Operator PIN</label>
+                <button type="button" class="btn btn-ghost" id="ob-gen-pin-btn" style="font-size:10.5px; padding:1px 5px; color:#059669; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="ob-pin" placeholder="e.g. 748192" maxlength="6" pattern="\\d{6}" inputmode="numeric" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; letter-spacing:2px; font-family:var(--font-mono, monospace);" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="ob-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10px; color:#64748b; margin-top:2px;">Optional. For POS terminal operator sign-in.</div>
+            </div>
+          </div>
+        </div>
+
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
           <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
-          <button class="btn btn-primary" type="submit" style="background:var(--gold,#b45309); border-color:var(--gold,#b45309); color:#fff; font-weight:600;">Complete Onboarding</button>
+          <button class="btn btn-primary" type="submit" id="ob-submit-btn" style="background:var(--gold,#b45309); border-color:var(--gold,#b45309); color:#fff; font-weight:600;">Complete Onboarding</button>
         </div>
       </form>
     </div>
   `);
 
+  const modalRoot = document.getElementById("modal-root");
+  if (modalRoot) {
+    wireVisibilityToggles(modalRoot);
+
+    modalRoot.querySelector("#ob-gen-pwd-btn")?.addEventListener("click", () => {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+      let rand = "";
+      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+      const pwd = `Zamorin@${rand}!`;
+      const pwdInput = modalRoot.querySelector("#ob-password");
+      if (pwdInput) {
+        pwdInput.value = pwd;
+        pwdInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='ob-password']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+
+    modalRoot.querySelector("#ob-gen-pin-btn")?.addEventListener("click", () => {
+      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      const pinInput = modalRoot.querySelector("#ob-pin");
+      if (pinInput) {
+        pinInput.value = randomPin;
+        pinInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='ob-pin']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+  }
+
   document.getElementById("onboard-employee-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const submitBtn = document.getElementById("ob-submit-btn");
+    const pwdVal = document.getElementById("ob-password")?.value?.trim() || "";
+    const pinVal = document.getElementById("ob-pin")?.value?.trim() || "";
+
+    if (pwdVal && pwdVal.length < 8) {
+      showToast("Password must be at least 8 characters long.", "coral");
+      return;
+    }
+    if (pinVal && !/^\\d{6}$/.test(pinVal)) {
+      showToast("Operator PIN must be exactly 6 digits.", "coral");
+      return;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Onboarding...";
+    }
+
     const payload = {
-      name: document.getElementById("ob-name").value,
-      preferredName: document.getElementById("ob-preferred").value,
-      email: document.getElementById("ob-email").value,
-      phone: document.getElementById("ob-phone").value,
+      name: document.getElementById("ob-name").value.trim(),
+      preferredName: document.getElementById("ob-preferred").value.trim(),
+      email: document.getElementById("ob-email").value.trim().toLowerCase(),
+      phone: document.getElementById("ob-phone").value.trim(),
       primaryCafeId: document.getElementById("ob-cafe").value,
       department: document.getElementById("ob-dept").value,
-      designation: document.getElementById("ob-title").value,
+      designation: document.getElementById("ob-title").value.trim(),
       workerType: document.getElementById("ob-worker-type").value,
       role: "STAFF",
     };
-
-    const newEmpId = `EMP-${String(liveEmployees.length + 1).padStart(4, "0")}`;
-    const newEmp = {
-      userId: newEmpId,
-      name: payload.name,
-      preferredName: payload.preferredName || payload.name,
-      email: payload.email,
-      role: "STAFF",
-      designation: payload.designation,
-      department: payload.department,
-      primaryCafeId: payload.primaryCafeId,
-      employmentType: "Full Time",
-      workerType: payload.workerType,
-      employmentStatus: "ACTIVE",
-      joiningDate: new Date().toISOString().split("T")[0],
-    };
-    liveEmployees.unshift(newEmp);
+    if (pwdVal) payload.password = pwdVal;
+    if (pinVal) payload.operatorPin = pinVal;
 
     try {
-      await apiPost("/employees", payload).catch(() => null);
-    } catch {}
+      const res = await apiPost("/employees", payload);
+      const createdUser = res?.data?.employee || res?.data?.user;
+      const creds = res?.data?.credentials || {};
+      const newEmpId = createdUser?.userId || creds.userId || `EMP-${String(liveEmployees.length + 1).padStart(4, "0")}`;
 
-    showToast(`Employee ${payload.name} (${newEmpId}) onboarded successfully!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const newEmp = {
+        userId: newEmpId,
+        name: payload.name,
+        preferredName: payload.preferredName || payload.name,
+        email: payload.email,
+        role: "STAFF",
+        designation: payload.designation,
+        department: payload.department,
+        primaryCafeId: payload.primaryCafeId,
+        employmentType: "Full Time",
+        workerType: payload.workerType,
+        employmentStatus: "ACTIVE",
+        joiningDate: new Date().toISOString().split("T")[0],
+      };
+      liveEmployees.unshift(newEmp);
+
+      showToast(`Employee ${payload.name} (${newEmpId}) onboarded successfully!`, "success");
+      rerenderCurrentSubpanel();
+
+      openCredentialsCardModal({
+        name: payload.name,
+        userId: newEmpId,
+        email: payload.email,
+        temporaryPassword: creds.temporaryPassword || pwdVal,
+        operatorPin: creds.operatorPin || pinVal,
+      });
+    } catch (err) {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Complete Onboarding";
+      }
+      showToast(err?.message || "Failed to onboard employee", "coral");
+    }
   });
 }
 
@@ -1894,10 +2013,46 @@ export function openOnboardEmployeeModal() {
           </label>
         </div>
 
-        <!-- 4. Readiness Checklist -->
+        <!-- 4. Account Access & Credentials -->
+        <div style="background:#f8fafc; padding:14px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:700; color:#475569; text-transform:uppercase;">4. Account Access &amp; Credentials</div>
+            <div style="font-size:11px; color:#64748b;">(Enables ERP &amp; POS Login)</div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">Web ERP Password</label>
+                <button type="button" class="btn btn-ghost" id="oe-gen-pwd-btn" style="font-size:10.5px; padding:1px 5px; color:#b45309; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="oe-password" placeholder="Leave blank to auto-generate" minlength="8" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="oe-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10.5px; color:#64748b; margin-top:3px;">Min 8 chars. Auto-generated if left blank.</div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">6-Digit Operator PIN</label>
+                <button type="button" class="btn btn-ghost" id="oe-gen-pin-btn" style="font-size:10.5px; padding:1px 5px; color:#059669; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="oe-pin" placeholder="e.g. 748192" maxlength="6" pattern="\\d{6}" inputmode="numeric" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; letter-spacing:2px; font-family:var(--font-mono, monospace);" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="oe-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10.5px; color:#64748b; margin-top:3px;">Optional. For POS terminal operator sign-in.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. Readiness Checklist -->
         <div style="background:#f1f5f9; padding:12px; border-radius:8px; font-size:11.5px; color:#475569;">
           <div style="font-weight:700; margin-bottom:4px; color:#0f172a;">Onboarding Checklist:</div>
-          <div>✓ Identity &amp; Contact Verified &nbsp;•&nbsp; ✓ Role &amp; Shift Assigned &nbsp;•&nbsp; ✓ Initial Training Queued &nbsp;•&nbsp; ✓ DPDP Consent Logged</div>
+          <div>✓ Identity &amp; Contact Verified &nbsp;•&nbsp; ✓ Role &amp; Shift Assigned &nbsp;•&nbsp; ✓ Initial Training Queued &nbsp;•&nbsp; ✓ DPDP Consent Logged &nbsp;•&nbsp; ✓ Credentials Ready</div>
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
@@ -1908,9 +2063,57 @@ export function openOnboardEmployeeModal() {
     </div>
   `);
 
+  const modalRoot = document.getElementById("modal-root");
+  if (modalRoot) {
+    wireVisibilityToggles(modalRoot);
+
+    modalRoot.querySelector("#oe-gen-pwd-btn")?.addEventListener("click", () => {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+      let rand = "";
+      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+      const pwd = `Zamorin@${rand}!`;
+      const pwdInput = modalRoot.querySelector("#oe-password");
+      if (pwdInput) {
+        pwdInput.value = pwd;
+        pwdInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='oe-password']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+
+    modalRoot.querySelector("#oe-gen-pin-btn")?.addEventListener("click", () => {
+      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      const pinInput = modalRoot.querySelector("#oe-pin");
+      if (pinInput) {
+        pinInput.value = randomPin;
+        pinInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='oe-pin']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+  }
+
   document.getElementById("onboard-emp-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const submitBtn = document.getElementById("oe-submit-btn");
+    const pwdVal = document.getElementById("oe-password")?.value?.trim() || "";
+    const pinVal = document.getElementById("oe-pin")?.value?.trim() || "";
+
+    if (pwdVal && pwdVal.length < 8) {
+      showToast("Password must be at least 8 characters long.", "coral");
+      return;
+    }
+    if (pinVal && !/^\\d{6}$/.test(pinVal)) {
+      showToast("Operator PIN must be exactly 6 digits.", "coral");
+      return;
+    }
+
     if (submitBtn) {
       submitBtn.disabled = true;
       submitBtn.textContent = "Provisioning Employee...";
@@ -1928,19 +2131,32 @@ export function openOnboardEmployeeModal() {
       assignedCafeIds: [document.getElementById("oe-cafe").value],
       joiningDate: document.getElementById("oe-joining").value,
     };
+    if (pwdVal) payload.password = pwdVal;
+    if (pinVal) payload.operatorPin = pinVal;
 
     try {
       const res = await apiPost("/employees", payload);
-      const newEmp = res?.data?.user || {
-        userId: res?.data?.userId || `ST-${String(liveEmployees.length + 1).padStart(4, "0")}`,
+      const createdUser = res?.data?.employee || res?.data?.user;
+      const creds = res?.data?.credentials || {};
+      const newEmpId = createdUser?.userId || creds.userId || `ST-${String(liveEmployees.length + 1).padStart(4, "0")}`;
+
+      const newEmp = createdUser || {
+        userId: newEmpId,
         ...payload,
         employmentStatus: "PROBATION"
       };
 
       liveEmployees.unshift(newEmp);
       showToast(`Employee "${payload.name}" successfully onboarded (${newEmp.userId})!`, "success");
-      document.getElementById("modal-root").innerHTML = "";
       rerenderCurrentSubpanel();
+
+      openCredentialsCardModal({
+        name: payload.name,
+        userId: newEmp.userId,
+        email: payload.email,
+        temporaryPassword: creds.temporaryPassword || pwdVal,
+        operatorPin: creds.operatorPin || pinVal,
+      });
     } catch (err) {
       if (submitBtn) {
         submitBtn.disabled = false;
@@ -1950,4 +2166,305 @@ export function openOnboardEmployeeModal() {
     }
   });
 }
+
+/**
+ * Universal toggle visibility handler for password & PIN input eye toggles
+ */
+function wireVisibilityToggles(root = document) {
+  root.querySelectorAll("[data-toggle-visibility]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetId = btn.getAttribute("data-toggle-visibility");
+      const input = root.querySelector(`#${targetId}`) || document.getElementById(targetId);
+      if (!input) return;
+      const isPwd = input.type === "password";
+      input.type = isPwd ? "text" : "password";
+      btn.innerHTML = isPwd ? icon("eyeOff", 15) : icon("eye", 15);
+      btn.setAttribute("title", isPwd ? "Hide" : "Show");
+      btn.setAttribute("aria-label", isPwd ? "Hide" : "Show");
+      btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted, #64748b)";
+    });
+  });
+}
+
+/**
+ * Modal to display copyable credentials summary card to administrator
+ */
+export function openCredentialsCardModal({ name, userId, email, temporaryPassword, operatorPin, isUpdated = false }) {
+  const credentialsSummary = `
+Zamorin Café ERP — Employee Access Credentials
+Employee Name: ${name}
+User ID: ${userId}
+Login Email: ${email}
+${temporaryPassword ? `Account Password: ${temporaryPassword}` : ''}
+${operatorPin ? `Café Operations POS PIN: ${operatorPin}` : ''}
+Login URL: ${window.location.origin}/#login
+  `.trim();
+
+  openModal(`
+    <div style="padding:26px; max-width:540px; width:100%; color:var(--ink); text-align:left;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+        <div style="width:44px; height:44px; border-radius:50%; background:#ecfdf5; color:#059669; display:flex; align-items:center; justify-content:center; font-size:22px;">
+          ✓
+        </div>
+        <div>
+          <span style="font-size:11px; font-weight:700; color:#059669; text-transform:uppercase; letter-spacing:0.5px;">
+            ${isUpdated ? 'Credentials Updated' : 'Account Provisioned & Ready'}
+          </span>
+          <h2 style="font-size:18px; font-weight:700; margin:2px 0 0;">${escapeHtml(name)} (${escapeHtml(userId)})</h2>
+        </div>
+      </div>
+
+      <p style="font-size:13px; color:#475569; margin:0 0 16px; line-height:1.5;">
+        ${isUpdated
+          ? 'The login credentials for this employee have been updated. Share these details securely with the employee.'
+          : 'Employee account has been registered. Share the credentials below so the employee can sign in.'}
+      </p>
+
+      <!-- Credentials Card -->
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:16px; margin-bottom:18px; display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid #e2e8f0;">
+          <span style="font-size:11.5px; font-weight:600; color:#64748b;">Login Email</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:13px; font-weight:600; color:#0f172a; background:#e2e8f0; padding:2px 6px; border-radius:4px;">${escapeHtml(email)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(email)}" style="padding:2px 6px; font-size:11px;" title="Copy email">📋 Copy</button>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid #e2e8f0;">
+          <span style="font-size:11.5px; font-weight:600; color:#64748b;">User ID (Alternate Login)</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:13px; font-weight:600; color:#0f172a; background:#e2e8f0; padding:2px 6px; border-radius:4px;">${escapeHtml(userId)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(userId)}" style="padding:2px 6px; font-size:11px;" title="Copy User ID">📋 Copy</button>
+          </div>
+        </div>
+
+        ${temporaryPassword ? `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid #e2e8f0;">
+          <div>
+            <span style="font-size:11.5px; font-weight:600; color:#64748b; display:block;">Web ERP Password</span>
+            <span style="font-size:10px; color:#b45309;">(Must change upon first login)</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:14px; font-weight:700; color:#b45309; background:#fef3c7; padding:4px 8px; border-radius:4px; letter-spacing:0.5px;">${escapeHtml(temporaryPassword)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(temporaryPassword)}" style="padding:4px 8px; font-size:11px; color:#b45309; font-weight:600;" title="Copy Password">📋 Copy Password</button>
+          </div>
+        </div>
+        ` : ''}
+
+        ${operatorPin ? `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-size:11.5px; font-weight:600; color:#64748b; display:block;">Café Operations POS PIN</span>
+            <span style="font-size:10px; color:#059669;">(For touch terminal operator login)</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:16px; font-weight:700; color:#059669; background:#d1fae5; padding:4px 8px; border-radius:4px; letter-spacing:3px;">${escapeHtml(operatorPin)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(operatorPin)}" style="padding:4px 8px; font-size:11px; color:#059669; font-weight:600;" title="Copy PIN">📋 Copy PIN</button>
+          </div>
+        </div>
+        ` : ''}
+      </div>
+
+      <!-- How to login notice -->
+      <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:12px; font-size:12px; color:#1e40af; line-height:1.5; margin-bottom:18px;">
+        <strong>How the employee logs in:</strong><br/>
+        1. <strong>Web ERP:</strong> Open <a href="#login" target="_blank" style="color:#2563eb; text-decoration:underline;">/#login</a> and enter email <code>${escapeHtml(email)}</code> and password.<br/>
+        ${operatorPin ? `2. <strong>Café Operations:</strong> Go to /cafe-operations and sign in with the 6-digit operator PIN.` : ''}
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <button class="btn btn-secondary copy-cred-btn" data-copy="${escapeHtml(credentialsSummary)}" style="font-size:12px; font-weight:600;">
+          📋 Copy All Details
+        </button>
+        <button class="btn btn-primary" onclick="document.getElementById('modal-root').innerHTML=''" style="font-size:12px; font-weight:600; padding:8px 16px;">
+          Done
+        </button>
+      </div>
+    </div>
+  `);
+
+  const modalRoot = document.getElementById("modal-root");
+  modalRoot?.querySelectorAll(".copy-cred-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const text = btn.getAttribute("data-copy");
+      if (text && navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+        const originalText = btn.textContent;
+        btn.textContent = "✓ Copied!";
+        btn.style.color = "#059669";
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.color = "";
+        }, 2000);
+      }
+    });
+  });
+}
+
+/**
+ * Modal to manage/reset password & 6-digit operator PIN for an existing employee
+ */
+export function openManageCredentialsModal(userId, empName, empEmail) {
+  openModal(`
+    <div style="padding:24px; max-width:520px; width:100%; color:var(--ink);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; border-bottom:1px solid rgba(0,0,0,0.08); padding-bottom:12px;">
+        <div>
+          <span style="font-size:11px; font-weight:700; color:#2563eb; text-transform:uppercase; letter-spacing:0.5px;">Security &amp; Identity Administration</span>
+          <h2 style="font-size:18px; font-weight:700; margin:2px 0 0;">Manage Login &amp; PIN</h2>
+          <div style="font-size:12px; color:#64748b; margin-top:2px;">${escapeHtml(empName)} · <code>${escapeHtml(userId)}</code></div>
+        </div>
+        <button class="btn btn-ghost" onclick="document.getElementById('modal-root').innerHTML=''" style="padding:4px 8px;">✕</button>
+      </div>
+
+      <form id="manage-cred-form" style="display:flex; flex-direction:column; gap:16px;">
+        <!-- Employee Account Info -->
+        <div style="background:#f8fafc; padding:12px 14px; border-radius:8px; border:1px solid #e2e8f0; font-size:12.5px;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span style="color:#64748b;">Login Email:</span>
+            <strong style="color:#0f172a;">${escapeHtml(empEmail || userId)}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:#64748b;">Alternate Login:</span>
+            <strong style="color:#0f172a;">User ID (${escapeHtml(userId)})</strong>
+          </div>
+        </div>
+
+        <!-- 1. Password Reset Section -->
+        <div style="background:#f8fafc; padding:14px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:700; color:#0f172a; text-transform:uppercase;">1. Web ERP Password</div>
+            <button type="button" class="btn btn-ghost" id="btn-gen-manage-pwd" style="font-size:11px; padding:2px 6px; color:#b45309; font-weight:600;">
+              🎲 Generate Password
+            </button>
+          </div>
+          <div style="position:relative; display:flex; align-items:center;">
+            <input type="password" id="mcred-password" placeholder="Enter new password (min 8 characters)" minlength="8" style="width:100%; padding:8px 38px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;" />
+            <button type="button" class="pin-visibility-toggle" data-toggle-visibility="mcred-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+              ${icon("eye", 16)}
+            </button>
+          </div>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">
+            Setting a new password will unlock the account and mark password change required on next login.
+          </div>
+        </div>
+
+        <!-- 2. Operator PIN Section -->
+        <div style="background:#f8fafc; padding:14px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:700; color:#0f172a; text-transform:uppercase;">2. 6-Digit POS Operator PIN</div>
+            <button type="button" class="btn btn-ghost" id="btn-gen-manage-pin" style="font-size:11px; padding:2px 6px; color:#059669; font-weight:600;">
+              🎲 Generate PIN
+            </button>
+          </div>
+          <div style="position:relative; display:flex; align-items:center;">
+            <input type="password" id="mcred-pin" placeholder="e.g. 582910" maxlength="6" pattern="\\d{6}" inputmode="numeric" style="width:100%; padding:8px 38px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; letter-spacing:2px; font-family:var(--font-mono, monospace);" />
+            <button type="button" class="pin-visibility-toggle" data-toggle-visibility="mcred-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+              ${icon("eye", 16)}
+            </button>
+          </div>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">
+            Used on Café Operations POS terminals for quick operator shift sign-in.
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:6px;">
+          <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="mcred-submit-btn" style="background:#2563eb; border-color:#2563eb; color:#fff; font-weight:600;">
+            💾 Save Credentials
+          </button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  const modalRoot = document.getElementById("modal-root");
+  if (!modalRoot) return;
+
+  wireVisibilityToggles(modalRoot);
+
+  modalRoot.querySelector("#btn-gen-manage-pwd")?.addEventListener("click", () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let rand = "";
+    for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+    const pwd = `Zamorin@${rand}!`;
+    const pwdInput = modalRoot.querySelector("#mcred-password");
+    if (pwdInput) {
+      pwdInput.value = pwd;
+      pwdInput.type = "text";
+      const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='mcred-password']");
+      if (toggleBtn) {
+        toggleBtn.innerHTML = icon("eyeOff", 16);
+        toggleBtn.style.color = "var(--primary, #c9933b)";
+      }
+    }
+  });
+
+  modalRoot.querySelector("#btn-gen-manage-pin")?.addEventListener("click", () => {
+    const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+    const pinInput = modalRoot.querySelector("#mcred-pin");
+    if (pinInput) {
+      pinInput.value = randomPin;
+      pinInput.type = "text";
+      const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='mcred-pin']");
+      if (toggleBtn) {
+        toggleBtn.innerHTML = icon("eyeOff", 16);
+        toggleBtn.style.color = "var(--primary, #c9933b)";
+      }
+    }
+  });
+
+  modalRoot.querySelector("#manage-cred-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const submitBtn = modalRoot.querySelector("#mcred-submit-btn");
+    const pwdVal = modalRoot.querySelector("#mcred-password")?.value?.trim() || "";
+    const pinVal = modalRoot.querySelector("#mcred-pin")?.value?.trim() || "";
+
+    if (!pwdVal && !pinVal) {
+      showToast("Please enter a new password or a 6-digit PIN to save.", "coral");
+      return;
+    }
+
+    if (pwdVal && pwdVal.length < 8) {
+      showToast("Password must be at least 8 characters long.", "coral");
+      return;
+    }
+
+    if (pinVal && !/^\\d{6}$/.test(pinVal)) {
+      showToast("Operator PIN must be exactly 6 numeric digits.", "coral");
+      return;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Updating...";
+    }
+
+    try {
+      const payload = {};
+      if (pwdVal) payload.password = pwdVal;
+      if (pinVal) payload.operatorPin = pinVal;
+
+      const res = await apiPost(`/employees/${encodeURIComponent(userId)}/credentials`, payload);
+      showToast(res?.message || "Credentials updated successfully!", "success");
+
+      openCredentialsCardModal({
+        name: empName,
+        userId: userId,
+        email: empEmail || res?.data?.email || userId,
+        temporaryPassword: pwdVal || res?.data?.temporaryPassword || null,
+        operatorPin: pinVal || res?.data?.operatorPin || null,
+        isUpdated: true,
+      });
+    } catch (err) {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "💾 Save Credentials";
+      }
+      showToast(err?.message || "Failed to update credentials", "coral");
+    }
+  });
+}
+
 

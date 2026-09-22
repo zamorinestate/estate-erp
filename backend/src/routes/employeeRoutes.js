@@ -8,6 +8,7 @@ const {
   listEmployees,
   getEmployee360,
   onboardEmployee,
+  setEmployeeCredentials,
   createEmployeeMovement,
   submitProbationReview,
   addEmployeeSkill,
@@ -105,14 +106,21 @@ router.get(
 // 6. Onboard New Employee
 router.post(
   '/',
-  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
   onboardEmployee
+);
+
+// Set / Reset Employee Credentials (Password & Operator PIN)
+router.post(
+  '/:userId/credentials',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  setEmployeeCredentials
 );
 
 // Stage 04: 9-Section Extended Registration
 router.post(
   '/register',
-  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
   registerEmployeeExtended
 );
 

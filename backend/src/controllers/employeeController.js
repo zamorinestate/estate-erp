@@ -22,6 +22,8 @@ const auditService = require('../services/auditService');
 const { recordRequestAudit } = auditService;
 const { resolveEmployeeShiftForDate, getWeekStartDate } = require('../services/shiftResolverService');
 const employeeService = require('../services/employeeService');
+const { hashPassword } = require('../services/authService');
+const operatorSessionService = require('../services/operatorSessionService');
 
 // ─── 1. OVERVIEW & WORKFORCE KPIS ─────────────────────────────────────────────
 const getWorkforceOverview = asyncHandler(async (req, res) => {
@@ -366,6 +368,15 @@ const getEmployee360 = asyncHandler(async (req, res) => {
   });
 });
 
+function generateTemporaryPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let rand = '';
+  for (let i = 0; i < 6; i++) {
+    rand += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `Zamorin@${rand}!`;
+}
+
 // ─── 4. ONBOARD NEW EMPLOYEE ──────────────────────────────────────────────────
 const onboardEmployee = asyncHandler(async (req, res) => {
   const { organisationId, userId: actorId } = req.auth;
@@ -385,6 +396,10 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     managerUserId = null,
     joiningDate = new Date().toISOString().split('T')[0],
     isPreboarding = false,
+    password = '',
+    initialPassword = '',
+    operatorPin = null,
+    pin = null,
   } = req.body;
 
   if (!name || !email) {
@@ -409,6 +424,36 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     newUserId = `${prefix}-${String(count + 1).padStart(4, '0')}`;
   }
 
+  // Compute password hash
+  let rawPassword = (password || initialPassword || '').trim();
+  let effectivePassword = rawPassword;
+  if (!effectivePassword) {
+    effectivePassword = generateTemporaryPassword();
+  } else if (effectivePassword.length < 8) {
+    throw new ApiError(400, 'INVALID_PASSWORD', 'Password must be at least 8 characters long.');
+  }
+  const passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
+
+  // Compute operator PIN hash if provided
+  let rawPin = operatorPin !== undefined && operatorPin !== null && operatorPin !== ''
+    ? operatorPin
+    : (pin !== undefined && pin !== null && pin !== '' ? pin : null);
+  let operatorPinHash = null;
+  let operatorPinSetAt = null;
+
+  if (rawPin) {
+    const pinStr = String(rawPin).trim();
+    if (!/^\d{6}$/.test(pinStr)) {
+      throw new ApiError(400, 'INVALID_OPERATOR_PIN', 'Operator PIN must be exactly 6 numeric digits.');
+    }
+    const weakPins = ['000000', '111111', '123456', '654321', '999999', '121212'];
+    if (weakPins.includes(pinStr)) {
+      throw new ApiError(400, 'WEAK_OPERATOR_PIN', 'Please choose a stronger, non-sequential 6-digit PIN.');
+    }
+    operatorPinHash = await operatorSessionService.hashPin(pinStr);
+    operatorPinSetAt = new Date();
+  }
+
   const employmentStatus = isPreboarding ? 'PREBOARDING' : 'PROBATION';
 
   const newUser = await User.create({
@@ -431,8 +476,10 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     managerUserId,
     joiningDate: new Date(joiningDate),
     accountStatus: 'ACTIVE',
-    passwordHash: 'TEMP_SEEDED_HASH_TO_BE_RESET_BY_USER',
+    passwordHash,
     mustChangePassword: true,
+    operatorPinHash,
+    operatorPinSetAt,
   });
 
   // Seed default onboarding training & documents checklist
@@ -461,7 +508,7 @@ const onboardEmployee = asyncHandler(async (req, res) => {
       action: 'ONBOARD_EMPLOYEE',
       entityType: 'EMPLOYEE',
       entityId: newUserId,
-      metadata: { name, email, role, primaryCafeId, employmentStatus },
+      metadata: { name, email, role, primaryCafeId, employmentStatus, hasOperatorPin: Boolean(operatorPinHash) },
     });
   } catch (e) {
     // Non-blocking audit
@@ -470,7 +517,105 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   return res.status(201).json({
     success: true,
     message: `Employee ${name} (${newUserId}) successfully onboarded.`,
-    data: { employee: newUser },
+    data: {
+      employee: newUser,
+      credentials: {
+        userId: newUserId,
+        email: newUser.email,
+        temporaryPassword: effectivePassword,
+        operatorPin: rawPin ? String(rawPin).trim() : null,
+        operatorPinConfigured: Boolean(operatorPinHash),
+        mustChangePassword: true,
+      },
+    },
+  });
+});
+
+// ─── 4B. SET / RESET EMPLOYEE CREDENTIALS (PASSWORD & OPERATOR PIN) ───────────
+const setEmployeeCredentials = asyncHandler(async (req, res) => {
+  const { organisationId } = req.auth;
+  const { userId } = req.params;
+  const { password, generatePassword = false, operatorPin } = req.body;
+
+  if (!password && !generatePassword && (operatorPin === undefined || operatorPin === null || operatorPin === '')) {
+    throw new ApiError(400, 'NO_UPDATES_PROVIDED', 'Please provide a new password, request auto-generated password, or provide a 6-digit Operator PIN.');
+  }
+
+  const user = await User.findOne({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: userId.trim().toUpperCase(),
+  });
+
+  if (!user) {
+    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
+  }
+
+  let effectivePassword = null;
+  if (password && String(password).trim().length > 0) {
+    effectivePassword = String(password).trim();
+    if (effectivePassword.length < 8) {
+      throw new ApiError(400, 'INVALID_PASSWORD', 'Password must be at least 8 characters.');
+    }
+    user.passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
+    user.mustChangePassword = true;
+    user.failedLoginAttempts = 0;
+    user.accountLockUntil = null;
+  } else if (generatePassword) {
+    effectivePassword = generateTemporaryPassword();
+    user.passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
+    user.mustChangePassword = true;
+    user.failedLoginAttempts = 0;
+    user.accountLockUntil = null;
+  }
+
+  let pinSet = false;
+  if (operatorPin !== undefined && operatorPin !== null && String(operatorPin).trim().length > 0) {
+    const pinStr = String(operatorPin).trim();
+    if (!/^\d{6}$/.test(pinStr)) {
+      throw new ApiError(400, 'INVALID_OPERATOR_PIN', 'Operator PIN must be exactly 6 numeric digits.');
+    }
+    const weakPins = ['000000', '111111', '123456', '654321', '999999', '121212'];
+    if (weakPins.includes(pinStr)) {
+      throw new ApiError(400, 'WEAK_OPERATOR_PIN', 'Please choose a stronger, non-sequential 6-digit PIN.');
+    }
+    user.operatorPinHash = await operatorSessionService.hashPin(pinStr);
+    user.operatorPinSetAt = new Date();
+    user.operatorPinFailedAttempts = 0;
+    user.operatorPinLockedUntil = null;
+    pinSet = true;
+  }
+
+  await user.save();
+
+  try {
+    await recordRequestAudit({
+      request: req,
+      module: 'EMPLOYEES',
+      action: 'SET_EMPLOYEE_CREDENTIALS',
+      entityType: 'USER',
+      entityId: user.userId,
+      metadata: {
+        targetUserId: user.userId,
+        passwordUpdated: Boolean(effectivePassword),
+        operatorPinUpdated: pinSet,
+      },
+    });
+  } catch (e) {
+    // Non-blocking audit
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: `Credentials updated successfully for ${user.name} (${user.userId}).`,
+    data: {
+      userId: user.userId,
+      name: user.name,
+      email: user.email,
+      temporaryPassword: effectivePassword,
+      operatorPin: pinSet ? String(operatorPin).trim() : null,
+      operatorPinConfigured: Boolean(user.operatorPinHash),
+      mustChangePassword: user.mustChangePassword,
+    },
   });
 });
 
@@ -2133,7 +2278,10 @@ const registerEmployeeExtended = asyncHandler(async (req, res) => {
   return res.status(201).json({
     success: true,
     message: `Employee ${employee.name} (${employee.userId}) registered successfully.`,
-    data: { employee },
+    data: {
+      employee,
+      credentials: employee.credentials || null,
+    },
   });
 });
 
@@ -2374,6 +2522,7 @@ module.exports = {
   deleteSelfDocument,
   exportProfileSummary,
   onboardEmployee,
+  setEmployeeCredentials,
   registerEmployeeExtended,
   getEmployeeReadiness,
   updateEmployeeReadiness,

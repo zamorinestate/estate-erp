@@ -11,6 +11,7 @@ import { skeleton, showToast } from "../components.js";
 import { state } from "../state.js";
 import { setupModalA11y } from "../utils/modalA11y.js";
 import { openChangePasswordModal } from "../components/changePasswordModal.js";
+import { openManageCredentialsModal } from "./employees.js";
 
 let activeRequest = null;
 let currentProfileData = null;
@@ -718,8 +719,9 @@ function renderSecurityTab(p) {
             <div><span style="color:var(--muted);" style="font-size:11px;">PASSWORD STATUS</span><div style="color:var(--ink);font-size:13px;margin-top:2px;">Strong · Last changed recently</div></div>
             <div><span style="color:var(--muted);" style="font-size:11px;">MFA METHOD</span><div style="color:var(--ink);font-size:13px;margin-top:2px;">Time-based One-Time Password (TOTP)</div></div>
           </div>
-          <div style="margin-top:14px;">
+          <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
             <button type="button" class="btn btn-primary" data-change-password-prompt style="font-size:12px;">Change Password</button>
+            <button type="button" class="btn btn-secondary" data-admin-manage-credentials style="font-size:12px;">🔑 Set / Reset Password &amp; PIN</button>
           </div>
         </div>
       </div>
@@ -1363,6 +1365,15 @@ function wireTabEvents(root) {
   // Change password prompt
   root.querySelector("[data-change-password-prompt]")?.addEventListener("click", () => {
     openChangePasswordModal();
+  });
+
+  // Admin manage credentials (Password & PIN)
+  root.querySelector("[data-admin-manage-credentials]")?.addEventListener("click", () => {
+    const p = currentProfileData || {};
+    const uId = p.identity?.userId || p.userId || "";
+    const uName = p.identity?.name || p.name || "Employee";
+    const uEmail = p.contact?.email || p.email || "";
+    openManageCredentialsModal(uId, uName, uEmail);
   });
 
   // Upload modal trigger -> navigates to Document Hub
