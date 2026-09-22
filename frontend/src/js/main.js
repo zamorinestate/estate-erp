@@ -78,17 +78,6 @@ export const DEV_PREVIEW_USERS = Object.freeze({
     isDevPreview: true,
   }),
 
-  master_normal: Object.freeze({
-    _id: "MU-0002",
-    id: "MU-0002",
-    name: "Zamorin Normal Master",
-    email: "normal.master@example.com",
-    role: "MASTER",
-    organisationId: "ZAMORIN",
-    status: "ACTIVE",
-    isPrimaryMaster: false,
-    isDevPreview: true,
-  }),
 
   owner: Object.freeze({
     _id: "OU-0001",
@@ -169,12 +158,6 @@ export function getRequestedDevRole() {
     return "cafe_admin";
   }
 
-  if (
-    requested === "master_normal" ||
-    (requested === "master" && authority === "normal")
-  ) {
-    return "master_normal";
-  }
 
   return "master";
 }

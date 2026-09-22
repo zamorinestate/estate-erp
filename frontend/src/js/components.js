@@ -198,7 +198,7 @@ export function renderTopbar({ scopeChip } = {}) {
   );
 
   if (isPrimaryMasterUser) {
-    const currentWs = state.activeWorkspace || (state.role === 'master' ? (state.isPrimaryMaster === false ? 'master-normal' : 'master-primary') : state.role);
+    const currentWs = state.activeWorkspace || (state.role === 'master' ? 'master-primary' : state.role);
     const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
     const empOptions = (state.employees || []).map(emp => `<option value="${emp.id || emp.employeeId || emp.userId}" ${(state.supervisedEmployeeId === (emp.id || emp.employeeId || emp.userId)) ? 'selected' : ''}>👤 ${emp.name || emp.fullName || emp.userId} (${emp.employeeId || emp.id || ''})</option>`).join('');
 
@@ -206,11 +206,10 @@ export function renderTopbar({ scopeChip } = {}) {
       <div class="primary-master-topbar-controls" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
         <div class="workspace-scope-dropdown">
           <select id="global-workspace-selector" class="select-scope" aria-label="Selected Workspace Window" style="font-weight:700;">
-            ${isPrimaryMasterUser ? `<option value="master-primary" ${currentWs === 'master-primary' ? 'selected' : ''}>🛡️ Primary Master</option>` : ''}
-            <option value="master-normal" ${currentWs === 'master-normal' ? 'selected' : ''}>⚖️ Normal Master</option>
+            <option value="master-primary" ${currentWs === 'master-primary' ? 'selected' : ''}>🛡️ Primary Master</option>
             <option value="owner" ${currentWs === 'owner' ? 'selected' : ''}>👑 Owner Portal</option>
             <option value="cafe_admin" ${currentWs === 'cafe_admin' ? 'selected' : ''}>☕ Café Operations</option>
-            <option value="staff" ${currentWs === 'staff' ? 'selected' : ''}>👤 Staff Preview</option>
+            <option value="staff" ${currentWs === 'staff' ? 'selected' : ''}>👤 Employee / Staff Window</option>
           </select>
         </div>
         <div class="cafe-scope-dropdown">
@@ -391,7 +390,7 @@ export function renderTopbar({ scopeChip } = {}) {
             const isPrimary = Boolean(state.auth?.user?.isPrimaryMaster || state.user?.isPrimaryMaster);
             if (isPrimary) return "Primary Master";
             if (user.designation) return user.designation;
-            if (role === ROLES.MASTER || role === "master") return "Normal Master";
+            if (role === ROLES.MASTER || role === "master") return "Primary Master";
             if (role === ROLES.OWNER || role === "owner") return "Café Owner";
             if (role === ROLES.CAFE_ADMIN || role === "cafe_admin") return "Café Administrator";
             return ROLE_LABELS[role] || "Staff Member";
@@ -510,7 +509,7 @@ export function wireBell(root) {
 
       if (targetWs === "master-primary" && !isActualPrimaryMaster) {
         // Silently block and reset selector
-        e.target.value = state.activeWorkspace || "master-normal";
+        e.target.value = state.activeWorkspace || "staff";
         showToast("Access Denied — Primary Master workspace is exclusively reserved for Pradeesh K (MU-0001).", "coral");
         return;
       }
@@ -523,12 +522,6 @@ export function wireBell(root) {
         state.isPrimaryMaster = true;
         state.activeWorkspace = "master-primary";
         showToast("Switched workspace to Primary Master", "info");
-        navigate("dashboard");
-      } else if (targetWs === "master-normal") {
-        state.role = ROLES.MASTER;
-        state.isPrimaryMaster = false;
-        state.activeWorkspace = "master-normal";
-        showToast("Switched workspace to Normal Master (Operational)", "info");
         navigate("dashboard");
       } else if (targetWs === "owner") {
         state.role = ROLES.OWNER;

@@ -73,19 +73,12 @@ const PRIMARY_MASTER_ITEMS = [
   { id: 'settings',      label: 'Settings',               icon: 'settings',     route: 'settings',          group: 'SYSTEM' },
 ];
 
-// ─── Normal Master Navigation ─────────────────────────────────────────────────
-// Same as Primary Master EXCEPT: no Personal Ledger, no Universal Payroll,
-// no Staff Loans & Advances, no Revenue Share.
-const NORMAL_MASTER_ITEMS = PRIMARY_MASTER_ITEMS.filter(
-  (item) => !item.primaryMasterOnly
-);
-
 export const NAVIGATION = {
   // ── MASTER ───────────────────────────────────────────────────────────────────
   [ROLES.MASTER]: {
-    scopeLabel: 'Master View',
+    scopeLabel: 'Primary Master View',
+    items: PRIMARY_MASTER_ITEMS,
     primaryItems: PRIMARY_MASTER_ITEMS,
-    normalItems: NORMAL_MASTER_ITEMS,
     footnote: 'Full operational and financial control across all cafés.',
   },
 
@@ -293,14 +286,7 @@ export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
     'staff-settings': 'settings',
   };
 
-  // Block Primary-Master-only routes for Normal Masters
-  if (
-    role === ROLES.MASTER &&
-    !isPrimaryMaster &&
-    (PRIMARY_MASTER_ONLY_ROUTES.has(pathOnly) || PRIMARY_MASTER_ONLY_ROUTES.has(route) || PRIMARY_MASTER_ONLY_ROUTES.has(baseRoute))
-  ) {
-    return false;
-  }
+
 
   const allowed = items.map((i) => i.route);
 
@@ -320,12 +306,7 @@ export function getGroupedNavItems(role, isPrimaryMaster = false) {
   const navConfig = NAVIGATION[role];
   if (!navConfig) return {};
 
-  let items;
-  if (role === ROLES.MASTER) {
-    items = isPrimaryMaster ? navConfig.primaryItems : navConfig.normalItems;
-  } else {
-    items = navConfig.items;
-  }
+  const items = navConfig.items || navConfig.primaryItems || [];
 
   const groups = {};
   for (const item of items) {

@@ -430,6 +430,17 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'Employee name and email are required for onboarding.');
   }
 
+  // Reject assigning MASTER role to any new employee
+  const candidateRole = String(role || 'STAFF').trim().toUpperCase();
+  if (candidateRole === 'MASTER') {
+    throw new ApiError(
+      400,
+      'CANNOT_ASSIGN_MASTER_ROLE',
+      'The Master role is reserved exclusively for the Primary Master. Permitted roles are STAFF, CAFE_ADMIN, and OWNER.'
+    );
+  }
+  const effectiveRole = ['STAFF', 'CAFE_ADMIN', 'OWNER'].includes(candidateRole) ? candidateRole : 'STAFF';
+
   // Duplicate check
   const existingUser = await User.findOne({
     $or: [{ email: email.toLowerCase() }, { phone: phone ? phone : null }].filter(Boolean),
@@ -439,10 +450,9 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   }
 
   let newUserId;
-  // Derive ID prefix from role: MR = Normal Master, OW = Owner, AD = Café Admin, ST = Staff
-  const userIdPrefix = role === 'MASTER' ? 'MR'
-    : role === 'OWNER' ? 'OW'
-    : role === 'CAFE_ADMIN' ? 'AD'
+  // Derive ID prefix from role: OW = Owner, AD = Café Admin, ST = Staff
+  const userIdPrefix = effectiveRole === 'OWNER' ? 'OW'
+    : effectiveRole === 'CAFE_ADMIN' ? 'AD'
     : 'ST';
   try {
     const seq = await SequenceCounter.generateId(organisationId, userIdPrefix, 4);
@@ -491,7 +501,7 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     preferredName: preferredName.trim(),
     email: email.toLowerCase().trim(),
     phone: phone.trim(),
-    role,
+    role: effectiveRole,
     department,
     designation,
     employmentType,
@@ -742,8 +752,15 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
     if (employmentStatus !== undefined) user.employmentStatus = String(employmentStatus).trim();
 
     if (role !== undefined) {
-      const validRoles = ['STAFF', 'CAFE_ADMIN', 'OWNER', 'MASTER'];
+      const validRoles = ['STAFF', 'CAFE_ADMIN', 'OWNER'];
       const candidateRole = String(role).trim().toUpperCase();
+      if (candidateRole === 'MASTER') {
+        throw new ApiError(
+          400,
+          'CANNOT_ASSIGN_MASTER_ROLE',
+          'The Master role is reserved exclusively for the Primary Master. Permitted roles are STAFF, CAFE_ADMIN, and OWNER.'
+        );
+      }
       if (validRoles.includes(candidateRole)) {
         user.role = candidateRole;
         // Never allow granting Primary Master to another employee

@@ -389,10 +389,10 @@ function renderDirectorySubpanel() {
   // Map roles to the ERP window they access
   const WINDOW_LABEL = {
     PRIMARY_MASTER: { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
-    MASTER:         { text: '⚖️ Normal Master',  color: '#1e3a5f', bg: '#dbeafe', border: '#3b82f6' },
+    MASTER:         { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
     OWNER:          { text: '👑 Owner Portal',    color: '#065f46', bg: '#d1fae5', border: '#34d399' },
-    CAFE_ADMIN:     { text: '🎯 Admin / Ops',     color: '#4c1d95', bg: '#ede9fe', border: '#8b5cf6' },
-    STAFF:          { text: '👤 Staff Window',    color: '#374151', bg: '#f3f4f6', border: '#9ca3af' },
+    CAFE_ADMIN:     { text: '🎯 Café Operations', color: '#4c1d95', bg: '#ede9fe', border: '#8b5cf6' },
+    STAFF:          { text: '👤 Employee / Staff Window', color: '#374151', bg: '#f3f4f6', border: '#9ca3af' },
   };
   function windowBadge(emp) {
     const isPM = emp.userId === 'MU-0001' && String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
@@ -1272,7 +1272,7 @@ function openOnboardingWizard() {
             <select id="ob-title" required style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
               <option value="">— Select Job Title / Position —</option>
               <optgroup label="👑 Management &amp; Administrative Roles">
-                <option value="Operations Manager" data-role="MASTER">Operations Manager</option>
+                <option value="Operations Manager" data-role="CAFE_ADMIN">Operations Manager</option>
                 <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
               </optgroup>
               <optgroup label="🎯 Store Operations (Admin Access)">
@@ -1319,10 +1319,9 @@ function openOnboardingWizard() {
             Determines the exact UI window this employee enters upon logging into Zamorin ERP.
           </div>
           <select id="ob-window-select" required style="width:100%; padding:8px 12px; border:1px solid #86efac; border-radius:6px; font-size:13px; font-weight:600; background:#fff;">
-            <option value="STAFF">👤 Staff Window (Cashier POS Till, Staff Portal &amp; Timesheets)</option>
-            <option value="CAFE_ADMIN">🎯 Admin / Operations Window (Store Operations, Daily Roster, Cafe Inventory)</option>
+            <option value="STAFF">👤 Employee / Staff Window (Cashier POS Till, Staff Portal &amp; Timesheets)</option>
+            <option value="CAFE_ADMIN">🎯 Café Operations Window (Store Operations, Daily Roster, Cafe Inventory)</option>
             <option value="OWNER">👑 Owner Portal (Financial Reports, Owner Governance, P&amp;L Overview)</option>
-            <option value="MASTER">⚖️ Normal Master Window (Workforce Management, Multi-store Admin)</option>
           </select>
           <div id="ob-role-badge" style="margin-top:6px; font-size:11px; font-weight:600;"></div>
         </div>
@@ -1382,9 +1381,8 @@ function openOnboardingWizard() {
     const obRoleBadge = modalRoot.querySelector("#ob-role-badge");
 
     const ROLE_BADGE_MAP = {
-      MASTER:     { text: "👑 Will access: Normal Master Window",     color: "#92400e", bg: "#fef3c7", border: "#f59e0b" },
       OWNER:      { text: "🏛️ Will access: Owner Portal",             color: "#1e40af", bg: "#dbeafe", border: "#3b82f6" },
-      CAFE_ADMIN: { text: "🎯 Will access: Café Admin / Ops Window",  color: "#065f46", bg: "#d1fae5", border: "#34d399" },
+      CAFE_ADMIN: { text: "🎯 Will access: Café Operations Window",   color: "#065f46", bg: "#d1fae5", border: "#34d399" },
       STAFF:      { text: "👤 Will access: Employee / Staff Window",  color: "#334155", bg: "#f1f5f9", border: "#94a3b8" },
     };
 
@@ -2943,7 +2941,7 @@ export function openEditEmployeeModal(userId) {
               <select id="edit-emp-title" required style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
                 <option value="">— Select Job Title / Position —</option>
                 <optgroup label="👑 Management &amp; Administrative Roles">
-                  <option value="Operations Manager" ${currentTitle === 'Operations Manager' ? 'selected' : ''} data-role="MASTER">Operations Manager</option>
+                  <option value="Operations Manager" ${currentTitle === 'Operations Manager' ? 'selected' : ''} data-role="CAFE_ADMIN">Operations Manager</option>
                   <option value="Café Owner / Franchise Partner" ${currentTitle === 'Café Owner / Franchise Partner' ? 'selected' : ''} data-role="OWNER">Café Owner / Franchise Partner</option>
                 </optgroup>
                 <optgroup label="🎯 Store Operations (Admin Access)">
@@ -3012,10 +3010,9 @@ export function openEditEmployeeModal(userId) {
             </div>
           ` : `
             <select id="edit-emp-window-select" required style="width:100%; padding:8px 12px; border:1px solid #86efac; border-radius:6px; font-size:13px; font-weight:600; background:#fff;">
-              <option value="STAFF" ${currentRole === 'STAFF' ? 'selected' : ''}>👤 Staff Window (Cashier POS Till, Staff Portal &amp; Timesheets)</option>
-              <option value="CAFE_ADMIN" ${currentRole === 'CAFE_ADMIN' ? 'selected' : ''}>🎯 Admin / Operations Window (Store Operations, Daily Roster, Cafe Inventory)</option>
+              <option value="STAFF" ${currentRole === 'STAFF' ? 'selected' : ''}>👤 Employee / Staff Window (Cashier POS Till, Staff Portal &amp; Timesheets)</option>
+              <option value="CAFE_ADMIN" ${currentRole === 'CAFE_ADMIN' ? 'selected' : ''}>🎯 Café Operations Window (Store Operations, Daily Roster, Cafe Inventory)</option>
               <option value="OWNER" ${currentRole === 'OWNER' ? 'selected' : ''}>👑 Owner Portal (Financial Reports, Owner Governance, P&amp;L Overview)</option>
-              <option value="MASTER" ${currentRole === 'MASTER' ? 'selected' : ''}>⚖️ Normal Master Window (Workforce Management, Multi-store Admin)</option>
             </select>
           `}
         </div>

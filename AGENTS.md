@@ -22,6 +22,14 @@ This document establishes the mandatory, locked architectural constraints for th
    - **Rule File**: [.agents/rules/auth_design_freeze.md](file:///.agents/rules/auth_design_freeze.md)
    - **Directive**: The visual layout, styling, dimensions, card size, and branding of Login 2.0 (`frontend/src/js/pages/login2.js`, `frontend/src/styles/login2.css`) are strictly finalized and frozen. Zero modifications permitted.
 
-3. **General System Constraints**:
+3. **Permanent 4-Window Topology & Normal Master Abolition**:
+   - By explicit user mandate, the **Normal Master** role and window have been permanently deleted and abolished.
+   - The ERP operates with strictly **4 dedicated windows**:
+     1. **Primary Master Window**: Exclusively held by Pradeesh K (`MU-0001` / `pradeeshk331@gmail.com`). Sole Master account with full system governance.
+     2. **Owner Portal** (`OWNER`): Executive reporting, P&L, CAPEX, risk, and corporate oversight.
+     3. **Café Operations Window** (`CAFE_ADMIN`): Daily store operations, POS, inventory counting, roster, and outlet management.
+     4. **Employee / Staff Window** (`STAFF`): Cashier POS till, timesheets, shift records, and self-service.
+   - Master window access is non-assignable. Onboarding and employee management support only the 3 operational roles: `STAFF`, `CAFE_ADMIN`, and `OWNER`.
    - Zero Kitchen Display System (KDS) files or tickets (strictly excluded by user mandate).
-   - Core design tokens (`tokens.css`) and navigation topology across all five windows must remain preserved.
+   - Core design tokens (`tokens.css`) must remain preserved.
+

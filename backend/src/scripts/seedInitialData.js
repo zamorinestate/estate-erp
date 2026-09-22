@@ -1606,22 +1606,9 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   // 3. Seed Canonical Role Accounts for Complete Role Recognition
   const defaultPasswordHash = await bcrypt.hash('PK@NilaVega_8427!Cedar', 10);
 
-  // Normal Master Account (role MASTER, isPrimaryMaster: false)
-  const existingNormalMaster = await User.findOne({ organisationId, email: 'normal.master@example.com' });
-  if (!existingNormalMaster) {
-    await User.create({
-      userId: 'MU-0002',
-      organisationId,
-      name: 'Zamorin Normal Master',
-      email: 'normal.master@example.com',
-      role: 'MASTER',
-      accountStatus: 'ACTIVE',
-      passwordHash: defaultPasswordHash,
-      isPrimaryMaster: false,
-      createdBy: masterUserId,
-      updatedBy: masterUserId,
-    });
-  }
+  // Note: Normal Master role and window have been abolished.
+  // There is strictly only one Master: the Primary Master (MU-0001 / Pradeesh K).
+
 
   // Owner Account
   const existingOwner = await User.findOne({ organisationId, email: 'owner@example.com' });
