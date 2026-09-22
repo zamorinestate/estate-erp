@@ -361,6 +361,27 @@ function renderOverviewSubpanel() {
 
 // ─── 2. EMPLOYEE DIRECTORY & SEARCH ──────────────────────────────────────────
 function renderDirectorySubpanel() {
+  // Determine if the currently logged-in user IS the Primary Master
+  const viewerUser = state.auth?.user || state.user || {};
+  const isViewerPrimaryMaster =
+    viewerUser.userId === 'MU-0001' &&
+    String(viewerUser.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+
+  // Map roles to the ERP window they access
+  const WINDOW_LABEL = {
+    PRIMARY_MASTER: { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
+    MASTER:         { text: '⚖️ Normal Master',  color: '#1e3a5f', bg: '#dbeafe', border: '#3b82f6' },
+    OWNER:          { text: '👑 Owner Portal',    color: '#065f46', bg: '#d1fae5', border: '#34d399' },
+    CAFE_ADMIN:     { text: '🎯 Admin / Ops',     color: '#4c1d95', bg: '#ede9fe', border: '#8b5cf6' },
+    STAFF:          { text: '👤 Staff Window',    color: '#374151', bg: '#f3f4f6', border: '#9ca3af' },
+  };
+  function windowBadge(emp) {
+    const isPM = emp.userId === 'MU-0001' && String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+    const key = isPM ? 'PRIMARY_MASTER' : (String(emp.role || '').toUpperCase() in WINDOW_LABEL ? String(emp.role || '').toUpperCase() : 'STAFF');
+    const w = WINDOW_LABEL[key] || WINDOW_LABEL.STAFF;
+    return `<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:4px; white-space:nowrap; color:${w.color}; background:${w.bg}; border:1px solid ${w.border};">${w.text}</span>`;
+  }
+
   const cleanEmployees = liveEmployees.filter(e =>
     !e.email?.toLowerCase().includes('perftest') &&
     !e.email?.toLowerCase().includes('@zamorin.test') &&
@@ -438,6 +459,7 @@ function renderDirectorySubpanel() {
               <th style="padding:10px 14px;">Primary Café</th>
               <th style="padding:10px 14px;">Type</th>
               <th style="padding:10px 14px;">System Role</th>
+              <th style="padding:10px 14px;">Window Access</th>
               <th style="padding:10px 14px;">Joined</th>
               <th style="padding:10px 14px;">Status</th>
               <th style="padding:10px 14px; text-align:right;">Actions</th>
@@ -452,22 +474,32 @@ function renderDirectorySubpanel() {
                   <div style="font-size:12px;">Get started by onboarding your first café team member using the "+ Onboard Employee" button above.</div>
                 </td>
               </tr>
-            ` : filtered.map((emp, idx) => `
-              <tr style="border-bottom:1px solid rgba(0,0,0,0.04); transition:background 0.15s ease;" onmouseover="this.style.background='#fafaf9'" onmouseout="this.style.background='transparent'">
+            ` : filtered.map((emp, idx) => {
+              const isPrimaryMasterRow = emp.userId === 'MU-0001' && String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+              // Designation: always show "Primary Master" for MU-0001 regardless of DB value
+              const displayDesignation = isPrimaryMasterRow ? 'Primary Master' : (emp.designation || 'Staff');
+              // Row freeze styling: golden locked border for Primary Master
+              const rowStyle = isPrimaryMasterRow
+                ? `border-bottom:1px solid rgba(0,0,0,0.04); background:linear-gradient(90deg,#fffbeb 0%,transparent 100%); border-left:3px solid #f59e0b;`
+                : `border-bottom:1px solid rgba(0,0,0,0.04); transition:background 0.15s ease;`;
+              const rowHover = isPrimaryMasterRow ? '' : `onmouseover="this.style.background='#fafaf9'" onmouseout="this.style.background='transparent'"`;
+              return `
+              <tr style="${rowStyle}" ${rowHover}>
                 <td style="padding:12px 14px; color:var(--muted); font-size:11px; font-weight:600;">${idx + 1}</td>
                 <td style="padding:12px 14px;">
-                  <div style="font-weight:600; color:var(--ink);">${emp.name}</div>
+                  <div style="font-weight:700; color:var(--ink);">${emp.name}${isPrimaryMasterRow ? ' <span style="font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b;">🔒 FROZEN</span>' : ''}</div>
                   <div style="font-size:11px; color:var(--muted);">${emp.userId} · ${emp.email}</div>
                 </td>
-                <td style="padding:12px 14px; font-weight:500;">${emp.designation || 'Staff'}</td>
+                <td style="padding:12px 14px; font-weight:${isPrimaryMasterRow ? '700' : '500'}; color:${isPrimaryMasterRow ? '#92400e' : 'inherit'};">${displayDesignation}</td>
                 <td style="padding:12px 14px; color:var(--muted);">${emp.department || 'Operations'}</td>
                 <td style="padding:12px 14px;"><span class="badge-tag badge-neutral" style="font-size:11.5px; font-weight:600;">${emp.primaryCafeId || '—'}</span></td>
                 <td style="padding:12px 14px; font-size:12px;">${emp.workerType || 'PERMANENT'}</td>
                 <td style="padding:12px 14px;">
                   <span class="badge-tag ${emp.role === 'MASTER' ? 'badge-accent' : emp.role === 'OWNER' ? 'badge-accent' : 'badge-neutral'}" style="font-size:11px; font-weight:700;">
-                    ${emp.role}
+                    ${isPrimaryMasterRow ? 'PRIMARY MASTER' : (emp.role || 'STAFF')}
                   </span>
                 </td>
+                <td style="padding:12px 14px;">${windowBadge(emp)}</td>
                 <td style="padding:12px 14px; font-size:12px; color:var(--muted);">${emp.joiningDate ? String(emp.joiningDate).split('T')[0] : '—'}</td>
                 <td style="padding:12px 14px;">
                   <span class="badge-tag ${emp.employmentStatus === 'ACTIVE' ? 'badge-success' : emp.employmentStatus === 'PROBATION' ? 'badge-warning' : 'badge-neutral'}" style="font-size:11.5px; font-weight:700;">
@@ -475,17 +507,20 @@ function renderDirectorySubpanel() {
                   </span>
                 </td>
                 <td style="padding:12px 14px; text-align:right; white-space:nowrap;">
-                  <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Login Password & POS PIN">🔑 Login &amp; PIN</button>
+                  <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Login Password &amp; POS PIN">🔑 Login &amp; PIN</button>
                   <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
                   <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
-                  <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
-                  <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
-                  ${emp.userId !== 'MU-0001' && emp.email !== 'pradeeshk331@gmail.com' && !emp.isPrimaryMaster ? `
-                    <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account & Revoke Access">🗑️ Delete</button>
+                  ${isPrimaryMasterRow && !isViewerPrimaryMaster ? '' : `
+                    <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
+                    <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
+                  `}
+                  ${!isPrimaryMasterRow ? `
+                    <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account &amp; Revoke Access">🗑️ Delete</button>
                   ` : ''}
                 </td>
               </tr>
-            `).join('')}
+            `;
+            }).join('')}
           </tbody>
         </table>
       </div>
