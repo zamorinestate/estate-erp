@@ -1,4 +1,4 @@
-﻿{
+{
   "files.exclude": {
     "**/*.BACKUP_*": true,
     "**/*.zip": true
@@ -36,13 +36,19 @@
   "gradle.java.home": "C:\\Users\\chris\\.gradle\\jdks\\eclipse_adoptium-17-amd64-windows.2",
   "jdk.javahome": "C:\\Users\\chris\\.gradle\\jdks\\eclipse_adoptium-17-amd64-windows.2",
   "java.import.gradle.enabled": false,
+  "java.import.gradle.offline.enabled": true,
+  "java.autobuild.enabled": false,
+  "gradle.autoDetect": "off",
   "java.import.exclusions": [
     "**/node_modules/**",
     "**/.metadata/**",
     "**/archetype-resources/**",
     "**/META-INF/maven/**",
     "**/android/**",
-    "**/Platform/Android/**"
+    "**/Android/**",
+    "**/Platform/Android/**",
+    "**/Platform/**",
+    "**/Archive/**"
   ],
   "java.configuration.runtimes": [
     {

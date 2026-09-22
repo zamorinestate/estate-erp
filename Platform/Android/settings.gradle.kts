@@ -29,5 +29,5 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
-rootProject.name = "Zamorin Cafe ERP"
+rootProject.name = "ZamorinCafeERP-Android"
 include(":app")
