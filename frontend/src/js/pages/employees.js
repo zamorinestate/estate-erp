@@ -92,7 +92,7 @@ function renderActiveSubpanel() {
     directory: {
       title: "Employee Directory & Profiles",
       icon: "👥",
-      desc: "Authoritative staff directory, 360 employee profiles and contact records.",
+      desc: "Authoritative staff directory, verified employee profiles and contact records.",
       actionsHtml: `<button class="btn btn-sm btn-primary" id="btn-child-onboard-emp" type="button">+ Onboard Employee</button>`
     },
     positions: {
@@ -361,7 +361,13 @@ function renderOverviewSubpanel() {
 
 // ─── 2. EMPLOYEE DIRECTORY & SEARCH ──────────────────────────────────────────
 function renderDirectorySubpanel() {
-  let filtered = [...liveEmployees];
+  const cleanEmployees = liveEmployees.filter(e =>
+    !e.email?.toLowerCase().includes('perftest') &&
+    !e.email?.toLowerCase().includes('@zamorin.test') &&
+    !e.userId?.match(/^ST-\d{4,}$/) &&
+    !e.name?.match(/^Perf Staff/i)
+  );
+  let filtered = [...cleanEmployees];
 
   if (searchQuery) {
     const q = searchQuery.toLowerCase().trim();
@@ -438,7 +444,15 @@ function renderDirectorySubpanel() {
             </tr>
           </thead>
           <tbody>
-            ${filtered.map((emp, idx) => `
+            ${filtered.length === 0 ? `
+              <tr>
+                <td colspan="10" style="text-align:center; padding:48px 20px; color:var(--muted);">
+                  <div style="font-size:32px; margin-bottom:8px;">👥</div>
+                  <div style="font-weight:600; font-size:14px; color:var(--ink); margin-bottom:4px;">No Employees Found</div>
+                  <div style="font-size:12px;">Get started by onboarding your first café team member using the "+ Onboard Employee" button above.</div>
+                </td>
+              </tr>
+            ` : filtered.map((emp, idx) => `
               <tr style="border-bottom:1px solid rgba(0,0,0,0.04); transition:background 0.15s ease;" onmouseover="this.style.background='#fafaf9'" onmouseout="this.style.background='transparent'">
                 <td style="padding:12px 14px; color:var(--muted); font-size:11px; font-weight:600;">${idx + 1}</td>
                 <td style="padding:12px 14px;">
@@ -746,7 +760,7 @@ async function fetchWorkforceData() {
   try {
     const [ov, emp, pos, stf, itg, cf] = await Promise.allSettled([
       apiGet("/employees/overview"),
-      apiGet("/employees"),
+      apiGet("/employees?limit=200"),
       apiGet("/employees/positions"),
       apiGet("/employees/staffing-requests"),
       apiGet("/employees/integrity"),
