@@ -70,6 +70,8 @@ export const DEV_PREVIEW_USERS = Object.freeze({
     name: "Zamorin Primary Master",
     email: "pradeeshk331@gmail.com",
     role: "MASTER",
+    designation: "Primary Master",
+    position: "Primary Master",
     organisationId: "ZAMORIN",
     status: "ACTIVE",
     isPrimaryMaster: true,

@@ -154,19 +154,6 @@ function renderBackgroundAndModalsHtml() {
         <p style="font-size: 13px; color: var(--l2-text-muted); margin-bottom: 18px; font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif) !important;">Authenticate securely using your device biometrics or personal application PIN.</p>
         
         <div id="l2-bio-options-list" class="biometric-options">
-          <button type="button" class="light-bio-option" data-bio-type="faceId">
-            <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 7V5a2 2 0 0 1 2-2h2"/>
-              <path d="M16 3h2a2 2 0 0 1 2 2v2"/>
-              <path d="M20 17v2a2 2 0 0 1-2 2h-2"/>
-              <path d="M8 21H6a2 2 0 0 1-2-2v-2"/>
-              <path d="M9 8.5v2"/>
-              <path d="M15 8.5v2"/>
-              <path d="M12 11.5v2.2a.8.8 0 0 1-.8.8H11"/>
-              <path d="M8.5 16.8c1 1.4 2.2 1.9 3.5 1.9s2.5-.5 3.5-1.9"/>
-            </svg>
-            <span style="font-size: 13px; font-weight: 600;">Face ID</span>
-          </button>
           <button type="button" class="light-bio-option" data-bio-type="fingerprint">
             <svg class="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/>
@@ -645,7 +632,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     }
 
     const originalHtml = passkeyBtn ? passkeyBtn.innerHTML : "";
-    const labelText = preferredType === "faceId" ? "Scanning Face ID…" : "Scanning Fingerprint…";
+    const labelText = "Scanning Fingerprint…";
     if (passkeyBtn) {
       passkeyBtn.disabled = true;
       passkeyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d4a359" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 0 20" stroke-dasharray="62.8" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></path></svg> <span>${labelText}</span>`;
@@ -677,7 +664,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       // If email was provided and user explicitly has 0 registered credentials:
       if (email && Array.isArray(options.allowCredentials) && options.allowCredentials.length === 0) {
         showGlassAlert(
-          `No passkey or biometric is registered for ${email} on this device.\n\nSign in with your password or 6-digit PIN, then go to Settings → Security & Sign-In to register your fingerprint or Face ID.`,
+          `No passkey or biometric is registered for ${email} on this device.\n\nSign in with your password or 6-digit PIN, then go to Settings → Security & Sign-In to register your fingerprint passkey.`,
           null,
           "Biometric Not Registered"
         );
@@ -699,7 +686,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         delete publicKeyOptions.allowCredentials;
       }
 
-      // 2. Native Platform Authenticator Ceremony (Windows Hello / Touch ID / Face ID / Android)
+      // 2. Native Platform Authenticator Ceremony (Windows Hello / Touch ID / Android)
       let credential;
       explicitAbortController = new AbortController();
       activeExplicitAbortController = explicitAbortController;
@@ -814,7 +801,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         errMsg.includes("session has expired")
       ) {
         showGlassAlert(
-          "This device's biometric is not yet linked to your Zamorin ERP account.\n\nPlease sign in with your password or 6-digit PIN, then go to Settings → Security & Sign-In to register your fingerprint or Face ID.",
+          "This device's biometric is not yet linked to your Zamorin ERP account.\n\nPlease sign in with your password or 6-digit PIN, then go to Settings → Security & Sign-In to register your fingerprint passkey.",
           null,
           "Biometric Not Registered"
         );
@@ -876,11 +863,11 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     });
   }
 
-  // Handle Option Clicks (Face ID, Fingerprint, 6-Digit PIN)
+  // Handle Option Clicks (Fingerprint, 6-Digit PIN)
   container.querySelectorAll(".light-bio-option").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const bioType = btn.getAttribute("data-bio-type");
-      if (bioType === "faceId" || bioType === "fingerprint") {
+      if (bioType === "fingerprint") {
         bioModal?.classList.add("hidden");
         await triggerNativePasskeyAuth({ preferredType: bioType });
       } else if (bioType === "appPin") {
@@ -1138,15 +1125,30 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     }).catch(() => {});
   }
 
-  // Social Informational buttons
-  container.querySelector("#l2-social-google")?.addEventListener("click", () => {
-    showGlassAlert("Single Sign-On (Google Workspace) is restricted to corporate domain accounts. Please sign in with your enterprise credentials.");
+  // Social Informational buttons (Blocked per Administrative Policy, Aesthetics & Effects Preserved)
+  container.querySelector("#l2-social-google")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showGlassAlert(
+      "Google Single Sign-On is disabled by enterprise security policy. Please sign in using your staff credentials.",
+      null,
+      "Access Restricted"
+    );
   });
-  container.querySelector("#l2-social-apple")?.addEventListener("click", () => {
-    showGlassAlert("Single Sign-On (Apple ID) is managed via Enterprise MDM profile. Please sign in with your enterprise credentials.");
+  container.querySelector("#l2-social-apple")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showGlassAlert(
+      "Apple Sign-In is disabled by enterprise security policy. Please sign in using your staff credentials.",
+      null,
+      "Access Restricted"
+    );
   });
-  container.querySelector("#l2-social-facebook")?.addEventListener("click", () => {
-    showGlassAlert("Single Sign-On (Facebook) is restricted to corporate domain accounts. Please sign in with your enterprise credentials.");
+  container.querySelector("#l2-social-facebook")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showGlassAlert(
+      "Facebook Login is disabled by enterprise security policy. Please sign in using your staff credentials.",
+      null,
+      "Access Restricted"
+    );
   });
 
   // Forgot Password Confirmation Modal (Image 3 in Set 1)
@@ -1177,11 +1179,16 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
     });
   }
 
-  // Register Navigation (Image 1 in Set 1)
+  // Register Navigation (Blocked per Administrative Mandate, Aesthetics & Button Effects Preserved)
   const toRegisterBtn = container.querySelector("#l2-to-register-btn");
-  if (toRegisterBtn && typeof onRegister === "function") {
-    toRegisterBtn.addEventListener("click", () => {
-      onRegister();
+  if (toRegisterBtn) {
+    toRegisterBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      showGlassAlert(
+        "Self-registration is disabled. Employee accounts are provisioned exclusively by Café Administration. Please contact your manager for access.",
+        null,
+        "Registration Restricted"
+      );
     });
   }
 

@@ -233,9 +233,19 @@ const listEmployees = asyncHandler(async (req, res) => {
       .lean(),
   ]);
 
-  // Field-level privacy masking for Normal Master / non-Primary
+  // Field-level privacy masking for Normal Master / non-Primary & Primary Master Designation Lock
   const sanitizedUsers = users.map((u) => {
     const userCopy = { ...u };
+    if (
+      userCopy.userId === 'MU-0001' ||
+      String(userCopy.email || '').toLowerCase() === 'pradeeshk331@gmail.com' ||
+      userCopy.isPrimaryMaster === true
+    ) {
+      userCopy.designation = 'Primary Master';
+      userCopy.position = 'Primary Master';
+      userCopy.isPrimaryMaster = true;
+      userCopy.role = 'MASTER';
+    }
     if (!isPrimaryMaster) {
       if (userCopy.address) {
         userCopy.address = { city: userCopy.address.city, state: userCopy.address.state };
@@ -275,6 +285,16 @@ const getEmployee360 = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
   user.organisationId = user.organisationId || organisationId;
+  if (
+    user.userId === 'MU-0001' ||
+    String(user.email || '').toLowerCase() === 'pradeeshk331@gmail.com' ||
+    user.isPrimaryMaster === true
+  ) {
+    user.designation = 'Primary Master';
+    user.position = 'Primary Master';
+    user.isPrimaryMaster = true;
+    user.role = 'MASTER';
+  }
 
   if (role === 'OWNER') {
     if (userId && userId === authUserId) {
@@ -559,6 +579,27 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
+  // Absolute safety guard: Only the Primary Master may change Primary Master credentials
+  const isTargetPrimaryMaster =
+    user.isPrimaryMaster === true ||
+    user.userId === 'MU-0001' ||
+    String(user.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+
+  if (isTargetPrimaryMaster) {
+    const callerId = req.auth?.userId;
+    const isCallerPM =
+      callerId === 'MU-0001' ||
+      req.auth?.isPrimaryMaster === true ||
+      String(req.auth?.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+    if (!isCallerPM) {
+      throw new ApiError(
+        403,
+        'CANNOT_EDIT_PRIMARY_MASTER_CREDENTIALS',
+        'The Primary Master credentials cannot be modified by any other administrator.'
+      );
+    }
+  }
+
   let effectivePassword = null;
   if (password && String(password).trim().length > 0) {
     effectivePassword = String(password).trim();
@@ -624,6 +665,117 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
       operatorPin: pinSet ? String(operatorPin).trim() : null,
       operatorPinConfigured: Boolean(user.operatorPinHash),
       mustChangePassword: user.mustChangePassword,
+    },
+  });
+});
+
+// ─── UPDATE EMPLOYEE PROFILE (POSITION, WINDOW & DETAILS) ─────────────────────
+const updateEmployeeProfile = asyncHandler(async (req, res) => {
+  const { organisationId } = req.auth;
+  const { userId } = req.params;
+  const {
+    name,
+    preferredName,
+    phone,
+    primaryCafeId,
+    assignedCafeIds,
+    department,
+    designation,
+    role,
+    workerType,
+    employmentStatus,
+  } = req.body;
+
+  const normalizedUserId = String(userId).trim().toUpperCase();
+
+  const user = await User.findOne({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: normalizedUserId,
+  });
+
+  if (!user) {
+    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
+  }
+
+  const isTargetPM =
+    user.isPrimaryMaster === true ||
+    user.userId === 'MU-0001' ||
+    String(user.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+
+  const callerId = req.auth?.userId;
+  const isCallerPM =
+    callerId === 'MU-0001' ||
+    req.auth?.isPrimaryMaster === true ||
+    String(req.auth?.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+
+  if (isTargetPM) {
+    if (!isCallerPM) {
+      throw new ApiError(
+        403,
+        'CANNOT_EDIT_PRIMARY_MASTER',
+        'The Primary Master account is protected and cannot be modified by other users.'
+      );
+    }
+    // Primary Master editing his own profile
+    if (name && String(name).trim()) user.name = String(name).trim();
+    if (preferredName !== undefined) user.preferredName = String(preferredName).trim();
+    if (phone !== undefined) user.phone = String(phone).trim();
+    // Role, designation and isPrimaryMaster remain immutably Primary Master
+    user.role = 'MASTER';
+    user.isPrimaryMaster = true;
+    user.designation = 'Primary Master';
+    user.position = 'Primary Master';
+  } else {
+    // Normal employee profile update
+    if (name && String(name).trim()) user.name = String(name).trim();
+    if (preferredName !== undefined) user.preferredName = String(preferredName).trim();
+    if (phone !== undefined) user.phone = String(phone).trim();
+    if (primaryCafeId !== undefined && primaryCafeId !== null) {
+      user.primaryCafeId = String(primaryCafeId).trim().toUpperCase();
+    }
+    if (assignedCafeIds !== undefined && Array.isArray(assignedCafeIds)) {
+      user.assignedCafeIds = assignedCafeIds.map((c) => String(c).trim().toUpperCase());
+    }
+    if (department !== undefined) user.department = String(department).trim();
+    if (designation !== undefined) user.designation = String(designation).trim();
+    if (workerType !== undefined) user.workerType = String(workerType).trim();
+    if (employmentStatus !== undefined) user.employmentStatus = String(employmentStatus).trim();
+
+    if (role !== undefined) {
+      const validRoles = ['STAFF', 'CAFE_ADMIN', 'OWNER', 'MASTER'];
+      const candidateRole = String(role).trim().toUpperCase();
+      if (validRoles.includes(candidateRole)) {
+        user.role = candidateRole;
+        // Never allow granting Primary Master to another employee
+        user.isPrimaryMaster = false;
+      }
+    }
+  }
+
+  await user.save();
+
+  try {
+    await recordRequestAudit({
+      request: req,
+      module: 'EMPLOYEES',
+      action: 'UPDATE_EMPLOYEE_PROFILE',
+      entityType: 'USER',
+      entityId: user.userId,
+      metadata: {
+        updatedUserId: user.userId,
+        designation: user.designation,
+        role: user.role,
+        department: user.department,
+        primaryCafeId: user.primaryCafeId,
+      },
+    });
+  } catch (e) {}
+
+  return res.status(200).json({
+    success: true,
+    message: `Profile for ${user.name} (${user.userId}) has been updated successfully.`,
+    data: {
+      employee: user,
     },
   });
 });
@@ -2657,6 +2809,7 @@ module.exports = {
   exportProfileSummary,
   onboardEmployee,
   setEmployeeCredentials,
+  updateEmployeeProfile,
   registerEmployeeExtended,
   getEmployeeReadiness,
   updateEmployeeReadiness,

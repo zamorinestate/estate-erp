@@ -9,6 +9,7 @@ const {
   getEmployee360,
   onboardEmployee,
   setEmployeeCredentials,
+  updateEmployeeProfile,
   createEmployeeMovement,
   submitProbationReview,
   addEmployeeSkill,
@@ -16,6 +17,7 @@ const {
   listFoodSafetyTrainings,
   generateEmployeeLetter,
   initiateOffboarding,
+  deleteEmployeeAccount,
   getWorkforceIntegrity,
   listPositions,
   createPosition,
@@ -115,6 +117,13 @@ router.post(
   '/:userId/credentials',
   authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
   setEmployeeCredentials
+);
+
+// Update Employee Profile (Position, Window, Department, Café & Details)
+router.patch(
+  '/:userId',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  updateEmployeeProfile
 );
 
 // Stage 04: 9-Section Extended Registration
@@ -350,11 +359,23 @@ router.post(
   generateEmployeeLetter
 );
 
-// 14. Offboarding Initiation
+// 14. Offboarding Initiation & Permanent Account Deletion
 router.post(
   '/:userId/offboard',
   authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
   initiateOffboarding
+);
+
+router.delete(
+  '/:userId',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  deleteEmployeeAccount
+);
+
+router.post(
+  '/:userId/delete',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  deleteEmployeeAccount
 );
 
 // ── Stage 04: Onboarding Readiness Checklist ─────────────────────────────────

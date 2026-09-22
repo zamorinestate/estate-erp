@@ -1186,7 +1186,7 @@ function renderSecurity() {
     <div class="settings-section-card">
       <div class="settings-card-header">
         <div>
-          <h2 class="settings-card-title">Biometric Passkeys (Face ID / Fingerprint / Windows Hello)</h2>
+          <h2 class="settings-card-title">Biometric Passkeys (Fingerprint / Touch ID / Windows Hello)</h2>
           <div class="settings-card-subtitle">Fast, passwordless hardware authentication bound to your registered devices.</div>
         </div>
         <button class="btn btn-primary btn-sm" id="settings-register-passkey-btn" type="button">
@@ -2862,7 +2862,7 @@ function _wireSecurity(root) {
         if (passkeys.length === 0) {
           container.innerHTML = `
             <div style="padding:14px 16px; background:var(--surface-sunken); border:1px dashed var(--line); border-radius:var(--radius-sm, 8px); color:var(--muted); font-size:13px; text-align:center;">
-              🔒 No biometric passkeys enrolled yet. Click <strong>➕ Register New Passkey</strong> above to enable instant Face ID / Fingerprint sign-in.
+              🔒 No biometric passkeys enrolled yet. Click <strong>➕ Register New Passkey</strong> above to enable instant Fingerprint / Touch ID sign-in.
             </div>
           `;
           return;
