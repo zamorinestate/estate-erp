@@ -1,4 +1,21 @@
-{
+﻿{
+  "files.exclude": {
+    "**/*.BACKUP_*": true,
+    "**/*.zip": true
+  },
+  "files.watcherExclude": {
+    "**/Archive/**": true,
+    "**/Evidence/**": true,
+    "**/Documentation/**": true,
+    "**/node_modules/**": true,
+    "**/.git/**": true
+  },
+  "search.exclude": {
+    "**/Archive": true,
+    "**/Evidence": true,
+    "**/Documentation": true,
+    "**/node_modules": true
+  },
   "javascript.validate.enable": false,
   "typescript.validate.enable": false,
   "js/ts.implicitProjectConfig.checkJs": false,
@@ -10,6 +27,7 @@
   "html.validate.scripts": false,
   "html.validate.styles": false,
   "css.validate": false,
+  "sonarlint.analysisExcludes": "**",
   "vscode-edge-devtools.webhint": false,
   "vscode-edge-devtools.webhintInstallNotification": false,
   "markdownlint.appliesTo": "noFiles",
@@ -23,7 +41,8 @@
     "**/.metadata/**",
     "**/archetype-resources/**",
     "**/META-INF/maven/**",
-    "**/android/**"
+    "**/android/**",
+    "**/Platform/Android/**"
   ],
   "java.configuration.runtimes": [
     {

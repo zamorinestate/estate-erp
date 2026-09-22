@@ -1,0 +1,382 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		110000010000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110000020000000000000001 /* AppDelegate.swift */; };
+		110000010000000000000002 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110000020000000000000002 /* ViewController.swift */; };
+		110000010000000000000003 /* ZamorinNativeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110000020000000000000003 /* ZamorinNativeBridge.swift */; };
+		110000010000000000000004 /* ZamorinDocumentManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110000020000000000000004 /* ZamorinDocumentManager.swift */; };
+		110000010000000000000005 /* ZamorinSecurityConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110000020000000000000005 /* ZamorinSecurityConfig.swift */; };
+		110000010000000000000006 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 110000020000000000000006 /* PrivacyInfo.xcprivacy */; };
+		110000010000000000000007 /* ZamorinIosBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110000020000000000000007 /* ZamorinIosBridgeTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		110000030000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 110000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 110000100000000000000001;
+			remoteInfo = ZamorinCafeERP;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		110000020000000000000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		110000020000000000000002 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		110000020000000000000003 /* ZamorinNativeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZamorinNativeBridge.swift; sourceTree = "<group>"; };
+		110000020000000000000004 /* ZamorinDocumentManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZamorinDocumentManager.swift; sourceTree = "<group>"; };
+		110000020000000000000005 /* ZamorinSecurityConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZamorinSecurityConfig.swift; sourceTree = "<group>"; };
+		110000020000000000000006 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		110000020000000000000007 /* ZamorinIosBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZamorinIosBridgeTests.swift; sourceTree = "<group>"; };
+		110000020000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		110000020000000000000009 /* ZamorinCafeERP.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ZamorinCafeERP.entitlements; sourceTree = "<group>"; };
+		110000040000000000000001 /* ZamorinCafeERP.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZamorinCafeERP.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		110000040000000000000002 /* ZamorinCafeERPTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZamorinCafeERPTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		110000050000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		110000050000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		110000060000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				110000060000000000000002 /* ZamorinCafeERP */,
+				110000060000000000000003 /* Tests */,
+				110000060000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		110000060000000000000002 /* ZamorinCafeERP */ = {
+			isa = PBXGroup;
+			children = (
+				110000020000000000000001 /* AppDelegate.swift */,
+				110000020000000000000002 /* ViewController.swift */,
+				110000020000000000000003 /* ZamorinNativeBridge.swift */,
+				110000020000000000000004 /* ZamorinDocumentManager.swift */,
+				110000020000000000000005 /* ZamorinSecurityConfig.swift */,
+				110000020000000000000006 /* PrivacyInfo.xcprivacy */,
+				110000020000000000000008 /* Info.plist */,
+				110000020000000000000009 /* ZamorinCafeERP.entitlements */,
+			);
+			path = ZamorinCafeERP;
+			sourceTree = "<group>";
+		};
+		110000060000000000000003 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				110000020000000000000007 /* ZamorinIosBridgeTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		110000060000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				110000040000000000000001 /* ZamorinCafeERP.app */,
+				110000040000000000000002 /* ZamorinCafeERPTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		110000100000000000000001 /* ZamorinCafeERP */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 110000200000000000000001 /* Build configuration list for PBXNativeTarget "ZamorinCafeERP" */;
+			buildPhases = (
+				110000070000000000000001 /* Sources */,
+				110000050000000000000001 /* Frameworks */,
+				110000080000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ZamorinCafeERP;
+			productName = ZamorinCafeERP;
+			productReference = 110000040000000000000001 /* ZamorinCafeERP.app */;
+			productType = "com.apple.product-type.application";
+		};
+		110000100000000000000002 /* ZamorinCafeERPTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 110000200000000000000002 /* Build configuration list for PBXNativeTarget "ZamorinCafeERPTests" */;
+			buildPhases = (
+				110000070000000000000002 /* Sources */,
+				110000050000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				110000110000000000000001 /* PBXTargetDependency */,
+			);
+			name = ZamorinCafeERPTests;
+			productName = ZamorinCafeERPTests;
+			productReference = 110000040000000000000002 /* ZamorinCafeERPTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		110000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					110000100000000000000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					110000100000000000000002 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = 110000100000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = 110000300000000000000001 /* Build configuration list for PBXProject "ZamorinCafeERP" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 110000060000000000000001;
+			productRefGroup = 110000060000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				110000100000000000000001 /* ZamorinCafeERP */,
+				110000100000000000000002 /* ZamorinCafeERPTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		110000080000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000010000000000000006 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		110000070000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000010000000000000001 /* AppDelegate.swift in Sources */,
+				110000010000000000000002 /* ViewController.swift in Sources */,
+				110000010000000000000003 /* ZamorinNativeBridge.swift in Sources */,
+				110000010000000000000004 /* ZamorinDocumentManager.swift in Sources */,
+				110000010000000000000005 /* ZamorinSecurityConfig.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		110000070000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000010000000000000007 /* ZamorinIosBridgeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		110000110000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 110000100000000000000001 /* ZamorinCafeERP */;
+			targetProxy = 110000030000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		110000400000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		110000400000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		110000400000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ZamorinCafeERP/ZamorinCafeERP.entitlements;
+				CODE_SIGNING_ALLOWED = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ZamorinCafeERP/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zamorin.cafe.erp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		110000400000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ZamorinCafeERP/ZamorinCafeERP.entitlements;
+				CODE_SIGNING_ALLOWED = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ZamorinCafeERP/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zamorin.cafe.erp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		110000400000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.zamorin.cafe.erp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ZamorinCafeERP.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ZamorinCafeERP";
+			};
+			name = Debug;
+		};
+		110000400000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.zamorin.cafe.erp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ZamorinCafeERP.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ZamorinCafeERP";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		110000300000000000000001 /* Build configuration list for PBXProject "ZamorinCafeERP" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				110000400000000000000001 /* Debug */,
+				110000400000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		110000200000000000000001 /* Build configuration list for PBXNativeTarget "ZamorinCafeERP" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				110000400000000000000003 /* Debug */,
+				110000400000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		110000200000000000000002 /* Build configuration list for PBXNativeTarget "ZamorinCafeERPTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				110000400000000000000005 /* Debug */,
+				110000400000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 110000000000000000000001 /* Project object */;
+}

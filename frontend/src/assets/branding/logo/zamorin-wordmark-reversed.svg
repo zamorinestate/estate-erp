@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 220">
+  <text x="3" y="99" font-family="Playfair Display" font-weight="700" font-size="80" letter-spacing="3" fill="#F7F3EA">ZAMORIN</text>
+  <text x="5" y="162" font-family="Poppins" font-weight="400" font-size="22" letter-spacing="12" fill="#B9BECB">ESTATE</text>
+  <line x1="3" y1="178" x2="400" y2="178" stroke="#CBA968" stroke-width="1.5"/>
+  <text x="5" y="200" font-family="Poppins" font-weight="500" font-size="13" letter-spacing="5" fill="#CBA968">PVT. LTD.</text>
+</svg>

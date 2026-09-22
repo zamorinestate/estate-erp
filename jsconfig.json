@@ -1,0 +1,21 @@
+﻿{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "checkJs": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "Backend/**/*",
+    "Frontend/**/*",
+    "Scripts/**/*",
+    "Config/**/*"
+  ],
+  "exclude": [
+    "Archive/**/*",
+    "Documentation/**/*",
+    "Evidence/**/*",
+    "Platform/**/*",
+    "**/node_modules"
+  ]
+}

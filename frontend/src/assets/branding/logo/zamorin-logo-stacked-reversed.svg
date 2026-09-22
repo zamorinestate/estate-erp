@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 465">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C6A567"/>
+      <stop offset="100%" stop-color="#83622C"/>
+    </linearGradient>
+    <g id="icn">
+      <rect x="22" y="22" width="156" height="156" rx="38" fill="none" stroke="url(#g1)" stroke-width="2.25" opacity="0.9"/>
+      <path d="M 58 68 L 142 68 L 58 132 L 142 132" fill="none" stroke="url(#g1)" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </defs>
+  <use href="#icn" transform="translate(160,30) scale(0.8)"/>
+  <g transform="translate(39,225)">
+    <text x="201.5" y="99" font-family="Playfair Display" font-weight="700" font-size="80" letter-spacing="3" fill="#F7F3EA" text-anchor="middle">ZAMORIN</text>
+    <text x="201.5" y="162" font-family="Poppins" font-weight="400" font-size="22" letter-spacing="12" fill="#B9BECB" text-anchor="middle">ESTATE</text>
+    <line x1="40" y1="178" x2="363" y2="178" stroke="#CBA968" stroke-width="1.5"/>
+    <text x="201.5" y="200" font-family="Poppins" font-weight="500" font-size="13" letter-spacing="5" fill="#CBA968" text-anchor="middle">PVT. LTD.</text>
+  </g>
+</svg>

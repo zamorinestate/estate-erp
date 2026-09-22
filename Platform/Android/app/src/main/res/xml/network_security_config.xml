@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Production Base Configuration: Strict HTTPS only; cleartext HTTP prohibited -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Controlled Development Domain overrides for local emulators/debuggers -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+
+    <!-- Specific domain rules -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">zamorin-cafe-erp.vercel.app</domain>
+        <domain includeSubdomains="true">zamorin.app</domain>
+        <domain includeSubdomains="true">zamorin-cafe-erp-backend.onrender.com</domain>
+    </domain-config>
+</network-security-config>
