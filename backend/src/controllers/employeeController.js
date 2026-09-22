@@ -16,6 +16,10 @@ const { ProbationReview } = require('../models/ProbationReview');
 const { Asset } = require('../models/Asset');
 const { Cafe } = require('../models/Cafe');
 const { SequenceCounter } = require('../models/SequenceCounter');
+const { Session } = require('../models/Session');
+const { PasskeyCredential } = require('../models/PasskeyCredential');
+const { OperatorSession } = require('../models/OperatorSession');
+const { UserPreference } = require('../models/UserPreference');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const auditService = require('../services/auditService');
@@ -415,13 +419,17 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   }
 
   let newUserId;
+  // Derive ID prefix from role: MR = Normal Master, OW = Owner, AD = Café Admin, ST = Staff
+  const userIdPrefix = role === 'MASTER' ? 'MR'
+    : role === 'OWNER' ? 'OW'
+    : role === 'CAFE_ADMIN' ? 'AD'
+    : 'ST';
   try {
-    const seq = await SequenceCounter.generateId(organisationId, role === 'CAFE_ADMIN' ? 'AD' : 'ST', 4);
+    const seq = await SequenceCounter.generateId(organisationId, userIdPrefix, 4);
     newUserId = seq;
   } catch (err) {
     const count = await User.countDocuments({ organisationId });
-    const prefix = role === 'CAFE_ADMIN' ? 'AD' : 'ST';
-    newUserId = `${prefix}-${String(count + 1).padStart(4, '0')}`;
+    newUserId = `${userIdPrefix}-${String(count + 1).padStart(4, '0')}`;
   }
 
   // Compute password hash
@@ -480,6 +488,7 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     mustChangePassword: true,
     operatorPinHash,
     operatorPinSetAt,
+    createdBy: actorId,
   });
 
   // Seed default onboarding training & documents checklist
@@ -949,7 +958,94 @@ const generateEmployeeLetter = asyncHandler(async (req, res) => {
   });
 });
 
-// ─── 9. OFFBOARDING WORKFLOW ──────────────────────────────────────────────────
+// ─── 9. OFFBOARDING & IMMEDIATE ACCOUNT DELETION WORKFLOW ─────────────────────
+const deleteEmployeeAccount = asyncHandler(async (req, res) => {
+  const { organisationId } = req.auth;
+  const { userId } = req.params;
+
+  if (!userId) {
+    throw new ApiError(400, 'INVALID_PAYLOAD', 'userId parameter is required.');
+  }
+
+  const normalizedUserId = String(userId).trim().toUpperCase();
+
+  const user = await User.findOne({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: normalizedUserId,
+  });
+
+  if (!user) {
+    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
+  }
+
+  // Absolute safety guard: NEVER permit deleting Primary Master
+  if (
+    user.isPrimaryMaster === true ||
+    user.email === 'pradeeshk331@gmail.com' ||
+    user.userId === 'MU-0001' ||
+    (user.role === 'MASTER' && user.isPrimaryMaster !== false)
+  ) {
+    throw new ApiError(403, 'CANNOT_DELETE_PRIMARY_MASTER', 'The Primary Master account is protected and cannot be deleted.');
+  }
+
+  // 1. Permanently delete user document from User collection
+  await User.deleteOne({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: normalizedUserId,
+  });
+
+  // 2. Immediately purge all active sessions to invalidate all JWT tokens
+  await Session.deleteMany({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: normalizedUserId,
+  }).catch(() => null);
+
+  // 3. Purge all registered passkeys & WebAuthn credentials
+  await PasskeyCredential.deleteMany({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: normalizedUserId,
+  }).catch(() => null);
+
+  // 4. Purge Operator sessions and preferences
+  await OperatorSession.deleteMany({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: normalizedUserId,
+  }).catch(() => null);
+
+  await UserPreference.deleteMany({
+    organisationId: organisationId.trim().toUpperCase(),
+    userId: normalizedUserId,
+  }).catch(() => null);
+
+  // 5. Record immutable audit event
+  try {
+    await recordRequestAudit({
+      request: req,
+      module: 'EMPLOYEES',
+      action: 'DELETE_EMPLOYEE_ACCOUNT',
+      entityType: 'EMPLOYEE',
+      entityId: normalizedUserId,
+      metadata: {
+        deletedUserEmail: user.email,
+        deletedUserName: user.name,
+        role: user.role,
+        primaryCafeId: user.primaryCafeId,
+      },
+    });
+  } catch (e) {
+    // Non-blocking audit
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: `Account for ${user.name} (${normalizedUserId}) has been permanently deleted. All active sessions and credentials have been revoked.`,
+    data: {
+      userId: normalizedUserId,
+      deleted: true,
+    },
+  });
+});
+
 const initiateOffboarding = asyncHandler(async (req, res) => {
   const { organisationId, userId: actorId } = req.auth;
   const { userId } = req.params;
@@ -961,15 +1057,53 @@ const initiateOffboarding = asyncHandler(async (req, res) => {
     handoverComplete = false,
     assetsReturned = false,
     accessRevoked = false,
+    deleteImmediately = false,
   } = req.body;
+
+  const normalizedUserId = String(userId).trim().toUpperCase();
+
+  const user = await User.findOne({ organisationId, userId: normalizedUserId });
+  if (!user) {
+    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
+  }
+
+  // If immediate deletion or access revocation is requested:
+  if (deleteImmediately || accessRevoked || exitType === 'TERMINATION') {
+    if (
+      user.isPrimaryMaster === true ||
+      user.email === 'pradeeshk331@gmail.com' ||
+      user.userId === 'MU-0001' ||
+      (user.role === 'MASTER' && user.isPrimaryMaster !== false)
+    ) {
+      throw new ApiError(403, 'CANNOT_DELETE_PRIMARY_MASTER', 'The Primary Master account is protected and cannot be deleted.');
+    }
+
+    await User.deleteOne({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId });
+    await Session.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
+    await PasskeyCredential.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
+    await OperatorSession.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
+    await UserPreference.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
+
+    try {
+      await recordRequestAudit({
+        request: req,
+        module: 'EMPLOYEES',
+        action: 'OFFBOARD_AND_DELETE_EMPLOYEE',
+        entityType: 'EMPLOYEE',
+        entityId: normalizedUserId,
+        metadata: { lastWorkingDay, exitType, reasonCategory, accessRevoked: true },
+      });
+    } catch (e) {}
+
+    return res.status(200).json({
+      success: true,
+      message: `Account for ${user.name} (${normalizedUserId}) has been permanently deleted and access revoked immediately.`,
+      data: { employee: user, deleted: true },
+    });
+  }
 
   if (!lastWorkingDay) {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'lastWorkingDay is required.');
-  }
-
-  const user = await User.findOne({ organisationId, userId });
-  if (!user) {
-    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
   user.employmentStatus = 'NOTICE_PERIOD';
@@ -998,7 +1132,7 @@ const initiateOffboarding = asyncHandler(async (req, res) => {
       module: 'EMPLOYEES',
       action: 'OFFBOARD_EMPLOYEE',
       entityType: 'EMPLOYEE',
-      entityId: userId,
+      entityId: normalizedUserId,
       metadata: { lastWorkingDay, exitType, reasonCategory },
     });
   } catch (e) {}
@@ -2537,6 +2671,7 @@ module.exports = {
   listFoodSafetyTrainings,
   generateEmployeeLetter,
   initiateOffboarding,
+  deleteEmployeeAccount,
   getWorkforceIntegrity,
   listPositions,
   createPosition,

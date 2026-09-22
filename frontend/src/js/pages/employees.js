@@ -480,6 +480,9 @@ function renderDirectorySubpanel() {
                   <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
                   <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
                   <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
+                  ${emp.userId !== 'MU-0001' && emp.email !== 'pradeeshk331@gmail.com' && !emp.isPrimaryMaster ? `
+                    <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account & Revoke Access">🗑️ Delete</button>
+                  ` : ''}
                 </td>
               </tr>
             `).join('')}
@@ -815,6 +818,19 @@ export async function wireEmployees(container = document, subroute) {
         document.getElementById("employees-back-to-hub-btn")?.addEventListener("click", backToHub);
         document.getElementById("workforce-back-to-hub-btn")?.addEventListener("click", backToHub);
         attachDirectoryRowListeners();
+        // Re-bind child action buttons that live inside the dynamically re-rendered subpanel header
+        document.querySelectorAll("#btn-child-onboard-emp, #open-onboard-wizard-btn, #onboard-emp-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openOnboardingWizard());
+        });
+        document.querySelectorAll("#btn-child-add-position, #add-position-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openCreatePositionModal());
+        });
+        document.querySelectorAll("#btn-child-new-staffing-req, #new-requisition-btn, #open-staffing-request-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openStaffingRequestModal());
+        });
+        document.querySelectorAll("#btn-child-verify-skill, #verify-skill-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openVerifySkillModal());
+        });
       }
     });
   }
@@ -991,12 +1007,70 @@ function attachDirectoryRowListeners() {
     });
   });
 
+  // Permanent Account Deletion & Immediate Revocation
+  document.querySelectorAll(".delete-employee-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const userId = btn.getAttribute("data-user-id");
+      const name = btn.getAttribute("data-name") || userId;
+      confirmAndDeleteEmployee(userId, name);
+    });
+  });
+
   // Open Probation Modal
   document.querySelectorAll(".open-probation-modal-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const userId = btn.getAttribute("data-user-id");
       openProbationModal(userId);
     });
+  });
+}
+
+function confirmAndDeleteEmployee(userId, name) {
+  openModal(`
+    <div style="padding:24px; max-width:480px; width:100%; color:var(--ink);">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+        <div style="width:40px; height:40px; border-radius:50%; background:rgba(220,38,38,0.12); display:flex; align-items:center; justify-content:center; font-size:20px; color:#dc2626;">
+          ⚠️
+        </div>
+        <div>
+          <h2 style="font-size:18px; font-weight:700; margin:0; color:#dc2626;">Permanently Delete Account</h2>
+          <div style="font-size:12px; color:var(--muted);">${escapeHtml(name)} (${escapeHtml(userId)})</div>
+        </div>
+      </div>
+      <p style="font-size:13.5px; line-height:1.5; color:var(--ink); margin:0 0 16px;">
+        Are you sure you want to permanently delete the account for <strong>${escapeHtml(name)}</strong> (<code>${escapeHtml(userId)}</code>)?
+      </p>
+      <div style="background:rgba(220,38,38,0.06); border:1px solid rgba(220,38,38,0.2); border-radius:8px; padding:12px; font-size:12px; color:#991b1b; margin-bottom:20px;">
+        <strong>Warning:</strong> This will permanently delete the employee record from the database, instantly terminate all active sessions, and revoke all login credentials. The employee will not be able to log in or access the ERP again.
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+        <button class="btn btn-primary" id="confirm-delete-emp-btn" type="button" style="background:#dc2626; border-color:#dc2626; color:#fff; font-weight:600;">
+          🗑️ Permanently Delete
+        </button>
+      </div>
+    </div>
+  `);
+
+  document.getElementById("confirm-delete-emp-btn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("confirm-delete-emp-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Deleting...";
+    }
+    try {
+      await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+      liveEmployees = liveEmployees.filter(e => e.userId !== userId);
+      document.getElementById("modal-root").innerHTML = "";
+      showToast(`Account for ${name} (${userId}) has been permanently deleted and access revoked.`, "success");
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🗑️ Permanently Delete";
+      }
+      showToast(err?.message || "Failed to delete employee account", "coral");
+    }
   });
 }
 
@@ -1081,8 +1155,34 @@ function openOnboardingWizard() {
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div>
-            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Designation *</label>
-            <input type="text" id="ob-title" required placeholder="e.g. Junior Barista" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;" />
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Position *</label>
+            <select id="ob-title" required style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
+              <option value="">— Select Job Title / Position —</option>
+              <optgroup label="👑 Management Access (Elevated Windows)">
+                <option value="Normal Master / Operations Manager" data-role="MASTER">Normal Master / Operations Manager</option>
+                <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
+              </optgroup>
+              <optgroup label="🎯 Operations Management (Admin Access)">
+                <option value="Café Administrator / Store Manager" data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
+                <option value="Assistant Store Manager" data-role="CAFE_ADMIN">Assistant Store Manager</option>
+              </optgroup>
+              <optgroup label="☕ Café Staff (Employee Window)">
+                <option value="Head Barista" data-role="STAFF">Head Barista</option>
+                <option value="Senior Barista" data-role="STAFF">Senior Barista</option>
+                <option value="Junior Barista" data-role="STAFF">Junior Barista</option>
+                <option value="Chef" data-role="STAFF">Chef</option>
+                <option value="Sous Chef" data-role="STAFF">Sous Chef</option>
+                <option value="Kitchen Staff" data-role="STAFF">Kitchen Staff</option>
+                <option value="Service Staff / Waiter" data-role="STAFF">Service Staff / Waiter</option>
+                <option value="Cashier" data-role="STAFF">Cashier</option>
+                <option value="Delivery Staff" data-role="STAFF">Delivery Staff</option>
+                <option value="Cleaning Staff" data-role="STAFF">Cleaning Staff</option>
+                <option value="Security Guard" data-role="STAFF">Security Guard</option>
+                <option value="Trainee / Apprentice" data-role="STAFF">Trainee / Apprentice</option>
+                <option value="Other" data-role="STAFF">Other</option>
+              </optgroup>
+            </select>
+            <div id="ob-role-badge" style="margin-top:4px; font-size:10.5px; color:#64748b; font-weight:600;"></div>
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Worker Type</label>
@@ -1143,6 +1243,27 @@ function openOnboardingWizard() {
   if (modalRoot) {
     wireVisibilityToggles(modalRoot);
 
+    // Live role badge: shows what window the employee will get access to
+    const obTitleSelect = modalRoot.querySelector("#ob-title");
+    const obRoleBadge = modalRoot.querySelector("#ob-role-badge");
+    const ROLE_BADGE_MAP = {
+      MASTER:     { text: "👑 Will access: Normal Master Window",     color: "#92400e", bg: "#fef3c7", border: "#f59e0b" },
+      OWNER:      { text: "🏛️ Will access: Owner Window",             color: "#1e40af", bg: "#dbeafe", border: "#3b82f6" },
+      CAFE_ADMIN: { text: "🎯 Will access: Café Admin / Ops Window",  color: "#065f46", bg: "#d1fae5", border: "#34d399" },
+      STAFF:      { text: "👤 Will access: Employee / Staff Window",  color: "#334155", bg: "#f1f5f9", border: "#94a3b8" },
+    };
+    function updateObRoleBadge() {
+      if (!obTitleSelect || !obRoleBadge) return;
+      const opt = obTitleSelect.options[obTitleSelect.selectedIndex];
+      const r = opt?.dataset?.role || "";
+      if (!r || !ROLE_BADGE_MAP[r]) { obRoleBadge.textContent = ""; obRoleBadge.style.cssText = ""; return; }
+      const b = ROLE_BADGE_MAP[r];
+      obRoleBadge.textContent = b.text;
+      obRoleBadge.style.cssText = `margin-top:5px; font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:4px; display:inline-block; color:${b.color}; background:${b.bg}; border:1px solid ${b.border};`;
+    }
+    obTitleSelect?.addEventListener("change", updateObRoleBadge);
+    updateObRoleBadge();
+
     modalRoot.querySelector("#ob-gen-pwd-btn")?.addEventListener("click", () => {
       const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
       let rand = "";
@@ -1195,6 +1316,11 @@ function openOnboardingWizard() {
       submitBtn.textContent = "Onboarding...";
     }
 
+    // Derive role from the selected job title option
+    const obTitleEl = document.getElementById("ob-title");
+    const obSelectedOpt = obTitleEl?.options?.[obTitleEl.selectedIndex];
+    const derivedRole = obSelectedOpt?.dataset?.role || "STAFF";
+
     const payload = {
       name: document.getElementById("ob-name").value.trim(),
       preferredName: document.getElementById("ob-preferred").value.trim(),
@@ -1202,9 +1328,9 @@ function openOnboardingWizard() {
       phone: document.getElementById("ob-phone").value.trim(),
       primaryCafeId: document.getElementById("ob-cafe").value,
       department: document.getElementById("ob-dept").value,
-      designation: document.getElementById("ob-title").value.trim(),
+      designation: obTitleEl?.value?.trim() || "",
       workerType: document.getElementById("ob-worker-type").value,
-      role: "STAFF",
+      role: derivedRole,
     };
     if (pwdVal) payload.password = pwdVal;
     if (pinVal) payload.operatorPin = pinVal;
@@ -1220,7 +1346,7 @@ function openOnboardingWizard() {
         name: payload.name,
         preferredName: payload.preferredName || payload.name,
         email: payload.email,
-        role: "STAFF",
+        role: derivedRole,
         designation: payload.designation,
         department: payload.department,
         primaryCafeId: payload.primaryCafeId,
@@ -1776,16 +1902,23 @@ function openOffboardModal(targetUserId) {
       accessRevoked: document.getElementById("ob-access").checked,
     };
 
-    const emp = liveEmployees.find(e => e.userId === userId);
-    if (emp) {
-      emp.employmentStatus = "NOTICE_PERIOD";
+    try {
+      if (payload.accessRevoked || payload.exitType === "TERMINATION") {
+        await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+        liveEmployees = liveEmployees.filter(e => e.userId !== userId);
+        showToast(`Account for ${userId} has been permanently deleted and access revoked.`, "success");
+      } else {
+        await apiPost(`/employees/${encodeURIComponent(userId)}/offboard`, payload);
+        const emp = liveEmployees.find(e => e.userId === userId);
+        if (emp) {
+          emp.employmentStatus = "NOTICE_PERIOD";
+        }
+        showToast(`Offboarding clearance initiated for ${userId} (${payload.exitType}).`, "success");
+      }
+    } catch (err) {
+      showToast(err?.message || "Failed to process offboarding", "coral");
     }
 
-    try {
-      await apiPost(`/employees/${userId}/offboard`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`Offboarding clearance initiated for ${userId} (${payload.exitType}).`, "success");
     document.getElementById("modal-root").innerHTML = "";
     rerenderCurrentSubpanel();
   });
@@ -1983,15 +2116,35 @@ export function openOnboardEmployeeModal() {
               </select>
             </div>
             <div>
-              <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">Designation</label>
-              <input type="text" id="oe-desig" value="Junior Barista" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;" />
-            </div>
-            <div>
-              <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">System Role</label>
-              <select id="oe-role" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
-                <option value="STAFF">STAFF (Employee)</option>
-                <option value="CAFE_ADMIN">CAFE_ADMIN (Store Lead)</option>
+              <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Position *</label>
+              <select id="oe-desig" required style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
+                <option value="">— Select Position —</option>
+                <optgroup label="👑 Management (Elevated Windows)">
+                  <option value="Normal Master / Operations Manager" data-role="MASTER">Normal Master / Operations Manager</option>
+                  <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
+                  <option value="Café Administrator / Store Manager" data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
+                  <option value="Assistant Store Manager" data-role="CAFE_ADMIN">Assistant Store Manager</option>
+                </optgroup>
+                <optgroup label="☕ Staff (Employee Window)">
+                  <option value="Head Barista" data-role="STAFF">Head Barista</option>
+                  <option value="Senior Barista" data-role="STAFF">Senior Barista</option>
+                  <option value="Junior Barista" data-role="STAFF" selected>Junior Barista</option>
+                  <option value="Chef" data-role="STAFF">Chef</option>
+                  <option value="Sous Chef" data-role="STAFF">Sous Chef</option>
+                  <option value="Kitchen Staff" data-role="STAFF">Kitchen Staff</option>
+                  <option value="Service Staff / Waiter" data-role="STAFF">Service Staff / Waiter</option>
+                  <option value="Cashier" data-role="STAFF">Cashier</option>
+                  <option value="Delivery Staff" data-role="STAFF">Delivery Staff</option>
+                  <option value="Cleaning Staff" data-role="STAFF">Cleaning Staff</option>
+                  <option value="Security Guard" data-role="STAFF">Security Guard</option>
+                  <option value="Trainee / Apprentice" data-role="STAFF">Trainee / Apprentice</option>
+                  <option value="Other" data-role="STAFF">Other</option>
+                </optgroup>
               </select>
+            </div>
+            <div style="display:none;">
+              <!-- Role is auto-derived from Job Title; kept hidden but read by submit handler -->
+              <input type="hidden" id="oe-role" value="STAFF" />
             </div>
           </div>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px;">
@@ -2139,8 +2292,15 @@ export function openOnboardEmployeeModal() {
       email: document.getElementById("oe-email").value.trim().toLowerCase(),
       phone: document.getElementById("oe-phone").value.trim(),
       department: document.getElementById("oe-dept").value,
-      designation: document.getElementById("oe-desig").value.trim(),
-      role: document.getElementById("oe-role").value,
+      designation: (() => {
+        const el = document.getElementById("oe-desig");
+        return el?.value?.trim() || "";
+      })(),
+      role: (() => {
+        const el = document.getElementById("oe-desig");
+        const opt = el?.options?.[el.selectedIndex];
+        return opt?.dataset?.role || "STAFF";
+      })(),
       primaryCafeId: document.getElementById("oe-cafe").value,
       assignedCafeIds: [document.getElementById("oe-cafe").value],
       joiningDate: document.getElementById("oe-joining").value,

@@ -119,10 +119,10 @@ export function renderSidebar() {
 
     <div class="sidebar-footer">
       <div class="footer-user">
-        <div class="user-avatar" title="${user.name || "Master"} (${rolePillLabel})">${ROLE_INITIALS[currentRole] || "ZU"}</div>
+        <div class="user-avatar" title="${user.name || "User"} (${rolePillLabel})">${user.name ? user.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase() : (ROLE_INITIALS[currentRole] || "ZU")}</div>
         <div class="user-info">
-          <div class="user-name">${user.name || "Master Administrator"}</div>
-          <div class="user-role">${user.email || "master@zamorin.cafe"}</div>
+          <div class="user-name">${user.name || user.fullName || (currentRole === ROLES.STAFF ? "Staff Member" : "Administrator")}</div>
+          <div class="user-role">${user.email || user.userId || "Staff Account"}</div>
         </div>
       </div>
     </div>
@@ -189,7 +189,12 @@ export function renderTopbar({ scopeChip } = {}) {
   let cafeScopeHtml = '';
   const isPrimaryMasterUser = Boolean(
     (state.auth?.user?.role === 'master' || state.user?.role === 'master' || state.role === 'master' || state.originalRole === 'master') &&
-    (state.auth?.user?.isPrimaryMaster !== false && state.user?.isPrimaryMaster !== false && state.isPrimaryMaster !== false)
+    // ⚠️ Strict identity check: isPrimaryMaster ONLY for MU-0001 / pradeeshk331@gmail.com
+    (
+      (state.auth?.user?.userId === 'MU-0001' && String(state.auth?.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com') ||
+      (state.user?.userId === 'MU-0001' && String(state.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com')
+    ) &&
+    (state.isPrimaryMaster !== false)
   );
 
   if (isPrimaryMasterUser) {
@@ -201,7 +206,7 @@ export function renderTopbar({ scopeChip } = {}) {
       <div class="primary-master-topbar-controls" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
         <div class="workspace-scope-dropdown">
           <select id="global-workspace-selector" class="select-scope" aria-label="Selected Workspace Window" style="font-weight:700;">
-            <option value="master-primary" ${currentWs === 'master-primary' ? 'selected' : ''}>🛡️ Primary Master</option>
+            ${isPrimaryMasterUser ? `<option value="master-primary" ${currentWs === 'master-primary' ? 'selected' : ''}>🛡️ Primary Master</option>` : ''}
             <option value="master-normal" ${currentWs === 'master-normal' ? 'selected' : ''}>⚖️ Normal Master</option>
             <option value="owner" ${currentWs === 'owner' ? 'selected' : ''}>👑 Owner Portal</option>
             <option value="cafe_admin" ${currentWs === 'cafe_admin' ? 'selected' : ''}>☕ Café Operations</option>
@@ -382,7 +387,15 @@ export function renderTopbar({ scopeChip } = {}) {
         <div class="user-avatar lg">${initials}</div>
         <div class="profile-details">
           <div class="user-name">${user.name || user.fullName || (isStaff ? "Staff Member" : isCafeOps ? "Café Administrator" : "Master Administrator")}</div>
-          <div class="user-sub">${ROLE_LABELS[role] || (isStaff ? "Staff Member" : "Master Account")}${user.userId ? ` · ${user.userId}` : ""}</div>
+          <div class="user-sub">${(() => {
+            const isPrimary = Boolean(state.auth?.user?.isPrimaryMaster || state.user?.isPrimaryMaster);
+            if (isPrimary) return "Primary Master";
+            if (user.designation) return user.designation;
+            if (role === ROLES.MASTER || role === "master") return "Normal Master";
+            if (role === ROLES.OWNER || role === "owner") return "Café Owner";
+            if (role === ROLES.CAFE_ADMIN || role === "cafe_admin") return "Café Administrator";
+            return ROLE_LABELS[role] || "Staff Member";
+          })()}${user.userId ? ` · ${user.userId}` : ""}</div>
           <div class="user-email">${user.email || ""}</div>
         </div>
       </div>
@@ -490,6 +503,18 @@ export function wireBell(root) {
   if (globalWsSel) {
     globalWsSel.addEventListener("change", (e) => {
       const targetWs = e.target.value;
+      // ⚠️ HARD GUARD: Only the verified Primary Master account may enter Primary Master workspace
+      const isActualPrimaryMaster =
+        (state.auth?.user?.userId === 'MU-0001' && String(state.auth?.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com') ||
+        (state.user?.userId === 'MU-0001' && String(state.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com');
+
+      if (targetWs === "master-primary" && !isActualPrimaryMaster) {
+        // Silently block and reset selector
+        e.target.value = state.activeWorkspace || "master-normal";
+        showToast("Access Denied — Primary Master workspace is exclusively reserved for Pradeesh K (MU-0001).", "coral");
+        return;
+      }
+
       if (!state.originalRole) {
         state.originalRole = state.role || ROLES.MASTER;
       }

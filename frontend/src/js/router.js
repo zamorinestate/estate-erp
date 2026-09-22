@@ -116,18 +116,23 @@ export function hideNavProgressBar() {
 }
 
 export function getIsPrimaryMaster() {
+  // ⚠️ PRIMARY MASTER LOCK — identity-anchored.
+  // ONLY MU-0001 / pradeeshk331@gmail.com may ever be Primary Master.
+  // Fail-closed: any other MASTER account returns false.
+  const user = state.auth?.user || state.user || {};
+  const isVerifiedIdentity =
+    user.userId === "MU-0001" &&
+    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+
+  if (!isVerifiedIdentity) return false;
+
+  // Identity verified — respect any explicit isPrimaryMaster flag
   if (state.auth?.user?.isPrimaryMaster !== undefined) return Boolean(state.auth.user.isPrimaryMaster);
   if (state.user?.isPrimaryMaster !== undefined) return Boolean(state.user.isPrimaryMaster);
   if (state.isPrimaryMaster !== undefined) return Boolean(state.isPrimaryMaster);
-  // In dev / preview / master context, default to Primary Master unless explicitly marked as normal
-  if (state.role === ROLES.MASTER || state.role === "master") {
-    const isExplicitNormal = Boolean(
-      state.auth?.user?.isPrimaryMaster === false ||
-      state.user?.isPrimaryMaster === false ||
-      state.isPrimaryMaster === false
-    );
-    return !isExplicitNormal;
-  }
+
+  // Verified identity with MASTER role: grant Primary Master by default
+  if (state.role === ROLES.MASTER || state.role === "master") return true;
   return false;
 }
 
