@@ -2275,7 +2275,7 @@ export function openOnboardEmployeeModal() {
               <select id="oe-desig" required style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
                 <option value="">— Select Position —</option>
                 <optgroup label="👑 Management (Elevated Windows)">
-                  <option value="Normal Master / Operations Manager" data-role="MASTER">Normal Master / Operations Manager</option>
+                  <option value="Operations Manager" data-role="CAFE_ADMIN">Operations Manager</option>
                   <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
                   <option value="Café Administrator / Store Manager" data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
                   <option value="Assistant Store Manager" data-role="CAFE_ADMIN">Assistant Store Manager</option>

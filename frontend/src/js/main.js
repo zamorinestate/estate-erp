@@ -340,9 +340,8 @@ function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
   if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
-    // ⚠️ PRIMARY MASTER LOCK: Only the single, hardcoded administrator account
-    // (MU-0001 / pradeeshk331@gmail.com) may ever receive isPrimaryMaster:true.
-    // Any other MASTER-role employee is strictly restricted to Normal Master mode.
+    // ⚠️ PRIMARY MASTER LOCK: Only the single administrator account
+    // (MU-0001 / pradeeshk331@gmail.com) holds the MASTER role and window.
     const isHardcodedPrimaryMaster =
       user?.userId === "MU-0001" &&
       String(user?.email || "").toLowerCase() === "pradeeshk331@gmail.com";
