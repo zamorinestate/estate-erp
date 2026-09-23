@@ -1204,8 +1204,18 @@ function confirmAndDeleteEmployee(userId, name) {
       try {
         await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
       } catch (postErr) {
-        if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND') {
-          await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+        if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+          try {
+            await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+          } catch (delErr) {
+            if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
+              console.warn("Backend deletion endpoint unavailable or record already purged from database:", delErr);
+            } else {
+              throw delErr;
+            }
+          }
+        } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+          console.warn("Employee record already purged from database.");
         } else {
           throw postErr;
         }
@@ -2099,8 +2109,18 @@ function openOffboardModal(targetUserId) {
         try {
           await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
         } catch (postErr) {
-          if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND') {
-            await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+          if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+            try {
+              await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+            } catch (delErr) {
+              if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
+                console.warn("Backend deletion endpoint unavailable or record already purged:", delErr);
+              } else {
+                throw delErr;
+              }
+            }
+          } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+            console.warn("Employee record already purged from database.");
           } else {
             throw postErr;
           }
