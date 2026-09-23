@@ -30,6 +30,8 @@ function resolveEffectiveCafeScope(request) {
     request.query?.cafeId ||
     request.body?.cafeId ||
     request.params?.cafeId ||
+    request.headers?.['x-cafe-id'] ||
+    (typeof request.get === 'function' ? request.get('x-cafe-id') : null) ||
     ''
   ).trim().toUpperCase();
 

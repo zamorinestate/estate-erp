@@ -489,17 +489,33 @@ const createOrder = asyncHandler(async (request, response) => {
   if (!cafeId || !vendorId) {
     throw new ApiError(400, 'MISSING_FIELDS', 'cafeId and vendorId are required.');
   }
+  if (cafeId === 'ALL') {
+    throw new ApiError(400, 'INVALID_CAFE_SCOPE', 'A specific destination café outlet must be selected for purchase order delivery.');
+  }
   assertCafeAccess(request, cafeId);
 
   // Validate vendor existence
-  const vendor = await Vendor.findOne({
+  let vendor = await Vendor.findOne({
     vendorId,
     organisationId: request.auth.organisationId,
     status: 'ACTIVE',
   }).lean();
 
   if (!vendor) {
-    throw new ApiError(404, 'VENDOR_NOT_FOUND', 'Active vendor not found.');
+    // Resilient fallback by vendor name or tradeName
+    vendor = await Vendor.findOne({
+      organisationId: request.auth.organisationId,
+      status: 'ACTIVE',
+      $or: [
+        { nameLower: vendorId.toLowerCase() },
+        { name: new RegExp(`^${vendorId}$`, 'i') },
+        { tradeName: new RegExp(`^${vendorId}$`, 'i') },
+      ],
+    }).lean();
+  }
+
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', `Active vendor '${vendorId}' not found.`);
   }
 
   if (!Array.isArray(lineItems) || lineItems.length === 0) {
@@ -524,9 +540,33 @@ const createOrder = asyncHandler(async (request, response) => {
 
   for (const li of lineItems) {
     const iId = normalizeId(li.itemId);
-    const item = itemMap[iId];
+    let item = itemMap[iId];
     if (!item) {
-      throw new ApiError(400, 'ITEM_NOT_FOUND', `Active item ${iId} not found.`);
+      item = await GlobalInventoryItem.findOne({
+        organisationId: request.auth.organisationId,
+        $or: [{ itemId: iId }, { sku: iId }, { name: new RegExp(`^${iId}$`, 'i') }],
+        status: 'ACTIVE',
+      }).lean();
+      if (item) {
+        itemMap[iId] = item;
+      }
+    }
+    if (!item) {
+      const vendorCat = (vendor.itemCatalogue || []).find(
+        (c) => c.itemId === iId || (c.itemName && c.itemName.toLowerCase() === iId.toLowerCase())
+      );
+      if (vendorCat) {
+        item = {
+          itemId: vendorCat.itemId || iId,
+          name: vendorCat.itemName || iId,
+          baseUnit: vendorCat.uom || 'units',
+          unitCostPaisa: vendorCat.currentPricePaisa || 0,
+        };
+        itemMap[iId] = item;
+      }
+    }
+    if (!item) {
+      throw new ApiError(400, 'ITEM_NOT_FOUND', `Active item '${iId}' not found in catalog.`);
     }
 
     const qty = Number(li.orderedQuantityBase);
@@ -612,6 +652,7 @@ const createOrder = asyncHandler(async (request, response) => {
     discountPaisa: discount,
     totalPaisa,
     status: initialStatus,
+    deliveryMatchRemark: 'PENDING',
     submittedByUserId: shouldSubmitDirectly ? request.auth.userId : null,
     submittedAt: shouldSubmitDirectly ? new Date() : null,
     orderDate: getIstBusinessDate(),
@@ -1641,8 +1682,14 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
     order.receiptAttachments.push(receiptAttachment);
   }
 
+  const missingCount = grnItems.reduce((acc, g) => acc + (g.missingQty || 0), 0);
+  const isFullyFulfilled = (order.lineItems || []).every(
+    (l) => (Number(l.acceptedReceivedQty) || 0) >= (Number(l.orderedQuantityBase) || 0)
+  );
+
   order.status = 'VERIFIED_PENDING_MASTER_APPROVAL';
-  order.receivingStatus = 'PARTIALLY_RECEIVED';
+  order.receivingStatus = (missingCount === 0 && isFullyFulfilled) ? 'FULLY_RECEIVED' : 'PARTIALLY_RECEIVED';
+  order.deliveryMatchRemark = (missingCount === 0 && isFullyFulfilled) ? 'COMPLETED' : 'PARTIAL';
   order.receivedDate = businessDate;
   if (vendorInvoiceNumber) order.vendorInvoiceNumber = String(vendorInvoiceNumber).trim();
   if (vendorInvoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(vendorInvoiceDate)) order.vendorInvoiceDate = vendorInvoiceDate;
@@ -1650,8 +1697,26 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
 
   await order.save();
 
+  // ── ACTION: Analyze and Update Vendor Ledger & AP Subledger ──
+  let apBillResult = null;
+  try {
+    const vendorLedgerService = require('../services/vendorLedgerService');
+    apBillResult = await vendorLedgerService.postVendorBillFromReceipt({
+      organisationId: request.auth.organisationId,
+      purchaseOrderId,
+      supplierInvoiceNumber: vendorInvoiceNumber || deliveryNoteNumber || `INV-${purchaseOrderId}`,
+      invoiceDate: vendorInvoiceDate || businessDate,
+      dueDate: order.expectedDeliveryDate || businessDate,
+      claimedAmountPaisa: order.totalPaisa,
+      claimedTaxPaisa: order.taxPaisa || 0,
+      notes: notes || 'Delivery physical count verified and receipt/invoice uploaded',
+      auth: request.auth,
+    });
+  } catch (ledgerErr) {
+    console.warn(`Vendor ledger post warning for PO ${purchaseOrderId}: ${ledgerErr.message}`);
+  }
+
   // ── ACTION 2: Notify Master window with module to approve order & bills ──
-  const missingCount = grnItems.reduce((acc, g) => acc + (g.missingQty || 0), 0);
   const discrepancyText = missingCount > 0 ? ` (${missingCount} units reported missing/short)` : ' (Quantities fully verified)';
   const billText = receiptAttachment ? ' Vendor bill/receipt attached.' : '';
 
@@ -1674,10 +1739,13 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
     entityId: purchaseOrderId,
     after: {
       status: order.status,
+      deliveryMatchRemark: order.deliveryMatchRemark,
+      receivingStatus: order.receivingStatus,
       grnId,
       receiptAttachmentAttached: !!receiptAttachment,
       movementsCreatedCount: movementsCreated.length,
       missingCount,
+      vendorLedgerPosted: !!apBillResult,
     },
     result: 'SUCCESS',
     riskClassification: 'LOW',
@@ -1691,6 +1759,8 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
       grn: grnRecord,
       receiptAttachment,
       movementsCreated,
+      vendorLedger: apBillResult,
+      deliveryMatchRemark: order.deliveryMatchRemark,
     },
     correlationId: request.correlationId || null,
   });

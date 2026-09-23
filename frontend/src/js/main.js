@@ -82,9 +82,11 @@ export const DEV_PREVIEW_USERS = Object.freeze({
   owner: Object.freeze({
     _id: "OU-0001",
     id: "OU-0001",
-    name: "Zamorin Owner",
+    name: "Café Owner",
     email: "owner@example.com",
     role: "OWNER",
+    designation: "Café Owner / Franchise Partner",
+    position: "Café Owner / Franchise Partner",
     organisationId: "ZAMORIN",
     status: "ACTIVE",
     isDevPreview: true,
@@ -683,6 +685,7 @@ function handleAuthenticatedUserSession(user) {
   }
 
   renderShell();
+  loadAvailableCafes().catch(() => {});
   registerServiceWorker().catch(() => {});
 }
 
@@ -769,6 +772,76 @@ if (isDirectDashboardAllowed()) {
 }
 
 // =============================================================================
+// CAFE PORTFOLIO & SCOPE INITIALIZATION
+// =============================================================================
+
+export async function loadAvailableCafes() {
+  try {
+    const res = await apiGet("/cafes");
+    const list = res?.data?.cafes || res?.data || [];
+    if (Array.isArray(list) && list.length > 0) {
+      state.cafes = list;
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("zamorin_cafes", JSON.stringify(list));
+        }
+      } catch {}
+
+      const savedCafe = typeof localStorage !== "undefined" ? localStorage.getItem("zamorin-selected-cafe-id") : null;
+      if (savedCafe && (savedCafe === "ALL" || list.some((c) => (c.cafeId || c.id || c.code) === savedCafe))) {
+        state.selectedCafeId = savedCafe;
+        state.currentCafeId = savedCafe === "ALL" ? "" : savedCafe;
+      } else if (state.role === "owner" && list.length === 1) {
+        const singleId = list[0].cafeId || list[0].id || list[0].code;
+        state.selectedCafeId = singleId;
+        state.currentCafeId = singleId;
+      } else if (!state.selectedCafeId) {
+        state.selectedCafeId = "ALL";
+        state.currentCafeId = "";
+      }
+
+      if (state.user && state.selectedCafeId && state.selectedCafeId !== "ALL") {
+        const found = list.find((c) => (c.cafeId || c.id || c.code) === state.selectedCafeId);
+        if (found) {
+          state.user.primaryCafeId = found.cafeId || found.id || found.code;
+          state.user.primaryCafeName = found.name || found.displayName || state.user.primaryCafeName;
+        }
+      }
+
+      if (typeof document !== "undefined") {
+        const sel = document.getElementById("global-cafe-selector");
+        if (sel) {
+          const isOwner = state.role === "owner";
+          const allLabel = isOwner ? "🏠 All Assigned Cafés (Portfolio)" : "🏠 All Cafés (Global Portfolio)";
+          const options = [
+            `<option value="ALL" ${state.selectedCafeId === "ALL" ? "selected" : ""}>${allLabel}</option>`,
+            ...list.map((c) => {
+              const cId = c.cafeId || c.id || c.code;
+              const cName = c.name || c.displayName || "Outlet";
+              const isSel = state.selectedCafeId === cId;
+              return `<option value="${cId}" ${isSel ? "selected" : ""}>☕ ${cId} · ${cName}</option>`;
+            }),
+          ].join("");
+          sel.innerHTML = options;
+          sel.value = state.selectedCafeId || "ALL";
+        }
+      }
+      return list;
+    }
+  } catch (_err) {
+    try {
+      if (typeof localStorage !== "undefined") {
+        const cached = JSON.parse(localStorage.getItem("zamorin_cafes") || "[]");
+        if (Array.isArray(cached) && cached.length) {
+          state.cafes = cached;
+        }
+      }
+    } catch {}
+  }
+  return state.cafes || [];
+}
+
+// =============================================================================
 // AUTHENTICATED SESSION BOOT
 // =============================================================================
 
@@ -824,6 +897,8 @@ function applyAuthenticatedUser(
       localStorage.setItem("zamorin_user", JSON.stringify(user));
     }
   } catch {}
+
+  loadAvailableCafes().catch(() => {});
 
   return {
     role,
@@ -900,6 +975,7 @@ async function boot() {
       }
     }
     renderShell();
+    loadAvailableCafes().catch(() => {});
     registerServiceWorker().catch(() => {});
     return;
   }
@@ -943,6 +1019,7 @@ async function boot() {
         }
       }
       renderShell();
+      loadAvailableCafes().catch(() => {});
       registerServiceWorker().catch(() => {});
       return;
     }
@@ -975,6 +1052,7 @@ async function boot() {
     });
 
     renderShell();
+    loadAvailableCafes().catch(() => {});
     registerServiceWorker().catch(() => {});
     return;
   }

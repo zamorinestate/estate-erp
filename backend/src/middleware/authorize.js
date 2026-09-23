@@ -93,7 +93,7 @@ function getRequestCafeId(
       request.body?.sourceCafeId ||
       request.body?.destCafeId ||
       request.query?.cafeId ||
-      request.get('x-cafe-id')
+      (typeof request.get === 'function' ? request.get('x-cafe-id') : request.headers?.['x-cafe-id'])
   );
 }
 
@@ -543,10 +543,36 @@ function authorize(
           })
         );
 
-      const decision =
+      let decision =
         selectEffectiveDecision(
           applicableRules
         );
+
+      if (!decision.allowed && !decision.rule) {
+        // No explicit DB rule found. If the route explicitly permits this role,
+        // or if the actor is Primary Master (with full governance and no absolute restriction),
+        // fallback to default permission grant.
+        const isMaster = auth.role === 'MASTER' || Boolean(auth.isPrimaryMaster);
+        const isRoleInAllowed = Array.isArray(allowedRoles) && allowedRoles.includes(auth.role);
+
+        if (isMaster || isRoleInAllowed || hasMatchingCapability) {
+          decision = {
+            allowed: true,
+            rule: {
+              permissionRuleId: `DEFAULT_${auth.role}_${normalizedPermissionCode}`,
+              scope: (auth.role === 'MASTER' || auth.role === 'OWNER') ? 'ORGANISATION' : (cafeId ? 'CAFE' : 'ORGANISATION'),
+              requiresMfa: false,
+              requiresReason: false,
+              requiresAuditEvent: false,
+              fieldAccess: {
+                allowedFields: [],
+                deniedFields: [],
+                maskedFields: [],
+              },
+            },
+          };
+        }
+      }
 
       if (!decision.allowed) {
         return sendAuthorizationError(
@@ -594,6 +620,7 @@ function authorize(
 
       return next();
     } catch (error) {
+      console.error('AUTHORIZATION_CHECK_FAILED:', error);
       return response.status(500).json({
         error: {
           code:

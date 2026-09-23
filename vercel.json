@@ -16,6 +16,13 @@
       }
     },
     {
+      "src": "/(src/assets|assets)/(.*)",
+      "dest": "/frontend/$1/$2",
+      "headers": {
+        "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"
+      }
+    },
+    {
       "src": "/(assets|src|cafe-operations|dist)/(.*)",
       "dest": "/frontend/$1/$2",
       "headers": {

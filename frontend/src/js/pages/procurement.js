@@ -600,6 +600,21 @@ async function executeMasterApprove(root, poId) {
   }
 }
 
+export function getDeliveryRemarkBadge(po) {
+  const lineItems = po.lineItems || [];
+  const missingCount = lineItems.reduce((acc, l) => acc + Math.max(0, (Number(l.orderedQuantityBase) || 0) - (Number(l.acceptedReceivedQty) || 0)), 0);
+  const isFulfilled = lineItems.length > 0 && lineItems.every(l => (Number(l.acceptedReceivedQty) || 0) >= (Number(l.orderedQuantityBase) || 0));
+  const hasReceipt = Boolean((po.grnReceipts && po.grnReceipts.length > 0) || (po.receiptAttachments && po.receiptAttachments.length > 0) || po.receivedDate);
+
+  if (po.deliveryMatchRemark === 'COMPLETED' || (hasReceipt && isFulfilled && missingCount === 0)) {
+    return `<span class="badge" style="background:#d1fae5;color:#065f46;border:1px solid #34d399;font-weight:800;font-size:10px;padding:2px 7px;">🟢 Order Completed (100% Received)</span>`;
+  }
+  if (po.deliveryMatchRemark === 'PARTIAL' || (hasReceipt && missingCount > 0)) {
+    return `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-weight:800;font-size:10px;padding:2px 7px;">🟡 Partial Delivery (${missingCount} Short)</span>`;
+  }
+  return `<span class="badge" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;font-weight:600;font-size:10px;padding:2px 7px;">⏳ Pending Delivery</span>`;
+}
+
 function renderFilteredOrders(root) {
   const wrap = root.querySelector('#orders-table-wrapper');
   if (!wrap) return;
@@ -661,8 +676,14 @@ function renderFilteredOrders(root) {
               ${o.timingType ? `<div style="font-size:9.5px;color:var(--muted);font-weight:normal;">${o.timingType}</div>` : ''}
             </td>
             <td><strong>${o.vendorName || o.vendorId}</strong></td>
-            <td style="color:var(--muted);">${o.cafeId || '—'}</td>
-            <td>${deliveryBadge}</td>
+            <td style="color:var(--muted);">
+              <span class="badge" style="background:rgba(59,130,246,0.1);color:#2563eb;font-weight:700;font-size:10.5px;">🏪 ${o.cafeNameSnapshot || o.cafeId || '—'}</span>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px;">🛒 ${(o.lineItems || []).length} items (${(o.lineItems || []).reduce((acc, l) => acc + (Number(l.orderedQuantityBase) || 0), 0)} units)</div>
+            </td>
+            <td>
+              ${deliveryBadge}
+              <div style="margin-top:4px;">${getDeliveryRemarkBadge(o)}</div>
+            </td>
             <td>
               <div>${renderStatusPill(o.status)}</div>
               <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
@@ -1255,7 +1276,7 @@ function renderExceptionsSubtab(root, container) {
  * Allows Cashier and Café Admin to place replenishment requests to vendors.
  * Immediately notifies Master window and displays the request with items & quantities.
  */
-function openPlaceOrderRequestModal(root, preselectedSku = null) {
+export async function openPlaceOrderRequestModal(root, preselectedSku = null, preselectedVendorId = null, onOrderSuccess = null) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const tomorrowDate = new Date();
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
@@ -1264,13 +1285,70 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
   let selectedDeliveryDate = tomorrowStr;
   let timingType = 'NEXT_DAY';
 
+  // Fetch or resolve active vendors
+  let activeVendors = [];
+  try {
+    const vRes = await apiGet('/vendors?status=ACTIVE');
+    if (vRes?.success && Array.isArray(vRes.data?.vendors) && vRes.data.vendors.length) {
+      activeVendors = vRes.data.vendors;
+    }
+  } catch (_) {}
+  if (!activeVendors.length) {
+    activeVendors = [
+      { vendorId: 'VEN-0001', name: 'Malabar Fresh Dairy & Produce Ltd', category: 'FOOD_BEVERAGE' },
+      { vendorId: 'VEN-0002', name: 'Wayanad Estate Coffee Roasters', category: 'FOOD_BEVERAGE' },
+      { vendorId: 'VEN-0003', name: 'Kerala Eco Packaging Solutions Ltd', category: 'PACKAGING' },
+    ];
+  }
+
+  // Fetch or resolve active cafes
+  let activeCafes = Array.isArray(state.cafes) && state.cafes.length ? [...state.cafes] : [];
+  if (!activeCafes.length) {
+    try {
+      const cRes = await apiGet('/cafes');
+      if (cRes?.success && Array.isArray(cRes.data?.cafes) && cRes.data.cafes.length) {
+        activeCafes = cRes.data.cafes;
+      }
+    } catch (_) {}
+  }
+  if (!activeCafes.length) {
+    activeCafes = [
+      { cafeId: 'ZC-0001', name: 'Koramangala Main Branch' },
+      { cafeId: 'ZC-0002', name: 'Indiranagar Central Branch' },
+    ];
+  }
+
+  // Authoritative default cafe: NEVER 'ALL'
+  let defaultCafeId = 'ZC-0001';
+  if (state.selectedCafeId && state.selectedCafeId !== 'ALL') {
+    defaultCafeId = state.selectedCafeId;
+  } else if (state.currentCafeId && state.currentCafeId !== 'ALL') {
+    defaultCafeId = state.currentCafeId;
+  } else if (activeCafes[0]?.cafeId) {
+    defaultCafeId = activeCafes[0].cafeId;
+  }
+
+  const defaultVendorId = preselectedVendorId || activeVendors[0]?.vendorId || 'VEN-0001';
+
+  const COMMON_CATALOGUE = [
+    { itemId: 'ITEM-1002', name: 'Farm Fresh Whole Milk (3.5% Fat)', baseUnit: 'litre', unitPriceRupees: 62 },
+    { itemId: 'ITM-MILK-01', name: 'Organic Full Cream Milk', baseUnit: 'liter', unitPriceRupees: 60 },
+    { itemId: 'ITM-CREAM-01', name: 'Heavy Whipping Cream', baseUnit: 'pack', unitPriceRupees: 120 },
+    { itemId: 'ITEM-1001', name: 'Arabica Whole Beans (Estate Blend)', baseUnit: 'kg', unitPriceRupees: 850 },
+    { itemId: 'ITM-COFFEE-01', name: 'Arabica Dark Roast Beans', baseUnit: 'kg', unitPriceRupees: 900 },
+    { itemId: 'ITEM-1003', name: 'Madagascar Vanilla Bean Syrup (750ml)', baseUnit: 'bottle', unitPriceRupees: 750 },
+    { itemId: 'ITM-CUP-01', name: 'Biodegradable Hot Coffee Cups (250ml)', baseUnit: 'box', unitPriceRupees: 450 },
+  ];
+
+  const initialItem = COMMON_CATALOGUE.find(c => c.itemId === preselectedSku) || COMMON_CATALOGUE[1];
+
   let orderItems = [
     {
-      itemId: preselectedSku || 'ITM-MILK-01',
-      baseUnit: 'liter',
-      qty: 20,
-      unitPriceRupees: 60,
-    }
+      itemId: initialItem.itemId,
+      baseUnit: initialItem.baseUnit,
+      qty: 15,
+      unitPriceRupees: initialItem.unitPriceRupees,
+    },
   ];
 
   function renderItemsTable() {
@@ -1284,25 +1362,38 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
       const lineSubtotal = (Number(it.qty) || 0) * (Number(it.unitPriceRupees) || 0);
       grandTotalRupees += lineSubtotal;
 
+      const isKnown = COMMON_CATALOGUE.some(c => c.itemId === it.itemId);
+
       return `
         <tr data-item-idx="${idx}">
           <td style="padding:6px 8px;">
-            <input type="text" class="input item-sku-input" data-field="itemId" style="font-size:11.5px;padding:4px 8px;width:100%;" value="${it.itemId}" placeholder="SKU e.g. ITM-MILK-01">
+            <select class="select item-sku-select" data-field="itemId" style="font-size:11.5px;padding:4px 8px;width:100%;">
+              ${COMMON_CATALOGUE.map(c => `
+                <option value="${c.itemId}" ${c.itemId === it.itemId ? 'selected' : ''}>
+                  ${c.name} (${c.itemId}) — ₹${c.unitPriceRupees}/${c.baseUnit}
+                </option>
+              `).join('')}
+              ${!isKnown ? `<option value="${it.itemId}" selected>${it.itemId} (Custom)</option>` : ''}
+              <option value="__CUSTOM__">+ Custom SKU...</option>
+            </select>
+            <input type="text" class="input item-custom-sku" style="display:none;font-size:11px;padding:3px 6px;margin-top:4px;width:100%;" placeholder="Enter SKU (e.g. ITEM-999)">
           </td>
           <td style="padding:6px 8px;">
-            <select class="select item-unit-select" data-field="baseUnit" style="font-size:11.5px;padding:4px 6px;">
+            <select class="select item-unit-select" data-field="baseUnit" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;">
               <option value="liter" ${it.baseUnit === 'liter' ? 'selected' : ''}>liter</option>
+              <option value="litre" ${it.baseUnit === 'litre' ? 'selected' : ''}>litre</option>
               <option value="kg" ${it.baseUnit === 'kg' ? 'selected' : ''}>kg</option>
               <option value="pack" ${it.baseUnit === 'pack' ? 'selected' : ''}>pack</option>
+              <option value="bottle" ${it.baseUnit === 'bottle' ? 'selected' : ''}>bottle</option>
               <option value="box" ${it.baseUnit === 'box' ? 'selected' : ''}>box</option>
               <option value="units" ${it.baseUnit === 'units' ? 'selected' : ''}>units</option>
             </select>
           </td>
           <td style="padding:6px 8px;">
-            <input type="number" class="input item-qty-input" data-field="qty" min="1" step="any" style="font-size:11.5px;padding:4px 8px;width:75px;text-align:right;" value="${it.qty}">
+            <input type="number" class="input item-qty-input" data-field="qty" min="1" step="any" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;" value="${it.qty}">
           </td>
           <td style="padding:6px 8px;">
-            <input type="number" class="input item-price-input" data-field="unitPriceRupees" min="0" step="any" style="font-size:11.5px;padding:4px 8px;width:85px;text-align:right;" value="${it.unitPriceRupees}">
+            <input type="number" class="input item-price-input" data-field="unitPriceRupees" min="0" step="any" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;" value="${it.unitPriceRupees}">
           </td>
           <td style="padding:6px 8px;text-align:right;font-weight:700;color:var(--ink);">
             ₹${lineSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1320,13 +1411,60 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
       totalEl.textContent = '₹' + grandTotalRupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    tbody.querySelectorAll('input, select').forEach((elem) => {
+    tbody.querySelectorAll('select.item-sku-select').forEach((sel) => {
+      sel.addEventListener('change', (e) => {
+        const row = e.target.closest('tr');
+        const idx = Number(row.dataset.itemIdx);
+        const val = e.target.value;
+        const customInput = row.querySelector('.item-custom-sku');
+        if (val === '__CUSTOM__') {
+          if (customInput) {
+            customInput.style.display = 'block';
+            customInput.focus();
+          }
+        } else {
+          if (customInput) customInput.style.display = 'none';
+          const match = COMMON_CATALOGUE.find(c => c.itemId === val);
+          if (match) {
+            orderItems[idx].itemId = match.itemId;
+            orderItems[idx].baseUnit = match.baseUnit;
+            orderItems[idx].unitPriceRupees = match.unitPriceRupees;
+          } else {
+            orderItems[idx].itemId = val;
+          }
+          renderItemsTable();
+        }
+      });
+    });
+
+    tbody.querySelectorAll('.item-custom-sku').forEach((inp) => {
+      inp.addEventListener('input', (e) => {
+        const row = e.target.closest('tr');
+        const idx = Number(row.dataset.itemIdx);
+        if (e.target.value.trim()) {
+          orderItems[idx].itemId = e.target.value.trim().toUpperCase();
+        }
+      });
+    });
+
+    tbody.querySelectorAll('.item-unit-select, .item-qty-input, .item-price-input').forEach((elem) => {
       elem.addEventListener('input', (e) => {
         const row = e.target.closest('tr');
         const idx = Number(row.dataset.itemIdx);
         const field = e.target.dataset.field;
         orderItems[idx][field] = e.target.value;
-        renderItemsTable();
+        const subtotal = (Number(orderItems[idx].qty) || 0) * (Number(orderItems[idx].unitPriceRupees) || 0);
+        const subtotalCell = row.cells[4];
+        if (subtotalCell) {
+          subtotalCell.textContent = '₹' + subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        let total = 0;
+        orderItems.forEach(i => {
+          total += (Number(i.qty) || 0) * (Number(i.unitPriceRupees) || 0);
+        });
+        if (totalEl) {
+          totalEl.textContent = '₹' + total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
       });
     });
 
@@ -1340,7 +1478,7 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
   }
 
   const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:680px;" class="proc-order-request-modal">
+    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:860px;" class="proc-order-request-modal">
       <div style="border-bottom:1px solid var(--line);padding-bottom:10px;">
         <div style="display:flex;align-items:center;gap:8px;">
           <h2 style="font-size:18px;font-weight:800;color:var(--ink);margin:0;">📦 Place Vendor Order Request</h2>
@@ -1377,11 +1515,23 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div>
           <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Supplying Vendor *</label>
-          <input type="text" id="modal-order-vendor" class="input" style="font-size:12px;width:100%;" value="VEN-0001" placeholder="e.g. VEN-0001 / Malabar Fresh">
+          <select id="modal-order-vendor" class="input select" style="font-size:12px;width:100%;height:38px;border-radius:6px;">
+            ${activeVendors.map(v => `
+              <option value="${v.vendorId}" ${v.vendorId === defaultVendorId ? 'selected' : ''}>
+                ${v.name} (${v.vendorId})
+              </option>
+            `).join('')}
+          </select>
         </div>
         <div>
-          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Requesting Café *</label>
-          <input type="text" id="modal-order-cafe" class="input" style="font-size:12px;width:100%;" value="${state.currentCafeId || state.selectedCafeId || ''}" placeholder="e.g. CAFE-PATIO-01">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">Requesting Café Outlet *</label>
+          <select id="modal-order-cafe" class="input select" style="font-size:12px;width:100%;height:38px;border-radius:6px;">
+            ${activeCafes.map(c => `
+              <option value="${c.cafeId}" ${c.cafeId === defaultCafeId ? 'selected' : ''}>
+                ${c.name || c.displayName || c.cafeId} (${c.cafeId})
+              </option>
+            `).join('')}
+          </select>
         </div>
       </div>
 
@@ -1391,16 +1541,16 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
           <label style="font-size:11.5px;font-weight:700;color:var(--ink);">Requested Items &amp; Quantities *</label>
           <button class="btn btn-sm btn-ghost" id="btn-add-order-item" style="font-size:11px;font-weight:700;color:var(--accent);" type="button">+ Add Item Row</button>
         </div>
-        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface);">
-          <table class="glass-table" style="width:100%;font-size:11px;margin:0;">
+        <div style="max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface);">
+          <table class="glass-table" style="width:100%;table-layout:fixed;font-size:11.5px;margin:0;">
             <thead>
               <tr style="background:var(--surface-sunken);">
-                <th>Item / SKU</th>
-                <th style="width:85px;">Unit</th>
-                <th style="width:80px;text-align:right;">Quantity</th>
-                <th style="width:90px;text-align:right;">Rate (₹)</th>
-                <th style="width:100px;text-align:right;">Subtotal</th>
-                <th style="width:40px;text-align:center;"></th>
+                <th style="width:38%;">Item / SKU</th>
+                <th style="width:14%;">Unit</th>
+                <th style="width:14%;text-align:right;">Quantity</th>
+                <th style="width:14%;text-align:right;">Rate (₹)</th>
+                <th style="width:14%;text-align:right;">Subtotal</th>
+                <th style="width:6%;text-align:center;"></th>
               </tr>
             </thead>
             <tbody id="order-items-tbody"></tbody>
@@ -1431,7 +1581,7 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
     </div>
   `;
 
-  openModal(modalHtml);
+  openModal(modalHtml, { maxWidth: '880px' });
   renderItemsTable();
 
   const radioToday = document.getElementById('timing-opt-today');
@@ -1476,11 +1626,12 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
   });
 
   document.getElementById('btn-add-order-item')?.addEventListener('click', () => {
+    const nextItem = COMMON_CATALOGUE[orderItems.length % COMMON_CATALOGUE.length];
     orderItems.push({
-      itemId: 'ITM-CREAM-01',
-      baseUnit: 'pack',
+      itemId: nextItem.itemId,
+      baseUnit: nextItem.baseUnit,
       qty: 10,
-      unitPriceRupees: 120,
+      unitPriceRupees: nextItem.unitPriceRupees,
     });
     renderItemsTable();
   });
@@ -1493,8 +1644,8 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
     const notes = document.getElementById('modal-order-notes')?.value?.trim() || '';
     const deliveryDate = dateInput?.value || selectedDeliveryDate;
 
-    if (!vendorId || !cafeId) {
-      showToast('Vendor ID and Café ID are required.', 'coral');
+    if (!vendorId || !cafeId || cafeId === 'ALL') {
+      showToast('Please select a specific requesting café outlet and supplying vendor.', 'coral');
       return;
     }
 
@@ -1530,8 +1681,13 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
           : 'Draft order saved successfully.',
         'mint'
       );
-      await loadOrdersSubtabData(root);
-      await loadProcurementOverview(root);
+      if (typeof onOrderSuccess === 'function') {
+        onOrderSuccess();
+      }
+      if (root) {
+        await loadOrdersSubtabData(root).catch(() => {});
+        await loadProcurementOverview(root).catch(() => {});
+      }
     } catch (err) {
       showToast(err.message || 'Failed to submit order request', 'coral');
     }
@@ -1541,7 +1697,7 @@ function openPlaceOrderRequestModal(root, preselectedSku = null) {
   document.getElementById('modal-order-draft')?.addEventListener('click', () => handleOrderSubmission(false));
 }
 
-function openNewPoModal(root, preselectedSku = null) {
+export function openNewPoModal(root, preselectedSku = null) {
   openPlaceOrderRequestModal(root, preselectedSku);
 }
 
@@ -1864,7 +2020,7 @@ function openNewRfqModal(root) {
  * Features: Counting items, calculating missing/short quantities live, entering discrepancy reasons,
  * submitting vendor bills/receipts (PDF or JPEG/PNG), auto-updating inventory, and notifying Master for approval.
  */
-function openVerifyDeliveryModal(root, po) {
+export function openVerifyDeliveryModal(root, po, onVerifySuccess = null) {
   let attachedFileBase64 = null;
   let attachedFileName = null;
   let attachedFileType = null;
@@ -2046,7 +2202,7 @@ function openVerifyDeliveryModal(root, po) {
     </div>
   `;
 
-  openModal(modalHtml);
+  openModal(modalHtml, { maxWidth: '860px' });
   renderDeliveryTable();
 
   const dropzone = document.getElementById('file-dropzone');
@@ -2148,11 +2304,18 @@ function openVerifyDeliveryModal(root, po) {
       await apiPost(`/procurement/orders/${po.purchaseOrderId}/verify-delivery`, payload);
       closeModal();
       showToast(
-        `⚡ Delivery verified! Items auto-added to inventory & Master notified with attached bill for review.`,
+        `⚡ Delivery verified! Items auto-added to inventory, vendor ledger updated & Master notified.`,
         'mint'
       );
-      await loadOrdersSubtabData(root);
-      await loadProcurementOverview(root);
+      if (typeof onVerifySuccess === 'function') {
+        try { onVerifySuccess(); } catch (_) {}
+      }
+      if (typeof loadOrdersSubtabData === 'function') {
+        try { await loadOrdersSubtabData(root); } catch (_) {}
+      }
+      if (typeof loadProcurementOverview === 'function') {
+        try { await loadProcurementOverview(root); } catch (_) {}
+      }
     } catch (err) {
       showToast(err.message || 'Failed to verify delivery', 'coral');
     }

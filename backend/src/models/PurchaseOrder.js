@@ -584,8 +584,14 @@ const purchaseOrderSchema = new mongoose.Schema(
     // ── Receiving & Invoicing Arrays ───────────────────────────────────────────
     receivingStatus: {
       type: String,
-      enum: ['PENDING', 'PARTIALLY_RECEIVED', 'RECEIVED', 'RECEIVED_PENDING_FINAL_POSTING', 'POSTED_TO_INVENTORY'],
+      enum: ['PENDING', 'PARTIALLY_RECEIVED', 'RECEIVED', 'RECEIVED_PENDING_FINAL_POSTING', 'POSTED_TO_INVENTORY', 'FULLY_RECEIVED'],
       default: 'PENDING',
+    },
+    deliveryMatchRemark: {
+      type: String,
+      enum: ['PENDING', 'COMPLETED', 'PARTIAL'],
+      default: 'PENDING',
+      index: true,
     },
     fulfillmentStatus: {
       type: String,

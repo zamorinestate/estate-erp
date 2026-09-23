@@ -120,8 +120,10 @@ export function getIsPrimaryMaster() {
   // ONLY MU-0001 / pradeeshk331@gmail.com may ever be Primary Master.
   // Fail-closed: any other MASTER account returns false.
   const user = state.auth?.user || state.user || {};
+  const userId = user.userId || user.id || user._id;
   const isVerifiedIdentity =
-    user.userId === "MU-0001" &&
+    (userId === "MU-0001" &&
+      String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com") ||
     String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com";
 
   if (!isVerifiedIdentity) return false;

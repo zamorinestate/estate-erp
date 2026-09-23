@@ -50,21 +50,29 @@ const getWorkforceOverview = asyncHandler(async (req, res) => {
   const [
     users,
     positions,
-    staffingRequests,
-    skills,
     trainings,
     documents,
     movements,
     probations,
   ] = await Promise.all([
-    User.find(userFilter).lean(),
-    Position.find({ organisationId }).lean(),
-    StaffingRequest.find({ organisationId }).lean(),
-    EmployeeSkill.find({ organisationId }).lean(),
-    EmployeeTraining.find({ organisationId }).lean(),
-    EmployeeDocument.find({ organisationId }).lean(),
-    EmployeeMovement.find({ organisationId }).lean(),
-    ProbationReview.find({ organisationId }).lean(),
+    User.find(userFilter)
+      .select('employmentStatus accountStatus probationStatus joiningDate primaryCafeId assignedCafeIds')
+      .lean(),
+    Position.find({ organisationId })
+      .select('status approvedCapacity cafeId isCritical')
+      .lean(),
+    EmployeeTraining.find({ organisationId })
+      .select('status validUntil')
+      .lean(),
+    EmployeeDocument.find({ organisationId })
+      .select('status')
+      .lean(),
+    EmployeeMovement.find({ organisationId })
+      .select('status')
+      .lean(),
+    ProbationReview.find({ organisationId })
+      .select('decision')
+      .lean(),
   ]);
 
   const activeEmployees = users.filter((u) => u.employmentStatus === 'ACTIVE' || u.accountStatus === 'ACTIVE');
@@ -98,7 +106,7 @@ const getWorkforceOverview = asyncHandler(async (req, res) => {
   let activeCafes = [];
   try {
     if (mongoose.connection.readyState === 1 || Cafe.find?.mock) {
-      activeCafes = await Cafe.find({ organisationId, status: 'ACTIVE' }).lean();
+      activeCafes = await Cafe.find({ organisationId, status: 'ACTIVE' }).select('cafeId name status').lean();
     }
   } catch (_err) {
     activeCafes = [];
@@ -426,7 +434,10 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     pin = null,
   } = req.body;
 
-  if (!name || !email) {
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+  const cleanPhone = phone ? String(phone).trim() : '';
+
+  if (!name || !cleanEmail) {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'Employee name and email are required for onboarding.');
   }
 
@@ -441,12 +452,20 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   }
   const effectiveRole = ['STAFF', 'CAFE_ADMIN', 'OWNER'].includes(candidateRole) ? candidateRole : 'STAFF';
 
-  // Duplicate check
+  // Duplicate check - strictly query non-empty values
+  const orConditions = [{ email: cleanEmail }];
+  if (cleanPhone) {
+    orConditions.push({ phone: cleanPhone });
+  }
+
   const existingUser = await User.findOne({
-    $or: [{ email: email.toLowerCase() }, { phone: phone ? phone : null }].filter(Boolean),
+    $or: orConditions,
   });
   if (existingUser) {
-    throw new ApiError(409, 'DUPLICATE_EMPLOYEE', `An employee with email ${email} or phone ${phone} already exists.`);
+    const duplicateDetail = existingUser.email === cleanEmail
+      ? `email ${cleanEmail}`
+      : `phone ${cleanPhone}`;
+    throw new ApiError(409, 'DUPLICATE_EMPLOYEE', `An employee with ${duplicateDetail} already exists.`);
   }
 
   let newUserId;
@@ -455,11 +474,31 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     : effectiveRole === 'CAFE_ADMIN' ? 'AD'
     : 'ST';
   try {
-    const seq = await SequenceCounter.generateId(organisationId, userIdPrefix, 4);
-    newUserId = seq;
+    if (typeof SequenceCounter.generateId === 'function') {
+      newUserId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `USER_${userIdPrefix}`,
+        prefix: userIdPrefix,
+        minimumDigits: 4,
+      });
+    }
+    if (!newUserId) {
+      throw new Error('Fallback to highest user index calculation');
+    }
   } catch (err) {
-    const count = await User.countDocuments({ organisationId });
-    newUserId = `${userIdPrefix}-${String(count + 1).padStart(4, '0')}`;
+    const highestUser = await User.findOne({
+      organisationId,
+      userId: new RegExp(`^${userIdPrefix}-\\d+`),
+    }).sort({ userId: -1 }).select('userId').lean();
+    let nextNum = 1;
+    if (highestUser?.userId) {
+      const match = String(highestUser.userId).match(/-(\d+)$/);
+      if (match) nextNum = parseInt(match[1], 10) + 1;
+    } else {
+      const count = await User.countDocuments({ organisationId });
+      nextNum = count + 1;
+    }
+    newUserId = `${userIdPrefix}-${String(nextNum).padStart(4, '0')}`;
   }
 
   // Compute password hash

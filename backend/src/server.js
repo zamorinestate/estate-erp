@@ -7,6 +7,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
+const compression = require('compression');
 
 const {
   connectDatabase,
@@ -221,6 +222,19 @@ function createApp(environment) {
     res.setHeader('X-Frame-Options', 'DENY');
     next();
   });
+
+  // High-performance gzip/deflate response compression (> 1KB threshold)
+  app.use(
+    compression({
+      threshold: 1024,
+      filter: (req, res) => {
+        if (req.headers['x-no-compression']) {
+          return false;
+        }
+        return compression.filter(req, res);
+      },
+    })
+  );
 
   app.use(
     express.json({

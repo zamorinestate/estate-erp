@@ -213,8 +213,8 @@ export function renderTopbar({ scopeChip } = {}) {
           </select>
         </div>
         <div class="cafe-scope-dropdown">
-          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope">
-            <option value="ALL">🏠 All Cafés (Global Portfolio)</option>
+          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope" style="font-weight:600;">
+            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === 'ALL') ? 'selected' : ''}>🏠 All Cafés (Global Portfolio)</option>
             ${cafeOptions}
           </select>
         </div>
@@ -252,13 +252,19 @@ export function renderTopbar({ scopeChip } = {}) {
         <span>${user.primaryCafeName || (user.primaryCafeId ? `Outlet ${user.primaryCafeId}` : "Assigned Outlet")}</span>
       </div>`;
   } else {
+    const isOwner = role === ROLES.OWNER || role === 'owner';
     const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
-    cafeScopeHtml = `<div class="cafe-scope-dropdown">
-        <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope">
-          <option value="ALL">🏠 All Cafés (Global Portfolio)</option>
-          ${cafeOptions}
-        </select>
-      </div>`;
+    const allLabel = isOwner ? '🏠 All Assigned Cafés (Portfolio)' : '🏠 All Cafés (Global Portfolio)';
+    cafeScopeHtml = `
+      <div class="owner-topbar-controls" style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <div class="cafe-scope-dropdown">
+          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope" style="font-weight:600;">
+            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === 'ALL') ? 'selected' : ''}>${allLabel}</option>
+            ${cafeOptions}
+          </select>
+        </div>
+      </div>
+    `;
   }
 
   const searchPlaceholder = isStaff
@@ -387,13 +393,21 @@ export function renderTopbar({ scopeChip } = {}) {
         <div class="profile-details">
           <div class="user-name">${user.name || user.fullName || (isStaff ? "Staff Member" : isCafeOps ? "Café Administrator" : "Master Administrator")}</div>
           <div class="user-sub">${(() => {
-            const isPrimary = Boolean(state.auth?.user?.isPrimaryMaster || state.user?.isPrimaryMaster);
+            const isPrimary = Boolean(
+              state.auth?.user?.isPrimaryMaster ||
+              state.user?.isPrimaryMaster ||
+              state.auth?.user?.userId === "MU-0001" ||
+              state.user?.userId === "MU-0001" ||
+              String(state.auth?.user?.email || "").toLowerCase() === "pradeeshk331@gmail.com" ||
+              String(state.user?.email || "").toLowerCase() === "pradeeshk331@gmail.com"
+            );
             if (isPrimary) return "Primary Master";
             if (user.designation) return user.designation;
-            if (role === ROLES.MASTER || role === "master") return "Primary Master";
-            if (role === ROLES.OWNER || role === "owner") return "Café Owner";
-            if (role === ROLES.CAFE_ADMIN || role === "cafe_admin") return "Café Administrator";
-            return ROLE_LABELS[role] || "Staff Member";
+            const uRole = String(user.role || (isPrimary ? "MASTER" : role)).toLowerCase();
+            if (uRole === ROLES.MASTER || uRole === "master") return "Primary Master";
+            if (uRole === ROLES.OWNER || uRole === "owner") return "Café Owner";
+            if (uRole === ROLES.CAFE_ADMIN || uRole === "cafe_admin") return "Café Administrator";
+            return ROLE_LABELS[uRole] || "Staff Member";
           })()}${user.userId ? ` · ${user.userId}` : ""}</div>
           <div class="user-email">${user.email || ""}</div>
         </div>
@@ -525,16 +539,19 @@ export function wireBell(root) {
         navigate("dashboard");
       } else if (targetWs === "owner") {
         state.role = ROLES.OWNER;
+        state.isPrimaryMaster = isActualPrimaryMaster;
         state.activeWorkspace = "owner";
-        showToast("Switched workspace to Owner Portal", "info");
+        showToast("Switched workspace to Owner Portal (Primary Master Governance)", "info");
         navigate("dashboard");
       } else if (targetWs === "cafe_admin") {
         state.role = ROLES.CAFE_ADMIN;
+        state.isPrimaryMaster = isActualPrimaryMaster;
         state.activeWorkspace = "cafe_admin";
         showToast("Switched workspace to Café Operations", "info");
         navigate("pos");
       } else if (targetWs === "staff") {
         state.role = ROLES.STAFF;
+        state.isPrimaryMaster = isActualPrimaryMaster;
         state.activeWorkspace = "staff";
         showToast("Switched workspace to Staff Self-Service Preview", "info");
         navigate("staff-home");
@@ -599,18 +616,58 @@ export function wireBell(root) {
     if (state.selectedCafeId) {
       globalCafeSel.value = state.selectedCafeId;
     }
+
+    // Asynchronously populate cafes if empty or only 1 option
+    if (!state.cafes || !state.cafes.length) {
+      apiGet("/cafes").then((res) => {
+        const cafeList = res?.data?.cafes || res?.data || [];
+        if (Array.isArray(cafeList) && cafeList.length) {
+          state.cafes = cafeList;
+          try {
+            if (typeof localStorage !== "undefined") {
+              localStorage.setItem("zamorin_cafes", JSON.stringify(cafeList));
+            }
+          } catch {}
+
+          const isOwner = state.role === "owner";
+          const allLabel = isOwner ? "🏠 All Assigned Cafés (Portfolio)" : "🏠 All Cafés (Global Portfolio)";
+          const cafeOpts = cafeList.map((c) => {
+            const cId = c.cafeId || c.id || c.code;
+            const cName = c.name || c.displayName || "Outlet";
+            const isSel = state.selectedCafeId === cId;
+            return `<option value="${cId}" ${isSel ? "selected" : ""}>☕ ${cId} · ${cName}</option>`;
+          }).join("");
+
+          globalCafeSel.innerHTML = `
+            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === "ALL") ? "selected" : ""}>${allLabel}</option>
+            ${cafeOpts}
+          `;
+          if (state.selectedCafeId) {
+            globalCafeSel.value = state.selectedCafeId;
+          }
+        }
+      }).catch(() => {});
+    }
+
     globalCafeSel.addEventListener("change", (e) => {
       const newCafeId = e.target.value;
       state.selectedCafeId = newCafeId;
       state.currentCafeId = (newCafeId && newCafeId !== "ALL") ? newCafeId : "";
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("zamorin-selected-cafe-id", newCafeId);
+        }
+      } catch {}
+
       if (state.user) {
         state.user.primaryCafeId = (newCafeId && newCafeId !== "ALL") ? newCafeId : "";
         const selOpt = globalCafeSel.options[globalCafeSel.selectedIndex];
         const optText = selOpt ? selOpt.textContent.trim() : "";
         const cleanName = optText.includes("·") ? optText.split("·").slice(1).join("·").trim() : optText;
-        state.user.primaryCafeName = cleanName || state.cafes?.find((c) => c.cafeId === newCafeId)?.name || newCafeId;
+        state.user.primaryCafeName = cleanName || state.cafes?.find((c) => (c.cafeId || c.id || c.code) === newCafeId)?.name || newCafeId;
       }
-      showToast(`Global café scope switched to ${newCafeId === "ALL" ? "All Cafés (Portfolio)" : newCafeId}`, "info");
+      const label = newCafeId === "ALL" ? (state.role === "owner" ? "All Assigned Cafés (Portfolio)" : "All Cafés (Global Portfolio)") : newCafeId;
+      showToast(`Switched café scope to: ${label}`, "info");
       // Trigger navigation refresh to update the active page data under new cafe context
       if (state.route) {
         navigate(state.route);
@@ -991,7 +1048,7 @@ let currentModalResolve = null;
 let lastFocusedElementBeforeModal = null;
 let activeModalKeydownHandler = null;
 
-export function openModal(options = {}) {
+export function openModal(options = {}, maybeBody = null, extraOptions = {}) {
   // Capture the element that triggered the modal for WCAG focus restoration
   lastFocusedElementBeforeModal = document.activeElement;
   closeModal();
@@ -1009,9 +1066,38 @@ export function openModal(options = {}) {
   modalEl.setAttribute("role", "dialog");
   modalEl.setAttribute("aria-modal", "true");
 
-  if (typeof options === "string") {
+  let cancelCallback = null;
+
+  if (typeof options === "string" && typeof maybeBody === "string") {
+    // 2-argument signature: openModal(title, bodyHtml, extraOptions)
+    const title = options;
+    const body = maybeBody;
+    const titleId = "zamorin-modal-title-" + Math.random().toString(36).slice(2, 8);
+    modalEl.setAttribute("aria-labelledby", titleId);
+
+    const maxWidth = (extraOptions && extraOptions.maxWidth) ? extraOptions.maxWidth : "680px";
+    cancelCallback = extraOptions?.onCancel || null;
+
     modalEl.innerHTML = `
-      <div class="modal-window" role="document" style="max-width:760px; max-height:85vh; overflow-y:auto; padding:24px; position:relative;">
+      <div class="modal-window" role="document" style="max-width:${maxWidth}; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
+        <div class="modal-header">
+          <h3 class="modal-title" id="${titleId}">${title}</h3>
+          <button class="modal-close-btn" data-modal-cancel type="button" aria-label="Close">
+            ${icon("x")}
+          </button>
+        </div>
+        <div class="modal-content" style="overflow-y:auto; padding:20px;">
+          ${body}
+        </div>
+      </div>
+    `;
+  } else if (typeof options === "string") {
+    // 1-argument signature: openModal(rawHtmlString, optionsObj)
+    const opts = (typeof maybeBody === "object" && maybeBody !== null) ? maybeBody : (extraOptions || {});
+    const maxWidth = opts.maxWidth || "860px";
+    cancelCallback = typeof opts.onCancel === "function" ? opts.onCancel : null;
+    modalEl.innerHTML = `
+      <div class="modal-window" role="document" style="max-width:${maxWidth}; max-height:88vh; overflow-y:auto; padding:24px; position:relative;">
         <button class="modal-close-btn" data-modal-cancel type="button" aria-label="Close"
           style="position:absolute; top:16px; right:16px; background:none; border:none; color:var(--muted); cursor:pointer; font-size:18px;">
           ${icon("x")}
@@ -1020,6 +1106,7 @@ export function openModal(options = {}) {
       </div>
     `;
   } else {
+    // Options object signature: openModal({ title, body, saveLabel, cancelLabel, onSave, onCancel, maxWidth })
     const {
       title = "Action",
       body = options.body || options.content || "",
@@ -1029,6 +1116,8 @@ export function openModal(options = {}) {
       onCancel = null,
       maxWidth = "560px",
     } = options;
+
+    cancelCallback = onCancel;
 
     const titleId = "zamorin-modal-title-" + Math.random().toString(36).slice(2, 8);
     modalEl.setAttribute("aria-labelledby", titleId);
@@ -1079,14 +1168,14 @@ export function openModal(options = {}) {
   cancelBtns.forEach((b) =>
     b.addEventListener("click", () => {
       closeModal();
-      if (typeof options.onCancel === "function") options.onCancel();
+      if (typeof cancelCallback === "function") cancelCallback();
     })
   );
 
   modalEl.addEventListener("click", (e) => {
     if (e.target === modalEl) {
       closeModal();
-      if (typeof options.onCancel === "function") options.onCancel();
+      if (typeof cancelCallback === "function") cancelCallback();
     }
   });
 
@@ -1094,7 +1183,7 @@ export function openModal(options = {}) {
   activeModalKeydownHandler = (e) => {
     if (e.key === "Escape") {
       closeModal();
-      if (typeof options.onCancel === "function") options.onCancel();
+      if (typeof cancelCallback === "function") cancelCallback();
       return;
     }
 

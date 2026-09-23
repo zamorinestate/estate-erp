@@ -580,7 +580,20 @@ function renderOverview() {
   }
 
   const displayName = user.preferredName || user.name || user.fullName || "Your Account";
-  const roleLabel = { [ROLES.MASTER]: "Master User", [ROLES.OWNER]: "Café Owner", [ROLES.CAFE_ADMIN]: "Café Admin", [ROLES.STAFF]: "Staff" }[role] || "Account";
+  const isUserPrimaryMaster = Boolean(
+    user.isPrimaryMaster ||
+    user.userId === "MU-0001" ||
+    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com"
+  );
+  const userAccountRole = String(user.role || (isUserPrimaryMaster ? "MASTER" : role)).toUpperCase();
+  const roleLabel = isUserPrimaryMaster
+    ? "Primary Master"
+    : ({
+        [ROLES.MASTER.toUpperCase()]: "Master User",
+        [ROLES.OWNER.toUpperCase()]: "Café Owner",
+        [ROLES.CAFE_ADMIN.toUpperCase()]: "Café Admin",
+        [ROLES.STAFF.toUpperCase()]: "Staff",
+      }[userAccountRole] || "Account");
 
   let totalVisibleItems = 0;
 
@@ -646,6 +659,9 @@ function renderOverview() {
             <div style="font-size:16px; font-weight:700; color:var(--ink); font-family:var(--font-display);">${escHtml(displayName)}</div>
             <div style="font-size:12px; color:var(--muted); margin-top:2px; display:flex; align-items:center; gap:8px;">
               <span class="status success" style="font-size:10.5px; padding:1px 6px;">${escHtml(roleLabel)}</span>
+              ${isUserPrimaryMaster && role !== ROLES.MASTER ? `
+                <span class="status info" style="font-size:10.5px; padding:1px 6px;">Workspace: ${{ [ROLES.OWNER]: "Owner Portal", [ROLES.CAFE_ADMIN]: "Café Operations", [ROLES.STAFF]: "Staff Window" }[role] || role}</span>
+              ` : ""}
               <span>ID: <strong>${escHtml(user.userId || "USR-0001")}</strong></span>
               <span>· ${escHtml(user.organisationId || "Zamorin Speciality Coffee")}</span>
             </div>
@@ -959,13 +975,23 @@ function renderEmployment() {
 function renderAccess() {
   const user = state.auth?.user || state.user || {};
   const cafes = user.assignedCafeIds || [];
-  const role = state.role || ROLES.STAFF;
+  const isUserPrimaryMaster = Boolean(
+    user.isPrimaryMaster ||
+    user.userId === "MU-0001" ||
+    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com"
+  );
+  const userAccountRole = String(user.role || (isUserPrimaryMaster ? "MASTER" : state.role || ROLES.STAFF)).toUpperCase();
   const roleLabels = {
-    [ROLES.MASTER]: "Master User — Full organisation administrative authority",
-    [ROLES.OWNER]: "Café Owner — Business, revenue and operational scope",
-    [ROLES.CAFE_ADMIN]: "Café Administrator — Unit-level management scope",
-    [ROLES.STAFF]: "Staff — Operational terminal and self-service scope",
+    [ROLES.MASTER.toUpperCase()]: isUserPrimaryMaster
+      ? "Primary Master — Full organisation administrative authority & system governance"
+      : "Master User — Full organisation administrative authority",
+    [ROLES.OWNER.toUpperCase()]: "Café Owner — Business, revenue and operational scope",
+    [ROLES.CAFE_ADMIN.toUpperCase()]: "Café Administrator — Unit-level management scope",
+    [ROLES.STAFF.toUpperCase()]: "Staff — Operational terminal and self-service scope",
   };
+  const effectiveRoleLabel = isUserPrimaryMaster
+    ? roleLabels[ROLES.MASTER.toUpperCase()]
+    : (roleLabels[userAccountRole] || roleLabels[ROLES.STAFF.toUpperCase()]);
 
   const content = `
     <!-- Role Summary Card -->
@@ -980,7 +1006,10 @@ function renderAccess() {
 
       <div style="padding:16px; background:var(--surface-sunken); border-radius:var(--radius-sm, 8px); border:1px solid var(--line);">
         <div class="settings-field-label">Current Role</div>
-        <div style="font-size:15px; font-weight:700; color:var(--ink); margin-top:2px;">${escHtml(roleLabels[role] || role)}</div>
+        <div style="font-size:15px; font-weight:700; color:var(--ink); margin-top:2px;">${escHtml(effectiveRoleLabel)}</div>
+        ${isUserPrimaryMaster && state.role && state.role !== ROLES.MASTER ? `
+          <div style="font-size:12px; color:var(--gold, #b45309); font-weight:600; margin-top:4px;">Currently inspecting workspace: ${escHtml({ [ROLES.OWNER]: "Owner Portal", [ROLES.CAFE_ADMIN]: "Café Operations", [ROLES.STAFF]: "Staff Window" }[state.role] || state.role)}</div>
+        ` : ""}
         <div class="settings-field-helper" style="margin-top:4px;">Governed under <strong>${escHtml(user.organisationId || "Zamorin Speciality Coffee")}</strong>.</div>
       </div>
     </div>

@@ -121,7 +121,7 @@ const getActiveOrders = asyncHandler(async (request, response) => {
     organisationId: request.auth.organisationId,
     cafeId,
     status: { $in: ['OPEN', 'HELD'] },
-  }).sort({ createdAt: -1 });
+  }).sort({ createdAt: -1 }).lean();
 
   return response.status(200).json({
     success: true,
@@ -146,13 +146,13 @@ const getLastCommittedBill = asyncHandler(async (request, response) => {
     organisationId: request.auth.organisationId,
     cafeId,
     status: { $in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
-  }).sort({ createdAt: -1 });
+  }).sort({ createdAt: -1 }).lean();
 
   if (!bill) {
     throw new ApiError(404, 'NO_RECENT_BILLS', 'No recent finalized bill found for this café.');
   }
 
-  const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
+  const billData = bill;
   return response.status(200).json({
     success: true,
     data: billData,

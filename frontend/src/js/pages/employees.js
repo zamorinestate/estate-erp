@@ -9,6 +9,7 @@ import { state } from "../state.js";
 import { navigate } from "../router.js";
 import { exportCentreModal } from "../components/exportCentreModal.js";
 import { icon } from "../icons.js";
+import { debounce } from "../utils/perf.js";
 
 let activeSubpanel = "overview";
 let liveOverview = null;
@@ -382,25 +383,26 @@ function renderOverviewSubpanel() {
 }
 
 // ─── 2. EMPLOYEE DIRECTORY & SEARCH ──────────────────────────────────────────
-function renderDirectorySubpanel() {
-  // Determine if the currently logged-in user IS the Primary Master
-  const isViewerPrimaryMaster = isCurrentViewerPrimaryMaster();
+// Map roles to the ERP window they access
+const WINDOW_LABEL = {
+  PRIMARY_MASTER: { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
+  MASTER:         { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
+  OWNER:          { text: '👑 Owner Portal',    color: '#065f46', bg: '#d1fae5', border: '#34d399' },
+  CAFE_ADMIN:     { text: '🎯 Café Operations', color: '#4c1d95', bg: '#ede9fe', border: '#8b5cf6' },
+  STAFF:          { text: '👤 Employee / Staff Window', color: '#374151', bg: '#f3f4f6', border: '#9ca3af' },
+};
 
-  // Map roles to the ERP window they access
-  const WINDOW_LABEL = {
-    PRIMARY_MASTER: { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
-    MASTER:         { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
-    OWNER:          { text: '👑 Owner Portal',    color: '#065f46', bg: '#d1fae5', border: '#34d399' },
-    CAFE_ADMIN:     { text: '🎯 Café Operations', color: '#4c1d95', bg: '#ede9fe', border: '#8b5cf6' },
-    STAFF:          { text: '👤 Employee / Staff Window', color: '#374151', bg: '#f3f4f6', border: '#9ca3af' },
-  };
-  function windowBadge(emp) {
-    const isPM = emp.userId === 'MU-0001' && String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
-    const key = isPM ? 'PRIMARY_MASTER' : (String(emp.role || '').toUpperCase() in WINDOW_LABEL ? String(emp.role || '').toUpperCase() : 'STAFF');
-    const w = WINDOW_LABEL[key] || WINDOW_LABEL.STAFF;
-    return `<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:4px; white-space:nowrap; color:${w.color}; background:${w.bg}; border:1px solid ${w.border};">${w.text}</span>`;
-  }
+function windowBadge(emp) {
+  const isPM =
+    emp.userId === 'MU-0001' ||
+    String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com' ||
+    emp.isPrimaryMaster === true;
+  const key = isPM ? 'PRIMARY_MASTER' : (String(emp.role || '').toUpperCase() in WINDOW_LABEL ? String(emp.role || '').toUpperCase() : 'STAFF');
+  const w = WINDOW_LABEL[key] || WINDOW_LABEL.STAFF;
+  return `<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:4px; white-space:nowrap; color:${w.color}; background:${w.bg}; border:1px solid ${w.border};">${w.text}</span>`;
+}
 
+function getFilteredEmployeesList() {
   const cleanEmployees = liveEmployees.filter(e =>
     !e.email?.toLowerCase().includes('perftest') &&
     !e.email?.toLowerCase().includes('@zamorin.test') &&
@@ -431,6 +433,102 @@ function renderDirectorySubpanel() {
   if (selectedWorkerType !== "ALL") {
     filtered = filtered.filter(e => e.workerType === selectedWorkerType);
   }
+  return filtered;
+}
+
+function renderDirectoryRows(filtered) {
+  const isViewerPrimaryMaster = isCurrentViewerPrimaryMaster();
+  if (filtered.length === 0) {
+    return `
+      <tr>
+        <td colspan="11" style="text-align:center; padding:48px 20px; color:var(--muted);">
+          <div style="font-size:32px; margin-bottom:8px;">👥</div>
+          <div style="font-weight:600; font-size:14px; color:var(--ink); margin-bottom:4px;">No Employees Found</div>
+          <div style="font-size:12px;">Get started by onboarding your first café team member using the "+ Onboard Employee" button above.</div>
+        </td>
+      </tr>
+    `;
+  }
+  return filtered.map((emp, idx) => {
+    const isPrimaryMasterRow =
+      emp.userId === 'MU-0001' ||
+      String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com' ||
+      emp.isPrimaryMaster === true;
+    // Designation: always show "Primary Master" for MU-0001 regardless of DB value
+    const displayDesignation = isPrimaryMasterRow ? 'Primary Master' : (emp.designation || 'Staff');
+    // Row freeze styling: golden locked border for Primary Master
+    const rowStyle = isPrimaryMasterRow
+      ? `border-bottom:1px solid rgba(0,0,0,0.04); background:linear-gradient(90deg,#fffbeb 0%,transparent 100%); border-left:3px solid #f59e0b;`
+      : `border-bottom:1px solid rgba(0,0,0,0.04); transition:background 0.15s ease;`;
+    const rowHover = isPrimaryMasterRow ? '' : `onmouseover="this.style.background='#fafaf9'" onmouseout="this.style.background='transparent'"`;
+    const frozenAttr = isPrimaryMasterRow ? 'data-frozen-row="MU-0001"' : '';
+    return `
+    <tr style="${rowStyle}" ${rowHover} ${frozenAttr}>
+      <td style="padding:12px 14px; color:var(--muted); font-size:11px; font-weight:600;">${idx + 1}</td>
+      <td style="padding:12px 14px;">
+        <div style="font-weight:700; color:var(--ink);">${escapeHtml(emp.name)}${isPrimaryMasterRow ? ' <span style="font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b;">🔒 FROZEN</span>' : ''}</div>
+        <div style="font-size:11px; color:var(--muted);">${escapeHtml(emp.userId)} · ${escapeHtml(emp.email)}</div>
+      </td>
+      <td style="padding:12px 14px; font-weight:${isPrimaryMasterRow ? '700' : '500'}; color:${isPrimaryMasterRow ? '#92400e' : 'inherit'};">
+        ${isPrimaryMasterRow ? '🛡️ Primary Master' : escapeHtml(displayDesignation)}
+      </td>
+      <td style="padding:12px 14px; color:var(--muted);">${escapeHtml(emp.department || 'Operations')}</td>
+      <td style="padding:12px 14px;"><span class="badge-tag badge-neutral" style="font-size:11.5px; font-weight:600;">${escapeHtml(emp.primaryCafeId || '—')}</span></td>
+      <td style="padding:12px 14px; font-size:12px;">${escapeHtml(emp.workerType || 'PERMANENT')}</td>
+      <td style="padding:12px 14px;">
+        <span class="badge-tag ${emp.role === 'MASTER' ? 'badge-accent' : emp.role === 'OWNER' ? 'badge-accent' : 'badge-neutral'}" style="font-size:11px; font-weight:700;">
+          ${isPrimaryMasterRow ? 'PRIMARY MASTER' : escapeHtml(emp.role || 'STAFF')}
+        </span>
+      </td>
+      <td style="padding:12px 14px;">${windowBadge(emp)}</td>
+      <td style="padding:12px 14px; font-size:12px; color:var(--muted);">${emp.joiningDate ? String(emp.joiningDate).split('T')[0] : '—'}</td>
+      <td style="padding:12px 14px;">
+        <span class="badge-tag ${emp.employmentStatus === 'ACTIVE' ? 'badge-success' : emp.employmentStatus === 'PROBATION' ? 'badge-warning' : 'badge-neutral'}" style="font-size:11.5px; font-weight:700;">
+          ${escapeHtml(emp.employmentStatus || 'ACTIVE')}
+        </span>
+      </td>
+      <td style="padding:12px 14px; text-align:right; white-space:nowrap;">
+        ${isPrimaryMasterRow && !isViewerPrimaryMaster ? `
+          <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:4px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b; display:inline-flex; align-items:center; gap:4px;" title="This account is protected by enterprise security freeze. Other administrators cannot edit or delete it.">
+            🔒 Protected
+          </span>
+          <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
+          <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
+        ` : isPrimaryMasterRow && isViewerPrimaryMaster ? `
+          <button class="btn btn-ghost edit-employee-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#059669; font-weight:600;" title="Edit Your Profile">✏️ Edit Profile</button>
+          <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Your Login Password &amp; POS PIN">🔑 My Login &amp; PIN</button>
+          <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
+          <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
+        ` : `
+          <button class="btn btn-ghost edit-employee-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#059669; font-weight:600;" title="Edit Position, Window &amp; Details">✏️ Edit &amp; Assign</button>
+          <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Login Password &amp; POS PIN">🔑 Login &amp; PIN</button>
+          <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
+          <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
+          <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
+          <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
+          <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account &amp; Revoke Access">🗑️ Delete</button>
+        `}
+      </td>
+    </tr>
+  `;
+  }).join('');
+}
+
+function updateDirectoryTableOnly() {
+  const tbody = document.getElementById("employee-directory-tbody");
+  const countIndicator = document.getElementById("employee-directory-count");
+  if (tbody) {
+    const filtered = getFilteredEmployeesList();
+    tbody.innerHTML = renderDirectoryRows(filtered);
+    if (countIndicator) {
+      countIndicator.textContent = `Showing ${filtered.length} of ${liveEmployees.length || filtered.length} records`;
+    }
+    attachDirectoryRowListeners();
+  }
+}
+
+function renderDirectorySubpanel() {
+  const filtered = getFilteredEmployeesList();
 
   return `
     <div style="background:#fff; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:20px;">
@@ -484,83 +582,13 @@ function renderDirectorySubpanel() {
               <th style="padding:10px 14px; text-align:right;">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            ${filtered.length === 0 ? `
-              <tr>
-                <td colspan="11" style="text-align:center; padding:48px 20px; color:var(--muted);">
-                  <div style="font-size:32px; margin-bottom:8px;">👥</div>
-                  <div style="font-weight:600; font-size:14px; color:var(--ink); margin-bottom:4px;">No Employees Found</div>
-                  <div style="font-size:12px;">Get started by onboarding your first café team member using the "+ Onboard Employee" button above.</div>
-                </td>
-              </tr>
-            ` : filtered.map((emp, idx) => {
-              const isPrimaryMasterRow =
-                emp.userId === 'MU-0001' ||
-                String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com' ||
-                emp.isPrimaryMaster === true;
-              // Designation: always show "Primary Master" for MU-0001 regardless of DB value
-              const displayDesignation = isPrimaryMasterRow ? 'Primary Master' : (emp.designation || 'Staff');
-              // Row freeze styling: golden locked border for Primary Master
-              const rowStyle = isPrimaryMasterRow
-                ? `border-bottom:1px solid rgba(0,0,0,0.04); background:linear-gradient(90deg,#fffbeb 0%,transparent 100%); border-left:3px solid #f59e0b;`
-                : `border-bottom:1px solid rgba(0,0,0,0.04); transition:background 0.15s ease;`;
-              const rowHover = isPrimaryMasterRow ? '' : `onmouseover="this.style.background='#fafaf9'" onmouseout="this.style.background='transparent'"`;
-              const frozenAttr = isPrimaryMasterRow ? 'data-frozen-row="MU-0001"' : '';
-              return `
-              <tr style="${rowStyle}" ${rowHover} ${frozenAttr}>
-                <td style="padding:12px 14px; color:var(--muted); font-size:11px; font-weight:600;">${idx + 1}</td>
-                <td style="padding:12px 14px;">
-                  <div style="font-weight:700; color:var(--ink);">${escapeHtml(emp.name)}${isPrimaryMasterRow ? ' <span style="font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b;">🔒 FROZEN</span>' : ''}</div>
-                  <div style="font-size:11px; color:var(--muted);">${escapeHtml(emp.userId)} · ${escapeHtml(emp.email)}</div>
-                </td>
-                <td style="padding:12px 14px; font-weight:${isPrimaryMasterRow ? '700' : '500'}; color:${isPrimaryMasterRow ? '#92400e' : 'inherit'};">
-                  ${isPrimaryMasterRow ? '🛡️ Primary Master' : escapeHtml(displayDesignation)}
-                </td>
-                <td style="padding:12px 14px; color:var(--muted);">${escapeHtml(emp.department || 'Operations')}</td>
-                <td style="padding:12px 14px;"><span class="badge-tag badge-neutral" style="font-size:11.5px; font-weight:600;">${escapeHtml(emp.primaryCafeId || '—')}</span></td>
-                <td style="padding:12px 14px; font-size:12px;">${escapeHtml(emp.workerType || 'PERMANENT')}</td>
-                <td style="padding:12px 14px;">
-                  <span class="badge-tag ${emp.role === 'MASTER' ? 'badge-accent' : emp.role === 'OWNER' ? 'badge-accent' : 'badge-neutral'}" style="font-size:11px; font-weight:700;">
-                    ${isPrimaryMasterRow ? 'PRIMARY MASTER' : escapeHtml(emp.role || 'STAFF')}
-                  </span>
-                </td>
-                <td style="padding:12px 14px;">${windowBadge(emp)}</td>
-                <td style="padding:12px 14px; font-size:12px; color:var(--muted);">${emp.joiningDate ? String(emp.joiningDate).split('T')[0] : '—'}</td>
-                <td style="padding:12px 14px;">
-                  <span class="badge-tag ${emp.employmentStatus === 'ACTIVE' ? 'badge-success' : emp.employmentStatus === 'PROBATION' ? 'badge-warning' : 'badge-neutral'}" style="font-size:11.5px; font-weight:700;">
-                    ${escapeHtml(emp.employmentStatus || 'ACTIVE')}
-                  </span>
-                </td>
-                <td style="padding:12px 14px; text-align:right; white-space:nowrap;">
-                  ${isPrimaryMasterRow && !isViewerPrimaryMaster ? `
-                    <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:4px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b; display:inline-flex; align-items:center; gap:4px;" title="This account is protected by enterprise security freeze. Other administrators cannot edit or delete it.">
-                      🔒 Protected
-                    </span>
-                    <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
-                    <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
-                  ` : isPrimaryMasterRow && isViewerPrimaryMaster ? `
-                    <button class="btn btn-ghost edit-employee-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#059669; font-weight:600;" title="Edit Your Profile">✏️ Edit Profile</button>
-                    <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Your Login Password &amp; POS PIN">🔑 My Login &amp; PIN</button>
-                    <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
-                    <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
-                  ` : `
-                    <button class="btn btn-ghost edit-employee-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#059669; font-weight:600;" title="Edit Position, Window &amp; Details">✏️ Edit &amp; Assign</button>
-                    <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Login Password &amp; POS PIN">🔑 Login &amp; PIN</button>
-                    <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
-                    <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
-                    <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
-                    <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
-                    <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account &amp; Revoke Access">🗑️ Delete</button>
-                  `}
-                </td>
-              </tr>
-            `;
-            }).join('')}
+          <tbody id="employee-directory-tbody">
+            ${renderDirectoryRows(filtered)}
           </tbody>
         </table>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; font-size:12px; color:var(--muted);">
-        <div>Showing ${filtered.length} of ${liveEmployees.length || filtered.length} records</div>
+        <div id="employee-directory-count">Showing ${filtered.length} of ${liveEmployees.length || filtered.length} records</div>
         <div>Authoritative Real-Time Data</div>
       </div>
     </div>
@@ -944,42 +972,43 @@ export async function wireEmployees(container = document, subroute) {
     }
   });
 
-  // Search input filter
-  document.getElementById("employee-search-input")?.addEventListener("input", (e) => {
-    searchQuery = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
+  const updateDirectoryViewSmooth = () => {
+    const tbody = document.getElementById("employee-directory-tbody");
+    if (tbody) {
+      updateDirectoryTableOnly();
+    } else {
+      const host = document.getElementById("workforce-content-area");
+      if (host && activeSubpanel === "directory") {
+        host.innerHTML = renderDirectorySubpanel();
+        attachDirectoryRowListeners();
+      }
     }
+  };
+
+  const debouncedDirectorySearch = debounce((val) => {
+    searchQuery = val;
+    updateDirectoryViewSmooth();
+  }, 150);
+
+  // Search input filter (debounced with non-destructive DOM update)
+  document.getElementById("employee-search-input")?.addEventListener("input", (e) => {
+    debouncedDirectorySearch(e.target.value);
   });
 
   // Filter selects
   document.getElementById("cafe-filter-select")?.addEventListener("change", (e) => {
     selectedCafe = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
-    }
+    updateDirectoryViewSmooth();
   });
 
   document.getElementById("dept-filter-select")?.addEventListener("change", (e) => {
     selectedDept = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
-    }
+    updateDirectoryViewSmooth();
   });
 
   document.getElementById("status-filter-select")?.addEventListener("change", (e) => {
     selectedStatus = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
-    }
+    updateDirectoryViewSmooth();
   });
 
   // Export CSV
@@ -1172,7 +1201,15 @@ function confirmAndDeleteEmployee(userId, name) {
       btn.textContent = "Deleting...";
     }
     try {
-      await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+      try {
+        await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+      } catch (postErr) {
+        if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND') {
+          await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+        } else {
+          throw postErr;
+        }
+      }
       liveEmployees = liveEmployees.filter(e => e.userId !== userId);
       document.getElementById("modal-root").innerHTML = "";
       showToast(`Account for ${name} (${userId}) has been permanently deleted and access revoked.`, "success");
@@ -1182,7 +1219,7 @@ function confirmAndDeleteEmployee(userId, name) {
         btn.disabled = false;
         btn.textContent = "🗑️ Permanently Delete";
       }
-      showToast(err?.message || "Failed to delete employee account", "coral");
+      showToast(err?.userMessage || err?.message || "Failed to delete employee account", "coral");
     }
   });
 }
@@ -1501,13 +1538,13 @@ function openOnboardingWizard() {
         name: payload.name,
         preferredName: payload.preferredName || payload.name,
         email: payload.email,
-        role: derivedRole,
+        role: assignedRole,
         designation: payload.designation,
         department: payload.department,
         primaryCafeId: payload.primaryCafeId,
         employmentType: "Full Time",
         workerType: payload.workerType,
-        employmentStatus: "ACTIVE",
+        employmentStatus: "PROBATION",
         joiningDate: new Date().toISOString().split("T")[0],
       };
       liveEmployees.unshift(newEmp);
@@ -1527,7 +1564,7 @@ function openOnboardingWizard() {
         submitBtn.disabled = false;
         submitBtn.textContent = "Complete Onboarding";
       }
-      showToast(err?.message || "Failed to onboard employee", "coral");
+      showToast(err?.userMessage || err?.message || "Failed to onboard employee", "coral");
     }
   });
 }
@@ -2059,7 +2096,15 @@ function openOffboardModal(targetUserId) {
 
     try {
       if (payload.accessRevoked || payload.exitType === "TERMINATION") {
-        await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+        try {
+          await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+        } catch (postErr) {
+          if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND') {
+            await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+          } else {
+            throw postErr;
+          }
+        }
         liveEmployees = liveEmployees.filter(e => e.userId !== userId);
         showToast(`Account for ${userId} has been permanently deleted and access revoked.`, "success");
       } else {

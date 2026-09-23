@@ -50,7 +50,7 @@ const getMenuOverview = asyncHandler(async (request, response) => {
   const filter = { organisationId };
   if (concept && concept !== 'ALL') filter.conceptEligibility = { $in: [concept, 'SHARED'] };
 
-  const rawItems = await MenuItem.find(filter);
+  const rawItems = await MenuItem.find(filter).lean();
   const items = Array.isArray(rawItems) ? rawItems : [];
 
   const activeCount = items.filter((i) => i.status === 'ACTIVE').length;
@@ -58,7 +58,7 @@ const getMenuOverview = asyncHandler(async (request, response) => {
   const restaurantItemsCount = items.filter((i) => i.conceptEligibility === 'RESTAURANT' || i.conceptEligibility === 'SHARED').length;
   const missingRecipeCount = items.filter((i) => i.status === 'ACTIVE' && !i.primaryRecipeId && !i.inventoryItemId).length;
 
-  const rawOfferings = await OutletOffering.find({ organisationId });
+  const rawOfferings = await OutletOffering.find({ organisationId }).lean();
   const offerings = Array.isArray(rawOfferings) ? rawOfferings : [];
   const soldOutCount = offerings.filter((o) => !o.isAvailable).length;
 
@@ -111,7 +111,8 @@ const listMenuItems = asyncHandler(async (request, response) => {
   const rawItems = await MenuItem.find(filter)
     .sort({ category: 1, name: 1 })
     .skip(skip)
-    .limit(parseInt(limit, 10));
+    .limit(parseInt(limit, 10))
+    .lean();
 
   const items = Array.isArray(rawItems) ? rawItems : [];
   const total = await MenuItem.countDocuments(filter);
@@ -361,7 +362,7 @@ const listRecipes = asyncHandler(async (request, response) => {
   if (status) filter.status = status;
   if (concept && concept !== 'ALL') filter.conceptEligibility = { $in: [concept, 'SHARED'] };
 
-  const rawRecipes = await Recipe.find(filter).sort({ name: 1 });
+  const rawRecipes = await Recipe.find(filter).sort({ name: 1 }).lean();
   const recipes = Array.isArray(rawRecipes) ? rawRecipes : [];
 
   return response.status(200).json({ recipes });
@@ -454,7 +455,7 @@ const updateRecipe = asyncHandler(async (request, response) => {
 // ── 4. Modifier Groups & Modifiers ───────────────────────────────────────────
 const listModifierGroups = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const rawGroups = await ModifierGroup.find({ organisationId, status: 'ACTIVE' });
+  const rawGroups = await ModifierGroup.find({ organisationId, status: 'ACTIVE' }).lean();
   const groups = Array.isArray(rawGroups) ? rawGroups : [];
   return response.status(200).json({ modifierGroups: groups });
 });
@@ -488,7 +489,7 @@ const createModifierGroup = asyncHandler(async (request, response) => {
 // ── 5. Combos & Set Menus ────────────────────────────────────────────────────
 const listCombos = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const rawCombos = await ComboDefinition.find({ organisationId, status: 'ACTIVE' });
+  const rawCombos = await ComboDefinition.find({ organisationId, status: 'ACTIVE' }).lean();
   const combos = Array.isArray(rawCombos) ? rawCombos : [];
   return response.status(200).json({ combos });
 });
@@ -525,7 +526,7 @@ const listMenus = asyncHandler(async (request, response) => {
   const filter = { organisationId, status: 'ACTIVE' };
   if (concept && concept !== 'ALL') filter.concept = { $in: [concept, 'SHARED'] };
 
-  const rawMenus = await Menu.find(filter);
+  const rawMenus = await Menu.find(filter).lean();
   const menus = Array.isArray(rawMenus) ? rawMenus : [];
 
   return response.status(200).json({ menus });
@@ -563,7 +564,7 @@ const listOutletOfferings = asyncHandler(async (request, response) => {
 
   assertOutletAccess(request, outletId);
 
-  const rawOfferings = await OutletOffering.find({ organisationId, outletId });
+  const rawOfferings = await OutletOffering.find({ organisationId, outletId }).lean();
   const offerings = Array.isArray(rawOfferings) ? rawOfferings : [];
 
   return response.status(200).json({ outletId, offerings });
@@ -631,7 +632,7 @@ const setOutletPriceOverride = asyncHandler(async (request, response) => {
 // ── 8. Publishing & Change Sets ──────────────────────────────────────────────
 const listChangeSets = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const rawSets = await MenuChangeSet.find({ organisationId }).sort({ createdAt: -1 });
+  const rawSets = await MenuChangeSet.find({ organisationId }).sort({ createdAt: -1 }).lean();
   const changeSets = Array.isArray(rawSets) ? rawSets : [];
   return response.status(200).json({ changeSets });
 });
@@ -742,7 +743,7 @@ const simulateEffectiveMenu = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
   const { outletId = 'ZC-0001', serviceMode = 'DINE_IN', targetDate } = request.query;
 
-  const rawItems = await MenuItem.find({ organisationId, status: 'ACTIVE' });
+  const rawItems = await MenuItem.find({ organisationId, status: 'ACTIVE' }).lean();
   const items = Array.isArray(rawItems) ? rawItems : [];
 
   const simulatedItems = [];
@@ -792,7 +793,7 @@ const getMenuIntegrityAudit = asyncHandler(async (request, response) => {
 const getMenuAnalytics = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
 
-  const rawItems = await MenuItem.find({ organisationId, status: 'ACTIVE' });
+  const rawItems = await MenuItem.find({ organisationId, status: 'ACTIVE' }).lean();
   const items = Array.isArray(rawItems) ? rawItems : [];
 
   return response.status(200).json({

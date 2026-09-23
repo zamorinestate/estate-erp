@@ -9,6 +9,9 @@
   <link rel="icon" type="image/svg+xml" href="/src/assets/zamorin-app-icon-vector.svg" />
   <link rel="apple-touch-icon" href="/src/assets/zamorin-app-icon-1024.png" />
   <link rel="manifest" href="/manifest.json" />
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+  <link rel="dns-prefetch" href="https://images.unsplash.com" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
@@ -40,15 +43,12 @@
       } catch (e) {}
     })();
     // Dynamic API URL Resolution:
-    // 1. Explicit window override (if injected by reverse proxy / host environment)
-    // 2. Operator override from localStorage
-    // 3. Localhost development bridge (:4000)
-    // 4. Production same-origin relative endpoint (/api/v1 proxied by Vercel to Render)
+    // Uses relative /api/v1 when served on Vercel domain, or direct Vercel API endpoint elsewhere.
     window.ZAMORIN_API_BASE_URL = window.ZAMORIN_API_BASE_URL ||
       localStorage.getItem('zamorin_api_url') ||
-      ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-        ? ('http://' + window.location.hostname + ':4000/api/v1')
-        : '/api/v1');
+      (window.location.hostname.includes('vercel.app')
+        ? '/api/v1'
+        : 'https://zamorin-cafe-erp.vercel.app/api/v1');
   </script>
 </head>
 <body style="background-color: #0b1120; margin: 0;">

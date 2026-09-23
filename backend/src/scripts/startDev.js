@@ -23,11 +23,23 @@ const {
   seedMasterUser,
   seedPermissionRules,
   seedSystemCommunicationSettings,
+  seedCafeOperationsData,
+  seedInventoryData,
+  seedVendorsData,
 } = require('./seedInitialData');
 
 async function main() {
   let uri = process.env.MONGODB_URI;
   let mongod = null;
+  async function startInMemoryMongo() {
+    console.log('[dev] Starting in-memory MongoDB...');
+    mongod = await MongoMemoryServer.create({
+      instance: { dbName: 'zamorin_cafe_erp' },
+    });
+    const memoryUri = mongod.getUri();
+    console.log(`[dev] In-memory MongoDB ready at ${memoryUri}`);
+    return memoryUri;
+  }
 
   if (!uri) {
     const net = require('net');
@@ -44,20 +56,22 @@ async function main() {
       uri = 'mongodb://127.0.0.1:27017/zamorin_cafe_erp';
       console.log(`[dev] Persistent local MongoDB detected at ${uri}`);
     } else {
-      console.log('[dev] Starting in-memory MongoDB...');
-      mongod = await MongoMemoryServer.create({
-        instance: { dbName: 'zamorin_cafe_erp' },
-      });
-      uri = mongod.getUri();
-      console.log(`[dev] In-memory MongoDB ready at ${uri}`);
+      uri = await startInMemoryMongo();
     }
   }
 
   // Override MONGODB_URI so the environment validator accepts it
   process.env.MONGODB_URI = uri;
 
-  // Connect once for seeding
-  await connectDatabase({ uri });
+  // Connect once for seeding (with automatic fallback to in-memory if remote Atlas fails)
+  try {
+    await connectDatabase({ uri, serverSelectionTimeoutMS: 4000 });
+  } catch (err) {
+    console.warn(`[dev] Primary MongoDB connection failed (${err.message}). Falling back to in-memory MongoDB...`);
+    uri = await startInMemoryMongo();
+    process.env.MONGODB_URI = uri;
+    await connectDatabase({ uri });
+  }
 
   const organisationId =
     process.env.INITIAL_ORGANISATION_ID || 'ZAMORIN';
@@ -87,6 +101,11 @@ async function main() {
     organisationId,
     masterEmail,
   });
+
+  console.log('[dev] Seeding cafes, operational inventory, and active suppliers...');
+  await seedCafeOperationsData(organisationId, masterUser.userId);
+  await seedInventoryData({ organisationId, masterUserId: masterUser.userId });
+  await seedVendorsData({ organisationId, masterUserId: masterUser.userId });
 
   console.log(
     `[dev] Seed complete — login: ${masterEmail} / ${masterPassword}`

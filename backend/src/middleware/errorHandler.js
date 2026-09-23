@@ -35,9 +35,11 @@ function errorHandler(error, req, res, next) {
     if (errStr.includes('attendance') || errStr.includes('businessdate') || reqPath.includes('/attendance')) {
       code = 'ATTENDANCE_ALREADY_EXISTS';
       message = 'Attendance record already exists for today.';
-    } else if (errStr.includes('email') || errStr.includes('userid') || reqPath.includes('/users')) {
+    } else if (errStr.includes('email') || errStr.includes('userid') || reqPath.includes('/users') || reqPath.includes('/employees')) {
       code = 'USER_ALREADY_EXISTS';
-      message = 'A user account with this email or ID already exists.';
+      message = errStr.includes('email')
+        ? 'An employee account with this email address already exists.'
+        : 'An employee account with this ID or credentials already exists.';
     } else if (errStr.includes('vendorid') || reqPath.includes('/vendors')) {
       code = 'VENDOR_ALREADY_EXISTS';
       message = 'A vendor record with this ID already exists.';

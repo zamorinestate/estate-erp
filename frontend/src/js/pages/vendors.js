@@ -3,10 +3,11 @@
 // =============================================================================
 
 import { apiGet, apiPost, apiPatch, apiDelete } from "../apiClient.js";
-import { showToast, openModal, confirmAction, renderFileUploadZone, wireFileUploadZone, openUniversalDocumentModal } from "../components.js";
+import { showToast, openModal, closeModal, confirmAction, renderFileUploadZone, wireFileUploadZone, openUniversalDocumentModal } from "../components.js";
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
 import { navigate } from "../router.js";
+import { openPlaceOrderRequestModal, openVerifyDeliveryModal, getDeliveryRemarkBadge } from "./procurement.js";
 
 let currentActiveTab = "DIRECTORY";
 let liveVendors = null;
@@ -53,13 +54,17 @@ export function setVendorsActiveTab(tab) {
 const SAMPLE_VENDORS = [];
 const SAMPLE_ORDERS = [];
 
+function getIsMaster() {
+  return state.role === ROLES.MASTER || state.role === "MASTER" || state.role === "master" || state.user?.role === "MASTER" || state.auth?.user?.role === "MASTER";
+}
+
 export function renderVendors(subroute) {
   if (subroute !== undefined) {
     setVendorsActiveTab(subroute);
   }
   const vendors = liveVendors || SAMPLE_VENDORS;
   const orders = liveOrders || SAMPLE_ORDERS;
-  const isMaster = state.user?.role === "MASTER";
+  const isMaster = getIsMaster();
 
   // Executive Metric Calculations
   const activeCount = vendors.filter((v) => v.status === "ACTIVE").length;
@@ -86,14 +91,14 @@ export function renderVendors(subroute) {
           </p>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button class="btn btn-primary" id="vnd-place-new-order-btn" type="button" style="display:flex; align-items:center; gap:6px; font-weight:700; background:#2563eb; border-color:#2563eb; color:#fff;">
+            <span>📦</span> + Place Order with Vendor
+          </button>
           ${
             isMaster
-              ? `<button class="btn btn-primary" id="add-vendor-btn" type="button" style="font-weight:700;">+ Onboard New Supplier</button>`
+              ? `<button class="btn btn-secondary" id="add-vendor-btn" type="button" style="font-weight:600;">+ Onboard Supplier</button>`
               : ""
           }
-          <button class="btn btn-secondary" id="upload-vendor-doc-btn" type="button" style="display:flex; align-items:center; gap:6px; font-weight:600;">
-            <span>📤</span> Upload Vendor Docs
-          </button>
           <button class="btn btn-ghost" id="vnd-export-zurf-btn" type="button" style="display:flex; align-items:center; gap:6px; font-weight:600;">
             <span>📄</span> Export ZURF v1
           </button>
@@ -334,6 +339,7 @@ function renderDirectoryTab(vendors, isMaster) {
                           </td>
                           <td>${statusBadge}</td>
                           <td style="text-align:right;white-space:nowrap;">
+                            <button class="btn btn-sm btn-secondary vnd-quick-order-btn" data-id="${v.vendorId}" data-name="${v.name}" type="button" title="Place Order with this Supplier" style="font-weight:600;margin-right:4px;">📦 Order</button>
                             <button class="btn btn-sm btn-ghost vnd-view-360-btn" data-id="${v.vendorId}" type="button" title="View 360 Profile">360° Profile</button>
                             ${
                               isMaster
@@ -386,13 +392,22 @@ function renderOrderTrackingTab(orders, isMaster) {
           </div>
           <p style="font-size:12.5px; color:var(--muted); margin:3px 0 0;">Track authoritative order dispatch timestamps, supplier acknowledgements, and delivery ETAs across all cafés.</p>
         </div>
+        <div>
+          <button class="btn btn-primary" id="vnd-track-place-order-btn" type="button" style="display:flex; align-items:center; gap:6px; font-weight:700; background:#2563eb; border-color:#2563eb; color:#fff;">
+            <span>📦</span> + Place New Order
+          </button>
+        </div>
       </div>
 
       <div style="display:flex; flex-direction:column; gap:18px;">
         ${
           orders.length === 0
             ? `<div style="text-align:center; padding:48px; color:var(--muted); background:var(--surface); border:1px dashed var(--line); border-radius:10px;">
-                No active purchase orders found. Dispatch orders from the Vendor Register to begin tracking.
+                <p style="font-size:14px; font-weight:600; margin-bottom:12px; color:var(--ink);">No active purchase orders found.</p>
+                <p style="font-size:12.5px; color:var(--muted); margin-bottom:16px;">Create a replenishment order for your café to initiate supplier fulfillment and Master review.</p>
+                <button class="btn btn-primary" id="vnd-empty-place-order-btn" type="button" style="font-weight:700; background:#2563eb; border-color:#2563eb; color:#fff;">
+                  📦 Place Order Now
+                </button>
               </div>`
             : orders.map((po) => {
               const isPlaced = Boolean(po.orderPlacedAt);
@@ -408,16 +423,25 @@ function renderOrderTrackingTab(orders, isMaster) {
                       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                         <span style="font-family:var(--font-mono, monospace); font-weight:800; font-size:15px; color:var(--ink); letter-spacing:-0.01em;">${po.purchaseOrderId}</span>
                         ${getStatusBadge(po.status)}
+                        ${getDeliveryRemarkBadge(po)}
                       </div>
                       <div style="font-size:14px; font-weight:700; color:var(--ink); margin-top:4px;">${po.vendorNameSnapshot || po.vendorId}</div>
-                      <div style="font-size:12px; color:var(--muted); margin-top:2px; display:flex; align-items:center; gap:8px;">
-                        <span>Café: <strong style="color:var(--ink);">${po.cafeId}</strong></span>
+                      <div style="font-size:12px; color:var(--muted); margin-top:5px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <span class="badge" style="background:rgba(59,130,246,0.12); color:#2563eb; font-weight:700; font-size:11px;">
+                          🏪 Café: ${po.cafeNameSnapshot || po.cafeId}
+                        </span>
+                        <span class="badge" style="background:rgba(100,116,139,0.12); color:var(--ink); font-weight:600; font-size:11px;">
+                          🛒 ${(po.lineItems || []).length} items (${(po.lineItems || []).reduce((acc, l) => acc + (Number(l.orderedQuantityBase) || 0), 0)} units)
+                        </span>
                         <span>&bull;</span>
                         <span>Total: <strong style="font-family:var(--font-mono, monospace); color:var(--ink); font-size:13px;">₹${((po.totalPaisa || 0) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></span>
                       </div>
                     </div>
 
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                      <button class="btn btn-sm btn-primary vnd-verify-match-btn" data-id="${po.purchaseOrderId}" type="button" style="display:flex; align-items:center; gap:6px; font-weight:700; background:#059669; border-color:#059669; color:#fff;" title="Physical item intake count, shortage calculation and vendor bill upload">
+                        <span>📥</span> Match &amp; Verify Arrival
+                      </button>
                       ${
                         !isPlaced
                           ? `<button class="btn btn-sm btn-primary vnd-place-order-btn" data-id="${po.purchaseOrderId}" type="button">🚀 Dispatch / Place Order</button>`
@@ -426,11 +450,6 @@ function renderOrderTrackingTab(orders, isMaster) {
                       ${
                         isPlaced && !isAcknowledged
                           ? `<button class="btn btn-sm btn-secondary vnd-ack-order-btn" data-id="${po.purchaseOrderId}" type="button">📋 Record Supplier Ack</button>`
-                          : ""
-                      }
-                      ${
-                        !isReceived
-                          ? `<button class="btn btn-sm btn-primary vnd-record-grn-btn" data-id="${po.purchaseOrderId}" type="button">📦 Record Goods Arrival (GRN)</button>`
                           : ""
                       }
                       ${
@@ -1472,1250 +1491,1346 @@ function renderApAgingTab(vendors, isMaster) {
 }
 
 function updateContainer() {
+  const isMaster = getIsMaster();
   const content = document.getElementById("vnd-tab-content");
   if (content) {
-    content.innerHTML = renderActiveTabContent(liveVendors || SAMPLE_VENDORS, liveOrders || SAMPLE_ORDERS, state.user?.role === "MASTER");
+    content.innerHTML = renderActiveTabContent(liveVendors || SAMPLE_VENDORS, liveOrders || SAMPLE_ORDERS, isMaster);
   } else {
-    const container = document.getElementById("main-content") || document.querySelector("#app");
+    const container = document.getElementById("page-content") || document.getElementById("main-content");
     if (container) {
-      container.innerHTML = renderVendors();
-      wireVendors(container);
+      container.innerHTML = renderVendors(currentActiveTab);
+      wireVendors(container, currentActiveTab);
     }
   }
 }
 
 // ── Event Handlers & Interactive Actions ────────────────────────────────────
 
+async function refreshVendorsData(silent = false) {
+  if (!silent) showToast("Refreshing supplier master & order tracking data...", "info");
+  try {
+    const [resVendors, resOrders] = await Promise.all([
+      apiGet("/api/v1/vendors"),
+      apiGet("/api/v1/procurement/orders").catch(() => null),
+    ]);
+    if (resVendors?.success && Array.isArray(resVendors.data?.vendors)) {
+      liveVendors = resVendors.data.vendors;
+    }
+    if (resOrders?.success && Array.isArray(resOrders.data?.purchaseOrders)) {
+      liveOrders = resOrders.data.purchaseOrders;
+    }
+    updateContainer();
+    if (!silent) showToast("Supplier data refreshed successfully.", "success");
+  } catch (err) {
+    if (!silent) showToast("Connected with local high-availability cache.", "info");
+  }
+}
+
+function handleOpenOrder(container, vendorId = null) {
+  openPlaceOrderRequestModal(container || document.getElementById("page-content"), null, vendorId, () => {
+    refreshVendorsData(true);
+  });
+}
+
+function handleOpenOnboard() {
+  openModal("Onboard New Supplier (Duplicate-Protected)", `
+    <form id="vnd-onboard-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label class="form-label">Legal Company Name *</label>
+        <input type="text" id="new-vnd-name" class="form-control" placeholder="e.g. Registered Vendor Name" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Supply Category *</label>
+          <select id="new-vnd-cat" class="form-control" required>
+            <option value="FOOD_BEVERAGE">Food &amp; Beverage</option>
+            <option value="DAIRY">Dairy</option>
+            <option value="PACKAGING">Packaging</option>
+            <option value="MAINTENANCE">Equipment &amp; Spares</option>
+            <option value="CLEANING">Cleaning &amp; Hygiene</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Supplier Type *</label>
+          <select id="new-vnd-type" class="form-control" required>
+            <option value="GOODS">Goods (Inventory-Bearing)</option>
+            <option value="SERVICE">Pure Service (No Stock Posting)</option>
+            <option value="HYBRID">Hybrid</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">GSTIN (15 Digits)</label>
+          <input type="text" id="new-vnd-gst" class="form-control" placeholder="29AABCU9876F1Z2" maxlength="15" />
+        </div>
+        <div>
+          <label class="form-label">PAN Number</label>
+          <input type="text" id="new-vnd-pan" class="form-control" placeholder="AABCU9876F" maxlength="10" />
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Official Phone</label>
+          <input type="tel" id="new-vnd-phone" class="form-control" placeholder="+91 98450 11990" />
+        </div>
+        <div>
+          <label class="form-label">Orders Email</label>
+          <input type="email" id="new-vnd-email" class="form-control" placeholder="orders@supplier.com" />
+        </div>
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Complete Supplier Registration</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById("vnd-onboard-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = {
+      name: document.getElementById("new-vnd-name")?.value,
+      category: document.getElementById("new-vnd-cat")?.value,
+      supplierType: document.getElementById("new-vnd-type")?.value,
+      gstNumber: document.getElementById("new-vnd-gst")?.value,
+      panNumber: document.getElementById("new-vnd-pan")?.value,
+      phone: document.getElementById("new-vnd-phone")?.value,
+      email: document.getElementById("new-vnd-email")?.value,
+    };
+
+    try {
+      showToast("Checking duplicate detection rules...", "info");
+      const res = await apiPost("/api/v1/vendors", payload);
+      if (res?.success) {
+        closeModal();
+        showToast(`Supplier ${res.data?.vendor?.vendorId || "registered"} onboarded successfully!`, "success");
+        if (!liveVendors) liveVendors = [];
+        liveVendors.unshift(res.data?.vendor || { ...payload, vendorId: `VEN-${Date.now().toString().slice(-4)}`, status: "ACTIVE" });
+        updateContainer();
+      } else if (res?.code === "DUPLICATE_VENDOR") {
+        showToast(`Duplicate Alert: ${res.message}`, "error");
+      } else {
+        showToast(res?.message || "Failed to register supplier.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || "Failed to register supplier.", "error");
+    }
+  });
+}
+
+function handleExportZurf() {
+  showToast("Generating ZURF v1 Sourcing & Supplier Register...", "info");
+  apiGet("/api/v1/vendors/reports/zurf-pdf")
+    .then((res) => {
+      if (res?.success && res.data) {
+        openModal("ZURF v1 Supplier Register", `
+          <div style="font-family:monospace;font-size:12px;background:#f8fafc;padding:16px;border-radius:6px;max-height:400px;overflow-y:auto;">
+            <div><strong>DOCUMENT:</strong> ${res.data.title}</div>
+            <div><strong>REPORT ID:</strong> ${res.data.reportId}</div>
+            <div><strong>GENERATED AT:</strong> ${res.data.generatedAt}</div>
+            <div><strong>LEGAL ENTITY:</strong> ${res.data.organisation?.legalName} (${res.data.organisation?.gstin})</div>
+            <hr style="margin:12px 0;" />
+            <div>Total Registered Suppliers: ${res.data.summary?.totalSuppliers}</div>
+            <div>Active Onboarded: ${res.data.summary?.activeSuppliers}</div>
+            <div>Portfolio OTIF Index: ${res.data.summary?.averageOtif}%</div>
+          </div>
+          <div style="margin-top:16px;text-align:right;">
+            <button class="btn btn-primary" onclick="window.print()">Print / Download PDF</button>
+          </div>
+        `);
+      } else {
+        showToast(res?.message || "Failed to generate report.", "error");
+      }
+    })
+    .catch((err) => {
+      showToast(err.message || "Failed to generate ZURF export document.", "error");
+    });
+}
+
+function handleUploadVendorDoc() {
+  openUniversalDocumentModal({
+    title: "Upload Vendor Contract / Rate Card / FSSAI",
+    subtitle: "Attach vendor agreement, statutory FSSAI certificate, MSME registration or signed price list.",
+    documentType: "VENDOR_CONTRACT",
+    onUploadSuccess: (doc) => {
+      showToast(`Vendor document ${doc.refNumber || doc.fileName} securely uploaded!`, "success");
+    },
+  });
+}
+
+function handleView360(vendorId) {
+  const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
+  if (!vendor) return;
+
+  openModal(`Supplier 360° Profile: ${vendor.name}`, `
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--bg);padding:14px;border-radius:6px;font-size:13px;">
+        <div>
+          <div><strong>Supplier ID:</strong> ${vendor.vendorId}</div>
+          <div><strong>Category:</strong> ${vendor.category} (${vendor.supplierType || "GOODS"})</div>
+          <div><strong>GSTIN:</strong> ${vendor.gstNumber || "N/A"}</div>
+          <div><strong>PAN:</strong> ${vendor.panNumber || "N/A"}</div>
+        </div>
+        <div>
+          <div><strong>Payment Terms:</strong> ${vendor.paymentTerms || "NET_30"}</div>
+          <div><strong>Credit Limit:</strong> ₹${(vendor.creditLimitInr || 0).toLocaleString("en-IN")}</div>
+          <div><strong>Bank:</strong> ${vendor.bankDetails?.bankName || "N/A"} (${vendor.bankDetails?.accountNumberMasked || "N/A"})</div>
+          <div><strong>Reliability:</strong> ★ ${vendor.reliabilityRating || 4.5} / 5.0</div>
+        </div>
+      </div>
+
+      <div>
+        <h4 style="font-size:14px;font-weight:700;margin:0 0 8px;">Approved Item Catalogue (${vendor.itemCatalogue?.length || 0})</h4>
+        <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+          <table class="table" style="width:100%;font-size:12px;">
+            <thead>
+              <tr>
+                <th>Item / SKU</th>
+                <th>Supplier Code</th>
+                <th>Pack Size</th>
+                <th>Price</th>
+                <th>Priority</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(vendor.itemCatalogue || []).map((c) => `
+                <tr>
+                  <td>${c.itemName || c.itemId}</td>
+                  <td><code>${c.supplierItemCode || "—"}</code></td>
+                  <td>${c.packSize || "1 UNIT"}</td>
+                  <td>₹${((c.currentPricePaisa || 0) / 100).toFixed(2)}</td>
+                  <td><span class="badge badge-neutral">${c.sourcePriority || "PRIMARY"}</span></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function handleEditVendor(vendorId) {
+  const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
+  if (!vendor) return;
+
+  openModal(`Edit Supplier: ${vendor.name}`, `
+    <form id="vnd-edit-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label class="form-label">Legal Name</label>
+        <input type="text" id="edit-vnd-name" class="form-control" value="${vendor.name || ""}" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Supply Category</label>
+          <select id="edit-vnd-cat" class="form-control">
+            <option value="FOOD_BEVERAGE" ${vendor.category === "FOOD_BEVERAGE" ? "selected" : ""}>Food &amp; Beverage</option>
+            <option value="DAIRY" ${vendor.category === "DAIRY" ? "selected" : ""}>Dairy</option>
+            <option value="PACKAGING" ${vendor.category === "PACKAGING" ? "selected" : ""}>Packaging</option>
+            <option value="MAINTENANCE" ${vendor.category === "MAINTENANCE" ? "selected" : ""}>Equipment &amp; Spares</option>
+            <option value="CLEANING" ${vendor.category === "CLEANING" ? "selected" : ""}>Cleaning &amp; Hygiene</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Payment Terms</label>
+          <select id="edit-vnd-terms" class="form-control">
+            <option value="IMMEDIATE" ${vendor.paymentTerms === "IMMEDIATE" ? "selected" : ""}>Immediate / COD</option>
+            <option value="NET_7" ${vendor.paymentTerms === "NET_7" ? "selected" : ""}>Net 7 Days</option>
+            <option value="NET_15" ${vendor.paymentTerms === "NET_15" ? "selected" : ""}>Net 15 Days</option>
+            <option value="NET_30" ${vendor.paymentTerms === "NET_30" ? "selected" : ""}>Net 30 Days</option>
+            <option value="NET_45" ${vendor.paymentTerms === "NET_45" ? "selected" : ""}>Net 45 Days</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Contact Phone</label>
+          <input type="tel" id="edit-vnd-phone" class="form-control" value="${vendor.phone || ""}" />
+        </div>
+        <div>
+          <label class="form-label">Orders Email</label>
+          <input type="email" id="edit-vnd-email" class="form-control" value="${vendor.email || ""}" />
+        </div>
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById("vnd-edit-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = {
+      name: document.getElementById("edit-vnd-name")?.value,
+      category: document.getElementById("edit-vnd-cat")?.value,
+      paymentTerms: document.getElementById("edit-vnd-terms")?.value,
+      phone: document.getElementById("edit-vnd-phone")?.value,
+      email: document.getElementById("edit-vnd-email")?.value,
+    };
+    try {
+      const res = await apiPatch(`/api/v1/vendors/${vendorId}`, payload);
+      if (res?.success) {
+        closeModal();
+        showToast(`Supplier ${vendorId} updated successfully.`, "success");
+        Object.assign(vendor, payload);
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to update supplier.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || "Failed to update supplier.", "error");
+    }
+  });
+}
+
+function handleHoldToggle(vendorId) {
+  const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
+  if (!vendor) return;
+  const isHold = vendor.status === "ON_HOLD";
+  const nextStatus = isHold ? "ACTIVE" : "ON_HOLD";
+
+  confirmAction({
+    title: isHold ? `Release Hold on ${vendor.name}?` : `Place ${vendor.name} on Hold?`,
+    message: isHold
+      ? `Releasing the hold will re-enable purchase order creation and deliveries for this supplier.`
+      : `Placing this supplier on hold will block new purchase orders and flag pending shipments.`,
+    confirmText: isHold ? "Release Hold" : "Place on Hold",
+    onConfirm: async () => {
+      try {
+        const res = await apiPost(`/api/v1/vendors/${vendorId}/status`, { status: nextStatus });
+        if (res?.success) {
+          vendor.status = nextStatus;
+          showToast(`Supplier ${vendorId} status changed to ${nextStatus}.`, "success");
+          updateContainer();
+        } else {
+          showToast(res?.message || "Failed to update status.", "error");
+        }
+      } catch (err) {
+        showToast(err.message || `Failed to update status for ${vendorId}.`, "error");
+      }
+    },
+  });
+}
+
+function handleDispatchOrder(poId) {
+  const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+  if (!po) return;
+
+  confirmAction({
+    title: `Dispatch Purchase Order ${poId}?`,
+    message: `This will officially transmit the PO to ${po.vendorNameSnapshot || po.vendorId} and start milestone tracking.`,
+    confirmText: "Dispatch Order",
+    onConfirm: async () => {
+      try {
+        const res = await apiPost(`/api/v1/vendors/orders/${poId}/place`, { status: "DISPATCHED" });
+        if (res?.success) {
+          po.orderPlacedAt = new Date().toISOString();
+          po.status = "DISPATCHED";
+          showToast(`Purchase Order ${poId} dispatched to supplier.`, "success");
+          updateContainer();
+        } else {
+          showToast(res?.message || "Failed to dispatch order.", "error");
+        }
+      } catch (err) {
+        showToast(err.message || `Failed to dispatch order ${poId}.`, "error");
+      }
+    },
+  });
+}
+
+function handleAckOrder(poId) {
+  const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+  if (!po) return;
+
+  openModal(`Record Supplier Ack for ${poId}`, `
+    <form id="vnd-ack-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label class="form-label">Acknowledgement Status</label>
+        <select id="ack-status" class="form-control">
+          <option value="ACCEPTED" selected>Accepted In Full</option>
+          <option value="ACCEPTED_WITH_CHANGES">Accepted With Changes</option>
+          <option value="REJECTED">Rejected by Supplier</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-label">Confirmed Delivery ETA Date *</label>
+        <input type="date" id="ack-eta-date" class="form-control" value="${new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10)}" required />
+      </div>
+      <div>
+        <label class="form-label">Supplier Order / Reference Number</label>
+        <input type="text" id="ack-ref-no" class="form-control" placeholder="e.g. SO-98421" />
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Save Acknowledgement</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById("vnd-ack-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const eta = document.getElementById("ack-eta-date")?.value;
+    const status = document.getElementById("ack-status")?.value;
+    const ref = document.getElementById("ack-ref-no")?.value;
+    try {
+      const res = await apiPost(`/api/v1/vendors/orders/${poId}/acknowledge`, {
+        confirmedDeliveryDate: eta,
+        status,
+        supplierReferenceNumber: ref,
+      });
+      if (res?.success) {
+        closeModal();
+        po.supplierConfirmedDeliveryDate = eta;
+        po.supplierAcknowledgementStatus = status;
+        po.supplierAcknowledgedAt = new Date().toISOString();
+        showToast(`Supplier acknowledgement recorded for ${poId}.`, "success");
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to record acknowledgement.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || `Failed to record acknowledgement for ${poId}.`, "error");
+    }
+  });
+}
+
+function handleRecordGrn(poId) {
+  const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+  if (!po) return;
+
+  openModal(`Record Goods Receipt (GRN) for ${poId}`, `
+    <form id="vnd-grn-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label class="form-label">Delivery Challan / Note Number *</label>
+        <input type="text" id="grn-dc-num" class="form-control" placeholder="DC-2026-0482" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Carrier / Transporter</label>
+          <input type="text" id="grn-carrier" class="form-control" placeholder="Local Courier / Direct Delivery" />
+        </div>
+        <div>
+          <label class="form-label">Vehicle / E-Way Bill Number</label>
+          <input type="text" id="grn-vehicle" class="form-control" placeholder="KL-11-AX-4821" />
+        </div>
+      </div>
+      <div>
+        <label class="form-label">Physical Inspection Result</label>
+        <select id="grn-qc-result" class="form-control">
+          <option value="PASSED" selected>Passed Quality & Temperature Check</option>
+          <option value="PARTIAL_ACCEPTANCE">Partial Acceptance (Some Damaged)</option>
+          <option value="REJECTED">Rejected at Dock</option>
+        </select>
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Complete GRN Intake</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById("vnd-grn-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const dcNum = document.getElementById("grn-dc-num")?.value;
+    const carrier = document.getElementById("grn-carrier")?.value;
+    const qc = document.getElementById("grn-qc-result")?.value;
+    const items = (po.lineItems || []).map((line) => ({
+      itemId: line.itemId,
+      deliveredQty: line.quantity || 1,
+      acceptedQty: qc === "REJECTED" ? 0 : line.quantity || 1,
+      rejectedQty: qc === "REJECTED" ? line.quantity || 1 : 0,
+    }));
+    try {
+      const res = await apiPost(`/api/v1/vendors/orders/${poId}/receipts`, {
+        deliveryNoteNumber: dcNum,
+        carrier,
+        inspectionStatus: qc,
+        items,
+      });
+      if (res?.success) {
+        closeModal();
+        po.receivingStatus = "RECEIVED_PENDING_FINAL_POSTING";
+        po.grnReceipts = po.grnReceipts || [];
+        po.grnReceipts.push({ deliveryNoteNumber: dcNum, receivedAt: new Date().toISOString() });
+        showToast(`GRN created for ${poId}. Pending 3-way match & MASTER stock posting.`, "success");
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to record GRN.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || `Failed to record GRN for ${poId}.`, "error");
+    }
+  });
+}
+
+function handleCaptureInvoice(poId) {
+  const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+  if (!po) return;
+
+  openModal(`Capture Supplier Tax Invoice for ${poId}`, `
+    <form id="vnd-capture-inv-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Tax Invoice Number *</label>
+          <input type="text" id="inv-num" class="form-control" placeholder="INV/2026/089" required />
+        </div>
+        <div>
+          <label class="form-label">Invoice Date *</label>
+          <input type="date" id="inv-date" class="form-control" value="${new Date().toISOString().slice(0, 10)}" required />
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Invoice Grand Total (₹) *</label>
+          <input type="number" step="0.01" id="inv-total" class="form-control" value="${((po.totalPaisa || 0) / 100).toFixed(2)}" required />
+        </div>
+        <div>
+          <label class="form-label">GST e-Invoice IRN (64-char)</label>
+          <input type="text" id="inv-irn" class="form-control" placeholder="Optional for B2B portal" />
+        </div>
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Capture & Verify Match</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById("vnd-capture-inv-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const invNumber = document.getElementById("inv-num")?.value;
+    const invDate = document.getElementById("inv-date")?.value;
+    const total = parseFloat(document.getElementById("inv-total")?.value || "0");
+    const irn = document.getElementById("inv-irn")?.value;
+    try {
+      const res = await apiPost(`/api/v1/vendors/orders/${poId}/invoices`, {
+        invoiceNumber: invNumber,
+        invoiceDate: invDate,
+        totalPaisa: Math.round(total * 100),
+        irn,
+      });
+      if (res?.success) {
+        closeModal();
+        po.invoices = po.invoices || [];
+        po.invoices.push({ invoiceNumber: invNumber, totalPaisa: Math.round(total * 100), irn });
+        po.threeWayMatch = { matchStatus: "MATCHED" };
+        showToast(`Supplier invoice ${invNumber} captured. Three-way match verified.`, "success");
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to capture invoice.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || `Failed to capture invoice for ${poId}.`, "error");
+    }
+  });
+}
+
+async function handleRecalcMatch(poId) {
+  const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+  if (!po) return;
+
+  showToast(`Recalculating 3-way match for ${poId}...`, "info");
+  try {
+    const res = await apiGet(`/api/v1/vendors/orders/${poId}/match`);
+    if (res?.success) {
+      if (po.threeWayMatch) po.threeWayMatch.matchStatus = res.data?.matchSummary?.matchStatus || "MATCHED";
+      showToast(`Three-way match calculated: ${res.data?.matchSummary?.matchStatus || "MATCHED"}.`, "success");
+      updateContainer();
+    } else {
+      showToast(res?.message || "Failed to calculate match.", "error");
+    }
+  } catch (err) {
+    showToast(err.message || `Failed to calculate match for ${poId}.`, "error");
+  }
+}
+
+function handleRejectBank(vendorId) {
+  const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
+  if (!vendor) return;
+
+  confirmAction({
+    title: `Reject Bank Account Modification for ${vendor.name}?`,
+    message: `This will decline the proposed bank credentials and preserve the existing active account.`,
+    confirmText: "Reject Bank Change",
+    onConfirm: async () => {
+      try {
+        const res = await apiPost(`/api/v1/vendors/${vendorId}/bank-change-reject`);
+        if (res?.success) {
+          vendor.pendingBankChange = null;
+          showToast(`Proposed bank details for ${vendorId} rejected.`, "info");
+          updateContainer();
+        } else {
+          showToast(res?.message || "Failed to reject bank change.", "error");
+        }
+      } catch (err) {
+        showToast(err.message || `Failed to reject bank change for ${vendorId}.`, "error");
+      }
+    },
+  });
+}
+
+function handleApproveBank(vendorId) {
+  const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
+  if (!vendor || !vendor.pendingBankChange) return;
+
+  confirmAction({
+    title: `Authorize MASTER Activation of New Bank Details?`,
+    message: `You are verifying that ${vendor.name}'s new bank account (${vendor.pendingBankChange.bankName}, ${vendor.pendingBankChange.accountNumberMasked}) has been validated.`,
+    confirmText: "Approve & Activate",
+    onConfirm: async () => {
+      try {
+        const res = await apiPost(`/api/v1/vendors/${vendorId}/bank-change-approve`);
+        if (res?.success) {
+          vendor.bankDetails = {
+            bankName: vendor.pendingBankChange.bankName,
+            accountNumberMasked: vendor.pendingBankChange.accountNumberMasked,
+            ifscCode: vendor.pendingBankChange.ifscCode,
+          };
+          vendor.pendingBankChange = null;
+          showToast(`New bank account for ${vendorId} authenticated and active.`, "success");
+          updateContainer();
+        } else {
+          showToast(res?.message || "Failed to approve bank change.", "error");
+        }
+      } catch (err) {
+        showToast(err.message || `Failed to approve bank change for ${vendorId}.`, "error");
+      }
+    },
+  });
+}
+
+function handleMasterApprove(poId) {
+  confirmAction({
+    title: `Authorize MASTER Stock Posting for ${poId}?`,
+    message: `This will verify the Three-Way Match, atomically post goods lines to cafe inventory exactly once, and create the Finance AP Invoice record.`,
+    confirmText: "Approve & Post Stock",
+    onConfirm: async () => {
+      try {
+        showToast("Executing atomic inventory posting...", "info");
+        const res = await apiPost(`/api/v1/vendors/orders/${poId}/master-approve`, {
+          approvalNotes: "MASTER approved goods arrival and verified 3-way match.",
+        });
+        if (res?.success) {
+          showToast(`Inventory posted successfully! Posting ID: ${res.data?.postingId || "POST-OK"}`, "success");
+          const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+          if (po) {
+            po.status = "CLOSED";
+            po.receivingStatus = "POSTED_TO_INVENTORY";
+            po.inventoryPosting = { status: "POSTED" };
+          }
+          updateContainer();
+        } else {
+          showToast(res?.message || "MASTER approval could not be completed.", "error");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to execute MASTER stock posting.", "error");
+      }
+    },
+  });
+}
+
+async function handleRefreshApQueue() {
+  showToast("Refreshing AP Work Queue...", "info");
+  try {
+    const res = await apiGet("/api/v1/vendor-ledger/ap/queue");
+    if (res?.success && res.data?.queue) {
+      liveApInvoices = res.data.queue;
+      showToast("AP Queue updated from live backend.", "success");
+    } else {
+      showToast("AP Queue synchronized.", "info");
+    }
+    updateContainer();
+  } catch (err) {
+    showToast("AP Queue local sync active.", "info");
+  }
+}
+
+async function handleRefreshAging() {
+  showToast("Calculating AP Aging & GST 180-Day status...", "info");
+  try {
+    const [resAging, resGst] = await Promise.all([
+      apiGet("/api/v1/vendor-ledger/reports/aging").catch(() => null),
+      apiGet("/api/v1/vendor-ledger/reports/gst-180-days").catch(() => null),
+    ]);
+    if (resAging?.success || resGst?.success) {
+      liveAgingReport = {
+        buckets: resAging?.data?.buckets || {},
+        gstRiskItems: resGst?.data?.riskInvoices || [],
+      };
+      showToast("AP Aging analysis & GST monitor updated.", "success");
+    } else {
+      showToast("Aging data synchronized.", "info");
+    }
+    updateContainer();
+  } catch (err) {
+    showToast("Aging calculations active.", "info");
+  }
+}
+
+function handlePayFullAp(invId, vendorId, amountPaise) {
+  confirmAction({
+    title: `Disburse Full Balance ₹${(amountPaise / 100).toFixed(2)}?`,
+    message: `This will execute the AP payment for ${invId}, post canonically to CashTransaction (PAID_OUT), and update the Vendor AP subledger.`,
+    confirmText: "Authorize Full Payment",
+    onConfirm: async () => {
+      try {
+        showToast("Posting canonical disbursement...", "info");
+        const res = await apiPost("/api/v1/vendor-ledger/payments", {
+          vendorId,
+          amountPaise,
+          paymentMethod: "BANK_TRANSFER",
+          referenceNumber: `PMT-${Date.now().toString().slice(-6)}`,
+          allocations: [{ invoiceId: invId, amountPaise }],
+        });
+        if (res?.success) {
+          showToast(`Full payment of ₹${(amountPaise / 100).toFixed(2)} posted successfully!`, "success");
+          const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
+          if (inv) {
+            inv.paidPaisa = (inv.paidPaisa || 0) + amountPaise;
+            inv.outstandingPaisa = 0;
+            inv.status = "PAID";
+          }
+          updateContainer();
+        } else {
+          showToast(res?.message || "Payment execution failed.", "error");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to execute payment.", "error");
+      }
+    },
+  });
+}
+
+function handlePayPartialAp(invId, vendorId, currentOutstanding) {
+  const defaultPartial = Math.round(currentOutstanding / 2);
+
+  openModal(`Record Partial Payment for ${invId}`, `
+    <form id="vnd-partial-pay-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div style="background:var(--bg);padding:12px;border-radius:6px;font-size:13px;">
+        <div>Outstanding Payable: <strong>₹${(currentOutstanding / 100).toFixed(2)}</strong></div>
+        <div>Supplier ID: <code>${vendorId}</code></div>
+      </div>
+      <div>
+        <label class="form-label">Partial Payment Amount (₹) *</label>
+        <input type="number" step="0.01" max="${(currentOutstanding / 100).toFixed(2)}" id="partial-pay-amount" class="form-control" value="${(defaultPartial / 100).toFixed(2)}" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Payment Method *</label>
+          <select id="partial-pay-method" class="form-control" required>
+            <option value="BANK_TRANSFER" selected>Bank Transfer (NEFT/RTGS/IMPS)</option>
+            <option value="UPI">UPI</option>
+            <option value="CASH">Cash</option>
+            <option value="CARD">Corporate Card</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Bank Reference / UTR *</label>
+          <input type="text" id="partial-pay-ref" class="form-control" placeholder="e.g. UTR-982138921" value="UTR-${Date.now().toString().slice(-6)}" required />
+        </div>
+      </div>
+      <div>
+        <label class="form-label">Payment Notes / Rationale</label>
+        <input type="text" id="partial-pay-notes" class="form-control" placeholder="e.g. Milestone 1 partial disbursement" />
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Post Partial Payment</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById("vnd-partial-pay-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const amountInr = parseFloat(document.getElementById("partial-pay-amount")?.value || "0");
+    const amountPaise = Math.round(amountInr * 100);
+    const paymentMethod = document.getElementById("partial-pay-method")?.value;
+    const ref = document.getElementById("partial-pay-ref")?.value;
+    const notes = document.getElementById("partial-pay-notes")?.value;
+
+    try {
+      showToast("Posting partial disbursement to CashTransaction & Subledger...", "info");
+      const res = await apiPost("/api/v1/vendor-ledger/payments", {
+        vendorId,
+        amountPaise,
+        paymentMethod,
+        referenceNumber: ref,
+        notes,
+        allocations: [{ invoiceId: invId, amountPaise }],
+      });
+      if (res?.success) {
+        closeModal();
+        showToast(`Partial payment of ₹${amountInr.toFixed(2)} posted! Remaining: ₹${((currentOutstanding - amountPaise) / 100).toFixed(2)}`, "success");
+        const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
+        if (inv) {
+          inv.paidPaisa = (inv.paidPaisa || 0) + amountPaise;
+          inv.outstandingPaisa = Math.max(0, currentOutstanding - amountPaise);
+          inv.status = inv.outstandingPaisa === 0 ? "PAID" : "PARTIAL";
+        }
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to record partial payment.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || "Failed to record partial payment.", "error");
+    }
+  });
+}
+
+function handleToggleHoldAp(invId, isHold) {
+  if (isHold) {
+    confirmAction({
+      title: `Release Payment Hold on ${invId}?`,
+      message: "This will unfreeze the bill and allow Accounts to release disbursements.",
+      confirmText: "Release Hold",
+      onConfirm: async () => {
+        try {
+          const res = await apiPost(`/api/v1/vendor-ledger/bills/${invId}/holds/release`, {
+            reason: "Finance verified documentation and cleared hold.",
+          });
+          if (res?.success) {
+            showToast(`Payment hold released for ${invId}.`, "success");
+            const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
+            if (inv) { inv.holdStatus = "NONE"; inv.holdReason = ""; }
+            updateContainer();
+          } else {
+            showToast(res?.message || "Failed to release hold.", "error");
+          }
+        } catch (err) {
+          showToast(err.message || "Failed to release hold.", "error");
+        }
+      },
+    });
+  } else {
+    openModal(`Place Payment Hold on ${invId}`, `
+      <form id="vnd-hold-form" style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label class="form-label">Reason for Payment Hold *</label>
+          <input type="text" id="hold-reason-input" class="form-control" placeholder="e.g. Quality dispute on batch #8821" required />
+        </div>
+        <div style="text-align:right;margin-top:10px;">
+          <button type="submit" class="btn btn-primary" style="background:#dc2626;">Confirm Payment Hold</button>
+        </div>
+      </form>
+    `);
+    document.getElementById("vnd-hold-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const reason = document.getElementById("hold-reason-input")?.value;
+      const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
+      if (inv) { inv.holdStatus = "ON_HOLD"; inv.holdReason = reason; }
+      showToast(`Payment hold placed on ${invId}: ${reason}`, "info");
+      closeModal();
+      updateContainer();
+    });
+  }
+}
+
+function handleApplyAdvance(invId, vendorId) {
+  openModal(`Apply Vendor Advance to ${invId}`, `
+    <form id="vnd-apply-adv-form" style="display:flex;flex-direction:column;gap:14px;">
+      <p style="font-size:12.5px;color:var(--muted);">Applying an existing vendor advance reallocates pre-paid cash to this AP bill with ZERO additional cash outflow.</p>
+      <div>
+        <label class="form-label">Advance Amount to Apply (₹) *</label>
+        <input type="number" step="0.01" id="apply-adv-amount" class="form-control" placeholder="500.00" value="500.00" required />
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Apply Advance</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("vnd-apply-adv-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const amountPaise = Math.round(parseFloat(document.getElementById("apply-adv-amount")?.value || "0") * 100);
+    try {
+      const res = await apiPost("/api/v1/vendor-ledger/advances/apply", { vendorId, invoiceId: invId, amountPaise });
+      if (res?.success) {
+        closeModal();
+        showToast("Advance successfully applied to AP invoice! Zero cash impact.", "success");
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to apply advance.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || "Failed to apply advance.", "error");
+    }
+  });
+}
+
+function handleApplyCredit(invId, vendorId) {
+  openModal(`Apply Vendor Credit Note to ${invId}`, `
+    <form id="vnd-apply-cr-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label class="form-label">Credit Note Reference *</label>
+        <input type="text" id="apply-cr-ref" class="form-control" placeholder="CRN-2026-001" required />
+      </div>
+      <div>
+        <label class="form-label">Credit Amount (₹) *</label>
+        <input type="number" step="0.01" id="apply-cr-amount" class="form-control" placeholder="250.00" required />
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Apply Credit Note</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("vnd-apply-cr-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const amountPaise = Math.round(parseFloat(document.getElementById("apply-cr-amount")?.value || "0") * 100);
+    const ref = document.getElementById("apply-cr-ref")?.value;
+    try {
+      const res = await apiPost("/api/v1/vendor-ledger/credits/apply", { vendorId, invoiceId: invId, amountPaise, creditNoteReference: ref });
+      if (res?.success) {
+        closeModal();
+        showToast("Credit note applied to bill.", "success");
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to apply credit note.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || "Failed to apply credit note.", "error");
+    }
+  });
+}
+
+async function handleRebuildSummary(vendorId) {
+  try {
+    showToast(`Rebuilding financial summary cache for ${vendorId}...`, "info");
+    const res = await apiPost(`/api/v1/vendor-ledger/vendors/${vendorId}/rebuild-summary`);
+    if (res?.success) {
+      showToast("Financial summary rebuilt! Subledger invariant verified: 100% reconciled.", "success");
+      updateContainer();
+    } else {
+      showToast(res?.message || "Rebuild failed.", "error");
+    }
+  } catch (err) {
+    showToast(err.message || "Failed to rebuild summary.", "error");
+  }
+}
+
+async function handleViewStatement(vendorId) {
+  try {
+    showToast(`Fetching subledger statement for ${vendorId}...`, "info");
+    const res = await apiGet(`/api/v1/vendor-ledger/vendors/${vendorId}/statement`);
+    if (res?.success) {
+      const stmt = res.data?.statement || {};
+      openModal(`Subledger Statement: ${stmt.vendorName || vendorId}`, `
+        <div style="font-family:monospace;font-size:12px;background:#f8fafc;padding:16px;border-radius:6px;max-height:420px;overflow-y:auto;">
+          <div><strong>VENDOR:</strong> ${stmt.vendorName} (${stmt.vendorId})</div>
+          <div><strong>GSTIN:</strong> ${stmt.gstNumber || "N/A"}</div>
+          <div><strong>GENERATED:</strong> ${new Date().toLocaleString()}</div>
+          <hr style="margin:10px 0;" />
+          <div>Opening Balance: ₹${((stmt.openingBalancePaise || 0) / 100).toFixed(2)}</div>
+          <div>Total Invoiced: ₹${((stmt.totalInvoicedPaise || 0) / 100).toFixed(2)}</div>
+          <div>Total Payments: ₹${((stmt.totalPaidPaise || 0) / 100).toFixed(2)}</div>
+          <div>Closing Outstanding: ₹${((stmt.closingBalancePaise || 0) / 100).toFixed(2)}</div>
+          <hr style="margin:10px 0;" />
+          <div><strong>TRANSACTIONS (${stmt.entries?.length || 0}):</strong></div>
+          ${(stmt.entries || []).map((e) => `
+            <div style="margin-top:4px;">${e.entryDate?.split("T")[0] || ""} · [${e.entryType}] · Ref: ${e.documentReferenceNumber || "—"} · Dr: ₹${((e.debitPaise || 0) / 100).toFixed(2)} · Cr: ₹${((e.creditPaise || 0) / 100).toFixed(2)} · Bal: ₹${((e.runningBalancePaise || 0) / 100).toFixed(2)}</div>
+          `).join("")}
+        </div>
+        <div style="text-align:right;margin-top:14px;">
+          <button class="btn btn-primary" onclick="window.print()">Print Statement</button>
+        </div>
+      `);
+    } else {
+      showToast(res?.message || "Failed to fetch statement.", "error");
+    }
+  } catch (err) {
+    showToast(err.message || "Failed to load statement.", "error");
+  }
+}
+
+function handleReversePayment(paymentId) {
+  confirmAction({
+    title: `Authorize Reversal of Disbursement ${paymentId}?`,
+    message: "Reversing this payment will debit the Vendor Subledger, mark the transaction reversed, and create an offsetting PAID_IN CashTransaction entry.",
+    confirmText: "Authorize Reversal",
+    confirmVariant: "coral",
+    onConfirm: async () => {
+      try {
+        showToast(`Executing reversal for ${paymentId}...`, "info");
+        const res = await apiPost(`/api/v1/vendor-ledger/payments/${paymentId}/reverse`, {
+          reason: "Disbursement reversal authorized by Master",
+        });
+        if (res?.success) {
+          showToast("Payment reversed. Offsetting PAID_IN cash transaction posted.", "success");
+          updateContainer();
+        } else {
+          showToast(res?.message || "Failed to reverse payment.", "error");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to reverse payment.", "error");
+      }
+    },
+  });
+}
+
+function handleRecordAdvance(vendorId) {
+  openModal(`Record Advance to Supplier (${vendorId})`, `
+    <form id="vnd-advance-form" style="display:flex;flex-direction:column;gap:14px;">
+      <p style="font-size:12.5px;color:var(--muted);">Advance payments post directly to CashTransaction (PAID_OUT) and credit the vendor advance balance for future bill offset.</p>
+      <div>
+        <label class="form-label">Advance Amount (₹) *</label>
+        <input type="number" step="0.01" id="adv-amount" class="form-control" placeholder="1000.00" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label">Disbursement Method *</label>
+          <select id="adv-method" class="form-control" required>
+            <option value="BANK_TRANSFER" selected>Bank Transfer</option>
+            <option value="UPI">UPI</option>
+            <option value="CASH">Cash</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Reference / UTR *</label>
+          <input type="text" id="adv-ref" class="form-control" value="ADV-${Date.now().toString().slice(-6)}" required />
+        </div>
+      </div>
+      <div>
+        <label class="form-label">Notes</label>
+        <input type="text" id="adv-notes" class="form-control" placeholder="e.g. 50% advance for upcoming bean shipment" />
+      </div>
+      <div style="text-align:right;margin-top:10px;">
+        <button type="submit" class="btn btn-primary">Post Advance Disbursement</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("vnd-advance-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const amountPaise = Math.round(parseFloat(document.getElementById("adv-amount")?.value || "0") * 100);
+    const paymentMethod = document.getElementById("adv-method")?.value;
+    const ref = document.getElementById("adv-ref")?.value;
+    const notes = document.getElementById("adv-notes")?.value;
+    try {
+      const res = await apiPost("/api/v1/vendor-ledger/advances", {
+        vendorId,
+        amountPaise,
+        paymentMethod,
+        referenceNumber: ref,
+        notes,
+      });
+      if (res?.success) {
+        closeModal();
+        showToast(`Vendor advance of ₹${(amountPaise / 100).toFixed(2)} posted with CashTransaction link!`, "success");
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to record advance.", "error");
+      }
+    } catch (err) {
+      showToast(err.message || "Failed to record advance.", "error");
+    }
+  });
+}
+
+function handleSendToAccounts(poId) {
+  showToast("Transmitting physical receipt packet to Accounts AP...", "info");
+  apiPost(`/api/v1/procurement/orders/${poId}/send-to-accounts`, {
+    notes: "Transmitted via Supplier Control Centre",
+  })
+    .then((res) => {
+      if (res?.success) {
+        showToast(`Receipt packet for ${poId} sent to Accounts AP successfully!`, "success");
+        const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+        if (po) {
+          po.accountsHandoff = res.data?.accountsHandoff || { status: "SENT_TO_ACCOUNTS" };
+        }
+        updateContainer();
+      } else {
+        showToast(res?.message || "Failed to send packet to Accounts.", "error");
+      }
+    })
+    .catch((err) => {
+      showToast(err.message || `Failed to send packet to Accounts for ${poId}.`, "error");
+    });
+}
+
 export function wireVendors(container, subroute) {
   if (subroute !== undefined) {
     setVendorsActiveTab(subroute);
   }
-  // Vendor Hub Tiles
-  document.querySelectorAll("[data-vnd-hub-tile]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tileId = btn.dataset.vndHubTile.toLowerCase().replace(/_/g, "-");
-      navigate("vendors/" + tileId);
-    });
-  });
 
-  // Back to Suppliers Hub Button
-  document.querySelector("#vnd-back-to-hub-btn")?.addEventListener("click", () => {
-    navigate("vendors");
-  });
-
-  // Tab Switcher (legacy)
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      currentActiveTab = btn.dataset.tab;
-      updateContainer();
-    });
-  });
-
-  // Search & Filters
-  const searchInput = document.getElementById("vnd-search-input");
-  if (searchInput) {
-    searchInput.addEventListener("input", (e) => {
-      searchQuery = e.target.value;
-      const content = document.getElementById("vnd-tab-content");
-      if (content) content.innerHTML = renderActiveTabContent(liveVendors || SAMPLE_VENDORS, liveOrders || SAMPLE_ORDERS, state.user?.role === "MASTER");
-    });
+  // Auto-fetch fresh vendors and orders on initial mount if not yet loaded
+  if (!liveVendors || !liveOrders) {
+    refreshVendorsData(true);
   }
 
-  const catFilter = document.getElementById("vnd-filter-cat");
-  if (catFilter) {
-    catFilter.addEventListener("change", (e) => {
-      selectedCategory = e.target.value;
-      const content = document.getElementById("vnd-tab-content");
-      if (content) content.innerHTML = renderActiveTabContent(liveVendors || SAMPLE_VENDORS, liveOrders || SAMPLE_ORDERS, state.user?.role === "MASTER");
-    });
-  }
+  const targetEl = container || document.getElementById("page-content") || document.body;
+  if (!targetEl) return;
 
-  const typeFilter = document.getElementById("vnd-filter-type");
-  if (typeFilter) {
-    typeFilter.addEventListener("change", (e) => {
-      selectedType = e.target.value;
-      const content = document.getElementById("vnd-tab-content");
-      if (content) content.innerHTML = renderActiveTabContent(liveVendors || SAMPLE_VENDORS, liveOrders || SAMPLE_ORDERS, state.user?.role === "MASTER");
-    });
-  }
+  // Single delegated click listener on container so buttons never lose listeners on re-render
+  if (!targetEl._vndDelegated) {
+    targetEl._vndDelegated = true;
 
-  const statusFilter = document.getElementById("vnd-filter-status");
-  if (statusFilter) {
-    statusFilter.addEventListener("change", (e) => {
-      selectedStatus = e.target.value;
-      const content = document.getElementById("vnd-tab-content");
-      if (content) content.innerHTML = renderActiveTabContent(liveVendors || SAMPLE_VENDORS, liveOrders || SAMPLE_ORDERS, state.user?.role === "MASTER");
-    });
-  }
+    targetEl.addEventListener("click", (e) => {
+      if (!window.location.hash.startsWith("#vendors")) return;
 
-  // Refresh Button
-  const refreshBtn = document.getElementById("refresh-vendors-btn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", async () => {
-      showToast("Refreshing supplier master & order tracking data...", "info");
-      try {
-        const [resVendors, resOrders] = await Promise.all([
-          apiGet("/api/v1/vendors"),
-          apiGet("/api/v1/procurement/orders").catch(() => null),
-        ]);
-        if (resVendors?.success && resVendors.data?.vendors) {
-          liveVendors = resVendors.data.vendors;
+      // 1. Hub Tiles
+      const hubTile = e.target.closest("[data-vnd-hub-tile]");
+      if (hubTile) {
+        const tileId = hubTile.dataset.vndHubTile.toLowerCase().replace(/_/g, "-");
+        navigate("vendors/" + tileId);
+        return;
+      }
+
+      // 2. Back to Hub
+      if (e.target.closest("#vnd-back-to-hub-btn")) {
+        navigate("vendors");
+        return;
+      }
+
+      // 3. Place Order buttons
+      if (e.target.closest("#vnd-place-new-order-btn") || e.target.closest("#vnd-track-place-order-btn") || e.target.closest("#vnd-empty-place-order-btn")) {
+        handleOpenOrder(targetEl, null);
+        return;
+      }
+
+      // 4. Quick Order button on directory table
+      const quickOrderBtn = e.target.closest(".vnd-quick-order-btn");
+      if (quickOrderBtn) {
+        handleOpenOrder(targetEl, quickOrderBtn.dataset.id);
+        return;
+      }
+
+      // 5. Onboard Supplier
+      if (e.target.closest("#add-vendor-btn")) {
+        handleOpenOnboard();
+        return;
+      }
+
+      // 6. Refresh Vendors
+      if (e.target.closest("#refresh-vendors-btn")) {
+        refreshVendorsData(false);
+        return;
+      }
+
+      // 7. Export ZURF
+      if (e.target.closest("#vnd-export-zurf-btn")) {
+        handleExportZurf();
+        return;
+      }
+
+      // 8. Upload Vendor Doc
+      if (e.target.closest("#upload-vendor-doc-btn")) {
+        handleUploadVendorDoc();
+        return;
+      }
+
+      // 9. 360° Profile Drawer
+      const view360Btn = e.target.closest(".vnd-view-360-btn");
+      if (view360Btn) {
+        handleView360(view360Btn.dataset.id);
+        return;
+      }
+
+      // 10. Edit Vendor Details
+      const editBtn = e.target.closest(".vnd-edit-btn");
+      if (editBtn) {
+        handleEditVendor(editBtn.dataset.id);
+        return;
+      }
+
+      // 11. Hold / Unhold Toggle
+      const holdBtn = e.target.closest(".vnd-hold-btn");
+      if (holdBtn) {
+        handleHoldToggle(holdBtn.dataset.id);
+        return;
+      }
+
+      // 12. Dispatch / Place Order
+      const dispatchBtn = e.target.closest(".vnd-place-order-btn");
+      if (dispatchBtn) {
+        handleDispatchOrder(dispatchBtn.dataset.id);
+        return;
+      }
+
+      // 13. Record Supplier Acknowledgement
+      const ackBtn = e.target.closest(".vnd-ack-order-btn");
+      if (ackBtn) {
+        handleAckOrder(ackBtn.dataset.id);
+        return;
+      }
+
+      // Verify & Match Arriving Delivery with Bill Upload
+      const verifyMatchBtn = e.target.closest(".vnd-verify-match-btn");
+      if (verifyMatchBtn) {
+        const poId = verifyMatchBtn.dataset.id;
+        const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+        if (po) {
+          openVerifyDeliveryModal(container, po, () => refreshVendorsData(true));
         }
-        if (resOrders?.success && resOrders.data?.purchaseOrders) {
-          liveOrders = resOrders.data.purchaseOrders;
+        return;
+      }
+
+      // 14. Record Goods Arrival (GRN)
+      const grnBtn = e.target.closest(".vnd-record-grn-btn");
+      if (grnBtn) {
+        const poId = grnBtn.dataset.id;
+        const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
+        if (po) {
+          openVerifyDeliveryModal(container, po, () => refreshVendorsData(true));
+        } else {
+          handleRecordGrn(poId);
         }
+        return;
+      }
+
+      // 15. Capture Supplier Tax Invoice
+      const capInvBtn = e.target.closest(".vnd-capture-inv-btn");
+      if (capInvBtn) {
+        handleCaptureInvoice(capInvBtn.dataset.id);
+        return;
+      }
+
+      // 16. Recalculate 3-Way Match
+      const recalcBtn = e.target.closest(".vnd-recalc-match-btn");
+      if (recalcBtn) {
+        handleRecalcMatch(recalcBtn.dataset.id);
+        return;
+      }
+
+      // 17. Bank Details Reject / Approve
+      const rejectBankBtn = e.target.closest(".vnd-reject-bank-btn");
+      if (rejectBankBtn) {
+        handleRejectBank(rejectBankBtn.dataset.id);
+        return;
+      }
+      const approveBankBtn = e.target.closest(".vnd-approve-bank-btn");
+      if (approveBankBtn) {
+        handleApproveBank(approveBankBtn.dataset.id);
+        return;
+      }
+
+      // 18. MASTER Approval & Post Inventory
+      const masterApproveBtn = e.target.closest(".vnd-master-approve-btn");
+      if (masterApproveBtn) {
+        handleMasterApprove(masterApproveBtn.dataset.id);
+        return;
+      }
+
+      // 19. AP Queue Filter Pills
+      const apPill = e.target.closest(".vnd-ap-filter-pill");
+      if (apPill) {
+        apQueueFilter = apPill.dataset.filter;
         updateContainer();
-        showToast("Supplier data refreshed successfully.", "success");
-      } catch (err) {
-        showToast("Connected with local high-availability cache.", "info");
+        return;
+      }
+
+      // 20. Refresh AP Queue & Aging Report
+      if (e.target.closest("#vnd-refresh-ap-btn")) {
+        handleRefreshApQueue();
+        return;
+      }
+      if (e.target.closest("#vnd-refresh-aging-btn")) {
+        handleRefreshAging();
+        return;
+      }
+
+      // 21. AP Disbursements & Settlements
+      const payFullBtn = e.target.closest(".vnd-ap-pay-full-btn");
+      if (payFullBtn) {
+        handlePayFullAp(payFullBtn.dataset.id, payFullBtn.dataset.vendor, parseInt(payFullBtn.dataset.amount, 10) || 0);
+        return;
+      }
+      const payPartialBtn = e.target.closest(".vnd-ap-pay-partial-btn");
+      if (payPartialBtn) {
+        handlePayPartialAp(payPartialBtn.dataset.id, payPartialBtn.dataset.vendor, parseInt(payPartialBtn.dataset.amount, 10) || 0);
+        return;
+      }
+      const toggleHoldBtn = e.target.closest(".vnd-ap-toggle-hold-btn");
+      if (toggleHoldBtn) {
+        handleToggleHoldAp(toggleHoldBtn.dataset.id, toggleHoldBtn.dataset.hold === "true");
+        return;
+      }
+      const applyAdvBtn = e.target.closest(".vnd-ap-apply-advance-btn");
+      if (applyAdvBtn) {
+        handleApplyAdvance(applyAdvBtn.dataset.id, applyAdvBtn.dataset.vendor);
+        return;
+      }
+      const applyCrBtn = e.target.closest(".vnd-ap-apply-credit-btn");
+      if (applyCrBtn) {
+        handleApplyCredit(applyCrBtn.dataset.id, applyCrBtn.dataset.vendor);
+        return;
+      }
+
+      // 22. Subledger Actions
+      const rebuildSummaryBtn = e.target.closest("#vnd-rebuild-summary-btn");
+      if (rebuildSummaryBtn) {
+        handleRebuildSummary(rebuildSummaryBtn.dataset.vendor);
+        return;
+      }
+      const viewStmtBtn = e.target.closest("#vnd-view-statement-btn");
+      if (viewStmtBtn) {
+        handleViewStatement(viewStmtBtn.dataset.vendor);
+        return;
+      }
+      const revPmtBtn = e.target.closest(".vnd-reverse-payment-btn");
+      if (revPmtBtn) {
+        handleReversePayment(revPmtBtn.dataset.id);
+        return;
+      }
+      const recAdvBtn = e.target.closest("#vnd-record-advance-btn");
+      if (recAdvBtn) {
+        handleRecordAdvance(recAdvBtn.dataset.vendor);
+        return;
+      }
+
+      // 23. Quick Navigation Between AP Workspaces
+      if (e.target.closest("#vnd-goto-ap-btn")) {
+        currentActiveTab = "AP_QUEUE";
+        updateContainer();
+        return;
+      }
+      if (e.target.closest("#vnd-ap-to-ledger-btn")) {
+        currentActiveTab = "VENDOR_LEDGER";
+        updateContainer();
+        return;
+      }
+      const agingLedgerBtn = e.target.closest(".vnd-aging-view-ledger-btn");
+      if (agingLedgerBtn) {
+        selectedLedgerVendorId = agingLedgerBtn.dataset.vendor;
+        currentActiveTab = "VENDOR_LEDGER";
+        updateContainer();
+        return;
+      }
+      const agingPayBtn = e.target.closest(".vnd-aging-pay-now-btn");
+      if (agingPayBtn) {
+        currentActiveTab = "AP_QUEUE";
+        updateContainer();
+        return;
+      }
+
+      // 24. Send to Accounts (Physical Receipt Packet Handoff)
+      const sendAccBtn = e.target.closest(".vnd-send-accounts-btn");
+      if (sendAccBtn) {
+        handleSendToAccounts(sendAccBtn.dataset.id);
+        return;
+      }
+    });
+
+    targetEl.addEventListener("input", (e) => {
+      if (!window.location.hash.startsWith("#vendors")) return;
+      if (e.target.id === "vnd-search-input") {
+        searchQuery = e.target.value;
+        const content = document.getElementById("vnd-tab-content");
+        if (content) {
+          content.innerHTML = renderActiveTabContent(liveVendors || SAMPLE_VENDORS, liveOrders || SAMPLE_ORDERS, getIsMaster());
+        }
+      }
+    });
+
+    targetEl.addEventListener("change", (e) => {
+      if (!window.location.hash.startsWith("#vendors")) return;
+      if (e.target.id === "vnd-filter-cat") {
+        selectedCategory = e.target.value;
+        updateContainer();
+      } else if (e.target.id === "vnd-filter-type") {
+        selectedType = e.target.value;
+        updateContainer();
+      } else if (e.target.id === "vnd-filter-status") {
+        selectedStatus = e.target.value;
+        updateContainer();
+      } else if (e.target.id === "vnd-ledger-vendor-select") {
+        selectedLedgerVendorId = e.target.value;
+        updateContainer();
       }
     });
   }
-
-  // Export ZURF v1 Report
-  const zurfBtn = document.getElementById("vnd-export-zurf-btn");
-  if (zurfBtn) {
-    zurfBtn.addEventListener("click", async () => {
-      showToast("Generating ZURF v1 Sourcing & Supplier Register...", "info");
-      try {
-        const res = await apiGet("/api/v1/vendors/reports/zurf-pdf");
-        if (res?.success && res.data) {
-          openModal("ZURF v1 Supplier Register", `
-            <div style="font-family:monospace;font-size:12px;background:#f8fafc;padding:16px;border-radius:6px;max-height:400px;overflow-y:auto;">
-              <div><strong>DOCUMENT:</strong> ${res.data.title}</div>
-              <div><strong>REPORT ID:</strong> ${res.data.reportId}</div>
-              <div><strong>GENERATED AT:</strong> ${res.data.generatedAt}</div>
-              <div><strong>LEGAL ENTITY:</strong> ${res.data.organisation?.legalName} (${res.data.organisation?.gstin})</div>
-              <hr style="margin:12px 0;" />
-              <div>Total Registered Suppliers: ${res.data.summary?.totalSuppliers}</div>
-              <div>Active Onboarded: ${res.data.summary?.activeSuppliers}</div>
-              <div>Portfolio OTIF Index: ${res.data.summary?.averageOtif}%</div>
-            </div>
-            <div style="margin-top:16px;text-align:right;">
-              <button class="btn btn-primary" onclick="window.print()">Print / Download PDF</button>
-            </div>
-          `);
-        } else {
-          showToast(res?.message || "Failed to generate report.", "error");
-        }
-      } catch (err) {
-        showToast(err.message || "Failed to generate ZURF export document.", "error");
-      }
-    });
-  }
-
-  // Upload Vendor Document Action
-  const uploadVendorDocBtn = document.querySelector("#upload-vendor-doc-btn");
-  if (uploadVendorDocBtn) {
-    uploadVendorDocBtn.addEventListener("click", () => {
-      openUniversalDocumentModal({
-        title: "Upload Vendor Contract / Rate Card / FSSAI",
-        subtitle: "Attach vendor agreement, statutory FSSAI certificate, MSME registration or signed price list.",
-        documentType: "VENDOR_CONTRACT",
-        onUploadSuccess: (doc) => {
-          showToast(`Vendor document ${doc.refNumber || doc.fileName} securely uploaded!`, "success");
-        },
-      });
-    });
-  }
-
-  // 360° Profile Drawer
-  document.querySelectorAll(".vnd-view-360-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const vendorId = btn.dataset.id;
-      const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
-      if (!vendor) return;
-
-      openModal(`Supplier 360° Profile: ${vendor.name}`, `
-        <div style="display:flex;flex-direction:column;gap:16px;">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--bg);padding:14px;border-radius:6px;font-size:13px;">
-            <div>
-              <div><strong>Supplier ID:</strong> ${vendor.vendorId}</div>
-              <div><strong>Category:</strong> ${vendor.category} (${vendor.supplierType || "GOODS"})</div>
-              <div><strong>GSTIN:</strong> ${vendor.gstNumber || "N/A"}</div>
-              <div><strong>PAN:</strong> ${vendor.panNumber || "N/A"}</div>
-            </div>
-            <div>
-              <div><strong>Payment Terms:</strong> ${vendor.paymentTerms || "NET_30"}</div>
-              <div><strong>Credit Limit:</strong> ₹${(vendor.creditLimitInr || 0).toLocaleString("en-IN")}</div>
-              <div><strong>Bank:</strong> ${vendor.bankDetails?.bankName || "N/A"} (${vendor.bankDetails?.accountNumberMasked || "N/A"})</div>
-              <div><strong>Reliability:</strong> ★ ${vendor.reliabilityRating || 4.5} / 5.0</div>
-            </div>
-          </div>
-
-          <div>
-            <h4 style="font-size:14px;font-weight:700;margin:0 0 8px;">Approved Item Catalogue (${vendor.itemCatalogue?.length || 0})</h4>
-            <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
-              <table class="table" style="width:100%;font-size:12px;">
-                <thead>
-                  <tr>
-                    <th>Item / SKU</th>
-                    <th>Supplier Code</th>
-                    <th>Pack Size</th>
-                    <th>Price</th>
-                    <th>Priority</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${(vendor.itemCatalogue || []).map((c) => `
-                    <tr>
-                      <td>${c.itemName || c.itemId}</td>
-                      <td><code>${c.supplierItemCode || "—"}</code></td>
-                      <td>${c.packSize || "1 UNIT"}</td>
-                      <td>₹${((c.currentPricePaisa || 0) / 100).toFixed(2)}</td>
-                      <td><span class="badge badge-neutral">${c.sourcePriority || "PRIMARY"}</span></td>
-                    </tr>
-                  `).join("")}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      `);
-    });
-  });
-
-  // Edit Vendor Details
-  document.querySelectorAll(".vnd-edit-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const vendorId = btn.dataset.id;
-      const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
-      if (!vendor) return;
-
-      openModal(`Edit Supplier: ${vendor.name}`, `
-        <form id="vnd-edit-form" style="display:flex;flex-direction:column;gap:14px;">
-          <div>
-            <label class="form-label">Legal Name</label>
-            <input type="text" id="edit-vnd-name" class="form-control" value="${vendor.name || ""}" required />
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Supply Category</label>
-              <select id="edit-vnd-cat" class="form-control">
-                <option value="FOOD_BEVERAGE" ${vendor.category === "FOOD_BEVERAGE" ? "selected" : ""}>Food &amp; Beverage</option>
-                <option value="DAIRY" ${vendor.category === "DAIRY" ? "selected" : ""}>Dairy</option>
-                <option value="PACKAGING" ${vendor.category === "PACKAGING" ? "selected" : ""}>Packaging</option>
-                <option value="MAINTENANCE" ${vendor.category === "MAINTENANCE" ? "selected" : ""}>Equipment &amp; Spares</option>
-                <option value="CLEANING" ${vendor.category === "CLEANING" ? "selected" : ""}>Cleaning &amp; Hygiene</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label">Payment Terms</label>
-              <select id="edit-vnd-terms" class="form-control">
-                <option value="IMMEDIATE" ${vendor.paymentTerms === "IMMEDIATE" ? "selected" : ""}>Immediate / COD</option>
-                <option value="NET_7" ${vendor.paymentTerms === "NET_7" ? "selected" : ""}>Net 7 Days</option>
-                <option value="NET_15" ${vendor.paymentTerms === "NET_15" ? "selected" : ""}>Net 15 Days</option>
-                <option value="NET_30" ${vendor.paymentTerms === "NET_30" ? "selected" : ""}>Net 30 Days</option>
-                <option value="NET_45" ${vendor.paymentTerms === "NET_45" ? "selected" : ""}>Net 45 Days</option>
-              </select>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Contact Phone</label>
-              <input type="tel" id="edit-vnd-phone" class="form-control" value="${vendor.phone || ""}" />
-            </div>
-            <div>
-              <label class="form-label">Orders Email</label>
-              <input type="email" id="edit-vnd-email" class="form-control" value="${vendor.email || ""}" />
-            </div>
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Save Changes</button>
-          </div>
-        </form>
-      `);
-
-      document.getElementById("vnd-edit-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const payload = {
-          name: document.getElementById("edit-vnd-name")?.value,
-          category: document.getElementById("edit-vnd-cat")?.value,
-          paymentTerms: document.getElementById("edit-vnd-terms")?.value,
-          phone: document.getElementById("edit-vnd-phone")?.value,
-          email: document.getElementById("edit-vnd-email")?.value,
-        };
-        try {
-          const res = await apiPatch(`/api/v1/vendors/${vendorId}`, payload);
-          if (res?.success) {
-            showToast(`Supplier ${vendorId} updated successfully.`, "success");
-            Object.assign(vendor, payload);
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to update supplier.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || "Failed to update supplier.", "error");
-        }
-      });
-    });
-  });
-
-  // Hold / Unhold Toggle
-  document.querySelectorAll(".vnd-hold-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const vendorId = btn.dataset.id;
-      const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
-      if (!vendor) return;
-      const isHold = vendor.status === "ON_HOLD";
-      const nextStatus = isHold ? "ACTIVE" : "ON_HOLD";
-
-      confirmAction({
-        title: isHold ? `Release Hold on ${vendor.name}?` : `Place ${vendor.name} on Hold?`,
-        message: isHold
-          ? `Releasing the hold will re-enable purchase order creation and deliveries for this supplier.`
-          : `Placing this supplier on hold will block new purchase orders and flag pending shipments.`,
-        confirmText: isHold ? "Release Hold" : "Place on Hold",
-        onConfirm: async () => {
-          try {
-            const res = await apiPost(`/api/v1/vendors/${vendorId}/status`, { status: nextStatus });
-            if (res?.success) {
-              vendor.status = nextStatus;
-              showToast(`Supplier ${vendorId} status changed to ${nextStatus}.`, "success");
-              updateContainer();
-            } else {
-              showToast(res?.message || "Failed to update status.", "error");
-            }
-          } catch (err) {
-            showToast(err.message || `Failed to update status for ${vendorId}.`, "error");
-          }
-        },
-      });
-    });
-  });
-
-  // Dispatch / Place Order
-  document.querySelectorAll(".vnd-place-order-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const poId = btn.dataset.id;
-      const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
-      if (!po) return;
-
-      confirmAction({
-        title: `Dispatch Purchase Order ${poId}?`,
-        message: `This will officially transmit the PO to ${po.vendorNameSnapshot || po.vendorId} and start milestone tracking.`,
-        confirmText: "Dispatch Order",
-        onConfirm: async () => {
-          try {
-            const res = await apiPost(`/api/v1/vendors/orders/${poId}/place`, { status: "DISPATCHED" });
-            if (res?.success) {
-              po.orderPlacedAt = new Date().toISOString();
-              po.status = "DISPATCHED";
-              showToast(`Purchase Order ${poId} dispatched to supplier.`, "success");
-              updateContainer();
-            } else {
-              showToast(res?.message || "Failed to dispatch order.", "error");
-            }
-          } catch (err) {
-            showToast(err.message || `Failed to dispatch order ${poId}.`, "error");
-          }
-        },
-      });
-    });
-  });
-
-  // Record Supplier Acknowledgement
-  document.querySelectorAll(".vnd-ack-order-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const poId = btn.dataset.id;
-      const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
-      if (!po) return;
-
-      openModal(`Record Supplier Ack for ${poId}`, `
-        <form id="vnd-ack-form" style="display:flex;flex-direction:column;gap:14px;">
-          <div>
-            <label class="form-label">Acknowledgement Status</label>
-            <select id="ack-status" class="form-control">
-              <option value="ACCEPTED" selected>Accepted In Full</option>
-              <option value="ACCEPTED_WITH_CHANGES">Accepted With Changes</option>
-              <option value="REJECTED">Rejected by Supplier</option>
-            </select>
-          </div>
-          <div>
-            <label class="form-label">Confirmed Delivery ETA Date *</label>
-            <input type="date" id="ack-eta-date" class="form-control" value="${new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10)}" required />
-          </div>
-          <div>
-            <label class="form-label">Supplier Order / Reference Number</label>
-            <input type="text" id="ack-ref-no" class="form-control" placeholder="e.g. SO-98421" />
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Save Acknowledgement</button>
-          </div>
-        </form>
-      `);
-
-      document.getElementById("vnd-ack-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const eta = document.getElementById("ack-eta-date")?.value;
-        const status = document.getElementById("ack-status")?.value;
-        const ref = document.getElementById("ack-ref-no")?.value;
-        try {
-          const res = await apiPost(`/api/v1/vendors/orders/${poId}/acknowledge`, {
-            confirmedDeliveryDate: eta,
-            status,
-            supplierReferenceNumber: ref,
-          });
-          if (res?.success) {
-            po.supplierConfirmedDeliveryDate = eta;
-            po.supplierAcknowledgementStatus = status;
-            po.supplierAcknowledgedAt = new Date().toISOString();
-            showToast(`Supplier acknowledgement recorded for ${poId}.`, "success");
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to record acknowledgement.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || `Failed to record acknowledgement for ${poId}.`, "error");
-        }
-      });
-    });
-  });
-
-  // Record Goods Arrival (GRN)
-  document.querySelectorAll(".vnd-record-grn-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const poId = btn.dataset.id;
-      const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
-      if (!po) return;
-
-      openModal(`Record Goods Receipt (GRN) for ${poId}`, `
-        <form id="vnd-grn-form" style="display:flex;flex-direction:column;gap:14px;">
-          <div>
-            <label class="form-label">Delivery Challan / Note Number *</label>
-            <input type="text" id="grn-dc-num" class="form-control" placeholder="DC-2026-0482" required />
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Carrier / Transporter</label>
-              <input type="text" id="grn-carrier" class="form-control" placeholder="Local Courier / Direct Delivery" />
-            </div>
-            <div>
-              <label class="form-label">Vehicle / E-Way Bill Number</label>
-              <input type="text" id="grn-vehicle" class="form-control" placeholder="KL-11-AX-4821" />
-            </div>
-          </div>
-          <div>
-            <label class="form-label">Physical Inspection Result</label>
-            <select id="grn-qc-result" class="form-control">
-              <option value="PASSED" selected>Passed Quality & Temperature Check</option>
-              <option value="PARTIAL_ACCEPTANCE">Partial Acceptance (Some Damaged)</option>
-              <option value="REJECTED">Rejected at Dock</option>
-            </select>
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Complete GRN Intake</button>
-          </div>
-        </form>
-      `);
-
-      document.getElementById("vnd-grn-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const dcNum = document.getElementById("grn-dc-num")?.value;
-        const carrier = document.getElementById("grn-carrier")?.value;
-        const qc = document.getElementById("grn-qc-result")?.value;
-        const items = (po.lineItems || []).map((line) => ({
-          itemId: line.itemId,
-          deliveredQty: line.quantity || 1,
-          acceptedQty: qc === "REJECTED" ? 0 : line.quantity || 1,
-          rejectedQty: qc === "REJECTED" ? line.quantity || 1 : 0,
-        }));
-        try {
-          const res = await apiPost(`/api/v1/vendors/orders/${poId}/receipts`, {
-            deliveryNoteNumber: dcNum,
-            carrier,
-            inspectionStatus: qc,
-            items,
-          });
-          if (res?.success) {
-            po.receivingStatus = "RECEIVED_PENDING_FINAL_POSTING";
-            po.grnReceipts = po.grnReceipts || [];
-            po.grnReceipts.push({ deliveryNoteNumber: dcNum, receivedAt: new Date().toISOString() });
-            showToast(`GRN created for ${poId}. Pending 3-way match & MASTER stock posting.`, "success");
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to record GRN.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || `Failed to record GRN for ${poId}.`, "error");
-        }
-      });
-    });
-  });
-
-  // Capture Supplier Tax Invoice
-  document.querySelectorAll(".vnd-capture-inv-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const poId = btn.dataset.id;
-      const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
-      if (!po) return;
-
-      openModal(`Capture Supplier Tax Invoice for ${poId}`, `
-        <form id="vnd-capture-inv-form" style="display:flex;flex-direction:column;gap:14px;">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Tax Invoice Number *</label>
-              <input type="text" id="inv-num" class="form-control" placeholder="INV/2026/089" required />
-            </div>
-            <div>
-              <label class="form-label">Invoice Date *</label>
-              <input type="date" id="inv-date" class="form-control" value="${new Date().toISOString().slice(0, 10)}" required />
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Invoice Grand Total (₹) *</label>
-              <input type="number" step="0.01" id="inv-total" class="form-control" value="${((po.totalPaisa || 0) / 100).toFixed(2)}" required />
-            </div>
-            <div>
-              <label class="form-label">GST e-Invoice IRN (64-char)</label>
-              <input type="text" id="inv-irn" class="form-control" placeholder="Optional for B2B portal" />
-            </div>
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Capture & Verify Match</button>
-          </div>
-        </form>
-      `);
-
-      document.getElementById("vnd-capture-inv-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const invNumber = document.getElementById("inv-num")?.value;
-        const invDate = document.getElementById("inv-date")?.value;
-        const total = parseFloat(document.getElementById("inv-total")?.value || "0");
-        const irn = document.getElementById("inv-irn")?.value;
-        try {
-          const res = await apiPost(`/api/v1/vendors/orders/${poId}/invoices`, {
-            invoiceNumber: invNumber,
-            invoiceDate: invDate,
-            totalPaisa: Math.round(total * 100),
-            irn,
-          });
-          if (res?.success) {
-            po.invoices = po.invoices || [];
-            po.invoices.push({ invoiceNumber: invNumber, totalPaisa: Math.round(total * 100), irn });
-            po.threeWayMatch = { matchStatus: "MATCHED" };
-            showToast(`Supplier invoice ${invNumber} captured. Three-way match verified.`, "success");
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to capture invoice.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || `Failed to capture invoice for ${poId}.`, "error");
-        }
-      });
-    });
-  });
-
-  // Recalculate 3-Way Match
-  document.querySelectorAll(".vnd-recalc-match-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const poId = btn.dataset.id;
-      const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
-      if (!po) return;
-
-      showToast(`Recalculating 3-way match for ${poId}...`, "info");
-      try {
-        const res = await apiGet(`/api/v1/vendors/orders/${poId}/match`);
-        if (res?.success) {
-          if (po.threeWayMatch) po.threeWayMatch.matchStatus = res.data?.matchSummary?.matchStatus || "MATCHED";
-          showToast(`Three-way match calculated: ${res.data?.matchSummary?.matchStatus || "MATCHED"}.`, "success");
-          updateContainer();
-        } else {
-          showToast(res?.message || "Failed to calculate match.", "error");
-        }
-      } catch (err) {
-        showToast(err.message || `Failed to calculate match for ${poId}.`, "error");
-      }
-    });
-  });
-
-  // Reject Bank Details Change
-  document.querySelectorAll(".vnd-reject-bank-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const vendorId = btn.dataset.id;
-      const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
-      if (!vendor) return;
-
-      confirmAction({
-        title: `Reject Bank Account Modification for ${vendor.name}?`,
-        message: `This will decline the proposed bank credentials and preserve the existing active account.`,
-        confirmText: "Reject Bank Change",
-        onConfirm: async () => {
-          try {
-            const res = await apiPost(`/api/v1/vendors/${vendorId}/bank-change-reject`);
-            if (res?.success) {
-              vendor.pendingBankChange = null;
-              showToast(`Proposed bank details for ${vendorId} rejected.`, "info");
-              updateContainer();
-            } else {
-              showToast(res?.message || "Failed to reject bank change.", "error");
-            }
-          } catch (err) {
-            showToast(err.message || `Failed to reject bank change for ${vendorId}.`, "error");
-          }
-        },
-      });
-    });
-  });
-
-  // Approve Bank Details Change
-  document.querySelectorAll(".vnd-approve-bank-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const vendorId = btn.dataset.id;
-      const vendor = (liveVendors || SAMPLE_VENDORS).find((v) => v.vendorId === vendorId);
-      if (!vendor || !vendor.pendingBankChange) return;
-
-      confirmAction({
-        title: `Authorize MASTER Activation of New Bank Details?`,
-        message: `You are verifying that ${vendor.name}'s new bank account (${vendor.pendingBankChange.bankName}, ${vendor.pendingBankChange.accountNumberMasked}) has been validated.`,
-        confirmText: "Approve & Activate",
-        onConfirm: async () => {
-          try {
-            const res = await apiPost(`/api/v1/vendors/${vendorId}/bank-change-approve`);
-            if (res?.success) {
-              vendor.bankDetails = {
-                bankName: vendor.pendingBankChange.bankName,
-                accountNumberMasked: vendor.pendingBankChange.accountNumberMasked,
-                ifscCode: vendor.pendingBankChange.ifscCode,
-              };
-              vendor.pendingBankChange = null;
-              showToast(`New bank account for ${vendorId} authenticated and active.`, "success");
-              updateContainer();
-            } else {
-              showToast(res?.message || "Failed to approve bank change.", "error");
-            }
-          } catch (err) {
-            showToast(err.message || `Failed to approve bank change for ${vendorId}.`, "error");
-          }
-        },
-      });
-    });
-  });
-
-  // MASTER Approval & Post Inventory Action
-  document.querySelectorAll(".vnd-master-approve-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const poId = btn.dataset.id;
-      confirmAction({
-        title: `Authorize MASTER Stock Posting for ${poId}?`,
-        message: `This will verify the Three-Way Match, atomically post goods lines to cafe inventory exactly once, and create the Finance AP Invoice record.`,
-        confirmText: "Approve & Post Stock",
-        onConfirm: async () => {
-          try {
-            showToast("Executing atomic inventory posting...", "info");
-            const res = await apiPost(`/api/v1/vendors/orders/${poId}/master-approve`, {
-              approvalNotes: "MASTER approved goods arrival and verified 3-way match.",
-            });
-            if (res?.success) {
-              showToast(`Inventory posted successfully! Posting ID: ${res.data?.postingId || "POST-OK"}`, "success");
-              // Update local order
-              const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
-              if (po) {
-                po.status = "CLOSED";
-                po.receivingStatus = "POSTED_TO_INVENTORY";
-                po.inventoryPosting = { status: "POSTED" };
-              }
-              updateContainer();
-            } else {
-              showToast(res?.message || "MASTER approval could not be completed.", "error");
-            }
-          } catch (err) {
-            showToast(err.message || "Failed to execute MASTER stock posting.", "error");
-          }
-        },
-      });
-    });
-  });
-
-  // Onboard New Supplier
-  const addVendorBtn = document.getElementById("add-vendor-btn");
-  if (addVendorBtn) {
-    addVendorBtn.addEventListener("click", () => {
-      openModal("Onboard New Supplier (Duplicate-Protected)", `
-        <form id="vnd-onboard-form" style="display:flex;flex-direction:column;gap:14px;">
-          <div>
-            <label class="form-label">Legal Company Name *</label>
-            <input type="text" id="new-vnd-name" class="form-control" placeholder="e.g. Registered Vendor Name" required />
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Supply Category *</label>
-              <select id="new-vnd-cat" class="form-control" required>
-                <option value="FOOD_BEVERAGE">Food &amp; Beverage</option>
-                <option value="DAIRY">Dairy</option>
-                <option value="PACKAGING">Packaging</option>
-                <option value="MAINTENANCE">Equipment &amp; Spares</option>
-                <option value="CLEANING">Cleaning &amp; Hygiene</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label">Supplier Type *</label>
-              <select id="new-vnd-type" class="form-control" required>
-                <option value="GOODS">Goods (Inventory-Bearing)</option>
-                <option value="SERVICE">Pure Service (No Stock Posting)</option>
-                <option value="HYBRID">Hybrid</option>
-              </select>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">GSTIN (15 Digits)</label>
-              <input type="text" id="new-vnd-gst" class="form-control" placeholder="29AABCU9876F1Z2" maxlength="15" />
-            </div>
-            <div>
-              <label class="form-label">PAN Number</label>
-              <input type="text" id="new-vnd-pan" class="form-control" placeholder="AABCU9876F" maxlength="10" />
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Official Phone</label>
-              <input type="tel" id="new-vnd-phone" class="form-control" placeholder="+91 98450 11990" />
-            </div>
-            <div>
-              <label class="form-label">Orders Email</label>
-              <input type="email" id="new-vnd-email" class="form-control" placeholder="orders@supplier.com" />
-            </div>
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Complete Supplier Registration</button>
-          </div>
-        </form>
-      `);
-
-      document.getElementById("vnd-onboard-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const payload = {
-          name: document.getElementById("new-vnd-name")?.value,
-          category: document.getElementById("new-vnd-cat")?.value,
-          supplierType: document.getElementById("new-vnd-type")?.value,
-          gstNumber: document.getElementById("new-vnd-gst")?.value,
-          panNumber: document.getElementById("new-vnd-pan")?.value,
-          phone: document.getElementById("new-vnd-phone")?.value,
-          email: document.getElementById("new-vnd-email")?.value,
-        };
-
-        try {
-          showToast("Checking duplicate detection rules...", "info");
-          const res = await apiPost("/api/v1/vendors", payload);
-          if (res?.success) {
-            showToast(`Supplier ${res.data?.vendor?.vendorId || "registered"} onboarded successfully!`, "success");
-            if (!liveVendors) liveVendors = [];
-            liveVendors.unshift(res.data?.vendor || { ...payload, vendorId: `VEN-${Date.now().toString().slice(-4)}`, status: "ACTIVE" });
-            updateContainer();
-          } else if (res?.code === "DUPLICATE_VENDOR") {
-            showToast(`Duplicate Alert: ${res.message}`, "error");
-          } else {
-            showToast(res?.message || "Failed to register supplier.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || "Failed to register supplier.", "error");
-        }
-      });
-    });
-  }
-
-  // ── AP Queue Filter Pills ──────────────────────────────────────────────
-  document.querySelectorAll(".vnd-ap-filter-pill").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      apQueueFilter = btn.dataset.filter;
-      updateContainer();
-    });
-  });
-
-  // ── Refresh AP Queue ───────────────────────────────────────────────────
-  document.getElementById("vnd-refresh-ap-btn")?.addEventListener("click", async () => {
-    showToast("Refreshing AP Work Queue...", "info");
-    try {
-      const res = await apiGet("/api/v1/vendor-ledger/ap/queue");
-      if (res?.success && res.data?.queue) {
-        liveApInvoices = res.data.queue;
-        showToast("AP Queue updated from live backend.", "success");
-      } else {
-        showToast("AP Queue synchronized.", "info");
-      }
-      updateContainer();
-    } catch (err) {
-      showToast("AP Queue local sync active.", "info");
-    }
-  });
-
-  // ── Refresh Aging Report ───────────────────────────────────────────────
-  document.getElementById("vnd-refresh-aging-btn")?.addEventListener("click", async () => {
-    showToast("Calculating AP Aging & GST 180-Day status...", "info");
-    try {
-      const [resAging, resGst] = await Promise.all([
-        apiGet("/api/v1/vendor-ledger/reports/aging").catch(() => null),
-        apiGet("/api/v1/vendor-ledger/reports/gst-180-days").catch(() => null),
-      ]);
-      if (resAging?.success || resGst?.success) {
-        liveAgingReport = {
-          buckets: resAging?.data?.buckets || {},
-          gstRiskItems: resGst?.data?.riskInvoices || [],
-        };
-        showToast("AP Aging analysis & GST monitor updated.", "success");
-      } else {
-        showToast("Aging data synchronized.", "info");
-      }
-      updateContainer();
-    } catch (err) {
-      showToast("Aging calculations active.", "info");
-    }
-  });
-
-  // ── Pay Full AP Invoice ────────────────────────────────────────────────
-  document.querySelectorAll(".vnd-ap-pay-full-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const invId = btn.dataset.id;
-      const vendorId = btn.dataset.vendor;
-      const amountPaise = parseInt(btn.dataset.amount, 10) || 0;
-      confirmAction({
-        title: `Disburse Full Balance ₹${(amountPaise / 100).toFixed(2)}?`,
-        message: `This will execute the AP payment for ${invId}, post canonically to CashTransaction (PAID_OUT), and update the Vendor AP subledger.`,
-        confirmText: "Authorize Full Payment",
-        onConfirm: async () => {
-          try {
-            showToast("Posting canonical disbursement...", "info");
-            const res = await apiPost("/api/v1/vendor-ledger/payments", {
-              vendorId,
-              amountPaise,
-              paymentMethod: "BANK_TRANSFER",
-              referenceNumber: `PMT-${Date.now().toString().slice(-6)}`,
-              allocations: [{ invoiceId: invId, amountPaise }],
-            });
-            if (res?.success) {
-              showToast(`Full payment of ₹${(amountPaise / 100).toFixed(2)} posted successfully!`, "success");
-              const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
-              if (inv) {
-                inv.paidPaisa = (inv.paidPaisa || 0) + amountPaise;
-                inv.outstandingPaisa = 0;
-                inv.status = "PAID";
-              }
-              updateContainer();
-            } else {
-              showToast(res?.message || "Payment execution failed.", "error");
-            }
-          } catch (err) {
-            showToast(err.message || "Failed to execute payment.", "error");
-          }
-        },
-      });
-    });
-  });
-
-  // ── Record Partial Payment ─────────────────────────────────────────────
-  document.querySelectorAll(".vnd-ap-pay-partial-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const invId = btn.dataset.id;
-      const vendorId = btn.dataset.vendor;
-      const currentOutstanding = parseInt(btn.dataset.amount, 10) || 0;
-      const defaultPartial = Math.round(currentOutstanding / 2);
-
-      openModal(`Record Partial Payment for ${invId}`, `
-        <form id="vnd-partial-pay-form" style="display:flex;flex-direction:column;gap:14px;">
-          <div style="background:var(--bg);padding:12px;border-radius:6px;font-size:13px;">
-            <div>Outstanding Payable: <strong>₹${(currentOutstanding / 100).toFixed(2)}</strong></div>
-            <div>Supplier ID: <code>${vendorId}</code></div>
-          </div>
-          <div>
-            <label class="form-label">Partial Payment Amount (₹) *</label>
-            <input type="number" step="0.01" max="${(currentOutstanding / 100).toFixed(2)}" id="partial-pay-amount" class="form-control" value="${(defaultPartial / 100).toFixed(2)}" required />
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Payment Method *</label>
-              <select id="partial-pay-method" class="form-control" required>
-                <option value="BANK_TRANSFER" selected>Bank Transfer (NEFT/RTGS/IMPS)</option>
-                <option value="UPI">UPI</option>
-                <option value="CASH">Cash</option>
-                <option value="CARD">Corporate Card</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label">Bank Reference / UTR *</label>
-              <input type="text" id="partial-pay-ref" class="form-control" placeholder="e.g. UTR-982138921" value="UTR-${Date.now().toString().slice(-6)}" required />
-            </div>
-          </div>
-          <div>
-            <label class="form-label">Payment Notes / Rationale</label>
-            <input type="text" id="partial-pay-notes" class="form-control" placeholder="e.g. Milestone 1 partial disbursement" />
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Post Partial Payment</button>
-          </div>
-        </form>
-      `);
-
-      document.getElementById("vnd-partial-pay-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const amountInr = parseFloat(document.getElementById("partial-pay-amount")?.value || "0");
-        const amountPaise = Math.round(amountInr * 100);
-        const paymentMethod = document.getElementById("partial-pay-method")?.value;
-        const ref = document.getElementById("partial-pay-ref")?.value;
-        const notes = document.getElementById("partial-pay-notes")?.value;
-
-        try {
-          showToast("Posting partial disbursement to CashTransaction & Subledger...", "info");
-          const res = await apiPost("/api/v1/vendor-ledger/payments", {
-            vendorId,
-            amountPaise,
-            paymentMethod,
-            referenceNumber: ref,
-            notes,
-            allocations: [{ invoiceId: invId, amountPaise }],
-          });
-          if (res?.success) {
-            showToast(`Partial payment of ₹${amountInr.toFixed(2)} posted! Remaining: ₹${((currentOutstanding - amountPaise) / 100).toFixed(2)}`, "success");
-            const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
-            if (inv) {
-              inv.paidPaisa = (inv.paidPaisa || 0) + amountPaise;
-              inv.outstandingPaisa = Math.max(0, currentOutstanding - amountPaise);
-              inv.status = inv.outstandingPaisa === 0 ? "PAID" : "PARTIAL";
-            }
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to record partial payment.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || "Failed to record partial payment.", "error");
-        }
-      });
-    });
-  });
-
-  // ── Place / Release Payment Hold ───────────────────────────────────────
-  document.querySelectorAll(".vnd-ap-toggle-hold-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const invId = btn.dataset.id;
-      const isHold = btn.dataset.hold === "true";
-      if (isHold) {
-        confirmAction({
-          title: `Release Payment Hold on ${invId}?`,
-          message: "This will unfreeze the bill and allow Accounts to release disbursements.",
-          confirmText: "Release Hold",
-          onConfirm: async () => {
-            try {
-              const res = await apiPost(`/api/v1/vendor-ledger/bills/${invId}/holds/release`, {
-                reason: "Finance verified documentation and cleared hold.",
-              });
-              if (res?.success) {
-                showToast(`Payment hold released for ${invId}.`, "success");
-                const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
-                if (inv) { inv.holdStatus = "NONE"; inv.holdReason = ""; }
-                updateContainer();
-              } else {
-                showToast(res?.message || "Failed to release hold.", "error");
-              }
-            } catch (err) {
-              showToast(err.message || "Failed to release hold.", "error");
-            }
-          },
-        });
-      } else {
-        openModal(`Place Payment Hold on ${invId}`, `
-          <form id="vnd-hold-form" style="display:flex;flex-direction:column;gap:14px;">
-            <div>
-              <label class="form-label">Reason for Payment Hold *</label>
-              <input type="text" id="hold-reason-input" class="form-control" placeholder="e.g. Quality dispute on batch #8821" required />
-            </div>
-            <div style="text-align:right;margin-top:10px;">
-              <button type="submit" class="btn btn-primary" style="background:#dc2626;">Confirm Payment Hold</button>
-            </div>
-          </form>
-        `);
-        document.getElementById("vnd-hold-form")?.addEventListener("submit", (e) => {
-          e.preventDefault();
-          const reason = document.getElementById("hold-reason-input")?.value;
-          const inv = liveApInvoices?.find((i) => i.invoiceId === invId);
-          if (inv) { inv.holdStatus = "ON_HOLD"; inv.holdReason = reason; }
-          showToast(`Payment hold placed on ${invId}: ${reason}`, "info");
-          updateContainer();
-        });
-      }
-    });
-  });
-
-  // ── Apply Advance to AP Bill ───────────────────────────────────────────
-  document.querySelectorAll(".vnd-ap-apply-advance-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const invId = btn.dataset.id;
-      const vendorId = btn.dataset.vendor;
-      openModal(`Apply Vendor Advance to ${invId}`, `
-        <form id="vnd-apply-adv-form" style="display:flex;flex-direction:column;gap:14px;">
-          <p style="font-size:12.5px;color:var(--muted);">Applying an existing vendor advance reallocates pre-paid cash to this AP bill with ZERO additional cash outflow.</p>
-          <div>
-            <label class="form-label">Advance Amount to Apply (₹) *</label>
-            <input type="number" step="0.01" id="apply-adv-amount" class="form-control" placeholder="500.00" value="500.00" required />
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Apply Advance</button>
-          </div>
-        </form>
-      `);
-      document.getElementById("vnd-apply-adv-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const amountPaise = Math.round(parseFloat(document.getElementById("apply-adv-amount")?.value || "0") * 100);
-        try {
-          const res = await apiPost("/api/v1/vendor-ledger/advances/apply", { vendorId, invoiceId: invId, amountPaise });
-          if (res?.success) {
-            showToast("Advance successfully applied to AP invoice! Zero cash impact.", "success");
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to apply advance.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || "Failed to apply advance.", "error");
-        }
-      });
-    });
-  });
-
-  // ── Apply Credit Note to AP Bill ───────────────────────────────────────
-  document.querySelectorAll(".vnd-ap-apply-credit-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const invId = btn.dataset.id;
-      const vendorId = btn.dataset.vendor;
-      openModal(`Apply Vendor Credit Note to ${invId}`, `
-        <form id="vnd-apply-cr-form" style="display:flex;flex-direction:column;gap:14px;">
-          <div>
-            <label class="form-label">Credit Note Reference *</label>
-            <input type="text" id="apply-cr-ref" class="form-control" placeholder="CRN-2026-001" required />
-          </div>
-          <div>
-            <label class="form-label">Credit Amount (₹) *</label>
-            <input type="number" step="0.01" id="apply-cr-amount" class="form-control" placeholder="250.00" required />
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Apply Credit Note</button>
-          </div>
-        </form>
-      `);
-      document.getElementById("vnd-apply-cr-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const amountPaise = Math.round(parseFloat(document.getElementById("apply-cr-amount")?.value || "0") * 100);
-        const ref = document.getElementById("apply-cr-ref")?.value;
-        try {
-          const res = await apiPost("/api/v1/vendor-ledger/credits/apply", { vendorId, invoiceId: invId, amountPaise, creditNoteReference: ref });
-          if (res?.success) {
-            showToast("Credit note applied to bill.", "success");
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to apply credit note.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || "Failed to apply credit note.", "error");
-        }
-      });
-    });
-  });
-
-  // ── Rebuild Vendor Financial Summary Cache ────────────────────────────
-  const rebuildBtn = document.getElementById("vnd-rebuild-summary-btn");
-  if (rebuildBtn) {
-    rebuildBtn.addEventListener("click", async () => {
-      const vendorId = rebuildBtn.dataset.vendor;
-      try {
-        showToast(`Rebuilding financial summary cache for ${vendorId}...`, "info");
-        const res = await apiPost(`/api/v1/vendor-ledger/vendors/${vendorId}/rebuild-summary`);
-        if (res?.success) {
-          showToast("Financial summary rebuilt! Subledger invariant verified: 100% reconciled.", "success");
-          updateContainer();
-        } else {
-          showToast(res?.message || "Rebuild failed.", "error");
-        }
-      } catch (err) {
-        showToast(err.message || "Failed to rebuild summary.", "error");
-      }
-    });
-  }
-
-  // ── Subledger Statement Export ─────────────────────────────────────────
-  const stmtBtn = document.getElementById("vnd-view-statement-btn");
-  if (stmtBtn) {
-    stmtBtn.addEventListener("click", async () => {
-      const vendorId = stmtBtn.dataset.vendor;
-      try {
-        showToast(`Fetching subledger statement for ${vendorId}...`, "info");
-        const res = await apiGet(`/api/v1/vendor-ledger/vendors/${vendorId}/statement`);
-        if (res?.success) {
-          const stmt = res.data?.statement || {};
-          openModal(`Subledger Statement: ${stmt.vendorName || vendorId}`, `
-            <div style="font-family:monospace;font-size:12px;background:#f8fafc;padding:16px;border-radius:6px;max-height:420px;overflow-y:auto;">
-              <div><strong>VENDOR:</strong> ${stmt.vendorName} (${stmt.vendorId})</div>
-              <div><strong>GSTIN:</strong> ${stmt.gstNumber || "N/A"}</div>
-              <div><strong>GENERATED:</strong> ${new Date().toLocaleString()}</div>
-              <hr style="margin:10px 0;" />
-              <div>Opening Balance: ₹${((stmt.openingBalancePaise || 0) / 100).toFixed(2)}</div>
-              <div>Total Invoiced: ₹${((stmt.totalInvoicedPaise || 0) / 100).toFixed(2)}</div>
-              <div>Total Payments: ₹${((stmt.totalPaidPaise || 0) / 100).toFixed(2)}</div>
-              <div>Closing Outstanding: ₹${((stmt.closingBalancePaise || 0) / 100).toFixed(2)}</div>
-              <hr style="margin:10px 0;" />
-              <div><strong>TRANSACTIONS (${stmt.entries?.length || 0}):</strong></div>
-              ${(stmt.entries || []).map((e) => `
-                <div style="margin-top:4px;">${e.entryDate?.split("T")[0] || ""} · [${e.entryType}] · Ref: ${e.documentReferenceNumber || "—"} · Dr: ₹${((e.debitPaise || 0) / 100).toFixed(2)} · Cr: ₹${((e.creditPaise || 0) / 100).toFixed(2)} · Bal: ₹${((e.runningBalancePaise || 0) / 100).toFixed(2)}</div>
-              `).join("")}
-            </div>
-            <div style="text-align:right;margin-top:14px;">
-              <button class="btn btn-primary" onclick="window.print()">Print Statement</button>
-            </div>
-          `);
-        } else {
-          showToast(res?.message || "Failed to fetch statement.", "error");
-        }
-      } catch (err) {
-        showToast(err.message || "Failed to load statement.", "error");
-      }
-    });
-  }
-
-  // ── Reverse Disbursement ───────────────────────────────────────────────
-  document.querySelectorAll(".vnd-reverse-payment-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const paymentId = btn.dataset.id;
-      confirmAction({
-        title: `Authorize Reversal of Disbursement ${paymentId}?`,
-        message: "Reversing this payment will debit the Vendor Subledger, mark the transaction reversed, and create an offsetting PAID_IN CashTransaction entry.",
-        confirmText: "Authorize Reversal",
-        confirmVariant: "coral",
-        onConfirm: async () => {
-          try {
-            showToast(`Executing reversal for ${paymentId}...`, "info");
-            const res = await apiPost(`/api/v1/vendor-ledger/payments/${paymentId}/reverse`, {
-              reason: "Disbursement reversal authorized by Master",
-            });
-            if (res?.success) {
-              showToast("Payment reversed. Offsetting PAID_IN cash transaction posted.", "success");
-              updateContainer();
-            } else {
-              showToast(res?.message || "Failed to reverse payment.", "error");
-            }
-          } catch (err) {
-            showToast(err.message || "Failed to reverse payment.", "error");
-          }
-        },
-      });
-    });
-  });
-
-  // ── Record Vendor Advance ──────────────────────────────────────────────
-  const advanceBtn = document.getElementById("vnd-record-advance-btn");
-  if (advanceBtn) {
-    advanceBtn.addEventListener("click", () => {
-      const vendorId = advanceBtn.dataset.vendor;
-      openModal(`Record Advance to Supplier (${vendorId})`, `
-        <form id="vnd-advance-form" style="display:flex;flex-direction:column;gap:14px;">
-          <p style="font-size:12.5px;color:var(--muted);">Advance payments post directly to CashTransaction (PAID_OUT) and credit the vendor advance balance for future bill offset.</p>
-          <div>
-            <label class="form-label">Advance Amount (₹) *</label>
-            <input type="number" step="0.01" id="adv-amount" class="form-control" placeholder="1000.00" required />
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <label class="form-label">Disbursement Method *</label>
-              <select id="adv-method" class="form-control" required>
-                <option value="BANK_TRANSFER" selected>Bank Transfer</option>
-                <option value="UPI">UPI</option>
-                <option value="CASH">Cash</option>
-              </select>
-            </div>
-            <div>
-              <label class="form-label">Reference / UTR *</label>
-              <input type="text" id="adv-ref" class="form-control" value="ADV-${Date.now().toString().slice(-6)}" required />
-            </div>
-          </div>
-          <div>
-            <label class="form-label">Notes</label>
-            <input type="text" id="adv-notes" class="form-control" placeholder="e.g. 50% advance for upcoming bean shipment" />
-          </div>
-          <div style="text-align:right;margin-top:10px;">
-            <button type="submit" class="btn btn-primary">Post Advance Disbursement</button>
-          </div>
-        </form>
-      `);
-      document.getElementById("vnd-advance-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const amountPaise = Math.round(parseFloat(document.getElementById("adv-amount")?.value || "0") * 100);
-        const paymentMethod = document.getElementById("adv-method")?.value;
-        const ref = document.getElementById("adv-ref")?.value;
-        const notes = document.getElementById("adv-notes")?.value;
-        try {
-          const res = await apiPost("/api/v1/vendor-ledger/advances", {
-            vendorId,
-            amountPaise,
-            paymentMethod,
-            referenceNumber: ref,
-            notes,
-          });
-          if (res?.success) {
-            showToast(`Vendor advance of ₹${(amountPaise / 100).toFixed(2)} posted with CashTransaction link!`, "success");
-            updateContainer();
-          } else {
-            showToast(res?.message || "Failed to record advance.", "error");
-          }
-        } catch (err) {
-          showToast(err.message || "Failed to record advance.", "error");
-        }
-      });
-    });
-  }
-
-  // ── Subledger Vendor Selector ──────────────────────────────────────────
-  const vendorSelect = document.getElementById("vnd-ledger-vendor-select");
-  if (vendorSelect) {
-    vendorSelect.addEventListener("change", (e) => {
-      selectedLedgerVendorId = e.target.value;
-      updateContainer();
-    });
-  }
-
-  // ── Quick Navigation Between AP Workspaces ─────────────────────────────
-  document.getElementById("vnd-goto-ap-btn")?.addEventListener("click", () => {
-    currentActiveTab = "AP_QUEUE";
-    updateContainer();
-  });
-  document.getElementById("vnd-ap-to-ledger-btn")?.addEventListener("click", () => {
-    currentActiveTab = "VENDOR_LEDGER";
-    updateContainer();
-  });
-  document.querySelectorAll(".vnd-aging-view-ledger-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      selectedLedgerVendorId = btn.dataset.vendor;
-      currentActiveTab = "VENDOR_LEDGER";
-      updateContainer();
-    });
-  });
-  document.querySelectorAll(".vnd-aging-pay-now-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      currentActiveTab = "AP_QUEUE";
-      updateContainer();
-    });
-  });
-
-  // ── Send to Accounts (Physical Receipt Packet Handoff) ─────────────────
-  document.querySelectorAll(".vnd-send-accounts-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const poId = btn.dataset.id;
-      try {
-        showToast("Transmitting physical receipt packet to Accounts AP...", "info");
-        const res = await apiPost(`/api/v1/procurement/orders/${poId}/send-to-accounts`, {
-          notes: "Transmitted via Supplier Control Centre",
-        });
-        if (res?.success) {
-          showToast(`Receipt packet for ${poId} sent to Accounts AP successfully!`, "success");
-          const po = (liveOrders || SAMPLE_ORDERS).find((o) => o.purchaseOrderId === poId);
-          if (po) {
-            po.accountsHandoff = res.data?.accountsHandoff || { status: "SENT_TO_ACCOUNTS" };
-          }
-          updateContainer();
-        } else {
-          showToast(res?.message || "Failed to send packet to Accounts.", "error");
-        }
-      } catch (err) {
-        showToast(err.message || `Failed to send packet to Accounts for ${poId}.`, "error");
-      }
-    });
-  });
 }
 
 export const attachVendorListeners = wireVendors;

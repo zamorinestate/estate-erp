@@ -119,13 +119,6 @@ router.post(
   setEmployeeCredentials
 );
 
-// Update Employee Profile (Position, Window, Department, Café & Details)
-router.patch(
-  '/:userId',
-  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
-  updateEmployeeProfile
-);
-
 // Stage 04: 9-Section Extended Registration
 router.post(
   '/register',
@@ -307,6 +300,13 @@ router.get(
     targetUserIdResolver: (req) => req.params?.userId,
   }),
   getEmployee360
+);
+
+// Update Employee Profile (Position, Window, Department, Café & Details)
+router.patch(
+  '/:userId',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  updateEmployeeProfile
 );
 
 router.get(
