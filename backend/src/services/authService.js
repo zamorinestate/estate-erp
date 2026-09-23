@@ -526,15 +526,16 @@ async function authenticatePassword({
   email,
   password,
 }) {
-  const normalizedOrganisationId =
-    normalizeIdentifier(organisationId);
+  const rawOrg = String(organisationId || '').trim();
+  const normalizedOrganisationId = rawOrg ? normalizeIdentifier(rawOrg) : 'ZAMORIN';
+  const canonicalOrg = rawOrg.toUpperCase();
 
   const rawIdentifier = String(email || '').trim();
   const normalizedEmail = rawIdentifier.toLowerCase();
   const canonicalId = rawIdentifier.toUpperCase();
 
   if (
-    !normalizedOrganisationId ||
+    (!normalizedOrganisationId && !canonicalOrg) ||
     !rawIdentifier ||
     !password
   ) {
@@ -543,13 +544,26 @@ async function authenticatePassword({
     );
   }
 
+  // Allow organisationId to be either the enterprise organisationId ('ZAMORIN')
+  // OR the user's User ID / Employee ID (e.g. 'MU-0001', 'ST-0001')
   const user = await User.findOne({
-    organisationId: normalizedOrganisationId,
-    $or: [
-      { email: normalizedEmail },
-      { userId: canonicalId },
-      { employeeId: canonicalId },
-      { employeeNumber: canonicalId },
+    $and: [
+      {
+        $or: [
+          { organisationId: normalizedOrganisationId },
+          { userId: canonicalOrg },
+          { employeeId: canonicalOrg },
+          { employeeNumber: canonicalOrg },
+        ],
+      },
+      {
+        $or: [
+          { email: normalizedEmail },
+          { userId: canonicalId },
+          { employeeId: canonicalId },
+          { employeeNumber: canonicalId },
+        ],
+      },
     ],
   }).select(
     '+passwordHash +passwordHistoryHashes'

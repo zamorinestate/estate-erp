@@ -285,8 +285,23 @@ async function generatePasskeyAuthenticationOptions({ organisationId, email }) {
 
   if (normalizedEmail) {
     user = await User.findOne({
-      organisationId: orgId,
-      email: normalizedEmail,
+      $and: [
+        {
+          $or: [
+            { organisationId: orgId },
+            { userId: orgId },
+            { employeeId: orgId },
+            { employeeNumber: orgId },
+          ],
+        },
+        {
+          $or: [
+            { email: normalizedEmail },
+            { userId: normalizedEmail.toUpperCase() },
+            { employeeId: normalizedEmail.toUpperCase() },
+          ],
+        },
+      ],
     });
 
     if (user && user.accountStatus === 'ACTIVE') {
