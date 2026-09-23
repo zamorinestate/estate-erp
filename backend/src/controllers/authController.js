@@ -289,16 +289,17 @@ function getLoginInput(request) {
     body = body.body;
   }
 
-  const organisationId = String(body.organisationId || body.orgId || body.organisation || '').trim();
+  const rawOrg = String(body.organisationId || body.orgId || body.organisation || '').trim();
   const email = String(body.email || body.identifier || '').trim();
   const password = typeof body.password === 'string' ? body.password : '';
   const rememberDevice = Boolean(body.rememberDevice || body.rememberMe || body.remember);
+  const organisationId = rawOrg || 'ZAMORIN';
 
-  if (!organisationId || !email || !password) {
+  if (!email || !password) {
     throw new ApiError(
       400,
       'LOGIN_FIELDS_REQUIRED',
-      'Organisation ID, email and password are required.'
+      'Email/User ID and password are required.'
     );
   }
 
@@ -1094,14 +1095,25 @@ const requestPasswordReset = asyncHandler(
     }
 
     const normalizedEmail = rawIdentifier.toLowerCase();
-    const canonicalId = rawIdentifier.toUpperCase();
+    const canonicalOrg = String(organisationId || '').trim().toUpperCase();
     const user = await User.findOne({
-      organisationId,
-      $or: [
-        { email: normalizedEmail },
-        { userId: canonicalId },
-        { employeeId: canonicalId },
-        { employeeNumber: canonicalId },
+      $and: [
+        {
+          $or: [
+            { organisationId: organisationId || 'ZAMORIN' },
+            { userId: canonicalOrg },
+            { employeeId: canonicalOrg },
+            { employeeNumber: canonicalOrg },
+          ],
+        },
+        {
+          $or: [
+            { email: normalizedEmail },
+            { userId: canonicalId },
+            { employeeId: canonicalId },
+            { employeeNumber: canonicalId },
+          ],
+        },
       ],
     });
     if (!passwordResetService.isResetEligibleUser(user)) {

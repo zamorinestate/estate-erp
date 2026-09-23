@@ -277,10 +277,10 @@ export function showGlassAlert(message, callback, title = "Notice", actionOption
 // -----------------------------------------------------------------------------
 // 1. MAIN LOGIN SCREEN (LOGIN-PAGE-2.0)
 // -----------------------------------------------------------------------------
-export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notice = "", error = "", cafeContext = null } = {}) {
+export function renderLoginPage2({ organisationId = "", email = "", notice = "", error = "", cafeContext = null } = {}) {
   // Check remembered device state
   let rememberedEmail = email;
-  let rememberedOrg = cafeContext?.organisationId || organisationId;
+  let rememberedOrg = cafeContext?.organisationId || (organisationId && organisationId !== "ZAMORIN" ? organisationId : "");
   let isRemembered = false;
   try {
     const raw = localStorage.getItem("zamorin_remembered_device");
@@ -288,8 +288,19 @@ export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notic
       const parsed = JSON.parse(raw);
       if (parsed?.email && !email) {
         rememberedEmail = parsed.email;
-        if (parsed?.organisationId && !cafeContext?.organisationId) rememberedOrg = parsed.organisationId;
+        if (parsed?.userId) {
+          rememberedOrg = parsed.userId;
+        } else if (parsed?.organisationId && parsed.organisationId !== "ZAMORIN") {
+          rememberedOrg = parsed.organisationId;
+        }
         isRemembered = true;
+      }
+    }
+    if (!rememberedOrg) {
+      const lastUser = localStorage.getItem("zamorin_user");
+      if (lastUser) {
+        const u = JSON.parse(lastUser);
+        if (u?.userId) rememberedOrg = u.userId;
       }
     }
   } catch {}
@@ -346,7 +357,7 @@ export function renderLoginPage2({ organisationId = "ZAMORIN", email = "", notic
                 <path d="M8 14h.01"></path>
               </svg>
             </div>
-            <input type="text" id="l2-org-id" placeholder="Organisation ID" value="${rememberedOrg || 'ZAMORIN'}" required autocomplete="organization" />
+            <input type="text" id="l2-org-id" placeholder="Organisation ID" value="${rememberedOrg}" autocomplete="organization" />
           </div>
 
           <!-- Email -->
@@ -516,10 +527,10 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
   if (emailInput) {
     const persistEmail = () => {
       const emailVal = emailInput.value.trim();
-      const orgVal = orgInput?.value?.trim() || "ZAMORIN";
+      const orgVal = orgInput?.value?.trim() || "";
       if (emailVal && rememberDeviceInput?.checked !== false) {
         try {
-          localStorage.setItem("zamorin_remembered_device", JSON.stringify({ email: emailVal, organisationId: orgVal }));
+          localStorage.setItem("zamorin_remembered_device", JSON.stringify({ email: emailVal, organisationId: orgVal, userId: orgVal }));
         } catch {}
       }
     };
@@ -1203,12 +1214,13 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
       if (errorEl) errorEl.style.display = "none";
 
-      const organisationId = container.querySelector("#l2-org-id")?.value?.trim() || "";
+      const orgVal = container.querySelector("#l2-org-id")?.value?.trim() || "";
       const email = container.querySelector("#l2-email")?.value?.trim() || "";
       const password = container.querySelector("#l2-password")?.value || "";
       const rememberDevice = Boolean(container.querySelector("#l2-remember-device")?.checked);
+      const organisationId = orgVal || email || "ZAMORIN";
 
-      if (!organisationId || !email || !password) {
+      if (!email || !password) {
         if (errorEl) {
           errorEl.textContent = "Please fill in all required credentials.";
           errorEl.style.display = "block";
