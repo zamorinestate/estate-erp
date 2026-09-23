@@ -98,7 +98,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
     if (mongoServer) await mongoServer.stop();
   });
 
-  await t.test('1. Role Authorization: Primary Master, Normal Master, and Owner can create cafes', async () => {
+  await t.test('1. Role Authorization: Primary Master and Normal Master can create cafes; Owner is denied (403)', async () => {
     // 1.1 Primary Master
     const res1 = await cafeService.createCafeWithAccess({
       cafeData: {
@@ -111,8 +111,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
     });
     assert.equal(res1.cafe.cafeId, 'ZC-0001');
     assert.equal(res1.access.provisioningStatus, 'READY');
-    assert.equal(typeof res1.access.permanentCafePin, 'string');
-    assert.equal(res1.access.permanentCafePin.length, 6);
+    assert.equal(res1.access.permanentCafePin, null); // Legacy PIN retired in REC-02
     assert.ok(res1.access.qrToken);
     assert.ok(res1.access.linkToken);
 
@@ -129,7 +128,27 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
     assert.equal(res2.cafe.cafeId, 'ZC-0002');
     assert.equal(res2.access.provisioningStatus, 'READY');
 
-    // 1.3 Owner
+    // 1.3 Owner denied creation under REC-02 Master-only authority
+    await assert.rejects(
+      async () => {
+        await cafeService.createCafeWithAccess({
+          cafeData: {
+            name: 'Mananchira Square Cafe',
+            displayName: 'Mananchira',
+            cafeType: 'KIOSK',
+            city: 'Kozhikode',
+          },
+          auth: ownerUser,
+        });
+      },
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CAFE_CREATION_DENIED');
+        return true;
+      }
+    );
+
+    // Create ZC-0003 via Master for downstream test fixtures
     const res3 = await cafeService.createCafeWithAccess({
       cafeData: {
         name: 'Mananchira Square Cafe',
@@ -137,7 +156,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
         cafeType: 'KIOSK',
         city: 'Kozhikode',
       },
-      auth: ownerUser,
+      auth: masterUser,
     });
     assert.equal(res3.cafe.cafeId, 'ZC-0003');
     assert.equal(res3.access.provisioningStatus, 'READY');
@@ -173,7 +192,28 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
     );
   });
 
-  await t.test('3. Permanent PIN Integrity: Non-trivial, AES-256-GCM Encrypted, HMAC-SHA256 Indexed & Reserved', async () => {
+  await t.test('3. Historical PIN Integrity: Backward compatibility for historical records with PIN', async () => {
+    // Seed historical PIN on ZC-0001 to verify backward compatibility
+    const historicalPin = '582914';
+    const encryptedPin = cafeAccessCryptoService.encryptPin(historicalPin);
+    const pinLookupHash = cafeAccessCryptoService.computePinLookupHash(historicalPin);
+
+    await CafeAccess.updateOne(
+      { cafeId: 'ZC-0001' },
+      {
+        permanentCafePinEncrypted: encryptedPin,
+        permanentCafePinLookupHash: pinLookupHash,
+      }
+    );
+
+    await CafePinReservation.create({
+      pinLookupHash,
+      cafeId: 'ZC-0001',
+      organisationId: 'ZAMORIN',
+      assignedAt: new Date(),
+      isArchived: false,
+    });
+
     const cafeAccess = await CafeAccess.findOne({ cafeId: 'ZC-0001' }).select('+permanentCafePinEncrypted +permanentCafePinLookupHash');
     assert.ok(cafeAccess);
     assert.ok(cafeAccess.permanentCafePinEncrypted);

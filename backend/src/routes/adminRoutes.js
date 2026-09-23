@@ -20,6 +20,7 @@ const {
 const router = express.Router();
 
 router.use(authenticate);
+router.use(authorize(['MASTER', 'OWNER']));
 
 // Overview & Work Queue (Master & Owner)
 router.get('/overview', getAdminOverview);

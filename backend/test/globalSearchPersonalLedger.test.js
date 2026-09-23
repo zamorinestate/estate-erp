@@ -10,12 +10,18 @@ const { GlobalInventoryItem } = require('../src/models/GlobalInventoryItem');
 const { Vendor } = require('../src/models/Vendor');
 const { Bill } = require('../src/models/Bill');
 const { PersonalLedger } = require('../src/models/PersonalLedger');
+const { PurchaseOrder } = require('../src/models/PurchaseOrder');
+const { TaxInvoice } = require('../src/models/TaxInvoice');
+const { BusinessDocument } = require('../src/models/BusinessDocument');
+const { Customer } = require('../src/models/Customer');
+const { Asset } = require('../src/models/Asset');
+const { Cafe } = require('../src/models/Cafe');
 
 function mockFind(model, rows, observed, key) {
   const original = model.find;
 
   model.find = (filter) => {
-observed[`${key}Called`] = true;
+    observed[`${key}Called`] = true;
     observed[`${key}Filter`] = filter;
 
     const query = {
@@ -44,6 +50,12 @@ async function runSearch(role, userId) {
     mockFind(GlobalInventoryItem, [], observed, 'inventory'),
     mockFind(Vendor, [], observed, 'vendors'),
     mockFind(Bill, [], observed, 'bills'),
+    mockFind(PurchaseOrder, [], observed, 'pos'),
+    mockFind(TaxInvoice, [], observed, 'invoices'),
+    mockFind(BusinessDocument, [], observed, 'docs'),
+    mockFind(Customer, [], observed, 'customers'),
+    mockFind(Asset, [], observed, 'assets'),
+    mockFind(Cafe, [], observed, 'cafes'),
     mockFind(
       PersonalLedger,
       [{

@@ -1,10 +1,34 @@
 {
   "system": "Zamorin Cafe ERP",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "dataClassifications": {
+    "PERSONAL_DATA": {
+      "description": "Information relating to identifiable individuals (employees, customers, directors). DPDP governance & Data Principal rights apply strictly here.",
+      "fields": ["customer.name", "customer.phone", "customer.email", "employee.fullName", "employee.aadhaar", "employee.pan", "employee.bankAccount", "employee.salaryPaise"],
+      "subjectToDpdpRights": true
+    },
+    "BUSINESS_CONFIDENTIAL": {
+      "description": "Commercial and internal business records. DPDP Data Principal rights do NOT apply.",
+      "fields": ["menuItem.costPricePaise", "recipe.ingredients", "supplier.contractTerms", "inventory.reorderPoint", "cafe.leaseAgreement"],
+      "subjectToDpdpRights": false
+    },
+    "SECURITY_SECRET": {
+      "description": "Credentials, API secrets, cryptographic keys, environment secrets. Governed by cybersecurity controls, NOT privacy Data Principal rights.",
+      "fields": ["user.passwordHash", "user.pinHash", "auth.jwtSecret", "device.deviceTokenHash", "infra.mongodbUri", "gateway.stripeApiKey"],
+      "subjectToDpdpRights": false
+    },
+    "FINANCIAL_CONFIDENTIAL": {
+      "description": "Banking, general ledgers, tax filings, and company balance sheets.",
+      "fields": ["ledger.journalEntry", "gstReturn.gstr1Data", "bankAccount.openingBalance", "bill.totalPaise"],
+      "subjectToDpdpRights": false
+    }
+  },
   "statutoryFrameworks": [
-    "Digital Personal Data Protection (DPDP) Act 2023 (India)",
-    "Goods and Services Tax (GST) Act 2017 (Sec 36)",
-    "Income Tax Act 1961 (Sec 44AA)",
+    "Digital Personal Data Protection (DPDP) Act 2023 & DPDP Rules 2025 (India)",
+    "Central Goods and Services Tax (CGST) Act 2017 (Sec 36 - 72 calendar months from annual return due date + proceedings override)",
+    "Income-tax Act, 2025 and Income-tax Rules, 2026 (for TY 2026-27 onward; 1961 Act s.44AA transitional)",
+    "Employees State Insurance Act 1948 (Sec 44 / Reg 32) & Zamorin Internal Policy (EPF Retention - Statutory EPFO verification pending)",
+    "Payment of Gratuity Act 1972 & Payment of Gratuity Rules 1972",
     "Payment and Settlement Systems Act 2007 (RBI)",
     "Code on Wages 2019"
   ],
@@ -40,13 +64,50 @@
       "logRedacted": true
     }
   },
-  "retentionScheduleYears": {
-    "FINANCIAL_BILLS_AND_INVOICES": 8,
-    "TAX_GST_RECORDS": 8,
-    "PAYROLL_AND_WAGES": 8,
-    "INVENTORY_LEDGER": 5,
-    "ATTENDANCE_LOGS": 3,
-    "AUDIT_TRAIL": 10,
-    "CUSTOMER_PII_CONSENT_WITHDRAWN": 0.08
+  "retentionSchedule": {
+    "STATUTORY_GST_TAX_INVOICES_REGISTERS": {
+      "duration": "72 calendar months from due date for furnishing annual return for relevant year",
+      "authority": "CGST Act 2017 Section 36",
+      "proceedingsOverride": "1 year post final disposal of appeal/revision/proceeding or normal period, whichever later"
+    },
+    "STATUTORY_INCOME_TAX_BOOKS": {
+      "duration": "7 tax years from end of relevant tax year (subject to reopened assessment extension)",
+      "authority": "Income-tax Act, 2025 & Income-tax Rules, 2026 Rule 46(9) (1961 Act transitional)"
+    },
+    "ZAMORIN_INTERNAL_PAYROLL_AND_EPF": {
+      "duration": "5 years from end of relevant financial year",
+      "authority": "Zamorin Internal HR/Finance Policy (INTERNAL POLICY — Statutory EPFO employer retention instruction pending) / ESI Reg 32"
+    },
+    "CERT_IN_ICT_SECURITY_LOGS": {
+      "duration": "180 rolling days",
+      "jurisdiction": "India",
+      "authority": "CERT-In Directions dated 28 April 2022 (Section 70B(6) Information Technology Act, 2000)",
+      "scope": "ICT system and network logs maintained securely within Indian jurisdiction"
+    },
+    "COMPANIES_ACT_ACCOUNTING_AUDIT_TRAIL": {
+      "duration": "8 financial years",
+      "authority": "Companies Act 2013 Section 128(5) & Companies (Accounts) Rules 2014 Rule 3(1)",
+      "scope": "Accounting software audit trail (edit log) for books of account, where corporate entity form applies"
+    },
+    "ZAMORIN_INTERNAL_POLICY_SEARCH_LOGS": {
+      "durationDays": 90,
+      "authority": "ZAMORIN INTERNAL RETENTION POLICY"
+    },
+    "ZAMORIN_INTERNAL_POLICY_NOTIFICATIONS": {
+      "durationDays": 90,
+      "authority": "ZAMORIN INTERNAL RETENTION POLICY"
+    },
+    "ZAMORIN_INTERNAL_POLICY_SUPPORT_DIAGNOSTICS": {
+      "durationDays": 30,
+      "authority": "ZAMORIN INTERNAL RETENTION POLICY"
+    },
+    "ZAMORIN_INTERNAL_POLICY_BCDR_DRILL_EVIDENCE": {
+      "durationYears": 5,
+      "authority": "ZAMORIN INTERNAL RETENTION POLICY"
+    },
+    "ZAMORIN_INTERNAL_POLICY_INACTIVE_CUSTOMER": {
+      "durationYears": 3,
+      "authority": "ZAMORIN INTERNAL RETENTION POLICY"
+    }
   }
 }

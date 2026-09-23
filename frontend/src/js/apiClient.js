@@ -6,11 +6,13 @@
 
 import { state } from "./state.js";
 
+const VERCEL_API_BASE_URL = "https://zamorin-cafe-erp.vercel.app/api/v1";
+
 const DEFAULT_API_BASE_URL =
   typeof globalThis.location !== "undefined" &&
-  (globalThis.location.hostname === "localhost" || globalThis.location.hostname === "127.0.0.1")
-    ? `http://${globalThis.location.hostname}:4000/api/v1`
-    : "/api/v1";
+  globalThis.location.hostname.includes("vercel.app")
+    ? "/api/v1"
+    : VERCEL_API_BASE_URL;
 
 function normalizeApiBaseUrl(value) {
   const candidate =
@@ -305,12 +307,24 @@ export function generateCacheKey(path, options = {}) {
   return `k:${orgId}::${userId}::${role}::${cafeId}::${deviceId}::${method}:${normalizedPath}`;
 }
 
+export function pruneExpiredCacheEntries() {
+  const now = Date.now();
+  for (const [key, entry] of apiReadCache.entries()) {
+    if (entry.ttl && (now - entry.timestamp > entry.ttl)) {
+      apiReadCache.delete(key);
+    }
+  }
+}
+
 function setCacheEntry(key, data, ttl) {
   if (apiReadCache.size >= MAX_CACHE_ENTRIES) {
-    // LRU eviction: delete oldest inserted key
-    const oldestKey = apiReadCache.keys().next().value;
-    if (oldestKey) {
-      apiReadCache.delete(oldestKey);
+    pruneExpiredCacheEntries();
+    if (apiReadCache.size >= MAX_CACHE_ENTRIES) {
+      // LRU eviction: delete oldest inserted key
+      const oldestKey = apiReadCache.keys().next().value;
+      if (oldestKey) {
+        apiReadCache.delete(oldestKey);
+      }
     }
   }
   apiReadCache.set(key, {
@@ -557,7 +571,7 @@ export class ApiClientError extends Error {
 export function mapErrorToUserMessage(code, status, fallbackMessage) {
   const sanitizeFallback = (msg) => {
     if (!msg || typeof msg !== "string") return null;
-    if (/MongoServerError|MongooseError|CastError|ValidationError|at\s+[\w\.]+\s+\(|\\Users\\|\/home\/|localhost|\.js:\d+/i.test(msg)) {
+    if (/MongoServerError|MongooseError|CastError|at\s+[\w\.]+\s+\(|\\Users\\|\/home\/|localhost|\.js:\d+/i.test(msg)) {
       return "The request could not be completed.";
     }
     return msg;
@@ -606,6 +620,7 @@ export function mapErrorToUserMessage(code, status, fallbackMessage) {
     case "DUPLICATE_KEY_CONFLICT":
     case "ATTENDANCE_ALREADY_EXISTS":
     case "USER_ALREADY_EXISTS":
+    case "DUPLICATE_EMPLOYEE":
     case "VENDOR_ALREADY_EXISTS":
     case "RECORD_CONFLICT":
       return safeFallback || "This record conflicts with existing data. Please refresh and try again.";
@@ -696,8 +711,15 @@ async function readResponsePayload(response) {
 }
 
 function createApiError(response, payload) {
-  const code = payload?.error?.code || `HTTP_${response.status}`;
-  const message = payload?.error?.message || "The request could not be completed.";
+  const code =
+    payload?.error?.code ||
+    (typeof payload?.error === "string" ? payload.error : null) ||
+    `HTTP_${response.status}`;
+  const message =
+    payload?.error?.message ||
+    (typeof payload?.error === "string" ? payload.error : null) ||
+    payload?.message ||
+    "The request could not be completed.";
 
   return new ApiClientError({
     status: response.status,
@@ -771,6 +793,14 @@ export async function performRequest(
   }
   if (cafeOpsSessionToken && typeof cafeOpsSessionToken === "string" && cafeOpsSessionToken.trim()) {
     requestHeaders["x-cafeops-session-token"] = cafeOpsSessionToken.trim();
+  }
+
+  // Automatic active café scope propagation for Master and Owner windows
+  const activeCafeScope = (state?.selectedCafeId && state.selectedCafeId !== "ALL")
+    ? state.selectedCafeId
+    : (state?.currentCafeId || null);
+  if (activeCafeScope && typeof activeCafeScope === "string" && activeCafeScope.trim()) {
+    requestHeaders["x-cafe-id"] = activeCafeScope.trim();
   }
 
   if (headers) {
@@ -905,6 +935,14 @@ const NON_REFRESHABLE_AUTH_PATHS = new Set([
   "/auth/mfa/verify",
   "/auth/password/change",
   "/auth/step-up",
+  "/auth/passkeys/authenticate/options",
+  "/auth/passkeys/authenticate/verify",
+  "/auth/passkeys/register/options",
+  "/auth/passkeys/register/verify",
+  "/auth/app-pin/login",
+  "/auth/password/reset-request",
+  "/auth/password/reset-verify",
+  "/auth/password/reset",
 ]);
 
 export async function requestJson(
@@ -987,6 +1025,8 @@ export async function requestJson(
     if (
       response.status === 401 &&
       allowRefreshRetry &&
+      !normalized.startsWith("/auth/passkeys/") &&
+      !normalized.startsWith("/auth/app-pin/") &&
       !NON_REFRESHABLE_AUTH_PATHS.has(normalized)
     ) {
       try {
@@ -1189,3 +1229,11 @@ export async function apiUpload(path, formData, { signal, headers = {} } = {}) {
 
   return payload;
 }
+
+export const api = {
+  get: apiGet,
+  post: (path, body, options) => apiPost(path, body, options),
+  put: (path, body, options) => apiPut(path, body, options),
+  patch: (path, body, options) => apiPatch(path, body, options),
+  delete: apiDelete,
+};

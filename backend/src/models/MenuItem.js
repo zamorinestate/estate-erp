@@ -240,6 +240,16 @@ const menuItemSchema = new mongoose.Schema(
       },
     },
 
+    sellingPrice: {
+      type: Number,
+      default: null,
+    },
+
+    pricing: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
     taxRatePercent: {
       type: Number,
       min: 0,
@@ -402,6 +412,7 @@ const menuItemSchema = new mongoose.Schema(
     versionKey: 'version',
     optimisticConcurrency: true,
     collection: 'menu_items',
+    strict: false,
   }
 );
 

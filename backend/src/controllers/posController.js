@@ -12,7 +12,9 @@
  */
 
 const { PosOrderService } = require('../services/posOrderService');
+const { PosReconciliationService } = require('../services/posReconciliationService');
 const { Bill } = require('../models/Bill');
+const { IdempotencyRecord } = require('../models/IdempotencyRecord');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { assertResourceCafeOwnership, resolveEffectiveCafeScope } = require('../utils/cafeScope');
@@ -119,12 +121,286 @@ const getActiveOrders = asyncHandler(async (request, response) => {
     organisationId: request.auth.organisationId,
     cafeId,
     status: { $in: ['OPEN', 'HELD'] },
-  }).sort({ createdAt: -1 });
+  }).sort({ createdAt: -1 }).lean();
 
   return response.status(200).json({
     success: true,
     count: bills.length,
     data: bills,
+  });
+});
+
+/**
+ * GET /api/v1/pos/orders/last/:cafeId
+ * Retrieves the most recent finalized bill for a café, enabling browser-refresh resilient reprint (CTL-05).
+ */
+const getLastCommittedBill = asyncHandler(async (request, response) => {
+  const cafeId = normalizeId(request.params.cafeId || request.query.cafeId || request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0]);
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required to retrieve the last receipt.');
+  }
+
+  assertCafeAccess(request, cafeId);
+
+  const bill = await Bill.findOne({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    status: { $in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
+  }).sort({ createdAt: -1 }).lean();
+
+  if (!bill) {
+    throw new ApiError(404, 'NO_RECENT_BILLS', 'No recent finalized bill found for this café.');
+  }
+
+  const billData = bill;
+  return response.status(200).json({
+    success: true,
+    data: billData,
+    bill: billData,
+  });
+});
+
+/**
+ * GET /api/v1/pos/orders/status/:transactionId
+ * REC-04B: Resolves transaction status by exact transaction identity (idempotencyKey or saleAttemptId).
+ * Safe recovery after unknown network outcomes without relying on "Reprint Last".
+ */
+const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
+  const transactionId = String(request.params.transactionId || '').trim();
+  if (!transactionId) {
+    throw new ApiError(400, 'TRANSACTION_ID_REQUIRED', 'transactionId (idempotencyKey or saleAttemptId) is required.');
+  }
+
+  const orgId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  const cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : null;
+
+  const billQuery = {
+    organisationId: orgId,
+    $or: [{ correlationId: transactionId }, { saleAttemptId: transactionId }],
+  };
+  if (cafeId) billQuery.cafeId = cafeId;
+
+  const bill = await Bill.findOne(billQuery);
+  if (bill) {
+    const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
+    return response.status(200).json({
+      success: true,
+      status: 'COMPLETED',
+      saleFinalized: true,
+      transactionId,
+      billId: billData.billId,
+      invoiceNumber: billData.invoiceNumber,
+      bill: billData,
+      data: billData,
+      message: 'Transaction completed successfully.',
+    });
+  }
+
+  const recordQuery = {
+    organisationId: orgId,
+    $or: [{ idempotencyKey: transactionId }, { saleAttemptId: transactionId }],
+  };
+  if (cafeId) recordQuery.cafeId = cafeId;
+
+  const record = await IdempotencyRecord.findOne(recordQuery);
+  if (record) {
+    if (record.status === 'COMPLETED') {
+      return response.status(200).json({
+        success: true,
+        status: 'COMPLETED',
+        saleFinalized: true,
+        transactionId,
+        billId: record.billId,
+        invoiceNumber: record.invoiceNumber,
+        bill: record.responseSnapshot?.bill || record.responseSnapshot?.data || null,
+        data: record.responseSnapshot,
+        message: 'Transaction completed successfully (from IdempotencyRecord).',
+      });
+    }
+
+    if (record.status === 'PROCESSING') {
+      return response.status(200).json({
+        success: true,
+        status: 'PROCESSING',
+        saleFinalized: false,
+        transactionId,
+        message: 'Transaction is currently processing.',
+      });
+    }
+
+    return response.status(200).json({
+      success: false,
+      status: 'FAILED',
+      saleFinalized: false,
+      transactionId,
+      error: record.errorDetails,
+      message: 'Transaction failed prior to finalization.',
+    });
+  }
+
+  return response.status(200).json({
+    success: true,
+    status: 'NOT_RECEIVED',
+    saleFinalized: false,
+    transactionId,
+    message: 'No transaction found for this identity. Safe to retry with same transaction identity.',
+  });
+});
+
+/**
+ * GET /api/v1/pos/reconciliation/pending
+ * REC-04B: Lists pending and manual-review reconciliation jobs for operational visibility.
+ */
+const getPendingReconciliations = asyncHandler(async (request, response) => {
+  const role = (request.auth?.role || '').toUpperCase();
+  if (role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view reconciliation queues.');
+  }
+  const { cafeId, status } = request.query;
+  const result = await PosReconciliationService.getPendingReconciliations({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    status,
+  });
+  return response.status(200).json(result);
+});
+
+/**
+ * POST /api/v1/pos/reconciliation/:jobId/retry
+ * REC-04B: Explicitly retries a reconciliation job with exactly-once safety.
+ */
+const retryReconciliation = asyncHandler(async (request, response) => {
+  const role = (request.auth?.role || '').toUpperCase();
+  if (role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to retry reconciliation jobs.');
+  }
+  const jobId = normalizeId(request.params.jobId);
+  const result = await PosReconciliationService.retryJob(jobId, request.auth);
+  return response.status(200).json(result);
+});
+
+/**
+ * POST /api/v1/pos/offline-sync
+ * REC-13: Replays queued offline POS transactions through the canonical PosOrderService pipeline.
+ */
+const syncOfflineOrders = asyncHandler(async (request, response) => {
+  const { organisationId, userId } = request.auth;
+  const cafeId = normalizeId(request.body?.cafeId || request.query?.cafeId || request.auth?.primaryCafeId || '');
+  const { transactions, deviceId, operatorSessionId } = request.body || {};
+
+  if (!Array.isArray(transactions) || transactions.length === 0) {
+    throw new ApiError(400, 'VALIDATION_FAILED', 'Transactions array is required for offline sync.');
+  }
+
+  const OfflineSyncService = require('../services/offlineSyncService');
+  const syncResult = await OfflineSyncService.syncBatch({
+    organisationId,
+    cafeId,
+    deviceId: deviceId || request.deviceContext?.deviceId || '',
+    userId,
+    operatorSessionId,
+    transactions,
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: `Processed ${transactions.length} offline transactions.`,
+    data: syncResult,
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * GET /api/v1/pos/offline-reviews/pending
+ * REC-13A / REC-13B: Lists pending offline review items scoped by cafe and authorization.
+ * Role-enforced: Only Assigned CAFE_ADMIN and MASTER are permitted.
+ * OWNER and STAFF are strictly barred (Segregation of Duties).
+ */
+const getPendingOfflineReviews = asyncHandler(async (request, response) => {
+  const role = (request.auth?.role || '').toUpperCase();
+  if (role === 'OWNER') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Owner does not possess offline POS review authorization (Segregation of Duties).'
+    );
+  }
+  if (role === 'STAFF') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Staff users are not authorized to view or manage offline queue reviews.'
+    );
+  }
+  if (!['CAFE_ADMIN', 'MASTER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      `Role ${role} is not authorized for offline queue review.`
+    );
+  }
+
+  const { organisationId } = request.auth;
+  const cafeId = normalizeId(request.query?.cafeId || request.params?.cafeId || '');
+
+  const OfflineSyncService = require('../services/offlineSyncService');
+  const items = await OfflineSyncService.getPendingReviews({
+    organisationId,
+    cafeId: cafeId || null,
+    authUser: request.auth,
+  });
+
+  return response.status(200).json({
+    success: true,
+    count: items.length,
+    data: items,
+  });
+});
+
+/**
+ * POST /api/v1/pos/offline-reviews/:reviewId/review
+ * REC-13A / REC-13B: Executes authorized review decision (APPROVE_AND_FINALIZE, REJECT, ESCALATE).
+ * Role-enforced: Only Assigned CAFE_ADMIN and MASTER are permitted.
+ * OWNER and STAFF are strictly barred (Segregation of Duties).
+ */
+const reviewOfflineOrder = asyncHandler(async (request, response) => {
+  const role = (request.auth?.role || '').toUpperCase();
+  if (role === 'OWNER') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Owner does not possess offline POS review authorization (Segregation of Duties).'
+    );
+  }
+  if (role === 'STAFF') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Staff users are not authorized to perform offline queue governance review.'
+    );
+  }
+  if (!['CAFE_ADMIN', 'MASTER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      `Role ${role} is not authorized for offline queue review.`
+    );
+  }
+
+  const { reviewId } = request.params;
+  const { action, reason } = request.body || {};
+
+  const OfflineSyncService = require('../services/offlineSyncService');
+  const result = await OfflineSyncService.reviewItem({
+    reviewId,
+    action,
+    reason,
+    authContext: request.auth,
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: result,
   });
 });
 
@@ -134,4 +410,13 @@ module.exports = {
   printOrder,
   reprintOrder,
   getActiveOrders,
+  getLastCommittedBill,
+  getOrderStatusByIdempotency,
+  getPendingReconciliations,
+  retryReconciliation,
+  syncOfflineOrders,
+  getPendingOfflineReviews,
+  reviewOfflineOrder,
 };
+
+

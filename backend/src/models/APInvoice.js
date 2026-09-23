@@ -75,9 +75,46 @@ const apInvoiceSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    // ── Three-Value Financial Architecture ──
+    supplierClaimedAmountPaisa: {
+      type: Number,
+      min: 0,
+      default: function () {
+        return this.totalPaisa || 0;
+      },
+    },
+    approvedPayableAmountPaisa: {
+      type: Number,
+      min: 0,
+      default: function () {
+        return this.totalPaisa || 0;
+      },
+    },
+    heldDisputedAmountPaisa: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
     paidPaisa: {
       type: Number,
       required: true,
+      min: 0,
+      default: 0,
+    },
+    amountPaidPaisa: {
+      type: Number,
+      min: 0,
+      default: function () {
+        return this.paidPaisa || 0;
+      },
+    },
+    appliedAdvancePaisa: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    appliedCreditPaisa: {
+      type: Number,
       min: 0,
       default: 0,
     },
@@ -85,6 +122,20 @@ const apInvoiceSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
+    },
+    outstandingPayableAmountPaisa: {
+      type: Number,
+      min: 0,
+      default: function () {
+        return this.outstandingPaisa !== undefined ? this.outstandingPaisa : (this.totalPaisa || 0);
+      },
+    },
+    outstandingBalancePaisa: {
+      type: Number,
+      min: 0,
+      default: function () {
+        return this.outstandingPayableAmountPaisa !== undefined ? this.outstandingPayableAmountPaisa : (this.totalPaisa || 0);
+      },
     },
     cafeId: {
       type: String,
@@ -99,6 +150,31 @@ const apInvoiceSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    grnIds: [
+      {
+        type: String,
+        trim: true,
+        uppercase: true,
+      },
+    ],
+    businessDocumentId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    lineItems: [
+      {
+        itemId: { type: String, trim: true, uppercase: true },
+        itemName: { type: String, trim: true, default: '' },
+        invoiceQuantity: { type: Number, min: 0, default: 0 },
+        acceptedQuantity: { type: Number, min: 0, default: 0 },
+        rejectedQuantity: { type: Number, min: 0, default: 0 },
+        unitPricePaisa: { type: Number, min: 0, default: 0 },
+        lineTotalPaisa: { type: Number, min: 0, default: 0 },
+        payableAmountPaisa: { type: Number, min: 0, default: 0 },
+        disputeReason: { type: String, trim: true, default: '' },
+      },
+    ],
     expenseReferenceId: {
       type: String,
       trim: true,
@@ -124,9 +200,43 @@ const apInvoiceSchema = new mongoose.Schema(
     },
     paymentStatus: {
       type: String,
-      enum: ['UNPAID', 'SCHEDULED', 'PARTIALLY_PAID', 'PAID', 'ON_HOLD'],
+      enum: [
+        'NOT_DUE',
+        'DUE',
+        'PARTIALLY_PAID',
+        'PAID',
+        'OVERDUE',
+        'ON_HOLD',
+        'DISPUTED',
+        'CREDIT_PENDING',
+        'CANCELLED',
+        'UNPAID',
+        'SCHEDULED',
+      ],
       default: 'UNPAID',
       index: true,
+    },
+    paymentHistory: [
+      {
+        paymentId: { type: String, required: true },
+        paidPaisa: { type: Number, required: true },
+        paidAt: { type: Date, default: Date.now },
+        paidByUserId: { type: String, required: true },
+        paymentMethod: { type: String, default: 'BANK_TRANSFER' },
+        reference: { type: String, default: '' },
+      },
+    ],
+    gstMonitoring: {
+      isGstApplicable: { type: Boolean, default: true },
+      invoiceDate: { type: String, default: null },
+      daysSinceInvoice: { type: Number, default: 0 },
+      unpaidProportionPaisa: { type: Number, default: 0 },
+      is180DayRisk: { type: Boolean, default: false },
+      riskCategory: {
+        type: String,
+        enum: ['NONE', 'APPROACHING_165_DAYS', 'APPROACHING_175_DAYS', 'OVERDUE_180_DAYS'],
+        default: 'NONE',
+      },
     },
     holds: [
       {
@@ -142,12 +252,41 @@ const apInvoiceSchema = new mongoose.Schema(
   }
 );
 
+apInvoiceSchema.methods.recalculateOutstanding = function () {
+  const approved = Number(this.approvedPayableAmountPaisa !== undefined ? this.approvedPayableAmountPaisa : this.totalPaisa) || 0;
+  const paid = Number(this.paidPaisa || 0);
+  const adv = Number(this.appliedAdvancePaisa || 0);
+  const cred = Number(this.appliedCreditPaisa || 0);
+  const netOutstanding = Math.max(0, approved - paid - adv - cred);
+
+  this.outstandingPayableAmountPaisa = netOutstanding;
+  this.outstandingPaisa = netOutstanding;
+  this.outstandingBalancePaisa = netOutstanding;
+  this.amountPaidPaisa = paid;
+
+  const activeHolds = (this.holds || []).filter(h => !h.releasedAt);
+  if (activeHolds.length > 0) {
+    this.paymentStatus = 'ON_HOLD';
+  } else if (netOutstanding === 0 && (paid > 0 || adv > 0 || cred > 0)) {
+    this.paymentStatus = 'PAID';
+  } else if (paid > 0 || adv > 0 || cred > 0) {
+    this.paymentStatus = 'PARTIALLY_PAID';
+  } else {
+    this.paymentStatus = 'DUE';
+  }
+
+  return netOutstanding;
+};
+
 apInvoiceSchema.pre('validate', function (next) {
   if (this.supplierInvoiceNumber) {
     if (!this.rawSupplierInvoiceNumber) {
       this.rawSupplierInvoiceNumber = this.supplierInvoiceNumber;
     }
     this.supplierInvoiceNumber = this.supplierInvoiceNumber.trim().toUpperCase();
+  }
+  if (typeof this.recalculateOutstanding === 'function') {
+    this.recalculateOutstanding();
   }
   if (typeof next === 'function') next();
 });

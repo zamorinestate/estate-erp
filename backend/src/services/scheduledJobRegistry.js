@@ -52,6 +52,14 @@ const REGISTERED_JOBS = [
     staleThresholdMinutes: 840,
     critical: true,
   },
+  {
+    jobId: 'JOB-ASSET-MAINTENANCE-SCHEDULER',
+    name: 'Preventive Asset Maintenance Evaluator & Alert Dispatcher',
+    schedule: 'Daily at 05:00 IST (30 23 * * *)',
+    owner: 'Equipment & Asset Reliability Lead',
+    staleThresholdMinutes: 1560,
+    critical: true,
+  },
 ];
 
 class ScheduledJobRegistry {

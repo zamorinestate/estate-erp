@@ -89,7 +89,13 @@
   --radius-control: 12px;
   --radius-pill: 999px;
 
-  /* ---- Spacing ---- */
+  /* ---- Spacing (8px derived scale) ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
@@ -97,7 +103,9 @@
   --space-xl: 32px;
   --space-2xl: 48px;
 
-  /* ---- Layout ---- */
+  /* ---- Layout & Canonical Auth Shell ---- */
+  --auth-shell-max-width: 448px;
+  --auth-control-height: 52px;
   --sidebar: 264px;
   --sidebar-collapsed: 68px;
   --topbar: 72px;
@@ -152,7 +160,8 @@
   --font-scale: 1;
 }
 
-[data-font-size="small"]      { --font-scale: 0.9;  }
+[data-font-size="small"],
+[data-font-size="compact"]    { --font-scale: 0.9;  }
 [data-font-size="standard"]   { --font-scale: 1;    }
 [data-font-size="large"]      { --font-scale: 1.15; }
 [data-font-size="extra-large"]{ --font-scale: 1.3;  }

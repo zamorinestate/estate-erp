@@ -119,10 +119,10 @@ export function renderSidebar() {
 
     <div class="sidebar-footer">
       <div class="footer-user">
-        <div class="user-avatar" title="${user.name || "Master"} (${rolePillLabel})">${ROLE_INITIALS[currentRole] || "ZU"}</div>
+        <div class="user-avatar" title="${user.name || "User"} (${rolePillLabel})">${user.name ? user.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase() : (ROLE_INITIALS[currentRole] || "ZU")}</div>
         <div class="user-info">
-          <div class="user-name">${user.name || "Master Administrator"}</div>
-          <div class="user-role">${user.email || "master@zamorin.cafe"}</div>
+          <div class="user-name">${user.name || user.fullName || (currentRole === ROLES.STAFF ? "Staff Member" : "Administrator")}</div>
+          <div class="user-role">${user.email || user.userId || "Staff Account"}</div>
         </div>
       </div>
     </div>
@@ -172,7 +172,9 @@ export function renderTopbar({ scopeChip } = {}) {
   const currentTheme = document.documentElement.dataset.theme || "paper";
   const user = state.auth?.user || state.user || {};
   const role = state.role || ROLES.MASTER;
-  const initials = ROLE_INITIALS[role] || "MU";
+  const initials = user.name
+    ? user.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase()
+    : (ROLE_INITIALS[role] || "ZU");
   const isStaff = role === ROLES.STAFF;
   const isCafeOps = role === ROLES.CAFE_ADMIN;
 
@@ -185,7 +187,46 @@ export function renderTopbar({ scopeChip } = {}) {
   }
 
   let cafeScopeHtml = '';
-  if (isCafeOps) {
+  const isPrimaryMasterUser = Boolean(
+    (state.auth?.user?.role === 'master' || state.user?.role === 'master' || state.role === 'master' || state.originalRole === 'master') &&
+    // ⚠️ Strict identity check: isPrimaryMaster ONLY for MU-0001 / pradeeshk331@gmail.com
+    (
+      (state.auth?.user?.userId === 'MU-0001' && String(state.auth?.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com') ||
+      (state.user?.userId === 'MU-0001' && String(state.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com')
+    ) &&
+    (state.isPrimaryMaster !== false)
+  );
+
+  if (isPrimaryMasterUser) {
+    const currentWs = state.activeWorkspace || (state.role === 'master' ? 'master-primary' : state.role);
+    const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
+    const empOptions = (state.employees || []).map(emp => `<option value="${emp.id || emp.employeeId || emp.userId}" ${(state.supervisedEmployeeId === (emp.id || emp.employeeId || emp.userId)) ? 'selected' : ''}>👤 ${emp.name || emp.fullName || emp.userId} (${emp.employeeId || emp.id || ''})</option>`).join('');
+
+    cafeScopeHtml = `
+      <div class="primary-master-topbar-controls" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <div class="workspace-scope-dropdown">
+          <select id="global-workspace-selector" class="select-scope" aria-label="Selected Workspace Window" style="font-weight:700;">
+            <option value="master-primary" ${currentWs === 'master-primary' ? 'selected' : ''}>🛡️ Primary Master</option>
+            <option value="owner" ${currentWs === 'owner' ? 'selected' : ''}>👑 Owner Portal</option>
+            <option value="cafe_admin" ${currentWs === 'cafe_admin' ? 'selected' : ''}>☕ Café Operations</option>
+            <option value="staff" ${currentWs === 'staff' ? 'selected' : ''}>👤 Employee / Staff Window</option>
+          </select>
+        </div>
+        <div class="cafe-scope-dropdown">
+          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope" style="font-weight:600;">
+            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === 'ALL') ? 'selected' : ''}>🏠 All Cafés (Global Portfolio)</option>
+            ${cafeOptions}
+          </select>
+        </div>
+        <div class="supervised-employee-dropdown">
+          <select id="global-supervised-employee-selector" class="select-scope" aria-label="Supervised Employee Scope">
+            <option value="NONE" ${!state.supervisedEmployeeId ? 'selected' : ''}>👥 Supervise: None (Self)</option>
+            ${empOptions}
+          </select>
+        </div>
+      </div>
+    `;
+  } else if (isCafeOps) {
     const operatorName = user.name || "Operations Lead";
     const operatorId = user.userId || "";
     const cafeName = user.primaryCafeName || (state.currentCafeId ? `Outlet ${state.currentCafeId}` : "Assigned Outlet");
@@ -211,13 +252,19 @@ export function renderTopbar({ scopeChip } = {}) {
         <span>${user.primaryCafeName || (user.primaryCafeId ? `Outlet ${user.primaryCafeId}` : "Assigned Outlet")}</span>
       </div>`;
   } else {
+    const isOwner = role === ROLES.OWNER || role === 'owner';
     const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
-    cafeScopeHtml = `<div class="cafe-scope-dropdown">
-        <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope">
-          <option value="ALL">🏠 All Cafés (Global Portfolio)</option>
-          ${cafeOptions}
-        </select>
-      </div>`;
+    const allLabel = isOwner ? '🏠 All Assigned Cafés (Portfolio)' : '🏠 All Cafés (Global Portfolio)';
+    cafeScopeHtml = `
+      <div class="owner-topbar-controls" style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <div class="cafe-scope-dropdown">
+          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope" style="font-weight:600;">
+            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === 'ALL') ? 'selected' : ''}>${allLabel}</option>
+            ${cafeOptions}
+          </select>
+        </div>
+      </div>
+    `;
   }
 
   const searchPlaceholder = isStaff
@@ -245,6 +292,18 @@ export function renderTopbar({ scopeChip } = {}) {
       </div>
 
       <div class="topbar-right">
+        ${state.isTrainingMode ? `
+          <div class="training-mode-badge" style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:var(--radius-sm); background:#fef3c7; border:1px solid #f59e0b; color:#92400e; font-size:11px; font-weight:700;">
+            <span>🎓 Training Mode</span>
+          </div>
+        ` : ''}
+        ${state.supervisedEmployeeId ? `
+          <div class="supervised-preview-badge" style="display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:var(--radius-sm); background:rgba(59,130,246,0.12); border:1px solid #3b82f6; color:#1d4ed8; font-size:11.5px; font-weight:700;">
+            <span>👁️ Viewing employee record: <strong style="font-family:var(--font-mono);">${state.supervisedEmployeeId}</strong></span>
+            <button id="exit-supervised-employee-btn" class="btn btn-ghost" type="button" style="padding:1px 6px; font-size:10.5px; height:auto; color:#1d4ed8; text-decoration:underline; font-weight:700; cursor:pointer;" title="Exit Employee Preview">Exit</button>
+          </div>
+        ` : ''}
+
         <!-- Live System Status Indicator -->
         <div class="system-status-indicator online" id="topbar-system-status" title="System Connected & Synced">
           <span style="font-size:10px;">●</span> Online
@@ -332,9 +391,25 @@ export function renderTopbar({ scopeChip } = {}) {
       <div class="profile-card-top">
         <div class="user-avatar lg">${initials}</div>
         <div class="profile-details">
-          <div class="user-name">${user.name || "Master Administrator"}</div>
-          <div class="user-sub">${ROLE_LABELS[role] || "Master Account"} · ${user.userId || "MU-0001"}</div>
-          <div class="user-email">${user.email || "master@zamorin.cafe"}</div>
+          <div class="user-name">${user.name || user.fullName || (isStaff ? "Staff Member" : isCafeOps ? "Café Administrator" : "Master Administrator")}</div>
+          <div class="user-sub">${(() => {
+            const isPrimary = Boolean(
+              state.auth?.user?.isPrimaryMaster ||
+              state.user?.isPrimaryMaster ||
+              state.auth?.user?.userId === "MU-0001" ||
+              state.user?.userId === "MU-0001" ||
+              String(state.auth?.user?.email || "").toLowerCase() === "pradeeshk331@gmail.com" ||
+              String(state.user?.email || "").toLowerCase() === "pradeeshk331@gmail.com"
+            );
+            if (isPrimary) return "Primary Master";
+            if (user.designation) return user.designation;
+            const uRole = String(user.role || (isPrimary ? "MASTER" : role)).toLowerCase();
+            if (uRole === ROLES.MASTER || uRole === "master") return "Primary Master";
+            if (uRole === ROLES.OWNER || uRole === "owner") return "Café Owner";
+            if (uRole === ROLES.CAFE_ADMIN || uRole === "cafe_admin") return "Café Administrator";
+            return ROLE_LABELS[uRole] || "Staff Member";
+          })()}${user.userId ? ` · ${user.userId}` : ""}</div>
+          <div class="user-email">${user.email || ""}</div>
         </div>
       </div>
       <div class="popover-menu">
@@ -349,6 +424,9 @@ export function renderTopbar({ scopeChip } = {}) {
         </button>
         <button class="popover-menu-item" data-profile-action="security">
           ${icon("shield")} Security &amp; MFA
+        </button>
+        <button class="popover-menu-item" data-profile-action="lock-screen">
+          ${icon("lock")} Lock Application
         </button>
         <div class="popover-divider"></div>
         <button class="popover-menu-item logout" data-profile-action="logout">
@@ -433,24 +511,163 @@ export function wireBell(root) {
     window.addEventListener('offline', updateConnectivityBadge);
   }
 
+  // Global Workspace Window Selector (Primary Master 3-Way Topbar Shell)
+  const globalWsSel = root.querySelector("#global-workspace-selector");
+  if (globalWsSel) {
+    globalWsSel.addEventListener("change", (e) => {
+      const targetWs = e.target.value;
+      // ⚠️ HARD GUARD: Only the verified Primary Master account may enter Primary Master workspace
+      const isActualPrimaryMaster =
+        (state.auth?.user?.userId === 'MU-0001' && String(state.auth?.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com') ||
+        (state.user?.userId === 'MU-0001' && String(state.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com');
+
+      if (targetWs === "master-primary" && !isActualPrimaryMaster) {
+        // Silently block and reset selector
+        e.target.value = state.activeWorkspace || "staff";
+        showToast("Access Denied — Primary Master workspace is exclusively reserved for Pradeesh K (MU-0001).", "coral");
+        return;
+      }
+
+      if (!state.originalRole) {
+        state.originalRole = state.role || ROLES.MASTER;
+      }
+      if (targetWs === "master-primary") {
+        state.role = ROLES.MASTER;
+        state.isPrimaryMaster = true;
+        state.activeWorkspace = "master-primary";
+        showToast("Switched workspace to Primary Master", "info");
+        navigate("dashboard");
+      } else if (targetWs === "owner") {
+        state.role = ROLES.OWNER;
+        state.isPrimaryMaster = isActualPrimaryMaster;
+        state.activeWorkspace = "owner";
+        showToast("Switched workspace to Owner Portal (Primary Master Governance)", "info");
+        navigate("dashboard");
+      } else if (targetWs === "cafe_admin") {
+        state.role = ROLES.CAFE_ADMIN;
+        state.isPrimaryMaster = isActualPrimaryMaster;
+        state.activeWorkspace = "cafe_admin";
+        showToast("Switched workspace to Café Operations", "info");
+        navigate("pos");
+      } else if (targetWs === "staff") {
+        state.role = ROLES.STAFF;
+        state.isPrimaryMaster = isActualPrimaryMaster;
+        state.activeWorkspace = "staff";
+        showToast("Switched workspace to Staff Self-Service Preview", "info");
+        navigate("staff-home");
+      }
+    });
+  }
+
+  // Global Supervised Employee Selector
+  const globalSupervisedSel = root.querySelector("#global-supervised-employee-selector");
+  if (globalSupervisedSel) {
+    if (state.supervisedEmployeeId) {
+      globalSupervisedSel.value = state.supervisedEmployeeId;
+    }
+    // Asynchronously populate employees if empty
+    if (!state.employees || !state.employees.length) {
+      apiGet("/employees").then((res) => {
+        const empList = res?.data?.employees || res?.data || [];
+        if (Array.isArray(empList) && empList.length) {
+          state.employees = empList;
+          const currentVal = globalSupervisedSel.value;
+          globalSupervisedSel.innerHTML = `
+            <option value="NONE" ${!state.supervisedEmployeeId ? 'selected' : ''}>👥 Supervise: None (Self)</option>
+            ${empList.map(emp => `<option value="${emp.id || emp.employeeId || emp.userId}" ${(state.supervisedEmployeeId === (emp.id || emp.employeeId || emp.userId)) ? 'selected' : ''}>👤 ${emp.name || emp.fullName || emp.userId} (${emp.employeeId || emp.id || ''})</option>`).join('')}
+          `;
+          if (currentVal && currentVal !== "NONE") {
+            globalSupervisedSel.value = currentVal;
+          }
+        }
+      }).catch(() => {});
+    }
+
+    globalSupervisedSel.addEventListener("change", (e) => {
+      const empId = e.target.value;
+      state.supervisedEmployeeId = empId === "NONE" ? null : empId;
+      const optText = globalSupervisedSel.options[globalSupervisedSel.selectedIndex]?.textContent || empId;
+      if (state.supervisedEmployeeId) {
+        showToast(`Supervising employee: ${optText} (Session identity preserved)`, "info");
+      } else {
+        showToast("Supervised employee cleared (Personal/Self mode)", "info");
+      }
+      if (state.route) {
+        navigate(state.route);
+      }
+    });
+
+    const exitSupervisedBtn = root.querySelector("#exit-supervised-employee-btn");
+    if (exitSupervisedBtn) {
+      exitSupervisedBtn.addEventListener("click", () => {
+        state.supervisedEmployeeId = null;
+        globalSupervisedSel.value = "NONE";
+        showToast("Exited employee supervision mode (Self)", "info");
+        if (state.route) {
+          navigate(state.route);
+        }
+      });
+    }
+  }
+
   // Global Café Scope Dropdown Selector
   const globalCafeSel = root.querySelector("#global-cafe-selector");
   if (globalCafeSel) {
     if (state.selectedCafeId) {
       globalCafeSel.value = state.selectedCafeId;
     }
+
+    // Asynchronously populate cafes if empty or only 1 option
+    if (!state.cafes || !state.cafes.length) {
+      apiGet("/cafes").then((res) => {
+        const cafeList = res?.data?.cafes || res?.data || [];
+        if (Array.isArray(cafeList) && cafeList.length) {
+          state.cafes = cafeList;
+          try {
+            if (typeof localStorage !== "undefined") {
+              localStorage.setItem("zamorin_cafes", JSON.stringify(cafeList));
+            }
+          } catch {}
+
+          const isOwner = state.role === "owner";
+          const allLabel = isOwner ? "🏠 All Assigned Cafés (Portfolio)" : "🏠 All Cafés (Global Portfolio)";
+          const cafeOpts = cafeList.map((c) => {
+            const cId = c.cafeId || c.id || c.code;
+            const cName = c.name || c.displayName || "Outlet";
+            const isSel = state.selectedCafeId === cId;
+            return `<option value="${cId}" ${isSel ? "selected" : ""}>☕ ${cId} · ${cName}</option>`;
+          }).join("");
+
+          globalCafeSel.innerHTML = `
+            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === "ALL") ? "selected" : ""}>${allLabel}</option>
+            ${cafeOpts}
+          `;
+          if (state.selectedCafeId) {
+            globalCafeSel.value = state.selectedCafeId;
+          }
+        }
+      }).catch(() => {});
+    }
+
     globalCafeSel.addEventListener("change", (e) => {
       const newCafeId = e.target.value;
       state.selectedCafeId = newCafeId;
       state.currentCafeId = (newCafeId && newCafeId !== "ALL") ? newCafeId : "";
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("zamorin-selected-cafe-id", newCafeId);
+        }
+      } catch {}
+
       if (state.user) {
         state.user.primaryCafeId = (newCafeId && newCafeId !== "ALL") ? newCafeId : "";
         const selOpt = globalCafeSel.options[globalCafeSel.selectedIndex];
         const optText = selOpt ? selOpt.textContent.trim() : "";
         const cleanName = optText.includes("·") ? optText.split("·").slice(1).join("·").trim() : optText;
-        state.user.primaryCafeName = cleanName || state.cafes?.find((c) => c.cafeId === newCafeId)?.name || newCafeId;
+        state.user.primaryCafeName = cleanName || state.cafes?.find((c) => (c.cafeId || c.id || c.code) === newCafeId)?.name || newCafeId;
       }
-      showToast(`Global café scope switched to ${newCafeId === "ALL" ? "All Cafés (Portfolio)" : newCafeId}`, "info");
+      const label = newCafeId === "ALL" ? (state.role === "owner" ? "All Assigned Cafés (Portfolio)" : "All Cafés (Global Portfolio)") : newCafeId;
+      showToast(`Switched café scope to: ${label}`, "info");
       // Trigger navigation refresh to update the active page data under new cafe context
       if (state.route) {
         navigate(state.route);
@@ -576,6 +793,8 @@ export function wireBell(root) {
         } else if (action === "settings") {
           setSettingsActiveSection("overview");
           navigate(state.role === ROLES.STAFF ? "staff-settings" : "settings");
+        } else if (action === "lock-screen") {
+          openApplicationLockModal();
         }
       });
     });
@@ -829,7 +1048,7 @@ let currentModalResolve = null;
 let lastFocusedElementBeforeModal = null;
 let activeModalKeydownHandler = null;
 
-export function openModal(options = {}) {
+export function openModal(options = {}, maybeBody = null, extraOptions = {}) {
   // Capture the element that triggered the modal for WCAG focus restoration
   lastFocusedElementBeforeModal = document.activeElement;
   closeModal();
@@ -847,9 +1066,38 @@ export function openModal(options = {}) {
   modalEl.setAttribute("role", "dialog");
   modalEl.setAttribute("aria-modal", "true");
 
-  if (typeof options === "string") {
+  let cancelCallback = null;
+
+  if (typeof options === "string" && typeof maybeBody === "string") {
+    // 2-argument signature: openModal(title, bodyHtml, extraOptions)
+    const title = options;
+    const body = maybeBody;
+    const titleId = "zamorin-modal-title-" + Math.random().toString(36).slice(2, 8);
+    modalEl.setAttribute("aria-labelledby", titleId);
+
+    const maxWidth = (extraOptions && extraOptions.maxWidth) ? extraOptions.maxWidth : "680px";
+    cancelCallback = extraOptions?.onCancel || null;
+
     modalEl.innerHTML = `
-      <div class="modal-window" role="document" style="max-width:760px; max-height:85vh; overflow-y:auto; padding:24px; position:relative;">
+      <div class="modal-window" role="document" style="max-width:${maxWidth}; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
+        <div class="modal-header">
+          <h3 class="modal-title" id="${titleId}">${title}</h3>
+          <button class="modal-close-btn" data-modal-cancel type="button" aria-label="Close">
+            ${icon("x")}
+          </button>
+        </div>
+        <div class="modal-content" style="overflow-y:auto; padding:20px;">
+          ${body}
+        </div>
+      </div>
+    `;
+  } else if (typeof options === "string") {
+    // 1-argument signature: openModal(rawHtmlString, optionsObj)
+    const opts = (typeof maybeBody === "object" && maybeBody !== null) ? maybeBody : (extraOptions || {});
+    const maxWidth = opts.maxWidth || "860px";
+    cancelCallback = typeof opts.onCancel === "function" ? opts.onCancel : null;
+    modalEl.innerHTML = `
+      <div class="modal-window" role="document" style="max-width:${maxWidth}; max-height:88vh; overflow-y:auto; padding:24px; position:relative;">
         <button class="modal-close-btn" data-modal-cancel type="button" aria-label="Close"
           style="position:absolute; top:16px; right:16px; background:none; border:none; color:var(--muted); cursor:pointer; font-size:18px;">
           ${icon("x")}
@@ -858,6 +1106,7 @@ export function openModal(options = {}) {
       </div>
     `;
   } else {
+    // Options object signature: openModal({ title, body, saveLabel, cancelLabel, onSave, onCancel, maxWidth })
     const {
       title = "Action",
       body = options.body || options.content || "",
@@ -867,6 +1116,8 @@ export function openModal(options = {}) {
       onCancel = null,
       maxWidth = "560px",
     } = options;
+
+    cancelCallback = onCancel;
 
     const titleId = "zamorin-modal-title-" + Math.random().toString(36).slice(2, 8);
     modalEl.setAttribute("aria-labelledby", titleId);
@@ -917,14 +1168,14 @@ export function openModal(options = {}) {
   cancelBtns.forEach((b) =>
     b.addEventListener("click", () => {
       closeModal();
-      if (typeof options.onCancel === "function") options.onCancel();
+      if (typeof cancelCallback === "function") cancelCallback();
     })
   );
 
   modalEl.addEventListener("click", (e) => {
     if (e.target === modalEl) {
       closeModal();
-      if (typeof options.onCancel === "function") options.onCancel();
+      if (typeof cancelCallback === "function") cancelCallback();
     }
   });
 
@@ -932,7 +1183,7 @@ export function openModal(options = {}) {
   activeModalKeydownHandler = (e) => {
     if (e.key === "Escape") {
       closeModal();
-      if (typeof options.onCancel === "function") options.onCancel();
+      if (typeof cancelCallback === "function") cancelCallback();
       return;
     }
 
@@ -1197,7 +1448,12 @@ export function openOperatorLockModal() {
 
       <div class="form-group" style="text-align:left; margin-bottom:20px;">
         <label class="label" style="font-weight:700;">Enter 6-Digit Operator PIN*</label>
-        <input type="password" id="lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:48px;" autofocus required />
+        <div style="position:relative; display:flex; align-items:center;">
+          <input type="password" id="lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:48px; padding-right:42px; box-sizing:border-box;" autofocus required />
+          <button type="button" class="pin-visibility-toggle" data-toggle-visibility="lock-pin-input" title="Show PIN" aria-label="Show PIN">
+            ${icon("eye", 16)}
+          </button>
+        </div>
       </div>
 
       <div style="display:flex; flex-direction:column; gap:10px;">
@@ -1210,6 +1466,18 @@ export function openOperatorLockModal() {
   openModal(content);
   const modalEl = document.getElementById("zamorin-global-modal");
   const pinInput = modalEl?.querySelector("#lock-pin-input");
+
+  modalEl?.querySelector("[data-toggle-visibility=\"lock-pin-input\"]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    if (!pinInput) return;
+    const isPwd = pinInput.type === "password";
+    pinInput.type = isPwd ? "text" : "password";
+    btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+    btn.setAttribute("title", isPwd ? "Hide PIN" : "Show PIN");
+    btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+  });
 
   modalEl?.querySelector("#lock-unlock-btn")?.addEventListener("click", async () => {
     const pin = pinInput?.value?.trim();
@@ -1230,6 +1498,105 @@ export function openOperatorLockModal() {
   modalEl?.querySelector("#lock-switch-btn")?.addEventListener("click", () => {
     closeModal();
     openSwitchOperatorModal();
+  });
+}
+
+/**
+ * ACP-05E-02: Workstation App Lock & Personal Six-Digit Application PIN Unlock
+ */
+export function openApplicationLockModal() {
+  const user = state.auth?.user || state.user || {};
+  const userName = user.name || user.fullName || "User";
+  const userEmail = user.email || "";
+
+  const content = `
+    <div style="max-width:440px; margin:0 auto; padding:10px 0; text-align:center;">
+      <div style="width:56px; height:56px; border-radius:50%; background:var(--surface-sunken); display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:24px; border:1px solid var(--border-subtle);">
+        🔒
+      </div>
+      <h3 style="font-size:18px; font-weight:800; color:var(--ink); margin:0 0 6px;">Application Locked</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin:0 0 16px;">
+        Active Session: <strong>${userName}</strong> ${userEmail ? `(${userEmail})` : ""}
+      </p>
+
+      <div style="background:var(--surface-sunken); border:1px solid var(--line); border-radius:var(--radius-md, 8px); padding:12px 14px; margin-bottom:16px; text-align:left;">
+        <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;">Security Notice</div>
+        <div style="font-size:12px; color:var(--ink); margin-top:2px;">
+          Enter your personal 6-digit Application PIN to unlock this session.
+        </div>
+      </div>
+
+      <div class="form-group" style="text-align:left; margin-bottom:16px;">
+        <label class="label" style="font-weight:700; font-size:12px;">Six-Digit App PIN*</label>
+        <div style="position:relative; display:flex; align-items:center;">
+          <input type="password" id="app-lock-pin-input" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:22px; letter-spacing:8px; text-align:center; font-family:var(--font-mono); height:46px; padding-right:42px; box-sizing:border-box;" autofocus required />
+          <button type="button" class="pin-visibility-toggle" data-toggle-visibility="app-lock-pin-input" title="Show PIN" aria-label="Show PIN">
+            ${icon("eye", 16)}
+          </button>
+        </div>
+        <div id="app-lock-error" style="color:var(--danger, #b23b35); font-size:12px; margin-top:6px; display:none;"></div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button class="btn btn-primary" id="app-lock-unlock-btn" type="button" style="height:42px; font-weight:700; font-size:13.5px;">Unlock Session</button>
+        <button class="btn btn-ghost" id="app-lock-signout-btn" type="button" style="font-size:12px; color:var(--muted);">Sign in with Password</button>
+      </div>
+    </div>
+  `;
+
+  openModal(content);
+  const modalEl = document.getElementById("zamorin-global-modal");
+  const pinInput = modalEl?.querySelector("#app-lock-pin-input");
+  const errEl = modalEl?.querySelector("#app-lock-error");
+
+  modalEl?.querySelector("[data-toggle-visibility=\"app-lock-pin-input\"]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    if (!pinInput) return;
+    const isPwd = pinInput.type === "password";
+    pinInput.type = isPwd ? "text" : "password";
+    btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+    btn.setAttribute("title", isPwd ? "Hide PIN" : "Show PIN");
+    btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+  });
+
+  const submitUnlock = async () => {
+    const pin = pinInput?.value?.trim();
+    if (!pin || pin.length !== 6) {
+      if (errEl) { errEl.textContent = "Please enter your 6-digit Application PIN."; errEl.style.display = "block"; }
+      return;
+    }
+
+    try {
+      const unlockBtn = modalEl?.querySelector("#app-lock-unlock-btn");
+      if (unlockBtn) { unlockBtn.disabled = true; unlockBtn.textContent = "Verifying..."; }
+      await apiPost("/auth/app-pin/unlock", { pin });
+      showToast("Application unlocked.", "mint");
+      closeModal();
+    } catch (err) {
+      if (errEl) {
+        errEl.textContent = err?.message || "Incorrect PIN.";
+        errEl.style.display = "block";
+      }
+      if (pinInput) pinInput.value = "";
+      const unlockBtn = modalEl?.querySelector("#app-lock-unlock-btn");
+      if (unlockBtn) { unlockBtn.disabled = false; unlockBtn.textContent = "Unlock Session"; }
+    }
+  };
+
+  modalEl?.querySelector("#app-lock-unlock-btn")?.addEventListener("click", submitUnlock);
+  pinInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitUnlock();
+  });
+
+  modalEl?.querySelector("#app-lock-signout-btn")?.addEventListener("click", async () => {
+    closeModal();
+    try { await apiPost("/auth/logout"); } catch {}
+    clearAllAuthTokens();
+    clearApiCacheAndInFlight();
+    window.location.hash = "#login";
+    window.location.reload();
   });
 }
 
@@ -1260,7 +1627,12 @@ export function openSwitchOperatorModal() {
 
       <div class="form-group">
         <label class="label">Incoming Operator 6-Digit PIN*</label>
-        <input type="password" id="sw-pin" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:18px; letter-spacing:6px; font-family:var(--font-mono);" required />
+        <div style="position:relative; display:flex; align-items:center;">
+          <input type="password" id="sw-pin" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:18px; letter-spacing:6px; font-family:var(--font-mono); padding-right:42px; box-sizing:border-box;" required />
+          <button type="button" class="pin-visibility-toggle" data-toggle-visibility="sw-pin" title="Show PIN" aria-label="Show PIN">
+            ${icon("eye", 16)}
+          </button>
+        </div>
       </div>
 
       <div class="form-group">
@@ -1277,6 +1649,19 @@ export function openSwitchOperatorModal() {
 
   openModal(content);
   const modalEl = document.getElementById("zamorin-global-modal");
+
+  const swPinInput = modalEl?.querySelector("#sw-pin");
+  modalEl?.querySelector("[data-toggle-visibility=\"sw-pin\"]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    if (!swPinInput) return;
+    const isPwd = swPinInput.type === "password";
+    swPinInput.type = isPwd ? "text" : "password";
+    btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+    btn.setAttribute("title", isPwd ? "Hide PIN" : "Show PIN");
+    btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+  });
 
   modalEl?.querySelector("#sw-cancel-btn")?.addEventListener("click", () => closeModal());
   modalEl?.querySelector("#sw-submit-btn")?.addEventListener("click", async () => {

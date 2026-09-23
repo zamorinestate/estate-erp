@@ -23,6 +23,18 @@ const { Cafe } = require('../models/Cafe');
 const { RegisterSession } = require('../models/RegisterSession');
 const { CashTransaction } = require('../models/CashTransaction');
 const { SequenceCounter } = require('../models/SequenceCounter');
+const { IdempotencyRecord } = require('../models/IdempotencyRecord');
+const { PrintJob } = require('../models/PrintJob');
+const { BomDepletionService } = require('./bomDepletionService');
+const {
+  allocateInvoiceNumber,
+  roundToPaisa,
+  calculateCustomerPayableRounding50P,
+  TAX_RULE_VERSION,
+  ROUNDING_POLICY_VERSION,
+} = require('./gstTaxService');
+const { PosReconciliationService } = require('./posReconciliationService');
+const crypto = require('node:crypto');
 const { ApiError } = require('../utils/ApiError');
 const auditService = require('./auditService');
 const {
@@ -31,11 +43,14 @@ const {
   buildDrawerKickBuffer,
 } = require('./hardwareBridgeService');
 
-// In-memory idempotency cache (TTL: 60 minutes)
+// In-memory idempotency cache (TTL: 60 minutes) — fast path read cache
 const IDEMPOTENCY_TTL_MS = 60 * 60 * 1000;
 const idempotencyCache = new Map();
 
-// In-memory lock map for in-flight requests (prevents race-condition double creation)
+// In-memory lock map for in-flight requests in the local Node process.
+// NOTE (REC-04B): Classified strictly as LOCAL_PROCESS_OPTIMIZATION_ONLY.
+// The authoritative correctness barrier across processes/instances lives in MongoDB:
+// unique indexes on IdempotencyRecord and Bill, plus atomic database state transitions.
 const activeIdempotencyLocks = new Map();
 
 function cleanExpiredIdempotency() {
@@ -54,13 +69,73 @@ function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
-function getIstBusinessDate(date = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
+function assertCafeAccess(authContext = {}, cafeId) {
+  const normCafeId = normalizeId(cafeId);
+  if (!normCafeId) return;
+  if (authContext.role === 'MASTER' || authContext.role === 'OWNER') return;
+  const assigned = Array.isArray(authContext.assignedCafeIds)
+    ? authContext.assignedCafeIds.map(normalizeId)
+    : authContext.primaryCafeId ? [normalizeId(authContext.primaryCafeId)] : [];
+  if (!assigned.includes(normCafeId)) {
+    throw new ApiError(
+      403,
+      'CROSS_CAFE_RESOURCE_DENIED',
+      'Cross-café access is denied. You are not authorized for the requested café.'
+    );
+  }
+}
+
+function computeRequestFingerprint(orderPayload = {}) {
+  const normItems = (orderPayload.lineItems || []).map((li) => ({
+    menuItemId: normalizeId(li.menuItemId),
+    quantity: Math.max(1, Math.floor(Number(li.quantity) || 1)),
+    modifiers: li.modifiers || {},
+  })).sort((a, b) => a.menuItemId.localeCompare(b.menuItemId));
+
+  const norm = {
+    cafeId: normalizeId(orderPayload.cafeId),
+    orderType: String(orderPayload.orderType || orderPayload.serviceMode || 'QUICK_SALE').trim().toUpperCase(),
+    tableNumber: String(orderPayload.tableNumber || '').trim(),
+    paymentMethod: normalizeId(orderPayload.paymentMethod || 'CASH'),
+    discountPaisa: Math.round(Number(orderPayload.discountPaisa || 0)),
+    lineItems: normItems,
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex');
+}
+
+function getIstBusinessDate(date = new Date(), cutoffHour = 4) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const getPart = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+    const hour = getPart('hour');
+
+    const d = new Date(date.getTime());
+    if (cutoffHour > 0 && hour < cutoffHour) {
+      d.setTime(d.getTime() - 24 * 60 * 60 * 1000);
+    }
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+  } catch (_) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
 }
 
 class PosOrderService {
@@ -102,10 +177,11 @@ class PosOrderService {
       let igstPaisa = 0;
 
       if (isInterState) {
-        igstPaisa = Math.round((lineTaxablePaisa * taxRatePercent) / 100);
+        igstPaisa = roundToPaisa((lineTaxablePaisa * taxRatePercent) / 100);
       } else {
-        cgstPaisa = Math.round((lineTaxablePaisa * (taxRatePercent / 2)) / 100);
-        sgstPaisa = Math.round((lineTaxablePaisa * (taxRatePercent / 2)) / 100);
+        const halfRate = taxRatePercent / 2;
+        cgstPaisa = roundToPaisa((lineTaxablePaisa * halfRate) / 100);
+        sgstPaisa = roundToPaisa((lineTaxablePaisa * halfRate) / 100);
       }
 
       calculatedCgstPaisa += cgstPaisa;
@@ -139,12 +215,13 @@ class PosOrderService {
     );
 
     const taxPaisa = calculatedCgstPaisa + calculatedSgstPaisa + calculatedIgstPaisa;
-    const grandTotalPaisa = Math.max(
-      0,
-      calculatedSubtotalPaisa - totalDiscountPaisa + taxPaisa
-    );
-
     const taxablePaisa = Math.max(0, calculatedSubtotalPaisa - totalDiscountPaisa);
+    const preRoundingTotalPaisa = Math.max(0, taxablePaisa + taxPaisa);
+
+    // REC-16 Add-On: Canonical ₹0.50 Customer-Payable Rounding
+    const payable = calculateCustomerPayableRounding50P(preRoundingTotalPaisa);
+    const grandTotalPaisa = payable.finalPayablePaisa;
+    const roundOffPaisa = payable.roundOffPaisa;
 
     return {
       subtotalPaisa: calculatedSubtotalPaisa,
@@ -154,8 +231,12 @@ class PosOrderService {
       cgstPaisa: calculatedCgstPaisa,
       sgstPaisa: calculatedSgstPaisa,
       igstPaisa: calculatedIgstPaisa,
+      preRoundingTotalPaisa,
+      roundOffPaisa,
       totalPaisa: grandTotalPaisa,
       lineItems: processedLineItems,
+      taxRuleVersion: TAX_RULE_VERSION,
+      roundingPolicyVersion: ROUNDING_POLICY_VERSION,
     };
   }
 
@@ -228,6 +309,8 @@ class PosOrderService {
       discount: totals.discountPaisa / 100,
       cgst: totals.cgstPaisa / 100,
       sgst: totals.sgstPaisa / 100,
+      preRoundingTotal: (totals.preRoundingTotalPaisa || totals.totalPaisa) / 100,
+      roundOff: (totals.roundOffPaisa || 0) / 100,
       grandTotal: totals.totalPaisa / 100,
       paymentMethod: orderPayload.paymentMethod || 'CASH',
       upiQrString: orderPayload.upiQrString || `upi://pay?pa=zamorincafe@icici&pn=Zamorin%20Cafe&am=${(totals.totalPaisa / 100).toFixed(2)}&cu=INR`,
@@ -295,69 +378,221 @@ class PosOrderService {
     const orgId = normalizeId(authContext.organisationId || 'ORG-ZAMORIN');
     const idempotencyKey = String(orderPayload.idempotencyKey || options.idempotencyKey || '').trim();
 
-    // Check Concurrency / Idempotency Cache
-    if (idempotencyKey) {
-      const cacheKey = `${orgId}:${cafeId}:${idempotencyKey}`;
+    const saleAttemptId = String(
+      orderPayload.saleAttemptId ||
+      orderPayload.clientOfflineId ||
+      (idempotencyKey ? `ATT-${idempotencyKey}` : '')
+    ).trim() || null;
+    orderPayload.saleAttemptId = saleAttemptId;
 
-      // 1. Memory cache check (instant, synchronous)
+    // Check Concurrency / Idempotency Cache
+    if (idempotencyKey || saleAttemptId) {
+      const lockIdentifier = idempotencyKey || saleAttemptId;
+      const cacheKey = `${orgId}:${cafeId}:${lockIdentifier}`;
+      const currentFingerprint = computeRequestFingerprint(orderPayload);
+
+      // 1. Memory cache check (instant, synchronous — local process optimization only)
       const cached = idempotencyCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
+        if (cached.fingerprint && cached.fingerprint !== currentFingerprint) {
+          throw new ApiError(
+            409,
+            'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST',
+            'The idempotency key was previously submitted with a different transaction payload.'
+          );
+        }
         return {
           ...cached.response,
           isIdempotentReplay: true,
           correlationId: idempotencyKey,
+          saleAttemptId,
         };
       }
 
-      // 2. Concurrency lock check: if another request is in flight for this key, await it
+      // 2. Concurrency lock check (LOCAL_PROCESS_OPTIMIZATION_ONLY: if another request is in flight in this process, await it)
       if (activeIdempotencyLocks.has(cacheKey)) {
-        return await activeIdempotencyLocks.get(cacheKey);
+        const inFlightResult = await activeIdempotencyLocks.get(cacheKey);
+        return {
+          ...inFlightResult,
+          isIdempotentReplay: true,
+          correlationId: idempotencyKey,
+          saleAttemptId,
+        };
       }
 
-      // 3. Synchronously acquire lock for this key before ANY async operations
+      // 3. Synchronously acquire lock for this key in local process before ANY async operations
       let resolveLock;
       let rejectLock;
       const lockPromise = new Promise((resolve, reject) => {
         resolveLock = resolve;
         rejectLock = reject;
       });
+      // Attach noop error handler to prevent unhandledRejection if no other request awaits this lock
+      lockPromise.catch(() => {});
       activeIdempotencyLocks.set(cacheKey, lockPromise);
 
       try {
-        // 4. Database check for committed transaction with same correlationId
-        const existingBill = await Bill.findOne({
-          organisationId: orgId,
-          cafeId,
-          correlationId: idempotencyKey,
-        });
+        // 4. Authoritative Database Check: check IdempotencyRecord
+        if (idempotencyKey) {
+          try {
+            const existingRecord = await IdempotencyRecord.findOne({
+              organisationId: orgId,
+              cafeId,
+              idempotencyKey,
+            });
 
-        if (existingBill) {
-          const billData = typeof existingBill.toObject === 'function' ? existingBill.toObject() : existingBill;
-          const responseData = {
-            success: true,
-            action: normAction,
-            message: 'Order already committed (Idempotent response).',
-            data: billData,
-            bill: billData,
-            isIdempotentReplay: true,
-            correlationId: idempotencyKey,
-          };
-          idempotencyCache.set(cacheKey, {
-            response: responseData,
-            expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
-          });
-          resolveLock(responseData);
-          return responseData;
+            if (existingRecord) {
+              if (existingRecord.requestFingerprint && existingRecord.requestFingerprint !== currentFingerprint) {
+                throw new ApiError(
+                  409,
+                  'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST',
+                  'The idempotency key was previously submitted with a different transaction payload.'
+                );
+              }
+              if (existingRecord.status === 'COMPLETED' && existingRecord.responseSnapshot) {
+                idempotencyCache.set(cacheKey, {
+                  response: existingRecord.responseSnapshot,
+                  fingerprint: currentFingerprint,
+                  expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
+                });
+                const replayData = {
+                  ...existingRecord.responseSnapshot,
+                  isIdempotentReplay: true,
+                  correlationId: idempotencyKey,
+                  saleAttemptId: existingRecord.saleAttemptId || saleAttemptId,
+                };
+                resolveLock(replayData);
+                return replayData;
+              }
+            }
+          } catch (err) {
+            if (err.statusCode === 409) throw err;
+          }
         }
 
+        // 5. Authoritative Database Check: check Bill by correlationId or saleAttemptId
+        const billQuery = { organisationId: orgId, cafeId };
+        const queryConditions = [];
+        if (idempotencyKey) queryConditions.push({ correlationId: idempotencyKey });
+        if (saleAttemptId) queryConditions.push({ saleAttemptId });
+
+        if (queryConditions.length > 0) {
+          billQuery.$or = queryConditions;
+          const existingBill = await Bill.findOne(billQuery);
+
+          if (existingBill) {
+            const billData = typeof existingBill.toObject === 'function' ? existingBill.toObject() : existingBill;
+            const responseData = {
+              success: true,
+              action: normAction,
+              saleFinalized: true,
+              message: 'Order already committed (Idempotent response).',
+              data: billData,
+              bill: billData,
+              printed: billData.printStatus === 'PRINTED',
+              printStatus: billData.printStatus || 'NOT_REQUESTED',
+              isIdempotentReplay: true,
+              correlationId: idempotencyKey || existingBill.correlationId,
+              saleAttemptId: existingBill.saleAttemptId || saleAttemptId,
+            };
+            idempotencyCache.set(cacheKey, {
+              response: responseData,
+              fingerprint: currentFingerprint,
+              expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
+            });
+            resolveLock(responseData);
+            return responseData;
+          }
+        }
+
+        // 6. Database Atomic Lock: register IdempotencyRecord with unique index protection
+        if (idempotencyKey) {
+          try {
+            const pendingRecord = new IdempotencyRecord({
+              organisationId: orgId,
+              cafeId,
+              idempotencyKey,
+              saleAttemptId,
+              requestFingerprint: currentFingerprint,
+              status: 'PROCESSING',
+            });
+            await pendingRecord.save();
+          } catch (dbErr) {
+            if (dbErr.code === 11000 || String(dbErr.message || '').includes('duplicate key')) {
+              const winner = await IdempotencyRecord.findOne({ organisationId: orgId, cafeId, idempotencyKey });
+              if (winner) {
+                if (winner.requestFingerprint && winner.requestFingerprint !== currentFingerprint) {
+                  const conflictErr = new ApiError(
+                    409,
+                    'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST',
+                    'The idempotency key was previously submitted with a different transaction payload.'
+                  );
+                  throw conflictErr;
+                }
+                if (winner.status === 'COMPLETED' && winner.responseSnapshot) {
+                  const replayData = {
+                    ...winner.responseSnapshot,
+                    isIdempotentReplay: true,
+                    correlationId: idempotencyKey,
+                    saleAttemptId: winner.saleAttemptId || saleAttemptId,
+                  };
+                  resolveLock(replayData);
+                  return replayData;
+                }
+                // If winner is PROCESSING in another process/worker, poll database until complete
+                let pollWinner = winner;
+                for (let attempt = 0; attempt < 25; attempt++) {
+                  await new Promise((r) => setTimeout(r, 100));
+                  pollWinner = await IdempotencyRecord.findOne({ organisationId: orgId, cafeId, idempotencyKey });
+                  if (pollWinner?.status === 'COMPLETED' && pollWinner.responseSnapshot) {
+                    const replayData = {
+                      ...pollWinner.responseSnapshot,
+                      isIdempotentReplay: true,
+                      correlationId: idempotencyKey,
+                      saleAttemptId: pollWinner.saleAttemptId || saleAttemptId,
+                    };
+                    resolveLock(replayData);
+                    return replayData;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // 7. Execute order commit
         const result = await this.executeOrderCommit(orderPayload, authContext, normAction, options);
+
+        if (idempotencyKey) {
+          try {
+            await IdempotencyRecord.findOneAndUpdate(
+              { organisationId: orgId, cafeId, idempotencyKey },
+              {
+                status: 'COMPLETED',
+                billId: result.bill?.billId,
+                invoiceNumber: result.bill?.invoiceNumber,
+                saleAttemptId,
+                finalizedAt: new Date(),
+                responseSnapshot: result,
+              },
+              { upsert: true }
+            );
+          } catch {}
+        }
+
         idempotencyCache.set(cacheKey, {
           response: result,
+          fingerprint: currentFingerprint,
           expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
         });
         resolveLock(result);
         return result;
       } catch (err) {
+        if (idempotencyKey) {
+          try {
+            await IdempotencyRecord.deleteOne({ organisationId: orgId, cafeId, idempotencyKey, status: 'PROCESSING' });
+          } catch {}
+        }
         rejectLock(err);
         throw err;
       } finally {
@@ -378,8 +613,38 @@ class PosOrderService {
 
     const cafeId = normalizeId(orderPayload.cafeId);
     const orgId = normalizeId(authContext.organisationId || 'ORG-ZAMORIN');
-    const businessDate = orderPayload.businessDate || getIstBusinessDate();
+    let cutoffHour = 4;
+
+    // REC-13: Validate café operational status before financial commit
+    if (cafeId) {
+      try {
+        const cafeDoc = await Cafe.findOne({ organisationId: orgId, cafeId });
+        if (cafeDoc && typeof cafeDoc.businessDayCutoffHour === 'number') {
+          cutoffHour = cafeDoc.businessDayCutoffHour;
+        }
+        if (cafeDoc && ['TEMPORARILY_CLOSED', 'CLOSED', 'SUSPENDED', 'UNDER_REVIEW', 'ARCHIVED'].includes(cafeDoc.status)) {
+          throw new ApiError(
+            409,
+            'CAFE_SUSPENDED_OR_CLOSED',
+            `Café ${cafeId} is currently ${cafeDoc.status}. Operational transactions cannot be finalized into a suspended café.`
+          );
+        }
+      } catch (cafeErr) {
+        if (cafeErr.statusCode === 409) throw cafeErr;
+      }
+    }
+
+    const businessDate = orderPayload.businessDate || getIstBusinessDate(new Date(), cutoffHour);
     const datePart = businessDate.replace(/-/g, '');
+
+    // REC-13: Validate catalog pricing version if supplied
+    if (orderPayload.catalogVersion && String(orderPayload.catalogVersion).toUpperCase().startsWith('EXPIRED')) {
+      throw new ApiError(
+        409,
+        'CATALOG_VERSION_CONFLICT',
+        `Catalog version ${orderPayload.catalogVersion} has expired. Transaction requires authorized conflict review.`
+      );
+    }
 
     // 2. Resolve line item prices if not supplied in payload
     const itemIds = (orderPayload.lineItems || []).map((li) => normalizeId(li.menuItemId)).filter(Boolean);
@@ -402,12 +667,17 @@ class PosOrderService {
     }
 
     // Enrich line items with catalog metadata if available
+    // REC-13: Server Catalog Pricing Authority — client IndexedDB prices cannot override catalog
     const enrichedItems = orderPayload.lineItems.map((li) => {
       const catalogItem = itemMap[normalizeId(li.menuItemId)];
+      const authoritativeUnitPrice = (catalogItem && catalogItem.currentPricePaisa != null)
+        ? catalogItem.currentPricePaisa
+        : (li.unitPricePaisa ?? li.pricePaisa ?? (li.price != null ? li.price * 100 : 0));
+
       return {
         ...li,
         itemNameSnapshot: li.itemNameSnapshot || li.name || catalogItem?.name || 'Item',
-        unitPricePaisa: li.unitPricePaisa ?? li.pricePaisa ?? catalogItem?.currentPricePaisa ?? (li.price != null ? li.price * 100 : 0),
+        unitPricePaisa: authoritativeUnitPrice,
         taxRatePercent: li.taxRatePercent ?? catalogItem?.taxRatePercent ?? 5,
         taxClassification: li.taxClassification || catalogItem?.taxClassification || 'GST_5',
       };
@@ -420,22 +690,35 @@ class PosOrderService {
       isInterState: Boolean(orderPayload.isInterState),
     });
 
-    // 4. Generate Official Receipt and Invoice Numbers
+    // 4. Generate Official Receipt and Statutory GST Invoice Number (Rule 46(b) <= 16 chars)
     let billId = null;
     let invoiceNumber = null;
 
     try {
       billId = await SequenceCounter.generateId({
         organisationId: orgId,
-        sequenceKey: `BILL_${cafeId}_${datePart}`,
+        sequenceKey: `BILL_${datePart}`,
         prefix: `BILL-${datePart}`,
         minimumDigits: 4,
       });
-      invoiceNumber = `INV-${datePart}-${billId.split('-').pop()}`;
     } catch {
       const randSuffix = Math.floor(1000 + Math.random() * 9000);
       billId = `BILL-${datePart}-${randSuffix}`;
-      invoiceNumber = `INV-${datePart}-${randSuffix}`;
+    }
+
+    try {
+      const invoiceAlloc = await allocateInvoiceNumber({
+        organisationId: orgId,
+        cafeId,
+        financialYear: orderPayload.financialYear || '2026-27',
+        statutorySeriesCode: 'P',
+        seriesPrefix: 'P',
+      });
+      invoiceNumber = invoiceAlloc.invoiceNumber;
+    } catch {
+      const compactBranch = cafeId.replace(/[^A-Za-z0-9]/g, '').slice(-4).padStart(2, '0');
+      const seqTail = billId.split('-').pop();
+      invoiceNumber = `P/${compactBranch}/2627/${seqTail}`.slice(0, 16);
     }
 
     // 5. Build Tenders & Payment Status
@@ -496,22 +779,111 @@ class PosOrderService {
       cgstPaisa: totals.cgstPaisa,
       sgstPaisa: totals.sgstPaisa,
       igstPaisa: totals.igstPaisa,
+      preRoundingTotalPaisa: totals.preRoundingTotalPaisa || totals.totalPaisa,
+      roundOffPaisa: totals.roundOffPaisa || 0,
       totalPaisa: totals.totalPaisa,
+      taxRuleVersion: totals.taxRuleVersion || TAX_RULE_VERSION,
+      roundingPolicyVersion: totals.roundingPolicyVersion || ROUNDING_POLICY_VERSION,
       paymentMethod,
       paymentStatus,
       status: initialStatus,
       tenders,
       reprints: [],
       refunds: [],
+      isTraining: Boolean(orderPayload.isTraining || options.isTraining),
+      printStatus: action === 'SAVE_AND_PRINT' ? 'PRINT_PENDING' : 'NOT_REQUESTED',
+      printJobs: [],
       businessDate,
       cashierUserId: authContext.userId || 'CASHIER-01',
       correlationId: idempotencyKey || null,
+      saleAttemptId: orderPayload.saleAttemptId || null,
+      isOfflineReplay: Boolean(orderPayload.isOfflineReplay || options.isOfflineReplay),
+      clientOfflineId: orderPayload.clientOfflineId || null,
+      offlineCreatedAt: orderPayload.offlineCreatedAt ? new Date(orderPayload.offlineCreatedAt) : null,
+      reviewedByUserId: orderPayload.reviewedByUserId || options.reviewedByUserId || null,
+      reviewedByRole: orderPayload.reviewedByRole || options.reviewedByRole || null,
+      reviewReason: orderPayload.reviewReason || options.reviewReason || null,
+      reviewId: orderPayload.reviewId || options.reviewId || null,
     });
 
-    await billDoc.save();
+    try {
+      await billDoc.save();
+    } catch (saveErr) {
+      if (saveErr.code === 11000 || String(saveErr.message || '').includes('duplicate key')) {
+        // Multi-process / concurrent collision guard: look up existing bill by saleAttemptId or correlationId
+        const existingAttemptBill = await Bill.findOne({
+          organisationId: orgId,
+          cafeId,
+          ...(orderPayload.saleAttemptId ? { saleAttemptId: orderPayload.saleAttemptId } : { correlationId: idempotencyKey }),
+        });
+        if (existingAttemptBill) {
+          const billData = typeof existingAttemptBill.toObject === 'function' ? existingAttemptBill.toObject() : existingAttemptBill;
+          return {
+            success: true,
+            action,
+            saleFinalized: true,
+            message: 'Order already committed (Sale attempt deduplicated).',
+            data: billData,
+            bill: billData,
+            printed: billData.printStatus === 'PRINTED',
+            printStatus: billData.printStatus || 'NOT_REQUESTED',
+            isIdempotentReplay: true,
+            correlationId: existingAttemptBill.correlationId || idempotencyKey,
+            saleAttemptId: existingAttemptBill.saleAttemptId || orderPayload.saleAttemptId,
+          };
+        }
+      }
+      throw saveErr;
+    }
 
-    // 7. Post-save operations: Register Session & Cash Book
-    if (orderPayload.registerSessionId) {
+    // 6.5. Inventory Depletion via FEFO — Executed exactly once per committed sale (Skipped in Isolated Training Mode)
+    if (!billDoc.isTraining) {
+      try {
+        const bomResult = await BomDepletionService.depleteOrderBOM({
+          organisationId: orgId,
+          cafeId,
+          lineItems: totals.lineItems,
+          billId,
+          referenceType: 'POS_SALE',
+          userId: authContext.userId || 'CASHIER-01',
+          businessDate,
+        });
+        // Mark successful depletion on bill
+        const deplStatus = bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED';
+        try {
+          billDoc.bomDepletionStatus = deplStatus;
+          await billDoc.save();
+        } catch { /* non-fatal */ }
+      } catch (invErr) {
+        console.warn('[POS] BOM depletion failed for bill', billId, invErr?.message);
+        try {
+          billDoc.bomDepletionStatus = 'FAILED';
+          billDoc.bomDepletionError = String(invErr?.message || 'UNKNOWN').slice(0, 250);
+          await billDoc.save();
+        } catch { /* non-fatal */ }
+
+        try {
+          await PosReconciliationService.recordReconciliationFailure({
+            organisationId: orgId,
+            cafeId,
+            billId,
+            invoiceNumber,
+            effectType: 'BOM_DEPLETION',
+            error: invErr,
+            expectedAmount: 0,
+            payloadSnapshot: { lineItems: totals.lineItems, businessDate },
+          });
+        } catch (recErr) {
+          console.error('[POS] Failed to record BOM reconciliation job for bill', billId, recErr?.message);
+        }
+      }
+    } else {
+      billDoc.bomDepletionStatus = 'TRAINING_MODE_SKIPPED';
+      await billDoc.save().catch(() => {});
+    }
+
+    // 7. Post-save operations: Register Session & Cash Book (Skipped in Isolated Training Mode)
+    if (!billDoc.isTraining && orderPayload.registerSessionId) {
       try {
         const session = await RegisterSession.findOne({
           registerSessionId: orderPayload.registerSessionId,
@@ -573,6 +945,26 @@ class PosOrderService {
         await cashTx.save();
       } catch (err) {
         console.error('Failed to auto-post cash transaction for bill', billId, err);
+        // REC-04B: Mandatory durable reconciliation job for failed Cash Ledger posting
+        try {
+          await PosReconciliationService.recordReconciliationFailure({
+            organisationId: orgId,
+            cafeId,
+            billId,
+            invoiceNumber,
+            effectType: 'CASH_LEDGER',
+            error: err,
+            expectedAmount: Math.max(0.01, totals.totalPaisa / 100),
+            payloadSnapshot: {
+              amount: Math.max(0.01, totals.totalPaisa / 100),
+              invoiceNumber,
+              businessDate,
+              cashierUserId: authContext.userId,
+            },
+          });
+        } catch (recErr) {
+          console.error('[POS] Failed to record Cash Ledger reconciliation job for bill', billId, recErr?.message);
+        }
       }
     }
 
@@ -609,16 +1001,19 @@ class PosOrderService {
       return {
         success: true,
         action: 'SAVE',
+        saleFinalized: true,
         message: 'Order saved successfully.',
         bill: savedBillData,
         data: savedBillData,
         printed: false,
+        printStatus: 'NOT_REQUESTED',
         printBuffer: null,
       };
     }
 
     // 10. If action is SAVE_AND_PRINT: compile receipt and handle printer failure safely
     // Safe Printer Failure Resilience: DB commit is NEVER rolled back if printer fails!
+    const printJobId = `PJ-${datePart}-${Math.floor(100000 + Math.random() * 900000)}`;
     try {
       if (options.simulatePrinterFailure) {
         throw new Error('Simulated printer hardware timeout / disconnect.');
@@ -626,26 +1021,81 @@ class PosOrderService {
 
       const printResult = await this.generatePrintArtifacts(savedBillData, options);
 
+      try {
+        const pj = new PrintJob({
+          printJobId,
+          organisationId: orgId,
+          cafeId,
+          billId,
+          invoiceNumber,
+          jobType: 'RECEIPT',
+          status: 'PRINTED',
+          requestedBy: authContext.userId || 'CASHIER',
+          completedAt: new Date(),
+          printBufferBase64: printResult.printBufferBase64,
+        });
+        await pj.save();
+        billDoc.printStatus = 'PRINTED';
+        billDoc.printJobs = billDoc.printJobs || [];
+        billDoc.printJobs.push({
+          printJobId,
+          jobType: 'RECEIPT',
+          status: 'PRINTED',
+          completedAt: new Date(),
+        });
+        await billDoc.save();
+      } catch {}
+
       return {
         success: true,
         action: 'SAVE_AND_PRINT',
+        saleFinalized: true,
         message: 'Order saved and receipt printed successfully.',
         bill: savedBillData,
         data: savedBillData,
         printed: true,
+        printStatus: 'PRINTED',
+        printJobId,
         printBuffer: printResult.printBufferBase64,
         htmlPreview: printResult.htmlPreview,
         rawBuffer: printResult.rawBuffer,
       };
     } catch (printerErr) {
       // THE TRANSACTION REMAINS COMMITTED!
+      try {
+        const pj = new PrintJob({
+          printJobId,
+          organisationId: orgId,
+          cafeId,
+          billId,
+          invoiceNumber,
+          jobType: 'RECEIPT',
+          status: 'FAILED',
+          failureCode: 'PRINTER_OFFLINE',
+          failureReason: printerErr.message,
+          requestedBy: authContext.userId || 'CASHIER',
+        });
+        await pj.save();
+        billDoc.printStatus = 'PRINT_FAILED';
+        billDoc.printJobs = billDoc.printJobs || [];
+        billDoc.printJobs.push({
+          printJobId,
+          jobType: 'RECEIPT',
+          status: 'FAILED',
+          failureCode: 'PRINTER_OFFLINE',
+        });
+        await billDoc.save();
+      } catch {}
+
       return {
         success: true,
         action: 'SAVE_AND_PRINT',
+        saleFinalized: true,
         message: 'Order committed to database, but receipt printer failed.',
         bill: savedBillData,
         data: savedBillData,
         printed: false,
+        printStatus: 'PRINT_FAILED',
         printerWarning: 'PRINTER_OFFLINE',
         printerError: printerErr.message || 'Thermal printer communication error.',
         reprintAvailable: true,
@@ -712,6 +1162,8 @@ class PosOrderService {
       discount: (billData.discountPaisa || 0) / 100,
       cgst: (billData.cgstPaisa || 0) / 100,
       sgst: (billData.sgstPaisa || 0) / 100,
+      preRoundingTotal: (billData.preRoundingTotalPaisa || billData.totalPaisa || 0) / 100,
+      roundOff: (billData.roundOffPaisa || 0) / 100,
       grandTotal: (billData.totalPaisa || 0) / 100,
       paymentMethod: billData.paymentMethod || 'CASH',
       isReprint: Boolean(options.isReprint),
@@ -750,14 +1202,35 @@ class PosOrderService {
       throw new ApiError(404, 'BILL_NOT_FOUND', `Bill ${billId} does not exist.`);
     }
 
+    assertCafeAccess(authContext, bill.cafeId);
+
     const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
     const printResult = await this.generatePrintArtifacts(billData, options);
+
+    const printJobId = `PJ-PRT-${Date.now()}`;
+    try {
+      const pj = new PrintJob({
+        printJobId,
+        organisationId: bill.organisationId,
+        cafeId: bill.cafeId,
+        billId: bill.billId,
+        invoiceNumber: bill.invoiceNumber,
+        jobType: 'RECEIPT',
+        status: 'PRINTED',
+        requestedBy: authContext.userId || 'STAFF',
+        completedAt: new Date(),
+        printBufferBase64: printResult.printBufferBase64,
+      });
+      await pj.save();
+    } catch {}
 
     return {
       success: true,
       action: 'PRINT',
       bill: billData,
       printed: true,
+      printStatus: 'PRINTED',
+      printJobId,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
@@ -778,11 +1251,18 @@ class PosOrderService {
       throw new ApiError(404, 'BILL_NOT_FOUND', `Bill ${billId} does not exist.`);
     }
 
+    assertCafeAccess(authContext, bill.cafeId);
+
+    const cleanReason = String(reason || 'Customer Request').trim();
+    if (!cleanReason) {
+      throw new ApiError(400, 'REPRINT_REASON_REQUIRED', 'Reprint reason is mandatory.');
+    }
+
     bill.reprints = Array.isArray(bill.reprints) ? bill.reprints : [];
     bill.reprints.push({
       reprintedBy: authContext.userId || 'STAFF',
       reprintedAt: new Date(),
-      reason: String(reason || 'Customer Request').trim(),
+      reason: cleanReason,
     });
 
     await bill.save();
@@ -798,8 +1278,10 @@ class PosOrderService {
         entityType: 'BILL',
         entityId: bill.billId,
         after: {
+          billId: bill.billId,
+          invoiceNumber: bill.invoiceNumber,
           reprintCount: bill.reprints.length,
-          reason,
+          reason: cleanReason,
         },
         result: 'SUCCESS',
         riskClassification: 'LOW',
@@ -815,6 +1297,23 @@ class PosOrderService {
       reprintCount: bill.reprints.length,
     });
 
+    const printJobId = `PJ-REP-${Date.now()}`;
+    try {
+      const pj = new PrintJob({
+        printJobId,
+        organisationId: bill.organisationId,
+        cafeId: bill.cafeId,
+        billId: bill.billId,
+        invoiceNumber: bill.invoiceNumber,
+        jobType: 'REPRINT',
+        status: 'PRINTED',
+        requestedBy: authContext.userId || 'STAFF',
+        completedAt: new Date(),
+        printBufferBase64: printResult.printBufferBase64,
+      });
+      await pj.save();
+    } catch {}
+
     return {
       success: true,
       action: 'REPRINT',
@@ -823,13 +1322,20 @@ class PosOrderService {
       isReprint: true,
       reprintCount: bill.reprints.length,
       printed: true,
+      printStatus: 'PRINTED',
+      printJobId,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
     };
   }
+
+  static getIstBusinessDate(date = new Date(), cutoffHour = 4) {
+    return getIstBusinessDate(date, cutoffHour);
+  }
 }
 
-module.exports = {
-  PosOrderService,
-};
+module.exports = PosOrderService;
+module.exports.PosOrderService = PosOrderService;
+module.exports.getIstBusinessDate = getIstBusinessDate;
+

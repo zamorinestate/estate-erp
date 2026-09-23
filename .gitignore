@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -18,6 +18,7 @@ yarn-error.log*
 .local-private-storage/
 .local-evidence-storage/
 backend/uploads/
+Backend/uploads/
 logs/
 *.log
 *.tmp
@@ -28,18 +29,26 @@ logs/
 .system_generated/
 scratch/
 
+# Preserved Archives & Evidence (Non-Runtime)
+Archive/
+Evidence/
+Documentation/
+Deployment/
+
 LOGIN-PAGE-2.0-main/
 
-# .NET / Windows Build Artifacts
+# Platform Build Artifacts
 windows/**/bin/
 windows/**/obj/
+Platform/Windows/**/bin/
+Platform/Windows/**/obj/
 **/bin/
 **/obj/
-
-# Apple / Xcode Build Artifacts
 .build/
 *.xcodeproj/*
 !*.xcodeproj/project.pbxproj
 *.xcworkspace/*
 !*.xcworkspace/contents.xcworkspacedata
 DerivedData/
+
+.vercel

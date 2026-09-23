@@ -21,7 +21,8 @@ const CHALLENGE_TTL_MINUTES = 5;
  */
 function getWebAuthnConfig() {
   const rpName = process.env.WEBAUTHN_RP_NAME || 'Zamorin Cafe ERP';
-  const rpID = process.env.WEBAUTHN_RP_ID || (process.env.NODE_ENV === 'production' ? 'zamorin-cafe-erp.vercel.app' : 'localhost');
+  const isCloudDeployment = process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER);
+  const rpID = process.env.WEBAUTHN_RP_ID || (isCloudDeployment ? 'zamorin-cafe-erp.vercel.app' : 'localhost');
   
   const rawOrigins = process.env.WEBAUTHN_ORIGIN
     ? process.env.WEBAUTHN_ORIGIN.split(',').map((o) => o.trim())
@@ -75,7 +76,11 @@ async function recordPasskeyAudit({
 /**
  * Generate Registration Options for an authenticated user.
  */
-async function generatePasskeyRegistrationOptions({ user }) {
+async function generatePasskeyRegistrationOptions({
+  user,
+  authenticatorType,
+  authenticatorAttachment,
+}) {
   if (!user || !user.userId || !user.organisationId) {
     throw ApiError.unauthorized('Authenticated user context is required for passkey registration.');
   }
@@ -94,18 +99,46 @@ async function generatePasskeyRegistrationOptions({ user }) {
     transports: cred.transports || [],
   }));
 
+  let userName = user.email;
+  let userDisplayName = user.name || user.email;
+
+  if (!userName || !userDisplayName) {
+    try {
+      const { User } = require('../models/User');
+      const userDoc = await User.findOne({
+        organisationId: user.organisationId,
+        userId: user.userId,
+      }).lean();
+      if (userDoc) {
+        userName = userName || userDoc.email || user.userId;
+        userDisplayName = userDisplayName || userDoc.name || userDoc.email || user.userId;
+      }
+    } catch {}
+  }
+
+  userName = userName || user.userId || 'user';
+  userDisplayName = userDisplayName || userName;
+
+  const authSelection = {
+    residentKey: 'preferred',
+    userVerification: 'required',
+  };
+
+  if (authenticatorType === 'PLATFORM' || authenticatorAttachment === 'platform') {
+    authSelection.authenticatorAttachment = 'platform';
+  } else if (authenticatorType === 'CROSS_PLATFORM' || authenticatorAttachment === 'cross-platform') {
+    authSelection.authenticatorAttachment = 'cross-platform';
+  }
+
   const options = await generateRegistrationOptions({
     rpName,
     rpID,
     userID: Buffer.from(user.userId, 'utf-8'),
-    userName: user.email,
-    userDisplayName: user.name || user.email,
+    userName,
+    userDisplayName,
     attestationType: 'none',
     excludeCredentials,
-    authenticatorSelection: {
-      residentKey: 'preferred',
-      userVerification: 'required',
-    },
+    authenticatorSelection: authSelection,
   });
 
   const challengeId = `PKC-REG-${Date.now()}-${crypto.randomInt(1000, 9999)}`;
@@ -268,6 +301,8 @@ async function generatePasskeyAuthenticationOptions({ organisationId, email }) {
           id: cred.credentialId,
           transports: cred.transports || [],
         }));
+      } else {
+        allowCredentials = [];
       }
     }
   }
@@ -452,6 +487,41 @@ async function listUserPasskeys({ organisationId, userId }) {
 }
 
 /**
+ * Rename a passkey for an authenticated user.
+ */
+async function renameUserPasskey({ organisationId, userId, credentialId, friendlyName }) {
+  const credential = await PasskeyCredential.findOne({
+    organisationId,
+    userId,
+    credentialId,
+    status: 'ACTIVE',
+  });
+
+  if (!credential) {
+    throw ApiError.notFound('Passkey credential not found or already revoked.');
+  }
+
+  const cleanName = String(friendlyName || '').trim().slice(0, 120);
+  if (!cleanName) {
+    throw ApiError.badRequest('A valid passkey name is required.');
+  }
+
+  credential.friendlyName = cleanName;
+  await credential.save();
+
+  await recordPasskeyAudit({
+    organisationId,
+    actorUserId: userId,
+    action: 'PASSKEY_RENAMED',
+    credentialId,
+    result: 'SUCCESS',
+    details: { friendlyName: cleanName },
+  });
+
+  return { success: true, credential: credential.toJSON() };
+}
+
+/**
  * Revoke a passkey for an authenticated user.
  */
 async function revokeUserPasskey({ organisationId, userId, credentialId, revokedBy }) {
@@ -482,6 +552,43 @@ async function revokeUserPasskey({ organisationId, userId, credentialId, revoked
   return { success: true, credentialId };
 }
 
+/**
+ * Revoke or purge all passkeys for an authenticated user.
+ */
+async function revokeAllUserPasskeys({ organisationId, userId, revokedBy, hardDelete = true }) {
+  if (hardDelete) {
+    const result = await PasskeyCredential.deleteMany({
+      organisationId,
+      userId,
+    });
+    return { success: true, count: result.deletedCount };
+  }
+
+  const result = await PasskeyCredential.updateMany(
+    {
+      organisationId,
+      userId,
+      status: 'ACTIVE',
+    },
+    {
+      $set: {
+        status: 'REVOKED',
+        revokedAt: new Date(),
+        revokedBy: revokedBy || userId,
+      },
+    }
+  );
+
+  await recordPasskeyAudit({
+    organisationId,
+    actorUserId: userId,
+    action: 'ALL_PASSKEYS_REVOKED',
+    result: 'SUCCESS',
+  });
+
+  return { success: true, count: result.modifiedCount };
+}
+
 module.exports = {
   getWebAuthnConfig,
   generatePasskeyRegistrationOptions,
@@ -490,4 +597,6 @@ module.exports = {
   verifyPasskeyAuthentication,
   listUserPasskeys,
   revokeUserPasskey,
+  revokeAllUserPasskeys,
+  renameUserPasskey,
 };

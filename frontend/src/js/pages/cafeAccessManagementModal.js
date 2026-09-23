@@ -8,7 +8,7 @@
 
 import { apiGet, apiPost } from '../apiClient.js';
 import { showToast } from '../components.js';
-import { openQrViewerModal, downloadQrSvg, printQrCard } from '../utils/qrCodeGen.js';
+import { openQrViewerModal, downloadQrSvg, downloadQrPng, printQrCard } from '../utils/qrCodeGen.js';
 
 function escHtml(str) {
   if (str === null || str === undefined) return '';
@@ -164,26 +164,54 @@ function renderAccessModalContent(container, data) {
                   High-entropy opaque gateway token. Version: <strong>v${data.qrVersion || 1}</strong>
                 </div>
               </div>
-              <span class="status info" style="font-size:10px;font-weight:700;">v${data.qrVersion || 1} ACTIVE</span>
+              ${data.qrEnabled
+                ? `<span class="status info" style="font-size:10px;font-weight:700;">v${data.qrVersion || 1} ACTIVE</span>`
+                : `<span class="status danger" style="font-size:10px;font-weight:700;">v${data.qrVersion || 1} REVOKED</span>`
+              }
             </div>
+
+            ${!data.qrEnabled ? `
+              <div class="alert danger" style="margin-bottom:12px;padding:10px 14px;border-radius:8px;background:rgba(220,38,38,0.15);border:1px solid var(--danger, #dc2626);color:#fca5a5;font-size:12.5px;">
+                ⚠️ <strong>QR Access Revoked:</strong> Scanning this QR or using its gateway link is currently disabled.
+                ${data.qrRevokeReason ? ` Reason: <em>${escHtml(data.qrRevokeReason)}</em>` : ''}
+              </div>
+            ` : ''}
 
             <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-sunken, #121110);border:1px solid var(--line-strong, #3d3935);border-radius:8px;padding:12px 18px;gap:12px;flex-wrap:wrap;">
               <div style="font-size:12px;color:var(--muted);flex:1;">
                 Generated: ${data.qrCreatedAt ? new Date(data.qrCreatedAt).toLocaleDateString('en-IN') : 'At Creation'}
                 ${data.qrLastUsedAt ? ` · Last Scanned: ${new Date(data.qrLastUsedAt).toLocaleDateString('en-IN')}` : ' · Never Scanned'}
+                ${data.qrRevokedAt ? ` · Revoked: ${new Date(data.qrRevokedAt).toLocaleDateString('en-IN')}` : ''}
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                ${data.qrUrl ? `
+                ${data.qrUrl && data.qrEnabled ? `
                   <button class="btn btn-xs btn-primary" id="acc-view-qr-btn" type="button">View QR</button>
-                  <button class="btn btn-xs btn-secondary" id="acc-fs-qr-btn" type="button">Full Screen</button>
-                  <button class="btn btn-xs btn-secondary" id="acc-dl-qr-btn" type="button">Download</button>
-                  <button class="btn btn-xs btn-secondary" id="acc-print-qr-btn" type="button">Print Card</button>
+                  <button class="btn btn-xs btn-secondary" id="acc-copy-qr-link-btn" type="button">Copy Link</button>
+                  <button class="btn btn-xs btn-secondary" id="acc-dl-qr-btn" type="button">SVG</button>
+                  <button class="btn btn-xs btn-secondary" id="acc-dl-png-btn" type="button">PNG</button>
+                  <button class="btn btn-xs btn-secondary" id="acc-print-qr-btn" type="button">Print Pack</button>
+                  <button class="btn btn-xs btn-secondary" id="acc-revoke-qr-btn" type="button" style="color:var(--danger, #ef4444);">Revoke QR</button>
                 ` : ''}
-                <button class="btn btn-xs btn-secondary" id="acc-rotate-qr-btn" type="button" style="color:var(--danger, #ef4444);">
-                  ↻ Regenerate QR
+                <button class="btn btn-xs btn-secondary" id="acc-rotate-qr-btn" type="button" style="color:var(--bronze-400, #d4a359);">
+                  ${data.qrEnabled ? '↻ Rotate QR' : '↻ Regenerate Active QR'}
                 </button>
               </div>
             </div>
+
+            <!-- QR Lifecycle History Timeline -->
+            ${data.qrHistory && data.qrHistory.length > 0 ? `
+              <div style="margin-top:12px;border-top:1px solid var(--line, #33302c);padding-top:10px;">
+                <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:6px;">Credential Lifecycle History</div>
+                <div style="display:flex;flex-direction:column;gap:6px;max-height:100px;overflow-y:auto;">
+                  ${data.qrHistory.map(h => `
+                    <div style="font-size:11px;color:var(--muted);display:flex;justify-content:space-between;background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;">
+                      <span><strong>v${h.version} [${escHtml(h.action)}]</strong> — ${escHtml(h.reason || 'No reason')}</span>
+                      <span>${h.actionAt ? new Date(h.actionAt).toLocaleDateString('en-IN') : ''}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
           </div>
 
           <!-- Card 3: Dedicated Login Link -->
@@ -316,12 +344,44 @@ function renderAccessModalContent(container, data) {
     downloadQrSvg(data.qrUrl, { filename: `ZAMORIN_${String(data.cafeId).replace(/[^A-Za-z0-9_-]/g, '')}_QR_V${data.qrVersion || 1}.svg` });
   });
 
-  // Print Card
+  // Download QR PNG
+  container.querySelector('#acc-dl-png-btn')?.addEventListener('click', () => {
+    downloadQrPng(data.qrUrl, { filename: `ZAMORIN_${String(data.cafeId).replace(/[^A-Za-z0-9_-]/g, '')}_QR_V${data.qrVersion || 1}.png`, size: 600 });
+  });
+
+  // Print Card / Pack
   container.querySelector('#acc-print-qr-btn')?.addEventListener('click', () => {
     printQrCard({ cafeName: data.cafeName, cafeId: data.cafeId, qrUrl: data.qrUrl, qrVersion: data.qrVersion });
   });
 
-  // Copy Link
+  // Copy QR Link
+  container.querySelector('#acc-copy-qr-link-btn')?.addEventListener('click', () => {
+    if (data.qrUrl && navigator.clipboard) {
+      navigator.clipboard.writeText(data.qrUrl);
+      showToast('Café QR gateway URL copied to clipboard!', 'info');
+    }
+  });
+
+  // Revoke QR
+  container.querySelector('#acc-revoke-qr-btn')?.addEventListener('click', async () => {
+    const confirm = window.confirm(
+      'REVOCATION WARNING: Revoking the QR access credential will immediately disable scanning and prevent any operator from accessing this café via QR.\n\nDo you want to revoke this QR credential?'
+    );
+    if (!confirm) return;
+
+    const reason = window.prompt('Please provide a reason for revocation (optional):') || '';
+    try {
+      await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/revoke-qr`, {
+        body: { reason },
+      });
+      showToast(`QR Code revoked for ${data.cafeName}. Gateway disabled.`, 'warning');
+      loadAndRenderAccessModal(container, data.cafeId);
+    } catch (err) {
+      showToast(err.message || 'Failed to revoke QR credential.', 'danger');
+    }
+  });
+
+  // Copy Link (Direct Login URL)
   container.querySelector('#acc-copy-link-btn')?.addEventListener('click', () => {
     if (data.linkUrl && navigator.clipboard) {
       navigator.clipboard.writeText(data.linkUrl);

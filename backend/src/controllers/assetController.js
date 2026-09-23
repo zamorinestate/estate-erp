@@ -32,6 +32,33 @@ const {
 } = require('../models/SequenceCounter');
 
 const {
+  AssetBreakdownLog,
+} = require('../models/AssetBreakdownLog');
+
+const {
+  CalibrationRecord,
+} = require('../models/CalibrationRecord');
+
+const {
+  BusinessContract,
+} = require('../models/BusinessContract');
+
+const {
+  InsurancePolicy,
+} = require('../models/InsurancePolicy');
+
+const {
+  InsuranceClaim,
+} = require('../models/InsuranceClaim');
+
+const {
+  MasterDuplicateCandidate,
+} = require('../models/MasterDuplicateCandidate');
+
+const ownerAssetReliabilityService = require('../services/ownerAssetReliabilityService');
+const { assetMaintenanceService } = require('../services/assetMaintenanceService');
+
+const {
   asyncHandler,
 } = require('../utils/asyncHandler');
 
@@ -59,6 +86,7 @@ function parsePositiveInteger(value, fallback, maximum) {
 
 function assertCafeAccess(request, cafeId) {
   if (!cafeId) return;
+  if (request.auth.role === 'MASTER' || request.auth.role === 'OWNER') return;
   const isCafeOps = request.auth.workspaceMode === 'CAFE_OPERATIONS' ||
     request.headers?.['x-workspace-mode'] === 'CAFE_OPERATIONS' ||
     (request.auth.deviceContext?.deviceClass === 'CAFE_OWNED' && !!request.auth.deviceContext?.boundCafeId);
@@ -70,7 +98,6 @@ function assertCafeAccess(request, cafeId) {
       'Cross-café access is denied. You are not authorized for the requested café.'
     );
   }
-  if (request.auth.role === 'MASTER' || request.auth.role === 'OWNER') return;
   if (effectiveCafe && effectiveCafe !== cafeId.trim().toUpperCase()) {
     throw new ApiError(
       403,
@@ -83,7 +110,10 @@ function assertCafeAccess(request, cafeId) {
 // 1. GET /api/v1/assets/overview
 const getAssetOverview = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const effectiveCafe = resolveEffectiveCafeScope(request);
+  let effectiveCafe = null;
+  if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
+    effectiveCafe = resolveEffectiveCafeScope(request);
+  }
   const filter = { organisationId };
 
   if (effectiveCafe) {
@@ -369,16 +399,60 @@ const getAssetDetail = asyncHandler(async (request, response) => {
 
   assertCafeAccess(request, asset.cafeId);
 
-  const workOrders = await WorkOrder.find({
-    assetId: normAssetId,
-    organisationId: request.auth.organisationId,
-  }).sort({ createdAt: -1 }).lean();
+  const [workOrders, breakdowns, calibrations, amcContracts, claims, metrics, replacement, dupCandidate, maintenanceHistory, maintenancePlans] =
+    await Promise.all([
+      WorkOrder.find({
+        assetId: normAssetId,
+        organisationId: request.auth.organisationId,
+      }).sort({ createdAt: -1 }).lean(),
+      AssetBreakdownLog.find({
+        assetId: normAssetId,
+        organisationId: request.auth.organisationId,
+      }).sort({ reportedAt: -1 }).limit(15).lean().catch(() => []),
+      CalibrationRecord.find({
+        assetId: normAssetId,
+        organisationId: request.auth.organisationId,
+      }).sort({ calibrationDate: -1 }).limit(10).lean().catch(() => []),
+      BusinessContract.find({
+        organisationId: request.auth.organisationId,
+        contractType: 'AMC_MAINTENANCE',
+        $or: [{ counterpartyId: asset.serviceProviderId || '' }, { title: new RegExp(normAssetId, 'i') }],
+      }).lean().catch(() => []),
+      InsuranceClaim.find({
+        organisationId: request.auth.organisationId,
+        assetId: normAssetId,
+      }).lean().catch(() => []),
+      ownerAssetReliabilityService.getAssetReliabilityMetrics(request.auth.organisationId, normAssetId).catch(() => null),
+      ownerAssetReliabilityService.getReplacementDecisionIndicators(request.auth.organisationId, normAssetId).catch(() => null),
+      MasterDuplicateCandidate.findOne({
+        organisationId: request.auth.organisationId,
+        domainCode: 'ASSET',
+        $or: [{ masterRecordIdA: normAssetId }, { masterRecordIdB: normAssetId }],
+      }).lean().catch(() => null),
+      MaintenanceJob.find({
+        assetId: normAssetId,
+        organisationId: request.auth.organisationId,
+      }).sort({ completedAt: -1, createdAt: -1 }).lean().catch(() => []),
+      MaintenancePlan.find({
+        assetId: normAssetId,
+        organisationId: request.auth.organisationId,
+      }).sort({ nextDueDate: 1 }).lean().catch(() => []),
+    ]);
 
   return response.status(200).json({
     success: true,
     data: {
       asset,
       workOrders,
+      breakdowns: breakdowns || [],
+      calibrations: calibrations || [],
+      amcContracts: amcContracts || [],
+      insuranceClaims: claims || [],
+      reliabilityMetrics: metrics || null,
+      replacementIndicators: replacement || null,
+      duplicateCandidate: dupCandidate || null,
+      maintenanceHistory: maintenanceHistory || [],
+      maintenancePlans: maintenancePlans || [],
     },
     correlationId: request.correlationId || null,
   });
@@ -706,9 +780,25 @@ const updateWorkOrder = asyncHandler(async (request, response) => {
 
 // 10. Maintenance Plans Endpoints
 const listMaintenancePlans = asyncHandler(async (request, response) => {
-  const plans = await MaintenancePlan.find({
-    organisationId: request.auth.organisationId,
-  }).sort({ nextDueDate: 1 }).lean();
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view maintenance plans.');
+  }
+
+  const query = { organisationId: request.auth.organisationId };
+  if (request.query.cafeId && request.query.cafeId !== 'ALL') {
+    const normCafe = normalizeId(request.query.cafeId);
+    assertCafeAccess(request, normCafe);
+    query.$or = [{ cafeId: normCafe }, { cafeId: null }];
+  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
+    const effectiveCafe = resolveEffectiveCafeScope(request);
+    if (effectiveCafe) {
+      query.$or = [{ cafeId: effectiveCafe }, { cafeId: null }];
+    } else if (request.auth.assignedCafeIds?.length) {
+      query.$or = [{ cafeId: { $in: request.auth.assignedCafeIds } }, { cafeId: null }];
+    }
+  }
+
+  const plans = await MaintenancePlan.find(query).sort({ nextDueDate: 1 }).lean();
 
   return response.status(200).json({
     success: true,
@@ -718,9 +808,34 @@ const listMaintenancePlans = asyncHandler(async (request, response) => {
 });
 
 const createMaintenancePlan = asyncHandler(async (request, response) => {
-  const { name, assetId, category, frequencyType = 'QUARTERLY', intervalDays = 90, startDate, jobPlan } = request.body || {};
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to create maintenance plans.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Owner role has read-only oversight and cannot create maintenance plans.');
+  }
+
+  const { name, assetId: rawAssetId, category, frequencyType = 'QUARTERLY', intervalDays = 90, startDate, jobPlan, cafeId: rawCafeId } = request.body || {};
 
   if (!name || !name.trim()) throw new ApiError(400, 'PLAN_NAME_REQUIRED', 'Plan name is required.');
+
+  let assetId = rawAssetId ? normalizeId(rawAssetId) : null;
+  let targetCafeId = rawCafeId ? normalizeId(rawCafeId) : null;
+
+  if (assetId) {
+    const asset = await Asset.findOne({
+      assetId,
+      organisationId: request.auth.organisationId,
+    }).lean();
+    if (!asset) throw new ApiError(404, 'ASSET_NOT_FOUND', 'Asset not found.');
+    assertCafeAccess(request, asset.cafeId);
+    targetCafeId = asset.cafeId;
+  } else if (targetCafeId) {
+    assertCafeAccess(request, targetCafeId);
+  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
+    const effectiveCafe = resolveEffectiveCafeScope(request);
+    if (effectiveCafe) targetCafeId = effectiveCafe;
+  }
 
   const planId = await SequenceCounter.generateId({
     organisationId: request.auth.organisationId,
@@ -729,18 +844,33 @@ const createMaintenancePlan = asyncHandler(async (request, response) => {
     minimumDigits: 4,
   });
 
+  const startStr = startDate
+    ? (typeof startDate === 'string' && startDate.length >= 10 ? startDate.slice(0, 10) : new Date(startDate).toISOString().split('T')[0])
+    : new Date().toISOString().split('T')[0];
+
   const plan = await MaintenancePlan.create({
     planId,
     organisationId: request.auth.organisationId,
+    cafeId: targetCafeId,
+    assetId,
     name: name.trim(),
-    assetId: assetId ? normalizeId(assetId) : null,
-    category: category ? category.toUpperCase() : null,
+    category: category ? String(category).trim().toUpperCase() : 'BREWING_EQUIPMENT',
     frequencyType,
     intervalDays: Number(intervalDays) || 90,
-    startDate: startDate || new Date().toISOString().split('T')[0],
-    nextDueDate: startDate || new Date().toISOString().split('T')[0],
-    jobPlan: jobPlan || { title: 'Standard Preventive Maintenance SOP', tasks: [] },
+    startDate: startStr,
+    nextDueDate: startStr,
+    jobPlan: typeof jobPlan === 'object' ? jobPlan : { title: jobPlan || 'Standard Preventive Maintenance SOP', tasks: [] },
+    isActive: true,
     createdByUserId: request.auth.userId,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'ASSETS',
+    action: 'MAINTENANCE_PLAN_CREATED',
+    entityType: 'MaintenancePlan',
+    entityId: plan.planId,
+    metadata: { name: plan.name, frequencyType: plan.frequencyType, assetId },
   });
 
   return response.status(201).json({
@@ -751,8 +881,276 @@ const createMaintenancePlan = asyncHandler(async (request, response) => {
   });
 });
 
+// 11. Maintenance Backlog & Queue
+const getMaintenanceBacklog = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view maintenance schedules.');
+  }
+
+  let targetCafe = null;
+  if (request.query.cafeId && request.query.cafeId !== 'ALL') {
+    const normCafe = normalizeId(request.query.cafeId);
+    assertCafeAccess(request, normCafe);
+    targetCafe = normCafe;
+  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
+    targetCafe = resolveEffectiveCafeScope(request);
+  }
+
+  const backlog = await assetMaintenanceService.getMaintenanceBacklog({
+    organisationId: request.auth.organisationId,
+    cafeId: targetCafe,
+    statusFilter: request.query.status || null,
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { backlog },
+    correlationId: request.correlationId || null,
+  });
+});
+
+// 12. Maintenance Service History
+const getMaintenanceHistory = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view maintenance history.');
+  }
+
+  const filter = { organisationId: request.auth.organisationId };
+  if (request.query.cafeId && request.query.cafeId !== 'ALL') {
+    const normCafe = normalizeId(request.query.cafeId);
+    assertCafeAccess(request, normCafe);
+    filter.cafeId = normCafe;
+  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
+    const effectiveCafe = resolveEffectiveCafeScope(request);
+    if (effectiveCafe) {
+      filter.cafeId = effectiveCafe;
+    } else if (request.auth.assignedCafeIds?.length) {
+      filter.cafeId = { $in: request.auth.assignedCafeIds };
+    }
+  }
+
+  const rawAssetId = request.params.assetId || request.query.assetId;
+  if (rawAssetId) {
+    const normAssetId = normalizeId(rawAssetId);
+    const asset = await Asset.findOne({
+      assetId: normAssetId,
+      organisationId: request.auth.organisationId,
+    }).lean();
+    if (!asset) throw new ApiError(404, 'ASSET_NOT_FOUND', 'Asset not found.');
+    assertCafeAccess(request, asset.cafeId);
+    filter.assetId = normAssetId;
+  }
+
+  const history = await MaintenanceJob.find(filter)
+    .sort({ completedAt: -1, createdAt: -1 })
+    .lean();
+
+  return response.status(200).json({
+    success: true,
+    data: { history },
+    correlationId: request.correlationId || null,
+  });
+});
+
+// 13. Complete Maintenance Job
+const completeMaintenanceJob = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to complete maintenance.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Owner role has read-only oversight and cannot complete maintenance.');
+  }
+
+  const normJobId = request.params.jobId ? normalizeId(request.params.jobId) : null;
+  const { assetId: rawAssetId, planId: rawPlanId } = request.body || {};
+  let assetId = rawAssetId ? normalizeId(rawAssetId) : null;
+
+  if (!assetId && normJobId) {
+    const existingJob = await MaintenanceJob.findOne({
+      jobId: normJobId,
+      organisationId: request.auth.organisationId,
+    }).lean();
+    if (existingJob) assetId = existingJob.assetId;
+  }
+
+  if (!assetId) {
+    throw new ApiError(400, 'ASSET_ID_REQUIRED', 'Asset ID is required to complete maintenance.');
+  }
+
+  const asset = await Asset.findOne({
+    assetId,
+    organisationId: request.auth.organisationId,
+  }).lean();
+  if (!asset) throw new ApiError(404, 'ASSET_NOT_FOUND', 'Asset not found.');
+  assertCafeAccess(request, asset.cafeId);
+
+  const result = await assetMaintenanceService.completeMaintenance({
+    organisationId: request.auth.organisationId,
+    assetId,
+    jobId: normJobId,
+    planId: rawPlanId ? normalizeId(rawPlanId) : null,
+    payload: request.body || {},
+    user: request.auth,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'ASSETS',
+    action: 'MAINTENANCE_COMPLETED',
+    entityType: 'Asset',
+    entityId: assetId,
+    metadata: {
+      jobId: result.job?.jobId,
+      nextMaintenanceDue: result.nextMaintenanceDue,
+      costPaisa: result.job?.costPaisa,
+    },
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Maintenance completed and record persisted successfully.',
+    data: result,
+    correlationId: request.correlationId || null,
+  });
+});
+
+// 14. Reschedule Maintenance Job
+const rescheduleMaintenanceJob = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to reschedule maintenance.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Owner role has read-only oversight and cannot reschedule maintenance.');
+  }
+
+  const normJobId = request.params.jobId ? normalizeId(request.params.jobId) : null;
+  const { assetId: rawAssetId, planId: rawPlanId, newDueDate, reason } = request.body || {};
+  let assetId = rawAssetId ? normalizeId(rawAssetId) : null;
+
+  if (!assetId && normJobId) {
+    const existingJob = await MaintenanceJob.findOne({
+      jobId: normJobId,
+      organisationId: request.auth.organisationId,
+    }).lean();
+    if (existingJob) assetId = existingJob.assetId;
+  }
+
+  if (!assetId) {
+    throw new ApiError(400, 'ASSET_ID_REQUIRED', 'Asset ID is required to reschedule maintenance.');
+  }
+
+  const asset = await Asset.findOne({
+    assetId,
+    organisationId: request.auth.organisationId,
+  }).lean();
+  if (!asset) throw new ApiError(404, 'ASSET_NOT_FOUND', 'Asset not found.');
+  assertCafeAccess(request, asset.cafeId);
+
+  const result = await assetMaintenanceService.rescheduleMaintenance({
+    organisationId: request.auth.organisationId,
+    assetId,
+    planId: rawPlanId ? normalizeId(rawPlanId) : null,
+    jobId: normJobId,
+    newDueDate,
+    reason,
+    user: request.auth,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'ASSETS',
+    action: 'MAINTENANCE_RESCHEDULED',
+    entityType: 'Asset',
+    entityId: assetId,
+    metadata: {
+      oldDueDate: result.oldDueDate,
+      newDueDate: result.newDueDate,
+      reason,
+    },
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Maintenance rescheduled successfully.',
+    data: result,
+    correlationId: request.correlationId || null,
+  });
+});
+
+// 15. Cancel Maintenance Plan
+const cancelMaintenancePlan = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to cancel maintenance plans.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Owner role has read-only oversight and cannot cancel maintenance plans.');
+  }
+
+  const normPlanId = normalizeId(request.params.planId);
+  const { reason } = request.body || {};
+
+  const plan = await MaintenancePlan.findOne({
+    planId: normPlanId,
+    organisationId: request.auth.organisationId,
+  }).lean();
+  if (!plan) throw new ApiError(404, 'PLAN_NOT_FOUND', 'Maintenance plan not found.');
+  if (plan.cafeId) assertCafeAccess(request, plan.cafeId);
+
+  const result = await assetMaintenanceService.cancelMaintenancePlan({
+    organisationId: request.auth.organisationId,
+    planId: normPlanId,
+    reason,
+    user: request.auth,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'ASSETS',
+    action: 'MAINTENANCE_PLAN_CANCELLED',
+    entityType: 'MaintenancePlan',
+    entityId: normPlanId,
+    metadata: { reason },
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Maintenance plan cancelled successfully.',
+    data: { plan: result },
+    correlationId: request.correlationId || null,
+  });
+});
+
+// 16. Evaluate Maintenance Alerts
+const runMaintenanceAlertEvaluation = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to trigger alert evaluations.');
+  }
+  let targetCafe = null;
+  if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
+    targetCafe = resolveEffectiveCafeScope(request);
+  }
+  const results = await assetMaintenanceService.evaluateMaintenanceAlerts({
+    organisationId: request.auth.organisationId,
+    cafeId: targetCafe,
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Maintenance alerts evaluated successfully.',
+    data: results,
+    correlationId: request.correlationId || null,
+  });
+});
+
 // Backward compatibility: Log maintenance job
 const logMaintenanceJob = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to log maintenance jobs.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Owner role has read-only oversight and cannot log maintenance jobs.');
+  }
+
   const normAssetId = normalizeId(request.params.assetId);
   const asset = await Asset.findOne({
     assetId: normAssetId,
@@ -789,6 +1187,15 @@ const logMaintenanceJob = asyncHandler(async (request, response) => {
   if (nextMaintenanceDue) asset.nextMaintenanceDue = nextMaintenanceDue;
   await asset.save();
 
+  await recordRequestAudit({
+    request,
+    module: 'ASSETS',
+    action: 'MAINTENANCE_JOB_LOGGED',
+    entityType: 'Asset',
+    entityId: normAssetId,
+    metadata: { jobId: job.jobId },
+  });
+
   return response.status(201).json({
     success: true,
     message: 'Maintenance job logged successfully.',
@@ -798,6 +1205,13 @@ const logMaintenanceJob = asyncHandler(async (request, response) => {
 });
 
 const recordInspection = asyncHandler(async (request, response) => {
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to record inspections.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Owner role has read-only oversight and cannot record inspections.');
+  }
+
   const { assetId: rawAssetId, verdict = 'PASS', notes = '' } = request.body || {};
   const normAssetId = normalizeId(rawAssetId);
   if (!normAssetId) throw new ApiError(400, 'ASSET_ID_REQUIRED', 'Asset ID is required.');
@@ -867,6 +1281,12 @@ module.exports = {
   updateWorkOrder,
   listMaintenancePlans,
   createMaintenancePlan,
+  getMaintenanceBacklog,
+  getMaintenanceHistory,
+  completeMaintenanceJob,
+  rescheduleMaintenanceJob,
+  cancelMaintenancePlan,
+  runMaintenanceAlertEvaluation,
   logMaintenanceJob,
   recordInspection,
 };

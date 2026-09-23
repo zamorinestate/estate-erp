@@ -246,6 +246,7 @@ const customerSchema = new mongoose.Schema(
     versionKey: 'version',
     optimisticConcurrency: true,
     collection: 'customers',
+    strict: false,
   }
 );
 

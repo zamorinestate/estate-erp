@@ -24,6 +24,81 @@ const { generateUniversalQr } = require('./universalQrService');
 // In-memory mutex locks for concurrency-safe sequential invoice numbering
 const activeSequenceLocks = new Map();
 
+// Canonical financial policy versions (§47, §48, REC-16 Add-On §15)
+const TAX_RULE_VERSION = 'GST_ROUNDING_V1_2026';
+const ROUNDING_POLICY_VERSION = 'ZAMORIN_PAYABLE_ROUNDING_50P_V1';
+
+/**
+ * Canonical monetary rounding helper (REC-16 §7, §8).
+ * Enforces exact arithmetic half-up rounding in minor units (paisa).
+ * Guaranteed free of JavaScript binary floating-point representation drift (e.g. 0.025 -> 0.03).
+ */
+function roundToPaisa(amountInPaisa) {
+  const n = Number(amountInPaisa || 0);
+  if (!Number.isFinite(n) || n === 0) return 0;
+  const sign = n < 0 ? -1 : 1;
+  const absVal = Math.abs(n);
+  // Adding 1e-9 guarantees IEEE 754 precision issues (such as 2.4999999999999996) do not round down.
+  return sign * Math.floor(absVal + 0.5 + 1e-9);
+}
+
+/**
+ * Convert rupee currency amount to integer paisa.
+ */
+function toPaisa(rupees) {
+  return roundToPaisa(Number(rupees || 0) * 100);
+}
+
+/**
+ * Convert integer paisa to formatted rupee decimal string (2 decimal places).
+ */
+function fromPaisa(paisa) {
+  return (roundToPaisa(paisa) / 100).toFixed(2);
+}
+
+/**
+ * Canonical Customer-Payable Rounding Engine to practical ₹0.50 increments (REC-16 Add-On §1-§11).
+ *
+ * This policy applies strictly AFTER taxable value and all statutory tax components (CGST, SGST, IGST, Cess)
+ * are calculated and finalized. It never mutates statutory tax components.
+ *
+ * Rules:
+ *   remainder = preRoundingTotalPaisa % 100
+ *   remainder <= 25           => round down to ₹X.00 (target = 0)
+ *   26 <= remainder <= 75     => round to ₹X.50 (target = 50)
+ *   remainder >= 76           => round up to ₹(X+1).00 (target = 100)
+ *
+ * Guaranteed Invariant:
+ *   ABS(roundOffPaisa) <= 25
+ *   preRoundingTotalPaisa + roundOffPaisa === finalPayablePaisa
+ */
+function calculateCustomerPayableRounding50P(preRoundingTotalPaisa) {
+  const pre = Math.round(Number(preRoundingTotalPaisa || 0));
+  const isNegative = pre < 0;
+  const absPre = Math.abs(pre);
+  const remainder = absPre % 100;
+  let targetRemainder = 0;
+
+  if (remainder <= 25) {
+    targetRemainder = 0;
+  } else if (remainder <= 75) {
+    targetRemainder = 50;
+  } else {
+    targetRemainder = 100;
+  }
+
+  const absFinal = Math.floor(absPre / 100) * 100 + targetRemainder;
+  const finalPayablePaisa = isNegative ? -absFinal : absFinal;
+  const roundOffPaisa = finalPayablePaisa - pre;
+
+  return {
+    preRoundingTotalPaisa: pre,
+    roundOffPaisa,
+    finalPayablePaisa,
+    roundingPolicyVersion: ROUNDING_POLICY_VERSION,
+  };
+}
+
 /**
  * Determine Indian Financial Year from date (e.g. April 2026 to March 2027 => "2026-27")
  */
@@ -115,7 +190,13 @@ function numberToIndianRupeeWords(amountPaisa) {
 /**
  * Calculate CBIC tax amounts for given line items
  */
-function calculateGstTaxes({ lines = [], supplyType = 'INTRA_STATE', defaultGstRate = 5 }) {
+function calculateGstTaxes({
+  lines = [],
+  supplyType = 'INTRA_STATE',
+  defaultGstRate = 5,
+  customerPayableRounding = false,
+  payableRoundingPolicy = 'NEAREST_RUPEE',
+} = {}) {
   const normSupplyType = supplyType === 'INTER_STATE' ? 'INTER_STATE' : 'INTRA_STATE';
   let totalTaxablePaisa = 0;
   let totalCgstPaisa = 0;
@@ -124,9 +205,9 @@ function calculateGstTaxes({ lines = [], supplyType = 'INTRA_STATE', defaultGstR
 
   const calculatedLines = lines.map((item, index) => {
     const quantity = Math.max(0.001, Number(item.quantity || 1));
-    const ratePaisa = Math.round(Number(item.ratePaisa || item.unitPricePaisa || 0));
-    const grossAmountPaisa = Math.round(quantity * ratePaisa);
-    const discountPaisa = Math.min(grossAmountPaisa, Math.round(Number(item.discountPaisa || 0)));
+    const ratePaisa = roundToPaisa(item.ratePaisa ?? item.unitPricePaisa ?? 0);
+    const grossAmountPaisa = roundToPaisa(quantity * ratePaisa);
+    const discountPaisa = Math.min(grossAmountPaisa, Math.max(0, roundToPaisa(item.discountPaisa || 0)));
     const taxableAmountPaisa = Math.max(0, grossAmountPaisa - discountPaisa);
 
     const gstRate = Number(item.gstRatePercent !== undefined ? item.gstRatePercent : defaultGstRate);
@@ -140,11 +221,11 @@ function calculateGstTaxes({ lines = [], supplyType = 'INTRA_STATE', defaultGstR
     if (normSupplyType === 'INTRA_STATE') {
       cgstRate = gstRate / 2;
       sgstRate = gstRate / 2;
-      cgstAmount = Math.round((taxableAmountPaisa * cgstRate) / 100);
-      sgstAmount = Math.round((taxableAmountPaisa * sgstRate) / 100);
+      cgstAmount = roundToPaisa((taxableAmountPaisa * cgstRate) / 100);
+      sgstAmount = roundToPaisa((taxableAmountPaisa * sgstRate) / 100);
     } else {
       igstRate = gstRate;
-      igstAmount = Math.round((taxableAmountPaisa * igstRate) / 100);
+      igstAmount = roundToPaisa((taxableAmountPaisa * igstRate) / 100);
     }
 
     const totalItemAmountPaisa = taxableAmountPaisa + cgstAmount + sgstAmount + igstAmount;
@@ -179,9 +260,22 @@ function calculateGstTaxes({ lines = [], supplyType = 'INTRA_STATE', defaultGstR
   const totalTaxPaisa = totalCgstPaisa + totalSgstPaisa + totalIgstPaisa;
   const unroundedTotalPaisa = totalTaxablePaisa + totalTaxPaisa;
 
-  // Round off to nearest 1 Rupee (100 Paisa)
-  const grandTotalPaisa = Math.round(unroundedTotalPaisa / 100) * 100;
-  const roundOffPaisa = grandTotalPaisa - unroundedTotalPaisa;
+  // Round-off calculation:
+  // REC-16 Add-On: 50-paise customer-payable rounding when enabled.
+  // Statutory B2B Tax Invoices default to nearest rupee under Section 170.
+  let grandTotalPaisa = unroundedTotalPaisa;
+  let roundOffPaisa = 0;
+  let effectivePolicy = payableRoundingPolicy;
+
+  if (customerPayableRounding || payableRoundingPolicy === 'ZAMORIN_50_PAISE_CUSTOM') {
+    effectivePolicy = 'ZAMORIN_50_PAISE_CUSTOM';
+    const payable = calculateCustomerPayableRounding50P(unroundedTotalPaisa);
+    grandTotalPaisa = payable.finalPayablePaisa;
+    roundOffPaisa = payable.roundOffPaisa;
+  } else if (payableRoundingPolicy === 'NEAREST_RUPEE') {
+    grandTotalPaisa = Math.round(unroundedTotalPaisa / 100) * 100;
+    roundOffPaisa = grandTotalPaisa - unroundedTotalPaisa;
+  }
 
   // Aggregate HSN Summary
   const hsnMap = new Map();
@@ -221,11 +315,27 @@ function calculateGstTaxes({ lines = [], supplyType = 'INTRA_STATE', defaultGstR
       totalSgstPaisa,
       totalIgstPaisa,
       totalTaxPaisa,
+      preRoundingTotalPaisa: unroundedTotalPaisa,
       roundOffPaisa,
       grandTotalPaisa,
+      taxRuleVersion: TAX_RULE_VERSION,
+      roundingPolicyVersion: effectivePolicy === 'ZAMORIN_50_PAISE_CUSTOM' ? ROUNDING_POLICY_VERSION : 'SECTION_170_NEAREST_RUPEE',
     },
     amountInWords,
+    taxRuleVersion: TAX_RULE_VERSION,
+    roundingPolicyVersion: effectivePolicy === 'ZAMORIN_50_PAISE_CUSTOM' ? ROUNDING_POLICY_VERSION : 'SECTION_170_NEAREST_RUPEE',
   };
+}
+
+/**
+ * Single canonical entry point for POS and customer billing with 50-paise rounding enabled (REC-16 §40).
+ */
+function calculateCanonicalGst(options = {}) {
+  return calculateGstTaxes({
+    customerPayableRounding: true,
+    payableRoundingPolicy: 'ZAMORIN_50_PAISE_CUSTOM',
+    ...options,
+  });
 }
 
 /**
@@ -1242,10 +1352,97 @@ async function generateGstr1Summary({ organisationId, cafeId, fromDate, toDate }
   };
 }
 
+/**
+ * Non-destructive migration audit for existing finalized invoices and bills (REC-16 §38).
+ * Scans persisted historical documents and counts discrepancies against the canonical engine
+ * without mutating any historical financial records.
+ */
+async function auditExistingInvoices({ organisationId, cafeId } = {}) {
+  const query = {};
+  if (organisationId) query.organisationId = organisationId;
+  if (cafeId) query.cafeId = cafeId;
+
+  const invoices = await TaxInvoice.find(query).lean();
+  let totalInvoicesChecked = invoices.length;
+  let exactMatches = 0;
+  let onePaisaDifferences = 0;
+  let greaterThanOnePaisaDifferences = 0;
+  let missingComponentData = 0;
+  const discrepancies = [];
+
+  for (const inv of invoices) {
+    if (!inv.taxSummary || inv.taxSummary.totalCgstPaisa == null || inv.taxSummary.totalSgstPaisa == null) {
+      missingComponentData++;
+      discrepancies.push({
+        invoiceNumber: inv.invoiceNumber,
+        type: 'MISSING_COMPONENT_DATA',
+        details: 'TaxSummary or split components missing',
+      });
+      continue;
+    }
+
+    // Recompute with canonical engine
+    const lines = (inv.lineItems || []).map((li) => ({
+      ratePaisa: li.ratePaisa || (li.unitPricePaisa ? li.unitPricePaisa : (li.grossAmountPaisa / (li.quantity || 1))),
+      quantity: li.quantity || 1,
+      discountPaisa: li.discountPaisa || 0,
+      gstRatePercent: li.gstRatePercent !== undefined ? li.gstRatePercent : ((li.cgstRatePercent || 0) + (li.sgstRatePercent || 0) + (li.igstRatePercent || 0)),
+      hsnCode: li.hsnCode,
+    }));
+
+    const canonical = calculateGstTaxes({
+      lines,
+      supplyType: inv.supplyType || 'INTRA_STATE',
+      customerPayableRounding: inv.taxSummary.roundingPolicyVersion === ROUNDING_POLICY_VERSION,
+    });
+
+    const diffCgst = Math.abs((inv.taxSummary.totalCgstPaisa || 0) - canonical.taxSummary.totalCgstPaisa);
+    const diffSgst = Math.abs((inv.taxSummary.totalSgstPaisa || 0) - canonical.taxSummary.totalSgstPaisa);
+    const diffTax = Math.abs((inv.taxSummary.totalTaxPaisa || 0) - canonical.taxSummary.totalTaxPaisa);
+
+    if (diffCgst === 0 && diffSgst === 0 && diffTax === 0) {
+      exactMatches++;
+    } else if (diffTax === 1 || diffCgst === 1 || diffSgst === 1) {
+      onePaisaDifferences++;
+      discrepancies.push({
+        invoiceNumber: inv.invoiceNumber,
+        type: 'ONE_PAISA_DIFFERENCE',
+        storedTaxPaisa: inv.taxSummary.totalTaxPaisa,
+        canonicalTaxPaisa: canonical.taxSummary.totalTaxPaisa,
+      });
+    } else {
+      greaterThanOnePaisaDifferences++;
+      discrepancies.push({
+        invoiceNumber: inv.invoiceNumber,
+        type: 'GREATER_THAN_ONE_PAISA_DIFFERENCE',
+        storedTaxPaisa: inv.taxSummary.totalTaxPaisa,
+        canonicalTaxPaisa: canonical.taxSummary.totalTaxPaisa,
+      });
+    }
+  }
+
+  return {
+    totalInvoicesChecked,
+    exactMatches,
+    onePaisaDifferences,
+    greaterThanOnePaisaDifferences,
+    missingComponentData,
+    discrepancies,
+    historicalRecordsModified: 0,
+  };
+}
+
 module.exports = {
   getIndianFinancialYear,
   numberToIndianRupeeWords,
   calculateGstTaxes,
+  calculateCanonicalGst,
+  roundToPaisa,
+  toPaisa,
+  fromPaisa,
+  calculateCustomerPayableRounding50P,
+  TAX_RULE_VERSION,
+  ROUNDING_POLICY_VERSION,
   registerStatutoryCafeCode,
   resolveCompactCafeCode,
   formatShortFinancialYear,
@@ -1257,6 +1454,7 @@ module.exports = {
   saveTaxInvoiceWithRetry,
   renderStatutoryGstInvoicePdf,
   generateGstr1Summary,
+  auditExistingInvoices,
   _clearStatutoryRegistries,
   syncTaxInvoiceIndexes,
 };

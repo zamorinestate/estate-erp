@@ -711,13 +711,23 @@ function renderPinSetupView() {
 
           <div class="form-group" style="margin-bottom:16px;">
             <label class="label" style="font-weight:700;">New 6-Digit PIN*</label>
-            <input type="password" id="pin-new-code" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:20px; letter-spacing:6px; font-family:var(--font-mono);" required />
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-new-code" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:20px; letter-spacing:6px; font-family:var(--font-mono); padding-right:42px; box-sizing:border-box;" required />
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-new-code" title="Show PIN" aria-label="Show PIN">
+                ${icon("eye", 16)}
+              </button>
+            </div>
             <div style="font-size:11.5px; color:var(--muted); margin-top:4px;">Avoid simple numbers like 123456 or 000000.</div>
           </div>
 
           <div class="form-group" style="margin-bottom:24px;">
             <label class="label" style="font-weight:700;">Confirm 6-Digit PIN*</label>
-            <input type="password" id="pin-confirm-code" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="font-size:20px; letter-spacing:6px; font-family:var(--font-mono);" required />
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-confirm-code" class="input" placeholder="••••••" maxlength="6" inputmode="numeric" style="width:100%; font-size:20px; letter-spacing:6px; font-family:var(--font-mono); padding-right:42px; box-sizing:border-box;" required />
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-confirm-code" title="Show PIN" aria-label="Show PIN">
+                ${icon("eye", 16)}
+              </button>
+            </div>
           </div>
 
           <div style="display:flex; justify-content:flex-end;">
@@ -732,6 +742,21 @@ function renderPinSetupView() {
 function wirePinSetupView(root) {
   const form = root.querySelector("#pin-setup-form");
   if (!form) return;
+
+  root.querySelectorAll("[data-toggle-visibility]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetId = btn.getAttribute("data-toggle-visibility");
+      const input = root.querySelector(`#${targetId}`);
+      if (!input) return;
+      const isPwd = input.type === "password";
+      input.type = isPwd ? "text" : "password";
+      btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+      btn.setAttribute("title", isPwd ? "Hide PIN" : "Show PIN");
+      btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+    });
+  });
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();

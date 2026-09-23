@@ -3,6 +3,7 @@
 const VALID_NODE_ENVIRONMENTS = new Set([
   'development',
   'test',
+  'staging',
   'production',
 ]);
 
@@ -22,9 +23,13 @@ function requireConfiguredValue(name, value) {
   }
 
   const placeholderMarkers = [
-    'USERNAME',
-    'PASSWORD',
-    'CLUSTER.mongodb.net',
+    '<db_user>',
+    '<db_password>',
+    '<cluster_host>',
+    'YOUR_ATLAS_PASSWORD',
+    'DB_USER',
+    'DB_PASSWORD',
+    'ATLAS_CLUSTER_HOST',
     'replace-with',
     'changeme',
     'change-me',
@@ -143,29 +148,29 @@ function parseAllowedOrigins(
 function loadEnvironment(
   source = process.env
 ) {
-  const nodeEnvironment = String(
-    source.NODE_ENV || 'development'
+  const rawEnv = String(
+    source.NODE_ENV || (source.RENDER ? 'staging' : 'development')
   )
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
     .trim()
     .toLowerCase();
 
-  if (
-    !VALID_NODE_ENVIRONMENTS.has(
-      nodeEnvironment
-    )
-  ) {
-    throw new Error(
-      'NODE_ENV must be development, test or production.'
-    );
-  }
+  const nodeEnvironment = VALID_NODE_ENVIRONMENTS.has(rawEnv)
+    ? rawEnv
+    : (source.RENDER ? 'staging' : 'development');
 
   const production =
     nodeEnvironment === 'production';
+  const staging =
+    nodeEnvironment === 'staging';
 
   const privateStorageDriver = String(
     source.PRIVATE_STORAGE_DRIVER ||
-      (production ? 'cloudinary' : 'local')
+      (source.CLOUDINARY_CLOUD_NAME ? 'cloudinary' : 'local')
   )
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
     .trim()
     .toLowerCase();
 
@@ -236,6 +241,7 @@ function loadEnvironment(
   return Object.freeze({
     nodeEnvironment,
     production,
+    staging,
     host:
       String(source.HOST || '0.0.0.0')
         .trim() || '0.0.0.0',

@@ -63,8 +63,9 @@ export function runDeploymentReadinessCheck({ targetEnv = process.env.NODE_ENV |
     const renderContent = fs.readFileSync(renderPath, 'utf8');
     const hasDisk = renderContent.includes('disk:') && renderContent.includes('/var/data/zamorin_documents');
     const hasDocStorage = renderContent.includes('DOCUMENT_STORAGE_ROOT');
-    if (hasDisk && hasDocStorage) {
-      checks.push({ name: 'Render Blueprint (render.yaml)', status: 'PASS', detail: 'Backend service with 10GB persistent disk mount (/var/data/zamorin_documents) configured' });
+    const hasGridFs = renderContent.includes('DOCUMENT_STORAGE_PROVIDER') && renderContent.includes('gridfs');
+    if ((hasDisk && hasDocStorage) || hasGridFs) {
+      checks.push({ name: 'Render Blueprint (render.yaml)', status: 'PASS', detail: hasGridFs ? 'Backend service with Mongo GridFS document storage provider configured' : 'Backend service with 10GB persistent disk mount (/var/data/zamorin_documents) configured' });
     } else {
       issues.push('render.yaml missing persistent disk configuration or DOCUMENT_STORAGE_ROOT');
       checks.push({ name: 'Render Blueprint (render.yaml)', status: 'FAIL', detail: 'Missing persistent disk definition' });

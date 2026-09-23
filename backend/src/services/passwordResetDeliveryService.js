@@ -16,6 +16,17 @@ function getGmailProvider() {
   return new GmailEmailProvider();
 }
 
+function getDeliveryProviderStatus() {
+  const provider = getGmailProvider();
+  if (provider.isConfigured()) {
+    return 'HEALTHY';
+  }
+  if (isDevelopmentCodeLoggingEnabled() || process.env.NODE_ENV !== 'production') {
+    return 'EXTERNAL_CONFIGURATION_REQUIRED';
+  }
+  return 'MISCONFIGURED';
+}
+
 function isPasswordResetDeliveryAvailable() {
   if (isDevelopmentCodeLoggingEnabled()) {
     return true;
@@ -44,24 +55,27 @@ async function deliverPasswordResetCode({
     );
   }
 
+  const provider = getGmailProvider();
+  const providerConfigured = provider.isConfigured();
+
   if (isDevelopmentCodeLoggingEnabled()) {
     console.info(
-      '[PASSWORD_RESET_DEV] challenge=%s recipient=%s code=%s',
+      '[PASSWORD_RESET_DEV] sender=zamorinestatepvtltd.erp@gmail.com challenge=%s recipient=%s code=%s expires=5m',
       challengeId,
       recipientEmail,
       code
     );
 
-    return {
-      delivered: true,
-      channel: 'DEVELOPMENT_LOG',
-      providerMessageId: null,
-    };
+    if (!providerConfigured) {
+      return {
+        delivered: true,
+        channel: 'DEVELOPMENT_LOG',
+        providerMessageId: null,
+      };
+    }
   }
 
-  const provider = getGmailProvider();
-
-  if (!provider.isConfigured()) {
+  if (!providerConfigured) {
     return {
       delivered: false,
       channel: null,
@@ -81,7 +95,7 @@ async function deliverPasswordResetCode({
     '',
     `Your recovery code is: ${code}`,
     '',
-    'This code expires in 10 minutes.',
+    'This code expires in 5 minutes.',
     '',
     'If you did not request a password reset, you can ignore this email.',
     '',
@@ -111,7 +125,7 @@ async function deliverPasswordResetCode({
         ${safeCode}
       </div>
 
-      <p><strong>This code expires in 10 minutes.</strong></p>
+      <p><strong>This code expires in 5 minutes.</strong></p>
 
       <p>
         If you did not request a password reset, you can safely ignore
@@ -127,15 +141,24 @@ async function deliverPasswordResetCode({
   try {
     const result = await provider.sendEmail({
       to: recipientEmail,
+      from: 'Zamorin Cafe ERP <zamorinestatepvtltd.erp@gmail.com>',
+      replyTo: 'zamorinestatepvtltd.erp@gmail.com',
       subject,
       text,
       html,
       isDraft: false,
     });
 
+    console.info(
+      '[PASSWORD_RESET_DELIVERY] Successfully sent live recovery email to %s via %s (messageId: %s)',
+      recipientEmail,
+      result?.channel || 'GMAIL_SMTP',
+      result?.providerMessageId || 'N/A'
+    );
+
     return {
       delivered: Boolean(result?.delivered),
-      channel: 'GMAIL_API',
+      channel: result?.channel || 'GMAIL_API',
       providerMessageId:
         result?.providerMessageId || null,
     };
@@ -153,8 +176,50 @@ async function deliverPasswordResetCode({
   }
 }
 
+/**
+ * Derives trusted application origin strictly from configured environment variables.
+ * Never derives from untrusted incoming request headers (Host, X-Forwarded-Host)
+ * to prevent password reset link poisoning attacks.
+ */
+function getTrustedApplicationOrigin() {
+  const configured =
+    process.env.APP_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.PUBLIC_URL;
+
+  if (configured && typeof configured === 'string' && configured.trim()) {
+    try {
+      const parsed = new URL(configured.trim());
+      return parsed.origin;
+    } catch (_err) {
+      // Fall through to canonical default
+    }
+  }
+
+  return 'https://app.zamorincafe.com';
+}
+
+/**
+ * Builds a secure password reset URL strictly bound to the trusted application origin.
+ */
+function buildTrustedPasswordResetUrl(challengeId, resetToken) {
+  const origin = getTrustedApplicationOrigin();
+  const url = new URL('/auth/reset-password', origin);
+  if (challengeId) {
+    url.searchParams.set('challengeId', challengeId);
+  }
+  if (resetToken) {
+    url.searchParams.set('token', resetToken);
+  }
+  return url.toString();
+}
+
 module.exports = {
   isDevelopmentCodeLoggingEnabled,
   isPasswordResetDeliveryAvailable,
+  getDeliveryProviderStatus,
   deliverPasswordResetCode,
+  getTrustedApplicationOrigin,
+  buildTrustedPasswordResetUrl,
 };
+

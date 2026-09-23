@@ -56,7 +56,10 @@ const listApprovals = asyncHandler(async (request, response) => {
   }
 
   if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
-    filter.cafeId = { $in: request.auth.assignedCafeIds };
+    const assigned = Array.isArray(request.auth.assignedCafeIds)
+      ? request.auth.assignedCafeIds
+      : (request.auth.assignedCafeIds ? [request.auth.assignedCafeIds] : []);
+    filter.cafeId = { $in: assigned };
   }
 
   const [approvals, total] = await Promise.all([
@@ -114,7 +117,10 @@ const decideApproval = asyncHandler(async (request, response) => {
     throw new ApiError(404, 'NOT_FOUND', 'Approval request not found.');
   }
 
-  if (request.auth.role === 'CAFE_ADMIN' && (!approval.cafeId || !request.auth.assignedCafeIds.includes(approval.cafeId))) {
+  const assigned = Array.isArray(request.auth.assignedCafeIds)
+    ? request.auth.assignedCafeIds
+    : (request.auth.assignedCafeIds ? [request.auth.assignedCafeIds] : []);
+  if (request.auth.role === 'CAFE_ADMIN' && (!approval.cafeId || !assigned.includes(approval.cafeId))) {
     throw new ApiError(
       403,
       'CAFE_ACCESS_DENIED',

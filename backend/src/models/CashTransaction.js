@@ -88,6 +88,13 @@ const cashTransactionSchema =
         min: 0.01,
       },
 
+      amountPaisa: {
+        type: Number,
+        default: function () {
+          return this.amount ? Math.round(this.amount * 100) : 0;
+        },
+      },
+
       currency: {
         type: String,
         immutable: true,
@@ -122,6 +129,14 @@ const cashTransactionSchema =
         uppercase: true,
         maxlength: 150,
         default: null,
+      },
+
+      referenceNumber: {
+        type: String,
+        trim: true,
+        maxlength: 150,
+        default: null,
+        index: true,
       },
 
       description: {

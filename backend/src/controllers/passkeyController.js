@@ -14,8 +14,12 @@ const getRegistrationOptions = asyncHandler(async (req, res) => {
     throw ApiError.unauthorized('Authentication required to register a passkey.');
   }
 
+  const { authenticatorType, authenticatorAttachment } = req.body || {};
+
   const result = await passkeyService.generatePasskeyRegistrationOptions({
-    user: req.user,
+    user: req.authenticatedUser || req.user,
+    authenticatorType,
+    authenticatorAttachment,
   });
 
   return res.status(200).json({
@@ -33,17 +37,17 @@ const verifyRegistration = asyncHandler(async (req, res) => {
     throw ApiError.unauthorized('Authentication required to register a passkey.');
   }
 
-  const { response, challengeId, friendlyName } = req.body || {};
+  const { response, challengeId, friendlyName, deviceName } = req.body || {};
 
   if (!response || !challengeId) {
     throw ApiError.badRequest('response payload and challengeId are required.');
   }
 
   const result = await passkeyService.verifyPasskeyRegistration({
-    user: req.user,
+    user: req.authenticatedUser || req.user,
     response,
     challengeId,
-    friendlyName,
+    friendlyName: friendlyName || deviceName || 'Passkey Device',
   });
 
   return res.status(201).json({
@@ -150,6 +154,59 @@ const revokeUserPasskey = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * PATCH /api/v1/auth/passkeys/:credentialId
+ * Renames a passkey credential for authenticated user.
+ */
+const renameUserPasskey = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw ApiError.unauthorized('Authentication required to rename a passkey.');
+  }
+
+  const { credentialId } = req.params;
+  const { friendlyName } = req.body || {};
+
+  if (!credentialId) {
+    throw ApiError.badRequest('credentialId is required.');
+  }
+
+  const result = await passkeyService.renameUserPasskey({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    credentialId,
+    friendlyName,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Passkey renamed successfully.',
+    data: result,
+  });
+});
+
+/**
+ * DELETE /api/v1/auth/passkeys
+ * Revokes / purges all passkey credentials for authenticated user.
+ */
+const revokeAllUserPasskeys = asyncHandler(async (req, res) => {
+  if (!req.user || !req.user.userId) {
+    throw ApiError.unauthorized('Authentication required to revoke passkeys.');
+  }
+
+  const result = await passkeyService.revokeAllUserPasskeys({
+    organisationId: req.user.organisationId,
+    userId: req.user.userId,
+    revokedBy: req.user.userId,
+    hardDelete: true,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'All passkeys purged successfully.',
+    data: result,
+  });
+});
+
 module.exports = {
   getRegistrationOptions,
   verifyRegistration,
@@ -157,4 +214,6 @@ module.exports = {
   verifyAuthentication,
   listUserPasskeys,
   revokeUserPasskey,
+  revokeAllUserPasskeys,
+  renameUserPasskey,
 };

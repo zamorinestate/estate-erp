@@ -906,7 +906,7 @@ function renderComplianceTab(compliance) {
             <span class="pill pill-mint">COMPLIANT</span>
           </div>
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">2026 Default New Tax Regime active with standard rebate</div>
-          <div style="font-size: 11.5px; color: var(--success); font-weight: 600;">✓ Form 24Q quarterly alignment ready</div>
+          <div style="font-size: 11.5px; color: var(--success); font-weight: 600;">✓ Form 138 (Salary TDS, formerly Form 24Q) quarterly alignment ready</div>
         </div>
 
         <div class="card card-pad">
@@ -984,7 +984,7 @@ function renderActiveTabContent(userRole) {
     case "year_end":
       return renderSimpleTab("Year-End / YTD Accumulators", "Cumulative financial year 2026-27 gross-to-net totals.", "YTD Total Payroll: ₹96,50,000 (INR). Annual projections on track.");
     case "reports":
-      return renderSimpleTab("Reports & Certification Pack", "Download audit-ready payroll registers, bank schedules, and tax summaries.", "Reports ready for export: Payroll Register (CSV), NEFT Batch (TXT), Tax 24Q (XML).");
+      return renderSimpleTab("Reports & Certification Pack", "Download audit-ready payroll registers, bank schedules, and tax summaries.", "Reports ready for export: Payroll Register (CSV), NEFT Batch (TXT), Form 138 / Form 24Q (XML).");
     case "audit":
       return renderAuditTab();
     default:

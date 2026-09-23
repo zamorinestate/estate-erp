@@ -37,6 +37,11 @@ const SENSITIVE_KEY_PATTERNS = [
   /privatekey/i,
   /mfakey/i,
   /aadhaar/i,
+  /accountnumber/i,
+  /bankaccount/i,
+  /bankdetails/i,
+  /ifsc/i,
+  /iban/i,
   /mongodb.?uri/i,
   /connectionstring/i,
 ];

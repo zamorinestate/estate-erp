@@ -22,6 +22,7 @@ const { Cafe } = require('../models/Cafe');
 
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { maskPhone, maskEmail } = require('../utils/dataClassifier');
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -353,12 +354,17 @@ const performGlobalSearch = asyncHandler(async (request, response) => {
         .lean()
         .then((res) => ({
           type: 'CUSTOMERS',
-          items: res.map((c) => ({
-            id: c.customerId,
-            title: c.name || c.phone,
-            subtitle: `${c.phone || ''} ${c.email ? '• ' + c.email : ''}`.trim(),
-            route: 'customers',
-          })),
+          items: res.map((c) => {
+            const isPrivileged = role === 'MASTER' || role === 'OWNER';
+            const displayPhone = isPrivileged ? (c.phone || '') : maskPhone(c.phone);
+            const displayEmail = isPrivileged ? (c.email || '') : maskEmail(c.email);
+            return {
+              id: c.customerId,
+              title: c.name || displayPhone,
+              subtitle: `${displayPhone} ${displayEmail ? '• ' + displayEmail : ''}`.trim(),
+              route: 'customers',
+            };
+          }),
         }))
     );
   }

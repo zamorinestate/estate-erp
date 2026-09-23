@@ -12,6 +12,8 @@ import { showToast, openModal, closeModal, confirmAction } from "../components.j
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
 import { generateInvoicePdf } from "../utils/invoicePdfGenerator.js";
+import { offlineManager, QUEUE_STATUSES } from "../utils/offlineManager.js";
+
 
 function resolvePosCafeId() {
   const user = state.auth?.user || state.user || {};
@@ -56,12 +58,12 @@ let _menuCatalogue = [];
 
 // POS State
 let cart = []; // Array of { lineId, item, qty, modifiers, notes }
-let activeServiceMode = "QUICK_SALE"; // QUICK_SALE | DINE_IN | TAKEAWAY
+let activeServiceMode = "QUICK_SALE"; // QUICK_SALE | DINE_IN | TAKEAWAY | STAFF_MEAL | COMPLIMENTARY
 let activeTable = "Table 01 (Indoor)";
 let activeToken = "A-101";
 let guestCovers = 2;
 let activeCategory = "ALL";
-let activeTender = "UPI"; // UPI | CASH | CARD | SPLIT
+let activeTender = "UPI"; // UPI | CASH | CARD | COMPLIMENTARY | SPLIT
 let searchQuery = "";
 let isCompactMode = false;
 let discountPaisa = 0;
@@ -80,10 +82,9 @@ let activeRegisterSession = null;
 let openTicketsList = [];
 let openTicketsFilter = "ALL";
 let openTicketsSearch = "";
-let kdsStationFilter = "ALL";
-let kdsStationsList = [];
-let kdsTicketsList = [];
-let kdsMetrics = null;
+
+// REC-13 Offline Queue State & CTL-08 Sync Control
+let _offlinePendingCount = 0;
 
 // UPI Assistant State
 let upiState = "READY"; // READY | GENERATING | PRESENTED | CONFIRMING | PAID | EXPIRED | FAILED
@@ -105,11 +106,9 @@ export function renderPOS() {
   if (activeMainView === "PAST_ORDERS") {
     return renderPastOrdersView();
   }
-  if (activeMainView === "KDS") {
-    return renderKdsView();
-  }
   return renderTerminalView();
 }
+
 
 function renderTerminalView() {
   const isCafeOps = state.role === ROLES.CAFE_ADMIN;
@@ -138,10 +137,11 @@ function renderTerminalView() {
     return acc + (line.item.price + modPrice) * line.qty;
   }, 0);
 
-  const discount = Math.round(discountPaisa / 100);
+  const isZeroCollectMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || activeTender === "COMPLIMENTARY" || activeTender === "STAFF_MEAL");
+  const discount = isZeroCollectMode ? subtotal : Math.round(discountPaisa / 100);
   const taxableAmount = Math.max(0, subtotal - discount);
-  const gst = Math.round(taxableAmount * 0.05);
-  const grandTotal = taxableAmount + gst;
+  const gst = isZeroCollectMode ? 0 : Math.round(taxableAmount * 0.05);
+  const grandTotal = isZeroCollectMode ? 0 : (taxableAmount + gst);
 
   const categories = ["ALL", "Hot Coffees", "Cold Brews", "Bakery & Viennoiserie", "Savouries & Mains", "Desserts"];
   const totalItemCount = cart.reduce((a, c) => a + c.qty, 0);
@@ -153,6 +153,13 @@ function renderTerminalView() {
         <span>⚠️ TERMINAL OFFLINE — Cached menu active. Cash payments only permitted. Card/UPI disabled.</span>
         <span style="font-family:var(--font-mono);font-size:11px;">0 Pending Sync</span>
       </div>
+
+      ${state.isTrainingMode ? `
+        <div id="pos-training-banner" style="display:flex;background:#fffbeb;border:1px solid #fde68a;color:#b45309;padding:8px 14px;border-radius:var(--radius-sm);align-items:center;justify-content:space-between;font-size:12px;font-weight:700;">
+          <span>⚠️ ISOLATED TRAINING MODE ACTIVE — Practice orders do not post to live General Ledger or register cash.</span>
+          <button id="exit-training-mode-banner-btn" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:#f59e0b;color:#ffffff;font-weight:700;" type="button">Exit Training</button>
+        </div>
+      ` : ""}
 
       <!-- Area 1: Fixed Operational Context Bar (§10, §17, §18) -->
       <div class="card" style="padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:var(--surface);border:1px solid var(--line);">
@@ -175,11 +182,13 @@ function renderTerminalView() {
           </div>
 
           <!-- Service Mode Button Group (§19–§23) -->
-          <div class="pos-service-btn-group" style="display:inline-flex;align-items:center;gap:6px;">
+          <div class="pos-service-btn-group" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
             ${[
               { id: "QUICK_SALE", icon: "⚡", label: "Quick Sale" },
               { id: "DINE_IN", icon: "🍽️", label: "Dine-In" },
               { id: "TAKEAWAY", icon: "🛍️", label: "Takeaway" },
+              { id: "STAFF_MEAL", icon: "🥗", label: "Staff Meal" },
+              { id: "COMPLIMENTARY", icon: "🎁", label: "Complimentary" },
             ].map((m) => `
               <button
                 class="pos-service-mode-btn ${activeServiceMode === m.id ? "active" : ""}"
@@ -191,8 +200,8 @@ function renderTerminalView() {
                   border:1.5px solid ${activeServiceMode === m.id ? "var(--ink, #18181b)" : "var(--line, #e2e8f0)"};
                   outline:none;
                   cursor:pointer;
-                  padding:6px 14px;
-                  font-size:12.5px;
+                  padding:6px 12px;
+                  font-size:12px;
                   font-weight:700;
                   font-family:inherit;
                   border-radius:8px;
@@ -210,7 +219,7 @@ function renderTerminalView() {
             `).join("")}
           </div>
 
-          <!-- Dine-In / Takeaway Metadata Controls -->
+          <!-- Dine-In / Takeaway / Special Metadata Controls -->
           ${activeServiceMode === "DINE_IN" ? `
             <div style="display:flex;align-items:center;gap:6px;">
               <select id="pos-table-picker" class="select" style="font-size:11.5px;padding:3px 8px;font-weight:700;">
@@ -230,19 +239,34 @@ function renderTerminalView() {
                 Token: ${activeToken}
               </span>
             </div>
+          ` : activeServiceMode === "STAFF_MEAL" ? `
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;font-weight:700;color:var(--success);background:var(--surface-sunken);padding:3px 8px;border-radius:4px;border:1px solid var(--line);">
+                🥗 100% Staff Meal · Zero Collection
+              </span>
+            </div>
+          ` : activeServiceMode === "COMPLIMENTARY" ? `
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;font-weight:700;color:var(--bronze-600);background:var(--surface-sunken);padding:3px 8px;border-radius:4px;border:1px solid var(--line);">
+                🎁 Complimentary / Sampling · Zero Collection
+              </span>
+            </div>
           ` : ""}
         </div>
 
         <!-- Top Right Actions -->
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <button class="pos-service-mode-btn ${state.isTrainingMode ? 'active' : ''}" id="toggle-training-mode-btn" style="padding:6px 12px;font-size:12px; ${state.isTrainingMode ? 'background:#fef3c7; color:#92400e; border-color:#f59e0b;' : ''}" type="button" title="Toggle Isolated Training Mode (Practice without affecting live sales)">
+            🎓 ${state.isTrainingMode ? 'Training ACTIVE' : 'Training Mode'}
+          </button>
           <button class="pos-service-mode-btn" id="open-tickets-btn" style="padding:6px 12px;font-size:12px;" type="button">
             📋 Open Tickets ${openTicketsList.length ? `<span class="badge warning" style="font-size:9.5px;margin-left:4px;">${openTicketsList.length}</span>` : ""}
           </button>
           <button class="pos-service-mode-btn" id="register-session-btn" style="padding:6px 12px;font-size:12px;" type="button">
             💵 Cash Drawer
           </button>
-          <button class="pos-service-mode-btn" id="kds-view-btn" style="padding:6px 12px;font-size:12px;" type="button">
-            🍳 Kitchen KDS
+          <button class="pos-service-mode-btn" id="pos-reprint-last-btn" style="padding:6px 12px;font-size:12px;" title="Reprint Last Finalized Receipt" type="button">
+            🔁 Reprint Last
           </button>
           <button class="btn btn-sm btn-secondary" id="view-past-orders-btn" style="font-size:12px;padding:6px 12px;font-weight:700;min-height:32px;" type="button">
             📜 Past Orders
@@ -250,10 +274,13 @@ function renderTerminalView() {
           <button class="pos-service-mode-btn" id="toggle-density-btn" style="padding:6px 10px;font-size:12px;" title="Toggle Compact Mode" type="button">
             ${isCompactMode ? "🖼️ Visual" : "☷ Compact"}
           </button>
-          <div id="pos-offline-status-container" style="display:inline-flex;align-items:center;">
-            <span id="pos-offline-badge" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;background:rgba(16,185,129,0.12);color:#059669;">
-              🟢 Online
+          <div id="pos-offline-status-container" style="display:inline-flex;align-items:center;gap:6px;">
+            <span id="pos-offline-badge" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;background:${_offlinePendingCount > 0 ? "rgba(245,158,11,0.15)" : (navigator?.onLine ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.15)")};color:${_offlinePendingCount > 0 ? "#b45309" : (navigator?.onLine ? "#059669" : "#dc2626")};">
+              ${_offlinePendingCount > 0 ? `⚠️ Offline — ${_offlinePendingCount} waiting to sync` : (navigator?.onLine ? "🟢 Online" : "🔴 Offline")}
             </span>
+            <button class="pos-service-mode-btn" id="pos-sync-queue-btn" style="padding:4px 10px;font-size:11px;font-weight:700;display:${_offlinePendingCount > 0 ? "inline-flex" : "none"};background:var(--bronze-600);color:#ffffff;border:none;border-radius:6px;cursor:pointer;" title="Sync Pending Sales (CTL-08)" type="button">
+              🔄 Sync Pending (${_offlinePendingCount})
+            </button>
           </div>
         </div>
       </div>
@@ -425,11 +452,12 @@ function renderTerminalView() {
             </div>
 
             <!-- Tenders Grid (§71–§85) -->
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px;">
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:8px;">
               ${[
                 { id: "UPI", label: "📱 UPI" },
                 { id: "CASH", label: "💵 Cash" },
                 { id: "CARD", label: "💳 Card" },
+                { id: "COMPLIMENTARY", label: "🎁 Free" },
                 { id: "SPLIT", label: "✂️ Split" },
               ].map((t) => `
                 <button
@@ -444,7 +472,7 @@ function renderTerminalView() {
                     outline:none;
                     cursor:pointer;
                     padding:7px 4px;
-                    font-size:11.5px;
+                    font-size:11px;
                     font-weight:700;
                     font-family:inherit;
                     border-radius:8px;
@@ -477,13 +505,16 @@ function renderTerminalView() {
               </div>
             ` : ""}
 
-            <!-- Action Buttons Grid: Preview Receipt & Charge with Duplicate-Lock -->
-            <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;">
-              <button class="btn btn-secondary" id="preview-receipt-btn" ${grandTotal <= 0 ? "disabled" : ""} style="padding:12px;font-size:13px;font-weight:700;min-height:46px;border-radius:8px;" type="button">
+            <!-- Action Buttons Grid: Preview, Save, and Save & Print with Duplicate-Lock -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:6px;">
+              <button class="btn btn-secondary" id="preview-receipt-btn" ${!cart.length || (grandTotal <= 0 && !isZeroCollectMode) ? "disabled" : ""} style="padding:10px 4px;font-size:12px;font-weight:700;min-height:46px;border-radius:8px;" type="button">
                 👁️ Preview
               </button>
-              <button class="btn btn-primary" id="process-charge-btn" ${grandTotal <= 0 || isPaymentInProgress ? "disabled" : ""} style="padding:12px;font-size:14px;font-weight:800;min-height:46px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.15);" type="button">
-                ${isPaymentInProgress ? "Confirming Payment…" : `Charge ₹${grandTotal.toLocaleString("en-IN")} (${activeTender})`}
+              <button class="btn btn-secondary" id="pos-save-only-btn" ${!cart.length || (grandTotal <= 0 && !isZeroCollectMode) || isPaymentInProgress ? "disabled" : ""} style="padding:10px 4px;font-size:12px;font-weight:700;min-height:46px;border-radius:8px;" type="button">
+                💾 Save
+              </button>
+              <button class="btn btn-primary" id="process-charge-btn" ${!cart.length || (grandTotal <= 0 && !isZeroCollectMode) || isPaymentInProgress ? "disabled" : ""} style="padding:10px 6px;font-size:12.5px;font-weight:800;min-height:46px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.15);" type="button">
+                ${isPaymentInProgress ? "Finalizing…" : (isZeroCollectMode ? `🎁 Finalize ${activeServiceMode === 'STAFF_MEAL' ? 'Staff Meal' : 'Complimentary'}` : `⚡ Save & Print ₹${grandTotal.toLocaleString("en-IN")}`)}
               </button>
             </div>
           </div>
@@ -872,9 +903,29 @@ export async function wirePOS(root) {
 
     const sessionRes = await apiGet("/bills/register/session/current");
     if (sessionRes?.data) activeRegisterSession = sessionRes.data;
+
+    // REC-13: Fetch pending offline sales count from IndexedDB
+    const cafeId = resolvePosCafeId();
+    _offlinePendingCount = await offlineManager.getPendingCount(cafeId);
   } catch (e) {
     console.warn("POS background data load notice:", e.message);
   }
+
+  // REC-13: Subscribe to offlineManager events for real-time queue badge & connectivity
+  offlineManager.subscribe(async ({ pendingCount, isOnline }) => {
+    _offlinePendingCount = pendingCount;
+    const badge = root.querySelector("#pos-offline-badge");
+    const syncBtn = root.querySelector("#pos-sync-queue-btn");
+    if (badge) {
+      badge.style.background = _offlinePendingCount > 0 ? "rgba(245,158,11,0.15)" : (isOnline ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.15)");
+      badge.style.color = _offlinePendingCount > 0 ? "#b45309" : (isOnline ? "#059669" : "#dc2626");
+      badge.textContent = _offlinePendingCount > 0 ? `⚠️ Offline — ${_offlinePendingCount} waiting to sync` : (isOnline ? "🟢 Online" : "🔴 Offline");
+    }
+    if (syncBtn) {
+      syncBtn.style.display = _offlinePendingCount > 0 ? "inline-flex" : "none";
+      syncBtn.textContent = `🔄 Sync Pending (${_offlinePendingCount})`;
+    }
+  });
 
   wirePOSEventListeners(root);
 }
@@ -889,6 +940,39 @@ function wirePOSEventListeners(root) {
     }
   };
   window.addEventListener("keydown", handleKeydown, { once: true });
+
+  // REC-13 / CTL-08: Sync Pending Offline Sales Button
+  const syncQueueBtn = root.querySelector("#pos-sync-queue-btn");
+  if (syncQueueBtn) {
+    syncQueueBtn.addEventListener("click", async () => {
+      const cafeId = resolvePosCafeId();
+      if (!cafeId) {
+        showToast("Select a café before syncing offline queue.", "danger");
+        return;
+      }
+      syncQueueBtn.disabled = true;
+      syncQueueBtn.textContent = "⏳ Syncing…";
+      showToast("Syncing offline POS queue…", "info");
+      try {
+        const res = await offlineManager.syncNow(apiPost, cafeId);
+        if (res.syncedCount > 0) {
+          showToast(`Synced ${res.syncedCount} offline sale(s) to server. Exactly-once confirmed.`, "mint");
+        } else if (res.conflictCount > 0) {
+          showToast(`${res.conflictCount} sale(s) require conflict review (pricing / café governance).`, "warning");
+        } else if (res.authRequiredCount > 0) {
+          showToast("Authentication required to sync queue. Please sign in.", "error");
+        } else {
+          showToast("No pending offline sales to sync.", "info");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to sync offline queue.", "error");
+      } finally {
+        _offlinePendingCount = await offlineManager.getPendingCount(cafeId);
+        syncQueueBtn.disabled = false;
+        refreshPOSView(root);
+      }
+    });
+  }
 
   // Subview toggle
   const pastOrdersBtn = root.querySelector("#view-past-orders-btn");
@@ -907,61 +991,6 @@ function wirePOSEventListeners(root) {
     });
   }
 
-  // KDS View Toggle & Actions
-  const kdsBtn = root.querySelector("#kds-view-btn");
-  if (kdsBtn) {
-    kdsBtn.addEventListener("click", async () => {
-      activeMainView = "KDS";
-      try {
-        const [ticketsRes, stationsRes] = await Promise.all([
-          apiGet(`/kds/tickets?prepStation=${kdsStationFilter}`),
-          apiGet('/kds/stations').catch(() => null),
-        ]);
-        if (stationsRes?.data?.stations) kdsStationsList = stationsRes.data.stations;
-        else if (stationsRes?.stations) kdsStationsList = stationsRes.stations;
-        if (ticketsRes?.data?.tickets) kdsTicketsList = ticketsRes.data.tickets;
-        else if (ticketsRes?.tickets) kdsTicketsList = ticketsRes.tickets;
-      } catch (_) {}
-      refreshPOSView(root);
-    });
-  }
-
-  const backToPosFromKds = root.querySelector("#back-to-pos-from-kds-btn");
-  if (backToPosFromKds) {
-    backToPosFromKds.addEventListener("click", () => {
-      activeMainView = "POS";
-      refreshPOSView(root);
-    });
-  }
-
-  const kdsRefreshBtn = root.querySelector("#kds-refresh-btn");
-  if (kdsRefreshBtn) {
-    kdsRefreshBtn.addEventListener("click", async () => {
-      try {
-        const [ticketsRes, stationsRes] = await Promise.all([
-          apiGet(`/kds/tickets?prepStation=${kdsStationFilter}`),
-          apiGet('/kds/stations').catch(() => null),
-        ]);
-        if (stationsRes?.data?.stations) kdsStationsList = stationsRes.data.stations;
-        else if (stationsRes?.stations) kdsStationsList = stationsRes.stations;
-        if (ticketsRes?.data?.tickets) kdsTicketsList = ticketsRes.data.tickets;
-        else if (ticketsRes?.tickets) kdsTicketsList = ticketsRes.tickets;
-      } catch (_) {}
-      refreshPOSView(root);
-    });
-  }
-
-  root.querySelectorAll("[data-kds-station]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      kdsStationFilter = btn.dataset.kdsStation;
-      try {
-        const res = await apiGet(`/kds/tickets?prepStation=${kdsStationFilter}`);
-        if (res?.data?.tickets) kdsTicketsList = res.data.tickets;
-        else if (res?.tickets) kdsTicketsList = res.tickets;
-      } catch (_) {}
-      refreshPOSView(root);
-    });
-  });
 
   root.querySelectorAll("[data-bump-ticket]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -1031,9 +1060,35 @@ function wirePOSEventListeners(root) {
   root.querySelectorAll("[data-service-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       activeServiceMode = btn.dataset.serviceMode;
+      if (activeServiceMode === "STAFF_MEAL") {
+        activeTender = "STAFF_MEAL";
+      } else if (activeServiceMode === "COMPLIMENTARY") {
+        activeTender = "COMPLIMENTARY";
+      } else if (activeTender === "STAFF_MEAL" || activeTender === "COMPLIMENTARY") {
+        activeTender = "UPI";
+      }
       refreshPOSView(root);
     });
   });
+
+  // Isolated Training Mode Toggle
+  const trainingBtn = root.querySelector("#toggle-training-mode-btn");
+  if (trainingBtn) {
+    trainingBtn.addEventListener("click", () => {
+      state.isTrainingMode = !state.isTrainingMode;
+      showToast(state.isTrainingMode ? "🎓 Isolated Training Mode ACTIVE" : "Exited Training Mode", state.isTrainingMode ? "warning" : "info");
+      refreshPOSView(root);
+    });
+  }
+
+  const exitTrainingBtn = root.querySelector("#exit-training-mode-banner-btn");
+  if (exitTrainingBtn) {
+    exitTrainingBtn.addEventListener("click", () => {
+      state.isTrainingMode = false;
+      showToast("Exited Training Mode", "info");
+      refreshPOSView(root);
+    });
+  }
 
   // Table Picker
   const tablePicker = root.querySelector("#pos-table-picker");
@@ -1238,6 +1293,34 @@ function wirePOSEventListeners(root) {
     });
   }
 
+  // REC-04 CTL-05: Reprint Last Finalized Bill (browser-refresh resilient)
+  // Fetches the most recent COMPLETED bill from the server and opens the receipt modal
+  // in reprint mode — works even after a full page reload since state is server-side.
+  const reprintLastBtn = root.querySelector("#pos-reprint-last-btn");
+  if (reprintLastBtn) {
+    reprintLastBtn.addEventListener("click", async () => {
+      const cafeId = resolvePosCafeId();
+      if (!cafeId) {
+        showToast("Select a café before reprinting.", "danger");
+        return;
+      }
+      reprintLastBtn.disabled = true;
+      reprintLastBtn.textContent = "⏳ Fetching...";
+      try {
+        const res = await apiGet(`/pos/orders/last/${cafeId}`);
+        const bill = res?.data || res?.bill;
+        if (!bill) throw new Error("No recent bill found.");
+        closeModal();
+        openReceiptModal(bill, true);
+      } catch (err) {
+        showToast(err.message || "No recent finalized bill found for this outlet.", "warning");
+      } finally {
+        reprintLastBtn.disabled = false;
+        reprintLastBtn.textContent = "🔁 Reprint Last";
+      }
+    });
+  }
+
   // Tender selection
   root.querySelectorAll("[data-select-tender]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1294,11 +1377,18 @@ function wirePOSEventListeners(root) {
     });
   }
 
-  // Charge / Payment Processing (§73–§85)
-  const chargeBtn = root.querySelector("#process-charge-btn");
-  if (chargeBtn) {
-    chargeBtn.addEventListener("click", async () => {
+  // Save Only Action (Case A: SAVE without PRINT)
+  const saveOnlyBtn = root.querySelector("#pos-save-only-btn");
+  if (saveOnlyBtn) {
+    saveOnlyBtn.addEventListener("click", async () => {
       if (!cart.length || isPaymentInProgress) return;
+
+      const isZeroMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || activeTender === "COMPLIMENTARY" || activeTender === "STAFF_MEAL");
+      if (isZeroMode) {
+        const tenderType = activeServiceMode === "STAFF_MEAL" ? "STAFF_MEAL" : "COMPLIMENTARY";
+        await executeFinalSale(0, tenderType, root, tenderType === "STAFF_MEAL" ? "Staff Meal" : "Complimentary Item", null, "SAVE");
+        return;
+      }
 
       const subtotal = cart.reduce((acc, l) => {
         const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
@@ -1310,13 +1400,47 @@ function wirePOSEventListeners(root) {
       const grandTotal = taxable + gst;
 
       if (activeTender === "UPI") {
-        openUpiQrAssistantModal(grandTotal, root);
+        openUpiQrAssistantModal(grandTotal, root, "SAVE");
       } else if (activeTender === "CARD") {
-        openCardReaderModal(grandTotal, root);
+        openCardReaderModal(grandTotal, root, "SAVE");
       } else if (activeTender === "SPLIT") {
-        openSplitPaymentModal(root);
+        openSplitPaymentModal(root, "SAVE");
       } else {
-        await executeFinalSale(grandTotal, "CASH", root);
+        await executeFinalSale(grandTotal, "CASH", root, "", null, "SAVE");
+      }
+    });
+  }
+
+  // Charge / Payment Processing (§73–§85) - Save & Print
+  const chargeBtn = root.querySelector("#process-charge-btn");
+  if (chargeBtn) {
+    chargeBtn.addEventListener("click", async () => {
+      if (!cart.length || isPaymentInProgress) return;
+
+      const isZeroMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || activeTender === "COMPLIMENTARY" || activeTender === "STAFF_MEAL");
+      if (isZeroMode) {
+        const tenderType = activeServiceMode === "STAFF_MEAL" ? "STAFF_MEAL" : "COMPLIMENTARY";
+        await executeFinalSale(0, tenderType, root, tenderType === "STAFF_MEAL" ? "Staff Meal" : "Complimentary Item", null, "SAVE_AND_PRINT");
+        return;
+      }
+
+      const subtotal = cart.reduce((acc, l) => {
+        const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
+        return acc + (l.item.price + modPrice) * l.qty;
+      }, 0);
+      const discount = Math.round(discountPaisa / 100);
+      const taxable = Math.max(0, subtotal - discount);
+      const gst = Math.round(taxable * 0.05);
+      const grandTotal = taxable + gst;
+
+      if (activeTender === "UPI") {
+        openUpiQrAssistantModal(grandTotal, root, "SAVE_AND_PRINT");
+      } else if (activeTender === "CARD") {
+        openCardReaderModal(grandTotal, root, "SAVE_AND_PRINT");
+      } else if (activeTender === "SPLIT") {
+        openSplitPaymentModal(root, "SAVE_AND_PRINT");
+      } else {
+        await executeFinalSale(grandTotal, "CASH", root, "", null, "SAVE_AND_PRINT");
       }
     });
   }
@@ -1529,7 +1653,7 @@ function openModifierModal(product, existingLine = null, root) {
   });
 }
 
-function openUpiQrAssistantModal(grandTotal, root) {
+function openUpiQrAssistantModal(grandTotal, root, posAction = "SAVE_AND_PRINT") {
   const txnRef = `UPI-${Date.now()}`;
 
   openModal({
@@ -1602,12 +1726,12 @@ function openUpiQrAssistantModal(grandTotal, root) {
     saveLabel: "Confirm Payment Received",
     cancelLabel: "Cancel Payment",
     onSave: async () => {
-      await executeFinalSale(grandTotal, "UPI", root, txnRef);
+      await executeFinalSale(grandTotal, "UPI", root, txnRef, null, posAction);
     },
   });
 }
 
-function openCardReaderModal(grandTotal, root) {
+function openCardReaderModal(grandTotal, root, posAction = "SAVE_AND_PRINT") {
   const cardRef = `CARD-${Date.now()}`;
   openModal({
     title: `Card Reader Terminal · ₹${grandTotal.toLocaleString("en-IN")}`,
@@ -1625,12 +1749,12 @@ function openCardReaderModal(grandTotal, root) {
     saveLabel: "Simulate Card Approved",
     cancelLabel: "Cancel Transaction",
     onSave: async () => {
-      await executeFinalSale(grandTotal, "CARD", root, cardRef);
+      await executeFinalSale(grandTotal, "CARD", root, cardRef, null, posAction);
     },
   });
 }
 
-function openSplitPaymentModal(root) {
+function openSplitPaymentModal(root, posAction = "SAVE_AND_PRINT") {
   const subtotal = cart.reduce((acc, l) => {
     const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
     return acc + (l.item.price + modPrice) * l.qty;
@@ -1685,26 +1809,30 @@ function openSplitPaymentModal(root) {
         tenders.push({ paymentMethod: "UPI", amountPaisa: uAmt * 100, provider: "BHIM_UPI", paymentReference: `UPI-${Date.now()}` });
       }
 
-      await executeFinalSale(grandTotal, "SPLIT", root, "", tenders);
+      await executeFinalSale(grandTotal, "SPLIT", root, "", tenders, posAction);
     },
   });
 }
 
-async function executeFinalSale(grandTotal, tender, root, paymentRef = "", customTenders = null) {
+async function executeFinalSale(grandTotal, tender, root, paymentRef = "", customTenders = null, posAction = "SAVE_AND_PRINT") {
   try {
     isPaymentInProgress = true;
     const idempotencyKey = `IDEM-SALE-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+    const saleAttemptId = `ATT-${idempotencyKey}`;
     const cartEntries = [...cart];
     const subtotal = cartEntries.reduce((acc, l) => {
       const modPrice = l.modifiers?.modifierPricePaisa ? l.modifiers.modifierPricePaisa / 100 : 0;
       return acc + (l.item.price + modPrice) * l.qty;
     }, 0);
 
+    const isZeroCollectMode = (activeServiceMode === "STAFF_MEAL" || activeServiceMode === "COMPLIMENTARY" || tender === "COMPLIMENTARY" || tender === "STAFF_MEAL");
+    const effectiveDiscountPaisa = isZeroCollectMode ? subtotal * 100 : discountPaisa;
+
     const tendersList = customTenders || [
       {
         paymentMethod: tender,
         amountPaisa: grandTotal * 100,
-        provider: tender === "UPI" ? "BHIM_UPI" : tender === "CARD" ? "PINELABS_TERMINAL" : "CASH_REGISTER",
+        provider: tender === "UPI" ? "BHIM_UPI" : tender === "CARD" ? "PINELABS_TERMINAL" : isZeroCollectMode ? "SPECIAL_ALLOWANCE" : "CASH_REGISTER",
         paymentReference: paymentRef || `TXN-${Date.now()}`,
       },
     ];
@@ -1717,18 +1845,24 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       return;
     }
 
+    // REC-04: Route all POS commits through the idempotent /pos/orders/commit endpoint.
+    // This ensures: idempotency deduplication, GST invoice allocation (Rule 46(b)),
+    // atomic BOM depletion, print-job tracking, and IDOR protection — all in one commit.
     const payload = {
+      action: posAction,           // SAVE | SAVE_AND_PRINT
       cafeId,
       orderType: activeServiceMode,
       serviceMode: activeServiceMode,
       tableNumber: activeServiceMode === "DINE_IN" ? activeTable : "",
       tableToken: activeServiceMode === "TAKEAWAY" ? activeToken : "",
       guestCovers,
-      discountPaisa,
+      discountPaisa: effectiveDiscountPaisa,
       paymentMethod: tender,
       registerId: "REG-01",
       registerSessionId: activeRegisterSession?.registerSessionId || "",
       idempotencyKey,
+      saleAttemptId,
+      isTraining: Boolean(state.isTrainingMode),
       lineItems: cartEntries.map((l) => ({
         menuItemId: l.item.id,
         quantity: l.qty,
@@ -1739,8 +1873,109 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       isImmediateCompletion: true,
     };
 
-    const res = await apiPost("/bills", payload);
-    const billData = res?.data || {
+    // REC-13: Upfront offline detection — tender policy enforcement
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      if (tender !== "CASH" && !isZeroCollectMode) {
+        isPaymentInProgress = false;
+        showToast(`Network connection required for ${tender}. Offline capture permitted for CASH / Zero-collect only.`, "error");
+        return;
+      }
+
+      // Offline CASH capture into IndexedDB of record (REC-13)
+      try {
+        const queued = await offlineManager.enqueueSale({
+          ...payload,
+          totalPaisa: grandTotal * 100,
+          subtotalPaisa: subtotal * 100,
+          taxPaisa: Math.round(subtotal * 0.05) * 100,
+        });
+
+        showToast("Saved Offline — sale queued in terminal IndexedDB.", "mint");
+        cart = [];
+        discountPaisa = 0;
+        discountReason = "";
+        cashReceivedAmount = 0;
+        isPaymentInProgress = false;
+        _offlinePendingCount = await offlineManager.getPendingCount(cafeId);
+        openOfflineReceiptModal(queued);
+        refreshPOSView(root);
+        return;
+      } catch (storageErr) {
+        isPaymentInProgress = false;
+        showToast("Storage error: offline sale could not be persisted. Quota exceeded or IndexedDB blocked. Sale NOT saved.", "error");
+        return;
+      }
+    }
+
+    // Primary: idempotent POS commit endpoint (REC-04)
+    // REC-04A: fallback is ONLY permitted for HTTP 404/405 (route not found = rolling deployment).
+    // ALL other failures (timeout, 500, 502-504, network loss, unknown) must surface to the user.
+    // Retrying via /bills after an ambiguous failure risks creating a DUPLICATE SALE.
+    let res;
+    try {
+      res = await apiPost("/pos/orders/commit", payload);
+    } catch (commitErr) {
+      const status = commitErr?.status || commitErr?.statusCode || commitErr?.httpStatus;
+      const isRouteNotFound = status === 404 || status === 405;
+      if (!isRouteNotFound) {
+        // REC-04B: Unknown outcome (timeout, connection drop, 502-504).
+        // Check transaction status using the EXACT transaction identity (idempotencyKey / saleAttemptId).
+        // NEVER guess using "Reprint Last" (which could return a previous customer's bill).
+        showToast("Checking transaction status\u2026", "info");
+        try {
+          const statusRes = await apiGet(`/pos/orders/status/${encodeURIComponent(idempotencyKey)}?cafeId=${encodeURIComponent(cafeId)}`);
+          if (statusRes?.status === "COMPLETED" && (statusRes?.bill || statusRes?.data)) {
+            res = statusRes;
+            showToast(`Transaction verified: Bill ${statusRes.invoiceNumber || statusRes.billId}`, "mint");
+          } else if (statusRes?.status === "PROCESSING") {
+            throw new Error("Transaction is currently processing on server. Please wait a moment and verify again with this transaction identity.");
+          } else {
+            throw new Error(
+              commitErr?.message ||
+              "Sale commit outcome unconfirmed. Transaction not found on server; safe to retry with same transaction."
+            );
+          }
+        } catch (statusErr) {
+          if (res) {
+            // Already recovered
+          } else {
+            // REC-13: Network unreachable during request — queue offline if CASH
+            const isNetworkFailure = !status || status >= 500 || commitErr.name === "TypeError" || String(commitErr.message).includes("fetch");
+            if (isNetworkFailure && tender === "CASH") {
+              try {
+                const queued = await offlineManager.enqueueSale({
+                  ...payload,
+                  totalPaisa: grandTotal * 100,
+                  subtotalPaisa: subtotal * 100,
+                  taxPaisa: Math.round(subtotal * 0.05) * 100,
+                });
+                showToast("Network unreachable. Saved Offline — queued in terminal IndexedDB.", "warning");
+                cart = [];
+                discountPaisa = 0;
+                discountReason = "";
+                cashReceivedAmount = 0;
+                isPaymentInProgress = false;
+                _offlinePendingCount = await offlineManager.getPendingCount(cafeId);
+                openOfflineReceiptModal(queued);
+                refreshPOSView(root);
+                return;
+              } catch (storageErr) {
+                isPaymentInProgress = false;
+                showToast("Storage error: offline sale could not be persisted. Sale NOT saved.", "error");
+                return;
+              }
+            }
+            throw statusErr;
+          }
+        }
+      } else {
+        // Route definitively absent (rolling deployment) — safe to use legacy endpoint
+        console.warn("[POS] /pos/orders/commit not found on this server version (HTTP " + status + "), using /bills fallback");
+        res = await apiPost("/bills", payload);
+      }
+    }
+
+    const billData = res?.data || res?.bill || {
       billId: `BILL-${Date.now()}`,
       invoiceNumber: `ZAM-BILL-${Math.floor(100000 + Math.random() * 900000)}`,
       totalPaisa: grandTotal * 100,
@@ -1756,21 +1991,104 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       tenders: tendersList,
     };
 
+    // Surface any printer warning from the backend (non-fatal — DB commit is already done)
+    if (res?.printerWarning || res?.printStatus === "FAILED") {
+      showToast(
+        `⚠️ Bill saved (${billData.invoiceNumber || billData.billId}). Printer offline — use Reprint when ready.`,
+        "warning"
+      );
+    } else {
+      showToast(
+        posAction === "SAVE" ? `Bill saved: ${billData.invoiceNumber || billData.billId}` : `Payment of ₹${grandTotal} confirmed — receipt issued.`,
+        "mint"
+      );
+    }
+
     cart = [];
     discountPaisa = 0;
     discountReason = "";
     cashReceivedAmount = 0;
     isPaymentInProgress = false;
 
-    showToast(`Payment of ₹${grandTotal} confirmed successfully!`, "mint");
     openReceiptModal(billData, false);
     refreshPOSView(root);
   } catch (err) {
     isPaymentInProgress = false;
-    showToast(err.message || "Sale failed", "error");
+    showToast(err.message || "Sale failed. Check network and try again.", "error");
     refreshPOSView(root);
   }
 }
+
+// REC-13: Canonical Offline Receipt (Pending Synchronization)
+function openOfflineReceiptModal(queued) {
+  const grandTotal = (queued.totalPaisa || 0) / 100;
+  const cafeName = state.user?.primaryCafeName || (state.cafes?.find((c) => c.cafeId === queued.cafeId)?.name) || "Zamorin Outlet";
+
+  openModal({
+    title: `OFFLINE SALE — PENDING SYNCHRONIZATION`,
+    maxWidth: "480px",
+    body: `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-size:12px;"><span style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">OFFLINE CAPTURE (PENDING SYNC)</span></div>
+        <div style="font-size:11px;font-family:monospace;color:var(--ink);">Ref: ${queued.localQueueId}</div>
+      </div>
+
+      <div class="pos-thermal-receipt" style="background:#fff;color:#000;padding:16px;border-radius:6px;border:1px solid #e2e8f0;font-family:'Courier New',Courier,monospace;">
+        <div class="receipt-header" style="text-align:center;margin-bottom:12px;">
+          <div class="receipt-title" style="font-size:16px;font-weight:bold;letter-spacing:1px;">ZAMORIN CAFE ESTATE</div>
+          <div class="receipt-subtitle" style="font-size:11px;margin-top:2px;">${cafeName} · TERMINAL OFFLINE MODE</div>
+          <div class="receipt-doc-type" style="font-size:11px;font-weight:bold;margin-top:4px;color:#b45309;">
+            OFFLINE SALE — PENDING SYNCHRONIZATION
+          </div>
+        </div>
+        <div class="receipt-row" style="display:flex;justify-content:space-between;font-size:11px;">
+          <span>QUEUE ID: <strong>${queued.localQueueId}</strong></span>
+          <span>${new Date(queued.capturedAtClient || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+        </div>
+        <div class="receipt-row" style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;">
+          <span>CAPTURE DATE: ${(queued.capturedAtClient || new Date().toISOString()).substring(0, 10)}</span>
+          <span>TENDER: CASH</span>
+        </div>
+        <div class="receipt-row" style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;">
+          <span>ATTEMPT ID: ${queued.saleAttemptId}</span>
+        </div>
+        <hr class="receipt-divider" style="border-top:1px dashed #94a3b8;margin:8px 0;" />
+
+        <div style="display:flex;font-size:10px;font-weight:bold;color:#475569;border-bottom:1px solid #cbd5e1;padding-bottom:3px;margin-bottom:4px;">
+          <span style="width:24px;">Sl.</span>
+          <span style="flex:1;">Item</span>
+          <span style="width:30px;text-align:center;">Qty</span>
+          <span style="width:60px;text-align:right;">Amount</span>
+        </div>
+
+        ${queued.lineItems?.map((li, idx) => `
+          <div style="display:flex;font-size:11px;padding:2px 0;">
+            <span style="width:24px;color:#64748b;">${idx + 1}</span>
+            <span style="flex:1;">${escapeHtml(li.itemNameSnapshot || li.name || 'Item')}</span>
+            <span style="width:30px;text-align:center;">${li.quantity}</span>
+            <span style="width:60px;text-align:right;font-weight:600;">₹${((li.unitPricePaisa * li.quantity) / 100).toFixed(0)}</span>
+          </div>
+        `).join("") || ""}
+
+        <hr class="receipt-divider" style="border-top:1px dashed #94a3b8;margin:8px 0;" />
+        <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:13px;margin-top:4px;">
+          <span>TOTAL CASH PAID:</span>
+          <span>₹${grandTotal.toLocaleString("en-IN")}</span>
+        </div>
+
+        <div style="margin-top:12px;padding:8px;background:#fef3c7;border:1px dashed #d97706;border-radius:4px;font-size:10px;text-align:center;color:#92400e;line-height:1.4;">
+          ⚠️ NOTICE: Captured during network outage. Stored durably in terminal IndexedDB. Official statutory GST invoice will be allocated upon server synchronization.
+        </div>
+      </div>
+    `,
+    saveLabel: "Print Offline Receipt",
+    cancelLabel: "Close",
+    onSave: () => {
+      window.print();
+    },
+  });
+}
+
 
 function openReceiptModal(bill, isReprint = false) {
   const subtotal = bill.subtotalPaisa ? bill.subtotalPaisa / 100 : bill.totalPaisa ? bill.totalPaisa / 100 : 0;
@@ -1779,6 +2097,10 @@ function openReceiptModal(bill, isReprint = false) {
   const cafeName = bill.cafeName || state.user?.primaryCafeName || (state.cafes?.find((c) => c.cafeId === bill.cafeId)?.name) || "Zamorin Outlet";
   const reprintCount = bill.reprints?.length || (isReprint ? 1 : 0);
   const isVoid = bill.status === "VOID" || bill.status === "CANCELLED";
+
+  // Persistent paper width preference (80mm vs 58mm)
+  let currentPaperWidth = (typeof localStorage !== "undefined" && localStorage.getItem("zamorin_pos_paper_width")) || "80";
+  if (currentPaperWidth !== "58" && currentPaperWidth !== "80") currentPaperWidth = "80";
 
   const statusBadge = isVoid
     ? `<span style="background:#fee2e2;color:#b91c1c;border:1px solid #f87171;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">VOID — CANCELLED (NOT VALID)</span>`
@@ -1799,69 +2121,132 @@ function openReceiptModal(bill, isReprint = false) {
     showToast(`Official Tax Invoice PDF saved: ${filename}`, "mint");
   };
 
-  const printThermal = () => {
-    showToast("Thermal print command sent to POS printer.", "mint");
+  let isPrintingActive = false;
+  const printThermal = async () => {
+    if (isPrintingActive) return;
+    isPrintingActive = true;
+    const printBtn = document.getElementById("posReceiptPrintBtn");
+    if (printBtn) {
+      printBtn.disabled = true;
+      printBtn.textContent = "⏳ Printing...";
+    }
+
+    // REC-04: Send print command to backend (logs PrintJob, generates thermal buffer)
+    // then invoke browser print as the local rendering fallback.
+    if (bill.billId && !bill.billId.startsWith("PREVIEW")) {
+      try {
+        await apiPost(`/pos/orders/${bill.billId}/print`, {
+          reason: isReprint ? "Terminal duplicate receipt reprint" : "Terminal thermal print",
+          paperWidth: currentPaperWidth,
+        });
+        showToast("Thermal print job queued on POS printer.", "mint");
+      } catch (printErr) {
+        // Non-fatal: log and fall through to browser print
+        console.warn("[POS] Backend print endpoint error:", printErr.message);
+        showToast("Printer bridge unavailable — printing via browser fallback.", "warning");
+      }
+    }
     window.print();
+    setTimeout(() => {
+      isPrintingActive = false;
+      if (printBtn) {
+        printBtn.disabled = false;
+        printBtn.textContent = "🖨️ Thermal Print";
+      }
+    }, 800);
   };
 
   openModal({
     title: `Tax Invoice Receipt · ${bill.invoiceNumber || bill.billId}`,
-    maxWidth: "480px",
+    maxWidth: "500px",
     body: `
+      <!-- Paper Width Profile Selector -->
+      <div class="receipt-profile-toggle-bar" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:6px 12px;background:var(--surface-sunken);border-radius:6px;border:1px solid var(--line);">
+        <span style="font-size:11.5px;font-weight:700;color:var(--ink);">🖨️ Thermal Paper Profile:</span>
+        <div style="display:inline-flex;gap:6px;">
+          <button type="button" class="btn btn-sm ${currentPaperWidth === '80' ? 'btn-primary' : 'btn-outline'}" id="posPaperToggle80" data-width="80" style="padding:3px 10px;font-size:11px;font-weight:700;">80mm Standard</button>
+          <button type="button" class="btn btn-sm ${currentPaperWidth === '58' ? 'btn-primary' : 'btn-outline'}" id="posPaperToggle58" data-width="58" style="padding:3px 10px;font-size:11px;font-weight:700;">58mm Compact</button>
+        </div>
+      </div>
+
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <div style="font-size:12px;color:var(--muted);">Status: ${statusBadge}</div>
         <div style="font-size:11px;font-family:monospace;color:var(--ink);">Official ID: ${bill.invoiceNumber || bill.billId}</div>
       </div>
 
-      <div class="pos-thermal-receipt" id="pos-thermal-receipt" style="background:#fff;color:#000;padding:16px;border-radius:6px;border:1px solid #e2e8f0;font-family:'Courier New',Courier,monospace;">
-        <div class="receipt-header" style="text-align:center;margin-bottom:12px;">
-          <div class="receipt-title" style="font-size:16px;font-weight:bold;letter-spacing:1px;">ZAMORIN CAFE ESTATE</div>
-          <div class="receipt-subtitle" style="font-size:11px;margin-top:2px;">GSTIN: 32AABCT1332L1ZV · ${cafeName}</div>
-          <div class="receipt-doc-type" style="font-size:11px;font-weight:bold;margin-top:4px;">
+      <div class="pos-thermal-receipt ${currentPaperWidth === '58' ? 'paper-58mm' : 'paper-80mm'}" id="pos-thermal-receipt" data-paper-width="${currentPaperWidth}">
+        <div class="receipt-header">
+          <div class="receipt-title">ZAMORIN CAFE ESTATE</div>
+          <div class="receipt-subtitle">GSTIN: 32AABCT1332L1ZV · ${escapeHtml(cafeName)}</div>
+          <div class="receipt-doc-type">
             ${isVoid ? "TAX INVOICE — [VOID / CANCELLED]" : (reprintCount > 0 ? `TAX INVOICE — [REPRINT #${reprintCount}]` : "TAX INVOICE / RETAIL BILL")}
           </div>
         </div>
-        <div class="receipt-row" style="display:flex;justify-content:space-between;font-size:11px;">
-          <span>INVOICE: <strong>${bill.invoiceNumber || bill.billId}</strong></span>
+        <div class="receipt-row">
+          <span>INVOICE: <strong>${escapeHtml(bill.invoiceNumber || bill.billId)}</strong></span>
           <span>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
         </div>
-        <div class="receipt-row" style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;">
-          <span>DATE: ${bill.businessDate || new Date().toISOString().substring(0, 10)}</span>
+        <div class="receipt-row" style="color:#64748b;">
+          <span>DATE: ${escapeHtml(bill.businessDate || new Date().toISOString().substring(0, 10))}</span>
           <span>REGISTER 01</span>
         </div>
-        <hr class="receipt-divider" style="border-top:1px dashed #94a3b8;margin:8px 0;" />
+        ${bill.tableNumber ? `
+        <div class="receipt-row" style="color:#64748b;">
+          <span>TABLE / TOKEN:</span>
+          <strong>${escapeHtml(bill.tableNumber)}</strong>
+        </div>` : ''}
+        ${bill.cashierName ? `
+        <div class="receipt-row" style="color:#64748b;">
+          <span>CASHIER:</span>
+          <span>${escapeHtml(bill.cashierName)}</span>
+        </div>` : ''}
+        <hr class="receipt-divider" />
         
         <!-- Table Header with Universal Sl. No. -->
-        <div style="display:flex;font-size:10px;font-weight:bold;color:#475569;border-bottom:1px solid #cbd5e1;padding-bottom:3px;margin-bottom:4px;">
-          <span style="width:24px;">Sl.</span>
-          <span style="flex:1;">Item</span>
-          <span style="width:30px;text-align:center;">Qty</span>
-          <span style="width:60px;text-align:right;">Amount</span>
+        <div class="receipt-item-line" style="font-weight:bold;color:#475569;border-bottom:1px solid #cbd5e1;padding-bottom:3px;margin-bottom:4px;">
+          <span class="receipt-item-sl">Sl.</span>
+          <span class="receipt-item-name">Item</span>
+          <span class="receipt-item-qty">Qty</span>
+          <span class="receipt-item-amt">Amount</span>
         </div>
 
         ${bill.lineItems?.map((li, idx) => `
-          <div style="display:flex;font-size:11px;padding:2px 0;">
-            <span style="width:24px;color:#64748b;">${idx + 1}</span>
-            <span style="flex:1;">${li.itemNameSnapshot || li.name || 'Item'}</span>
-            <span style="width:30px;text-align:center;">${li.quantity}</span>
-            <span style="width:60px;text-align:right;font-weight:600;">₹${((li.unitPricePaisa * li.quantity) / 100).toFixed(0)}</span>
+          <div class="receipt-item-line">
+            <span class="receipt-item-sl">${idx + 1}</span>
+            <span class="receipt-item-name">
+              ${escapeHtml(li.itemNameSnapshot || li.name || 'Item')}
+              ${li.modifiers?.size && li.modifiers.size !== 'Regular' ? `<br/><small style="color:#64748b;font-size:9.5px;">* ${escapeHtml(li.modifiers.size)}</small>` : ''}
+              ${li.itemNotes ? `<br/><small style="color:#64748b;font-size:9.5px;">* Note: ${escapeHtml(li.itemNotes)}</small>` : ''}
+            </span>
+            <span class="receipt-item-qty">${li.quantity}</span>
+            <span class="receipt-item-amt">₹${((li.unitPricePaisa * li.quantity) / 100).toFixed(0)}</span>
           </div>
         `).join("") || ""}
-        <hr class="receipt-divider" style="border-top:1px dashed #94a3b8;margin:8px 0;" />
-        <div style="display:flex;justify-content:space-between;font-size:11px;"><span>Subtotal:</span><span>₹${subtotal.toFixed(0)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;"><span>CGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;"><span>SGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:bold;border-top:1px solid #cbd5e1;padding-top:4px;margin-top:4px;">
+        <hr class="receipt-divider" />
+        <div class="receipt-row"><span>Subtotal:</span><span>₹${subtotal.toFixed(0)}</span></div>
+        ${bill.discountPaisa && bill.discountPaisa > 0 ? `
+        <div class="receipt-row" style="color:#b45309;">
+          <span>Discount:</span>
+          <span>-₹${(bill.discountPaisa / 100).toFixed(0)}</span>
+        </div>` : ''}
+        <div class="receipt-row"><span>CGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
+        <div class="receipt-row"><span>SGST (2.5%):</span><span>₹${(gst / 2).toFixed(0)}</span></div>
+        ${bill.roundOffPaisa && bill.roundOffPaisa !== 0 ? `
+        <div class="receipt-row" style="color:#64748b;font-size:10.5px;">
+          <span>Round Off:</span>
+          <span>${bill.roundOffPaisa < 0 ? `-₹${(Math.abs(bill.roundOffPaisa) / 100).toFixed(2)}` : `+₹${(bill.roundOffPaisa / 100).toFixed(2)}`}</span>
+        </div>` : ''}
+        <div class="receipt-total-row">
           <span>PAID TOTAL:</span>
           <span>₹${grandTotal.toFixed(0)}</span>
         </div>
-        <div class="receipt-footer" style="text-align:center;font-size:10.5px;margin-top:10px;color:#475569;">
-          Tender: <strong>${bill.paymentMethod || "UPI"}</strong> · THANK YOU FOR VISITING ZAMORIN!
+        <div class="receipt-footer">
+          Tender: <strong>${escapeHtml(bill.paymentMethod || "UPI")}</strong> · THANK YOU FOR VISITING ZAMORIN!
         </div>
       </div>
 
       <!-- Action Panel -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;">
+      <div class="receipt-action-panel" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;">
         <button type="button" class="btn btn-sm btn-secondary" id="posReceiptSaveBtn" style="justify-content:center;">
           💾 Save A4 PDF
         </button>
@@ -1880,10 +2265,43 @@ function openReceiptModal(bill, isReprint = false) {
     saveLabel: null,
   });
 
-  // Attach interactive button listeners
+  // Attach interactive button listeners & width toggle
   setTimeout(() => {
     const modalEl = document.getElementById("zamorin-global-modal");
     if (!modalEl) return;
+
+    const receiptEl = modalEl.querySelector("#pos-thermal-receipt");
+    const toggle80 = modalEl.querySelector("#posPaperToggle80");
+    const toggle58 = modalEl.querySelector("#posPaperToggle58");
+
+    const setPaperWidth = (w) => {
+      currentPaperWidth = w;
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("zamorin_pos_paper_width", w);
+      }
+      if (receiptEl) {
+        receiptEl.setAttribute("data-paper-width", w);
+        if (w === "58") {
+          receiptEl.classList.remove("paper-80mm");
+          receiptEl.classList.add("paper-58mm");
+        } else {
+          receiptEl.classList.remove("paper-58mm");
+          receiptEl.classList.add("paper-80mm");
+        }
+      }
+      if (toggle80 && toggle58) {
+        if (w === "80") {
+          toggle80.className = "btn btn-sm btn-primary";
+          toggle58.className = "btn btn-sm btn-outline";
+        } else {
+          toggle58.className = "btn btn-sm btn-primary";
+          toggle80.className = "btn btn-sm btn-outline";
+        }
+      }
+    };
+
+    toggle80?.addEventListener("click", () => setPaperWidth("80"));
+    toggle58?.addEventListener("click", () => setPaperWidth("58"));
 
     modalEl.querySelector("#posReceiptSaveBtn")?.addEventListener("click", () => {
       savePdf();

@@ -164,8 +164,21 @@ const taxInvoiceSchema = new mongoose.Schema(
       totalSgstPaisa: { type: Number, default: 0, min: 0 },
       totalIgstPaisa: { type: Number, default: 0, min: 0 },
       totalTaxPaisa: { type: Number, required: true, min: 0 },
+      preRoundingTotalPaisa: { type: Number, default: 0 },
       roundOffPaisa: { type: Number, default: 0 },
       grandTotalPaisa: { type: Number, required: true, min: 0 },
+      taxRuleVersion: { type: String, trim: true, default: 'GST_ROUNDING_V1_2026' },
+      roundingPolicyVersion: { type: String, trim: true, default: 'ZAMORIN_PAYABLE_ROUNDING_50P_V1' },
+    },
+    taxRuleVersion: {
+      type: String,
+      trim: true,
+      default: 'GST_ROUNDING_V1_2026',
+    },
+    roundingPolicyVersion: {
+      type: String,
+      trim: true,
+      default: 'ZAMORIN_PAYABLE_ROUNDING_50P_V1',
     },
     amountInWords: {
       type: String,

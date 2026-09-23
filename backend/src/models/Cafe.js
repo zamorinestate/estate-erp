@@ -19,12 +19,27 @@ const CAFE_STATUSES = [
 ];
 
 const CAFE_TYPES = [
+  'CAFE',
+  'RESTAURANT',
+  'CAFE_AND_RESTAURANT',
   'STANDARD_CAFE',
   'KIOSK',
   'FOOD_COURT',
   'CAMPUS_CAFE',
   'INSTITUTIONAL_CAFE',
   'OTHER',
+];
+
+const CAFE_LIFECYCLE_STAGES = [
+  'DRAFT',
+  'VALIDATION',
+  'PREVIEW',
+  'CREATED',
+  'PROVISIONING',
+  'PROVISIONED',
+  'VERIFIED',
+  'ACTIVATED',
+  'PROVISIONING_FAILED',
 ];
 
 const PAYMENT_METHODS = [
@@ -252,6 +267,26 @@ const cafeSchema = new mongoose.Schema(
       default: '',
     },
 
+    templateId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+      index: true,
+    },
+
+    templateOverrides: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
+    businessDayCutoffHour: {
+      type: Number,
+      default: 4,
+      min: 0,
+      max: 12,
+    },
+
     legalConstitution: {
       constitution: {
         type: String,
@@ -361,6 +396,24 @@ const cafeSchema = new mongoose.Schema(
       default: 'DRAFT',
       index: true,
     },
+
+    lifecycleStage: {
+      type: String,
+      enum: CAFE_LIFECYCLE_STAGES,
+      default: 'DRAFT',
+      index: true,
+    },
+
+    lifecycleHistory: [
+      {
+        fromStage: String,
+        toStage: String,
+        transitionedAt: { type: Date, default: Date.now },
+        transitionedBy: String,
+        reason: String,
+        metadata: mongoose.Schema.Types.Mixed,
+      },
+    ],
 
     openingDate: {
       type: Date,
@@ -554,6 +607,12 @@ const cafeSchema = new mongoose.Schema(
         certificateUrl: { type: String, trim: true, default: '' },
         effectiveDate: { type: Date, default: null },
         status: { type: String, trim: true, default: 'ACTIVE' },
+        verificationStatus: {
+          type: String,
+          enum: ['NOT_APPLICABLE', 'FORMAT_VALIDATED', 'DOCUMENT_PROVIDED', 'EXTERNALLY_VERIFIED'],
+          default: 'NOT_APPLICABLE',
+        },
+        documentAttachmentId: { type: String, trim: true, default: null },
       },
 
       pan: {
@@ -575,12 +634,34 @@ const cafeSchema = new mongoose.Schema(
       fssai: {
         isApplicable: { type: Boolean, default: true },
         number: { type: String, trim: true, default: '' },
+        category: {
+          type: String,
+          enum: ['REGISTRATION', 'STATE_LICENCE', 'CENTRAL_LICENCE'],
+          default: 'STATE_LICENCE',
+        },
         licenseType: { type: String, trim: true, default: 'State Licence' },
-        kindOfBusiness: { type: String, trim: true, default: '' },
-        issuingAuthority: { type: String, trim: true, default: '' },
+        kindOfBusiness: { type: String, trim: true, default: 'Food Service / Café' },
+        issuingAuthority: { type: String, trim: true, default: 'FSSAI FoSCoS' },
         validFrom: { type: Date, default: null },
-        validTill: { type: Date, default: null },
+        validTill: { type: Date, default: null }, // Optional legacy field
+        isPerpetual: { type: Boolean, default: true },
+        status: {
+          type: String,
+          enum: ['ACTIVE', 'SUSPENDED', 'CANCELLED', 'SURRENDERED', 'UNDER_REVIEW'],
+          default: 'ACTIVE',
+        },
+        annualFeeInr: { type: Number, default: 0 },
+        annualFeeHistory: [
+          {
+            financialYear: String,
+            amount: Number,
+            paidAt: Date,
+            transactionReference: String,
+          },
+        ],
+        fostacCompliant: { type: Boolean, default: false },
         certificateUrl: { type: String, trim: true, default: '' },
+        certificateAttachmentId: { type: String, trim: true, default: null },
         renewalReminderDate: { type: Date, default: null },
       },
 
@@ -1498,6 +1579,7 @@ module.exports = {
   Cafe,
   CAFE_STATUSES,
   CAFE_TYPES,
+  CAFE_LIFECYCLE_STAGES,
   PAYMENT_METHODS,
   SERVICE_TYPES,
   READINESS_CHECKLIST_KEYS,

@@ -27,6 +27,7 @@ const {
   updateAccessibilityPreferences,
   updateWorkspacePreferences,
   updateNotificationPreferences,
+  resetMyPreferences,
   getLanguageCatalogue,
   getSecurityOverview,
   updateSecurityPolicy,
@@ -76,6 +77,7 @@ router.patch('/preferences/language', updateLanguagePreference);
 router.patch('/preferences/accessibility', updateAccessibilityPreferences);
 router.patch('/preferences/workspace', updateWorkspacePreferences);
 router.patch('/preferences/notifications', updateNotificationPreferences);
+router.post('/preferences/reset', resetMyPreferences);
 
 // ── Language Catalogue ────────────────────────────────────────────────────────
 router.get('/languages', getLanguageCatalogue);

@@ -43,6 +43,13 @@ const {
 } = require('../models/SequenceCounter');
 
 const {
+  roundToPaisa,
+  calculateCustomerPayableRounding50P,
+  TAX_RULE_VERSION,
+  ROUNDING_POLICY_VERSION,
+} = require('../services/gstTaxService');
+
+const {
   asyncHandler,
 } = require('../utils/asyncHandler');
 
@@ -57,6 +64,7 @@ const {
 
 const auditService = require('../services/auditService');
 const recordRequestAudit = (opts) => auditService.recordRequestAudit(opts);
+const refundService = require('../services/refundService');
 
 function normalizeId(value) {
   return typeof value === 'string'
@@ -564,9 +572,10 @@ const createBill = asyncHandler(async (request, response) => {
     const effectiveUnitPrice = unitPrice + modifierPrice;
     const lineSubtotal = qty * effectiveUnitPrice;
     const taxRate = mItem.taxRatePercent || 5;
-    const lineTax = Math.round(lineSubtotal * (taxRate / 100));
-    const lineCgst = Math.round(lineTax / 2);
-    const lineSgst = lineTax - lineCgst;
+    const halfRate = taxRate / 2;
+    const lineCgst = roundToPaisa((lineSubtotal * halfRate) / 100);
+    const lineSgst = roundToPaisa((lineSubtotal * halfRate) / 100);
+    const lineTax = lineCgst + lineSgst;
 
     subtotalPaisa += lineSubtotal;
     taxPaisa += lineTax;
@@ -592,7 +601,10 @@ const createBill = asyncHandler(async (request, response) => {
   }
 
   const discount = Math.max(0, Number(discountPaisa) || 0);
-  const totalPaisa = Math.max(0, subtotalPaisa + taxPaisa - discount);
+  const preRoundingTotalPaisa = Math.max(0, subtotalPaisa + taxPaisa - discount);
+  const payable = calculateCustomerPayableRounding50P(preRoundingTotalPaisa);
+  const totalPaisa = payable.finalPayablePaisa;
+  const roundOffPaisa = payable.roundOffPaisa;
 
   const businessDate = getIstBusinessDate();
   const datePart = businessDate.replace(/-/g, '');
@@ -603,7 +615,22 @@ const createBill = asyncHandler(async (request, response) => {
     minimumDigits: 4,
   });
 
-  const invoiceNumber = `ZAM-BILL-${seqId.replace(/^BILL-/, '')}`;
+  let invoiceNumber = null;
+  try {
+    const { allocateInvoiceNumber } = require('../services/gstTaxService');
+    const invoiceAlloc = await allocateInvoiceNumber({
+      organisationId: request.auth.organisationId,
+      cafeId,
+      financialYear: typeof financialYear === 'string' && financialYear.trim() ? financialYear.trim() : '2026-27',
+      statutorySeriesCode: 'P',
+      seriesPrefix: 'P',
+    });
+    invoiceNumber = invoiceAlloc.invoiceNumber;
+  } catch {
+    const compactBranch = cafeId.replace(/[^A-Za-z0-9]/g, '').slice(-4).padStart(2, '0');
+    const seqTail = seqId.split('-').pop();
+    invoiceNumber = `P/${compactBranch}/2627/${seqTail}`.slice(0, 16);
+  }
   const shouldComplete = isImmediateCompletion !== false;
   const payMethod = PAYMENT_METHODS.includes(normalizeId(paymentMethod))
     ? normalizeId(paymentMethod)
@@ -667,7 +694,11 @@ const createBill = asyncHandler(async (request, response) => {
     sgstPaisa,
     igstPaisa: 0,
     discountPaisa: discount,
+    preRoundingTotalPaisa,
+    roundOffPaisa,
     totalPaisa,
+    taxRuleVersion: TAX_RULE_VERSION,
+    roundingPolicyVersion: ROUNDING_POLICY_VERSION,
     refundedTotalPaisa: 0,
     paymentStatus: shouldComplete ? 'PAID' : 'UNPAID',
     paymentMethod: processedTenders.length > 1 ? 'SPLIT' : payMethod,
@@ -894,104 +925,35 @@ const voidBill = asyncHandler(async (request, response) => {
 
 /**
  * POST /api/v1/bills/:billId/refund
- * Controlled refund with refundable-limit checks.
+ * Controlled refund orchestrated via canonical refundService.
  */
 const refundBill = asyncHandler(async (request, response) => {
   const billId = normalizeId(request.params.billId);
-  const { refundType = 'FULL', amountPaisa, amount, reason, tender } = request.body;
+  const { refundType = 'FULL', amountPaisa, amount, reason, tender, idempotencyKey } = request.body;
 
-  const reasonText = typeof reason === 'string' ? reason.trim() : '';
-  if (reasonText.length < 3) {
-    throw new ApiError(400, 'REASON_REQUIRED', 'A valid justification is required to process a refund.');
-  }
-
-  if (request.auth.role === 'OWNER') {
-    throw new ApiError(
-      403,
-      'REFUND_FORBIDDEN',
-      'Owner does not possess POS refund mutation authority.'
-    );
-  }
-
-  const bill = await Bill.findOne({
-    $or: [{ billId }, { invoiceNumber: billId }],
-    organisationId: request.auth.organisationId,
-  });
-
-  if (!bill) {
-    throw new ApiError(404, 'NOT_FOUND', 'Bill not found.');
-  }
-  assertResourceCafeOwnership(bill, request, 'Bill');
-  assertCafeAccess(request, bill.cafeId);
-
-  if (bill.status === 'VOIDED') {
-    throw new ApiError(400, 'CANNOT_REFUND_VOIDED', 'Cannot refund a voided bill.');
-  }
-
-  const remainingRefundablePaisa = Math.max(0, bill.totalPaisa - (bill.refundedTotalPaisa || 0));
-  if (remainingRefundablePaisa <= 0) {
-    throw new ApiError(400, 'NOTHING_TO_REFUND', 'This bill has already been fully refunded.');
-  }
-
-  let requestedPaisa = remainingRefundablePaisa;
-  if (refundType === 'PARTIAL' || refundType === 'AMOUNT_BASED') {
-    requestedPaisa = Math.round(Number(amountPaisa) || (amount ? Number(amount) * 100 : 0));
-    if (requestedPaisa <= 0 || requestedPaisa > remainingRefundablePaisa) {
-      throw new ApiError(
-        400,
-        'INVALID_REFUND_AMOUNT',
-        `Refund amount must be between ₹0.01 and ₹${(remainingRefundablePaisa / 100).toFixed(2)}.`
-      );
+  const result = await refundService.processBillRefund(
+    {
+      organisationId: request.auth.organisationId,
+      user: request.auth,
+      request,
+      channel: 'POS',
+    },
+    {
+      billId,
+      refundType,
+      amountPaisa,
+      amount,
+      reason,
+      tender,
+      idempotencyKey,
     }
-  }
-
-  const refundId = `REF-${Date.now()}`;
-  const refundEntry = {
-    refundId,
-    refundType: refundType.toUpperCase(),
-    amountPaisa: requestedPaisa,
-    reason: reasonText,
-    requestedBy: request.auth.userId,
-    approvedBy: request.auth.userId,
-    tender: tender && PAYMENT_METHODS.includes(tender.toUpperCase()) ? tender.toUpperCase() : bill.paymentMethod,
-    refundReference: `RREF-${Date.now()}`,
-    status: 'COMPLETED',
-    createdAt: new Date(),
-  };
-
-  if (!Array.isArray(bill.refunds)) {
-    bill.refunds = [];
-  }
-  bill.refunds.push(refundEntry);
-  bill.refundedTotalPaisa = (bill.refundedTotalPaisa || 0) + requestedPaisa;
-
-  if (bill.refundedTotalPaisa >= bill.totalPaisa) {
-    bill.status = 'REFUNDED';
-    bill.paymentStatus = 'REFUNDED';
-  } else {
-    bill.status = 'PARTIALLY_REFUNDED';
-    bill.paymentStatus = 'PARTIALLY_REFUNDED';
-  }
-
-  await bill.save();
-
-  await recordRequestAudit({
-    request,
-    module: 'BILLS_RECEIPTS',
-    action: 'REFUND_BILL',
-    entityType: 'BILL',
-    entityId: bill.billId,
-    after: { refundId, amountPaisa: requestedPaisa, status: bill.status, reason: reasonText },
-    reason: reasonText,
-    result: 'SUCCESS',
-    riskClassification: 'HIGH',
-  });
+  );
 
   return response.status(200).json({
     success: true,
     data: {
-      bill: bill.toObject(),
-      refund: refundEntry,
+      bill: result.bill,
+      refund: result.refund,
     },
     correlationId: request.correlationId || null,
   });
@@ -1825,6 +1787,9 @@ const getBillPdf = asyncHandler(async (request, response) => {
   if (!bill) {
     throw new ApiError(404, 'BILL_NOT_FOUND', `Bill ${billId} was not found.`);
   }
+
+  assertResourceCafeOwnership(bill, request, 'Bill');
+  assertCafeAccess(request, bill.cafeId);
 
   let cafe = null;
   if (bill.cafeId) {

@@ -53,8 +53,16 @@ const recipeIngredientSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    costPerUnit: {
+      type: Number,
+      default: null,
+    },
+    costPaisa: {
+      type: Number,
+      default: null,
+    },
   },
-  { _id: true }
+  { _id: true, strict: false }
 );
 
 const recipeSchema = new mongoose.Schema(
@@ -192,6 +200,7 @@ const recipeSchema = new mongoose.Schema(
   {
     timestamps: true,
     collection: 'recipes',
+    strict: false,
   }
 );
 

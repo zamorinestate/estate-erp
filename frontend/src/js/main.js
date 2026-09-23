@@ -27,21 +27,12 @@ import {
   setStepUpAuthenticationHandler,
   setAccessToken,
   clearAllAuthTokens,
+  addSessionExpirationListener,
+  setSessionState,
+  SessionState,
 } from "./apiClient.js";
 import { registerServiceWorker } from "./updateManager.js";
 import { initLanguage } from "./i18n.js";
-import {
-  renderLogin,
-  wireLogin,
-  renderPasswordResetRequest,
-  wirePasswordResetRequest,
-  renderPasswordResetVerify,
-  wirePasswordResetVerify,
-  renderPasswordResetFinal,
-  wirePasswordResetFinal,
-  renderMfaChallenge,
-  wireMfaChallenge,
-} from "./pages/login.js?v=3.4.4";
 import {
   renderLoginPage2,
   wireLoginPage2,
@@ -53,8 +44,11 @@ import {
   wirePasswordResetFinal2,
   renderMfaChallenge2,
   wireMfaChallenge2,
+  renderRegisterPage2,
+  wireRegisterPage2,
   showGlassAlert,
-} from "./pages/login2.js?v=3.4.4";
+  abortActivePasskeyRequests,
+} from "./pages/login2.js?v=3.5.0";
 import { mountPublicCafeGateway } from "./pages/cafeGatewayPage.js";
 import "./responsiveAuditor.js";
 
@@ -76,30 +70,23 @@ export const DEV_PREVIEW_USERS = Object.freeze({
     name: "Zamorin Primary Master",
     email: "pradeeshk331@gmail.com",
     role: "MASTER",
+    designation: "Primary Master",
+    position: "Primary Master",
     organisationId: "ZAMORIN",
     status: "ACTIVE",
     isPrimaryMaster: true,
     isDevPreview: true,
   }),
 
-  master_normal: Object.freeze({
-    _id: "MU-0002",
-    id: "MU-0002",
-    name: "Zamorin Normal Master",
-    email: "normal.master@example.com",
-    role: "MASTER",
-    organisationId: "ZAMORIN",
-    status: "ACTIVE",
-    isPrimaryMaster: false,
-    isDevPreview: true,
-  }),
 
   owner: Object.freeze({
     _id: "OU-0001",
     id: "OU-0001",
-    name: "Zamorin Owner",
+    name: "Café Owner",
     email: "owner@example.com",
     role: "OWNER",
+    designation: "Café Owner / Franchise Partner",
+    position: "Café Owner / Franchise Partner",
     organisationId: "ZAMORIN",
     status: "ACTIVE",
     isDevPreview: true,
@@ -173,12 +160,6 @@ export function getRequestedDevRole() {
     return "cafe_admin";
   }
 
-  if (
-    requested === "master_normal" ||
-    (requested === "master" && authority === "normal")
-  ) {
-    return "master_normal";
-  }
 
   return "master";
 }
@@ -330,18 +311,45 @@ export async function handlePasswordResetFinal({
   return result;
 }
 
-export function isLegacyLoginRequested() {
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("legacyLogin") === "true";
+export function getSafeInternalRedirect(target) {
+  if (!target || typeof target !== "string") return null;
+  const trimmed = target.trim();
+  // Disallow protocol-relative URLs (//example.com, \example.com)
+  if (trimmed.startsWith("//") || trimmed.startsWith("\\\\") || trimmed.startsWith("/\\")) return null;
+  // Disallow absolute URI schemes (http:, https:, javascript:, data:, etc.)
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return null;
+  // Disallow control characters
+  if (/[\r\n\0]/.test(trimmed)) return null;
+
+  // Safe internal hash route: e.g. "#pos", "#settings", "#vendors", "pos", "settings"
+  if (trimmed.startsWith("#")) {
+    const rawRoute = trimmed.slice(1).replace(/^\/+/, "");
+    return rawRoute || null;
+  }
+  // Safe relative internal pathname: e.g. "/pos", "/vendors", "/settings"
+  if (trimmed.startsWith("/")) {
+    const rawRoute = trimmed.slice(1);
+    return rawRoute || null;
+  }
+  // Simple internal route key: e.g. "pos", "vendors"
+  if (/^[a-zA-Z0-9_\-\/]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
 }
 
 function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
-  if (rawRole === "MASTER") {
+  if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
+    // ⚠️ PRIMARY MASTER LOCK: Only the single administrator account
+    // (MU-0001 / pradeeshk331@gmail.com) holds the MASTER role and window.
+    const isHardcodedPrimaryMaster =
+      user?.userId === "MU-0001" &&
+      String(user?.email || "").toLowerCase() === "pradeeshk331@gmail.com";
     return {
       role: "master",
-      isPrimaryMaster: Boolean(user?.isPrimaryMaster),
+      isPrimaryMaster: isHardcodedPrimaryMaster,
     };
   }
 
@@ -401,6 +409,7 @@ export function triggerBackendWarmup() {
 
 export function mountAuthScreen(screen = "login", params = {}) {
   if (typeof document === "undefined") return;
+  abortActivePasskeyRequests();
 
   const appEl = document.getElementById("app");
   if (!appEl) return;
@@ -411,36 +420,29 @@ export function mountAuthScreen(screen = "login", params = {}) {
   appEl.className = "auth-screen";
   delete appEl.dataset.shellRole;
 
-  const useLegacy = isLegacyLoginRequested();
-
   if (screen === "login") {
     // Non-blocking wake-up call to backend
     triggerBackendWarmup();
 
-    if (useLegacy) {
-      appEl.innerHTML = renderLogin(params);
-      wireLogin(appEl, {
-        onSubmit: async ({ organisationId, email, password, rememberDevice }) => {
-          await handleCompleteLoginFlow({ organisationId, email, password, rememberDevice });
-        },
-        onForgotPassword: ({ organisationId, email }) => {
-          mountAuthScreen("forgot", { organisationId, email });
-        }
-      });
-    } else {
-      appEl.innerHTML = renderLoginPage2(params);
-      wireLoginPage2(appEl, {
-        onSubmit: async ({ organisationId, email, password, rememberDevice }) => {
-          await handleCompleteLoginFlow({ organisationId, email, password, rememberDevice });
-        },
-        onForgotPassword: ({ organisationId, email }) => {
-          mountAuthScreen("forgot", { organisationId, email });
-        },
-        onCafeOps: () => {
-          window.location.href = "/cafe-operations/cafe-operations.html";
-        }
-      });
-    }
+    const activeCafe = params.cafeContext || null;
+    appEl.innerHTML = renderLoginPage2({ ...params, cafeContext: activeCafe });
+    wireLoginPage2(appEl, {
+      onSubmit: async ({ organisationId, email, password, rememberDevice, targetCafeId }) => {
+        await handleCompleteLoginFlow({ organisationId, email, password, rememberDevice, targetCafeId });
+      },
+      onForgotPassword: ({ organisationId, email }) => {
+        mountAuthScreen("forgot", { organisationId, email });
+      },
+      onRegister: () => {
+        mountAuthScreen("register");
+      },
+      onCafeOps: () => {
+        window.location.href = "/cafe-operations/cafe-operations.html";
+      },
+      onPasskeySuccess: (user) => {
+        handleAuthenticatedUserSession(user);
+      }
+    });
   } else if (screen === "mfa") {
     const handleMfaSubmit = async ({ code }) => {
       try {
@@ -481,118 +483,90 @@ export function mountAuthScreen(screen = "login", params = {}) {
       }
     };
 
-    if (useLegacy) {
-      appEl.innerHTML = renderMfaChallenge(params);
-      wireMfaChallenge(appEl, {
-        onSubmit: handleMfaSubmit,
-        onBack: () => mountAuthScreen("login"),
-      });
-    } else {
-      appEl.innerHTML = renderMfaChallenge2(params);
-      wireMfaChallenge2(appEl, {
-        onSubmit: handleMfaSubmit,
-        onBack: () => mountAuthScreen("login"),
-      });
-    }
+    appEl.innerHTML = renderMfaChallenge2(params);
+    wireMfaChallenge2(appEl, {
+      onSubmit: handleMfaSubmit,
+      onBack: () => mountAuthScreen("login"),
+    });
   } else if (screen === "forgot") {
-    if (useLegacy) {
-      appEl.innerHTML = renderPasswordResetRequest(params);
-      wirePasswordResetRequest(appEl, {
-        onSubmit: async ({ organisationId, email }) => {
-          const res = await handlePasswordResetRequest({ organisationId, email });
-          mountAuthScreen("verify", { email, challengeId: res?.data?.challengeId });
-        },
-        onBack: () => mountAuthScreen("login")
-      });
-    } else {
-      appEl.innerHTML = renderPasswordResetRequest2(params);
-      wirePasswordResetRequest2(appEl, {
-        onSubmit: async ({ organisationId, email }) => {
-          const res = await handlePasswordResetRequest({ organisationId, email });
-          mountAuthScreen("verify", { email, challengeId: res?.data?.challengeId });
-        },
-        onBack: () => mountAuthScreen("login")
-      });
-    }
+    appEl.innerHTML = renderPasswordResetRequest2(params);
+    wirePasswordResetRequest2(appEl, {
+      onSubmit: async ({ organisationId, email }) => {
+        const res = await handlePasswordResetRequest({ organisationId, email });
+        mountAuthScreen("verify", { organisationId, email, challengeId: res?.data?.challengeId });
+      },
+      onBack: () => mountAuthScreen("login")
+    });
   } else if (screen === "verify") {
-    if (useLegacy) {
-      appEl.innerHTML = renderPasswordResetVerify(params);
-      wirePasswordResetVerify(appEl, {
-        onSubmit: async ({ code }) => {
-          const res = await handlePasswordResetVerify({
-            challengeId: params.challengeId,
-            code
-          });
-          mountAuthScreen("reset", {
-            resetToken: res.resetToken,
-            challengeId: res.challengeId
-          });
-        },
-        onBack: () => mountAuthScreen("forgot")
-      });
-    } else {
-      appEl.innerHTML = renderPasswordResetVerify2(params);
-      wirePasswordResetVerify2(appEl, {
-        onSubmit: async ({ code }) => {
-          const res = await handlePasswordResetVerify({
-            challengeId: params.challengeId,
-            code
-          });
-          mountAuthScreen("reset", {
-            resetToken: res.resetToken,
-            challengeId: res.challengeId
-          });
-        },
-        onBack: () => mountAuthScreen("forgot")
-      });
-    }
+    appEl.innerHTML = renderPasswordResetVerify2(params);
+    wirePasswordResetVerify2(appEl, {
+      onSubmit: async ({ code }) => {
+        const res = await handlePasswordResetVerify({
+          organisationId: params.organisationId,
+          email: params.email,
+          challengeId: params.challengeId,
+          code
+        });
+        mountAuthScreen("reset", {
+          organisationId: params.organisationId,
+          resetToken: res.resetToken,
+          challengeId: res.challengeId
+        });
+      },
+      onResend: async () => {
+        const res = await handlePasswordResetRequest({
+          organisationId: params.organisationId || "ZAMORIN",
+          email: params.email,
+        });
+        if (res?.data?.challengeId) {
+          params.challengeId = res.data.challengeId;
+        }
+      },
+      onBack: () => mountAuthScreen("forgot")
+    });
   } else if (screen === "reset") {
-    if (useLegacy) {
-      appEl.innerHTML = renderPasswordResetFinal(params);
-      wirePasswordResetFinal(appEl, {
-        onSubmit: async ({ newPassword }) => {
-          await handlePasswordResetFinal({
-            challengeId: params.challengeId,
-            resetToken: params.resetToken,
-            newPassword
-          });
-          mountAuthScreen("login", { notice: "Password updated successfully. Please sign in with your new password." });
-        },
-        onCancel: () => mountAuthScreen("login")
-      });
-    } else {
-      appEl.innerHTML = renderPasswordResetFinal2(params);
-      wirePasswordResetFinal2(appEl, {
-        onSubmit: async ({ newPassword }) => {
-          await handlePasswordResetFinal({
-            challengeId: params.challengeId,
-            resetToken: params.resetToken,
-            newPassword
-          });
-          mountAuthScreen("login", { notice: "Password updated successfully. Please sign in with your new password." });
-        },
-        onCancel: () => mountAuthScreen("login")
-      });
-    }
+    appEl.innerHTML = renderPasswordResetFinal2(params);
+    wirePasswordResetFinal2(appEl, {
+      onSubmit: async ({ newPassword }) => {
+        await handlePasswordResetFinal({
+          organisationId: params.organisationId,
+          challengeId: params.challengeId,
+          resetToken: params.resetToken,
+          newPassword
+        });
+        mountAuthScreen("login", { notice: "Password updated successfully. Please sign in with your new password." });
+      },
+      onCancel: () => mountAuthScreen("login")
+    });
+  } else if (screen === "register") {
+    appEl.innerHTML = renderRegisterPage2(params);
+    wireRegisterPage2(appEl, {
+      onLogin: () => mountAuthScreen("login")
+    });
   }
 }
 
-async function handleCompleteLoginFlow({ organisationId, email, password, rememberDevice = false }) {
+async function handleCompleteLoginFlow({ organisationId, email, password, rememberDevice = false, targetCafeId = null }) {
   try {
+    const loginPayload = {
+      organisationId,
+      email,
+      password,
+      rememberDevice: Boolean(rememberDevice),
+      identifier: email,
+      device: {
+        deviceId: getOrCreateDeviceId(),
+        deviceName: "Browser Client",
+        deviceType: "DESKTOP",
+      },
+    };
+    if (targetCafeId) {
+      loginPayload.targetCafeId = String(targetCafeId).trim().toUpperCase();
+    }
+
     const res = await apiPost(
       "/auth/login",
-      {
-        organisationId,
-        email,
-        password,
-        rememberDevice: Boolean(rememberDevice),
-        identifier: email,
-        device: {
-          deviceId: getOrCreateDeviceId(),
-          deviceName: "Browser Client",
-          deviceType: "DESKTOP",
-        },
-      },
+      loginPayload,
       { timeoutMs: 60000 }
     );
 
@@ -630,7 +604,13 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
       handleAuthenticatedUserSession(user);
       return { success: true, user };
     }
-    window.location.hash = "#dashboard";
+    if (typeof window !== "undefined") {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", "/#dashboard");
+      } else {
+        window.location.hash = "#dashboard";
+      }
+    }
     boot();
     return { success: true };
   } catch (err) {
@@ -663,19 +643,50 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
 }
 
 function handleAuthenticatedUserSession(user) {
+  abortActivePasskeyRequests();
   const { role, isPrimaryMaster } = resolveAuthenticatedRole(user);
   const landingRoute = (role === "staff") ? "staff-home" : "dashboard";
+
+  let targetRoute = landingRoute;
+  if (typeof window !== "undefined") {
+    const searchParams = new URLSearchParams(window.location.search);
+    const candidate = searchParams.get("returnTo") || searchParams.get("redirect") || searchParams.get("next");
+    const safeTarget = getSafeInternalRedirect(candidate);
+    if (safeTarget && isRouteAllowed(role, safeTarget, isPrimaryMaster)) {
+      targetRoute = safeTarget;
+    }
+  }
+
+  // Clear any residual dev/preview role overrides so the authenticated employee profile is strictly authoritative
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("zamorin-dev-role");
+      localStorage.setItem("zamorin_user", JSON.stringify(user));
+    }
+  } catch {}
+
+  setSessionState(SessionState.AUTHENTICATED);
 
   setState({
     auth: { authenticated: true, user, loading: false },
     user,
     role,
     isPrimaryMaster,
-    route: landingRoute,
+    route: targetRoute,
   });
 
-  window.location.hash = `#${landingRoute}`;
-  boot();
+  if (typeof window !== "undefined") {
+    if (window.history && window.history.replaceState) {
+      // Transition browser out of /login into root single-page route
+      window.history.replaceState(null, "", `/#${targetRoute}`);
+    } else {
+      window.location.hash = `#${targetRoute}`;
+    }
+  }
+
+  renderShell();
+  loadAvailableCafes().catch(() => {});
+  registerServiceWorker().catch(() => {});
 }
 
 function renderDevPreviewBanner() {
@@ -761,6 +772,76 @@ if (isDirectDashboardAllowed()) {
 }
 
 // =============================================================================
+// CAFE PORTFOLIO & SCOPE INITIALIZATION
+// =============================================================================
+
+export async function loadAvailableCafes() {
+  try {
+    const res = await apiGet("/cafes");
+    const list = res?.data?.cafes || res?.data || [];
+    if (Array.isArray(list) && list.length > 0) {
+      state.cafes = list;
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("zamorin_cafes", JSON.stringify(list));
+        }
+      } catch {}
+
+      const savedCafe = typeof localStorage !== "undefined" ? localStorage.getItem("zamorin-selected-cafe-id") : null;
+      if (savedCafe && (savedCafe === "ALL" || list.some((c) => (c.cafeId || c.id || c.code) === savedCafe))) {
+        state.selectedCafeId = savedCafe;
+        state.currentCafeId = savedCafe === "ALL" ? "" : savedCafe;
+      } else if (state.role === "owner" && list.length === 1) {
+        const singleId = list[0].cafeId || list[0].id || list[0].code;
+        state.selectedCafeId = singleId;
+        state.currentCafeId = singleId;
+      } else if (!state.selectedCafeId) {
+        state.selectedCafeId = "ALL";
+        state.currentCafeId = "";
+      }
+
+      if (state.user && state.selectedCafeId && state.selectedCafeId !== "ALL") {
+        const found = list.find((c) => (c.cafeId || c.id || c.code) === state.selectedCafeId);
+        if (found) {
+          state.user.primaryCafeId = found.cafeId || found.id || found.code;
+          state.user.primaryCafeName = found.name || found.displayName || state.user.primaryCafeName;
+        }
+      }
+
+      if (typeof document !== "undefined") {
+        const sel = document.getElementById("global-cafe-selector");
+        if (sel) {
+          const isOwner = state.role === "owner";
+          const allLabel = isOwner ? "🏠 All Assigned Cafés (Portfolio)" : "🏠 All Cafés (Global Portfolio)";
+          const options = [
+            `<option value="ALL" ${state.selectedCafeId === "ALL" ? "selected" : ""}>${allLabel}</option>`,
+            ...list.map((c) => {
+              const cId = c.cafeId || c.id || c.code;
+              const cName = c.name || c.displayName || "Outlet";
+              const isSel = state.selectedCafeId === cId;
+              return `<option value="${cId}" ${isSel ? "selected" : ""}>☕ ${cId} · ${cName}</option>`;
+            }),
+          ].join("");
+          sel.innerHTML = options;
+          sel.value = state.selectedCafeId || "ALL";
+        }
+      }
+      return list;
+    }
+  } catch (_err) {
+    try {
+      if (typeof localStorage !== "undefined") {
+        const cached = JSON.parse(localStorage.getItem("zamorin_cafes") || "[]");
+        if (Array.isArray(cached) && cached.length) {
+          state.cafes = cached;
+        }
+      }
+    } catch {}
+  }
+  return state.cafes || [];
+}
+
+// =============================================================================
 // AUTHENTICATED SESSION BOOT
 // =============================================================================
 
@@ -768,6 +849,7 @@ function applyAuthenticatedUser(
   user,
   requestedRoute = ""
 ) {
+  abortActivePasskeyRequests();
   const {
     role,
     isPrimaryMaster,
@@ -810,6 +892,14 @@ function applyAuthenticatedUser(
     route: initialRoute,
   });
 
+  try {
+    if (typeof localStorage !== "undefined" && user) {
+      localStorage.setItem("zamorin_user", JSON.stringify(user));
+    }
+  } catch {}
+
+  loadAvailableCafes().catch(() => {});
+
   return {
     role,
     isPrimaryMaster,
@@ -847,18 +937,22 @@ async function boot() {
       ? new URLSearchParams(window.location.search)
       : null;
 
-  // Direct Café Access QR / Link / PIN Gateway Routing (P0-02, P0-02B)
+  // Direct Café Access QR / Link / PIN Gateway Routing (P0-02, P0-02B, REC-03)
   const pathname = typeof window !== "undefined" ? window.location.pathname : "";
-  const isQrPath = pathname.startsWith("/cafe-access/qr/") || urlHash.startsWith("cafe-access/qr/");
+  const isCShortPath = pathname.startsWith("/c/") || urlHash.startsWith("c/");
+  const isQrPath = isCShortPath || pathname.startsWith("/cafe-access/qr/") || urlHash.startsWith("cafe-access/qr/");
   const isLinkPath = pathname.startsWith("/cafe-access/link/") || urlHash.startsWith("cafe-access/link/");
   const isGatewayPath = pathname === "/cafe-gateway" || urlHash === "cafe-gateway";
 
   if (isQrPath || isLinkPath || isGatewayPath) {
-    const token = isQrPath
-      ? (pathname.startsWith("/cafe-access/qr/") ? pathname.slice("/cafe-access/qr/".length) : urlHash.slice("cafe-access/qr/".length))
-      : isLinkPath
-      ? (pathname.startsWith("/cafe-access/link/") ? pathname.slice("/cafe-access/link/".length) : urlHash.slice("cafe-access/link/".length))
-      : null;
+    let token = null;
+    if (pathname.startsWith("/c/")) token = pathname.slice("/c/".length);
+    else if (urlHash.startsWith("c/")) token = urlHash.slice("c/".length);
+    else if (pathname.startsWith("/cafe-access/qr/")) token = pathname.slice("/cafe-access/qr/".length);
+    else if (urlHash.startsWith("cafe-access/qr/")) token = urlHash.slice("cafe-access/qr/".length);
+    else if (pathname.startsWith("/cafe-access/link/")) token = pathname.slice("/cafe-access/link/".length);
+    else if (urlHash.startsWith("cafe-access/link/")) token = urlHash.slice("cafe-access/link/".length);
+
     const method = isQrPath ? "QR" : isLinkPath ? "LINK" : null;
 
     mountPublicCafeGateway(document.getElementById("app"), { method, token });
@@ -866,7 +960,42 @@ async function boot() {
   }
 
   // Direct Auth Screen Routing (0ms instant mount)
-  if (urlHash === "login" || params?.get("auth") === "login") {
+  // Handle /login2 alias -> redirect to canonical /login
+  if (pathname === "/login2" || urlHash === "login2") {
+    if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", "/login");
+    }
+  }
+
+  // If already authenticated in memory, mount the app shell immediately
+  if (state.auth?.authenticated && state.user) {
+    if (pathname === "/login" || pathname === "/login2") {
+      if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", `/#${state.route || "dashboard"}`);
+      }
+    }
+    renderShell();
+    loadAvailableCafes().catch(() => {});
+    registerServiceWorker().catch(() => {});
+    return;
+  }
+
+  const isExplicitAppHash = Boolean(
+    urlHash &&
+    !["login", "login2", "forgot", "mfa", "register", "cafe-gateway"].includes(urlHash) &&
+    !urlHash.startsWith("cafe-access/") &&
+    !urlHash.startsWith("c/")
+  );
+
+  const isLoginRoute = !isExplicitAppHash && (
+    urlHash === "login" ||
+    urlHash === "login2" ||
+    pathname === "/login" ||
+    pathname === "/login2" ||
+    params?.get("auth") === "login"
+  );
+
+  if (isLoginRoute) {
     mountAuthScreen("login");
     return;
   }
@@ -884,7 +1013,13 @@ async function boot() {
     const payload = await apiGet("/auth/me");
     if (payload?.data?.user) {
       applyAuthenticatedUser(payload.data.user, urlHash);
+      if (pathname === "/login" || pathname === "/login2") {
+        if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+          window.history.replaceState(null, "", `/#${urlHash || state.route || "dashboard"}`);
+        }
+      }
       renderShell();
+      loadAvailableCafes().catch(() => {});
       registerServiceWorker().catch(() => {});
       return;
     }
@@ -917,6 +1052,7 @@ async function boot() {
     });
 
     renderShell();
+    loadAvailableCafes().catch(() => {});
     registerServiceWorker().catch(() => {});
     return;
   }
@@ -945,17 +1081,22 @@ async function boot() {
 
 if (typeof window !== "undefined") {
   window.addEventListener("hashchange", () => {
+    abortActivePasskeyRequests();
     const rawHash = window.location.hash.replace(/^#/, "");
-    if (rawHash === "login") {
+    if (rawHash === "login" || rawHash === "login2") {
+      if (rawHash === "login2" && typeof window !== "undefined" && window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", "/login");
+      }
       mountAuthScreen("login");
     } else if (rawHash === "forgot") {
       mountAuthScreen("forgot");
     } else if (rawHash === "mfa") {
       mountAuthScreen("mfa");
-    } else if (rawHash === "cafe-gateway" || rawHash.startsWith("cafe-access/")) {
-      const isQr = rawHash.startsWith("cafe-access/qr/");
+    } else if (rawHash === "cafe-gateway" || rawHash.startsWith("cafe-access/") || rawHash.startsWith("c/")) {
+      const isCShort = rawHash.startsWith("c/");
+      const isQr = isCShort || rawHash.startsWith("cafe-access/qr/");
       const isLink = rawHash.startsWith("cafe-access/link/");
-      const token = isQr ? rawHash.slice("cafe-access/qr/".length) : isLink ? rawHash.slice("cafe-access/link/".length) : null;
+      const token = isCShort ? rawHash.slice("c/".length) : isQr ? rawHash.slice("cafe-access/qr/".length) : isLink ? rawHash.slice("cafe-access/link/".length) : null;
       const method = isQr ? "QR" : isLink ? "LINK" : null;
       mountPublicCafeGateway(document.getElementById("app"), { method, token });
     } else if (rawHash && state.route !== rawHash) {
@@ -968,6 +1109,20 @@ if (typeof window !== "undefined") {
 // APPLICATION START
 // =============================================================================
 
+// Session expiry automatic routing to canonical Login 2.0
+if (typeof window !== "undefined") {
+  addSessionExpirationListener(() => {
+    clearAllAuthTokens();
+    setState({
+      auth: { authenticated: false, loading: false, user: null, authentication: null, error: null },
+      user: null,
+      isPrimaryMaster: false,
+      route: "login",
+    });
+    mountAuthScreen("login", { notice: "Your session has expired. Please sign in again." });
+  });
+}
+
 if (typeof document !== "undefined") {
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot, { once: true });
@@ -975,3 +1130,4 @@ if (typeof document !== "undefined") {
     boot();
   }
 }
+

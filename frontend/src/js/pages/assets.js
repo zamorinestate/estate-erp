@@ -16,6 +16,8 @@ let cachedOverview = null;
 let cachedAssets = [];
 let cachedWorkOrders = [];
 let cachedCafes = [];
+let cachedPlans = [];
+let cachedBacklog = [];
 
 function renderCafeOptions(selectedCafeId) {
   if (!cachedCafes || cachedCafes.length === 0) {
@@ -425,36 +427,164 @@ function renderAssetsSubpanel() {
 
 // 3. MAINTENANCE SUBPANEL
 function renderMaintenanceSubpanel() {
-  return `
-    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(450px, 1fr)); gap:20px;">
-      <!-- PM Plans -->
-      <div class="card" style="padding:20px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-          <div>
-            <h3 style="font-size:15px; font-weight:700; margin:0 0 2px; color:var(--ink);">Preventive Maintenance Plans</h3>
-            <p style="font-size:12px; color:var(--muted); margin:0;">Active time-based &amp; meter-based maintenance schedules</p>
-          </div>
-          <button class="btn btn-ghost" id="create-pm-plan-btn" type="button" style="font-size:12px; padding:4px 10px;">+ New Plan</button>
-        </div>
+  const plans = cachedPlans || [];
+  const backlog = cachedBacklog || [];
 
-        <div style="padding:32px 16px; text-align:center; color:var(--muted); font-size:13px;">
-          No active preventive maintenance plans found. Click "+ New Plan" to configure recurring maintenance schedules.
+  const overdueCount = backlog.filter((b) => b.dueStatus === "OVERDUE").length;
+  const dueTodayCount = backlog.filter((b) => b.dueStatus === "DUE_TODAY").length;
+  const dueSoonCount = backlog.filter((b) => b.dueStatus === "DUE_SOON").length;
+  const activePlansCount = plans.filter((p) => p.isActive !== false).length;
+
+  return `
+    <!-- Top Stats Row -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-bottom:20px;">
+      <div class="card" style="padding:16px;">
+        <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700;">Overdue Maintenance</div>
+        <div style="font-size:24px; font-weight:800; color:var(--color-danger); margin-top:4px;">${overdueCount}</div>
+      </div>
+      <div class="card" style="padding:16px;">
+        <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700;">Due Today</div>
+        <div style="font-size:24px; font-weight:800; color:#b45309; margin-top:4px;">${dueTodayCount}</div>
+      </div>
+      <div class="card" style="padding:16px;">
+        <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700;">Due Soon (7 Days)</div>
+        <div style="font-size:24px; font-weight:800; color:var(--color-accent-amber); margin-top:4px;">${dueSoonCount}</div>
+      </div>
+      <div class="card" style="padding:16px;">
+        <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700;">Active PM Plans</div>
+        <div style="font-size:24px; font-weight:800; color:var(--ink); margin-top:4px;">${activePlansCount}</div>
+      </div>
+    </div>
+
+    <!-- Maintenance Backlog & Due Queue -->
+    <div class="card" style="padding:24px; margin-bottom:24px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
+        <div>
+          <h3 style="font-size:16px; font-weight:700; margin:0 0 2px; color:var(--ink);">Maintenance Backlog &amp; Due Queue (${backlog.length})</h3>
+          <p style="font-size:12.5px; color:var(--muted); margin:0;">Preventive services requiring execution, scheduled inspections, and overdue alerts</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary btn-sm" id="evaluate-alerts-btn" type="button">Evaluate Alerts</button>
         </div>
       </div>
 
-      <!-- Maintenance Backlog -->
-      <div class="card" style="padding:20px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-          <div>
-            <h3 style="font-size:15px; font-weight:700; margin:0 0 2px; color:var(--ink);">Maintenance Backlog &amp; Queue</h3>
-            <p style="font-size:12px; color:var(--muted); margin:0;">Scheduled service jobs awaiting execution</p>
-          </div>
-          <span class="status info" style="font-size:11px;">0 Queued</span>
-        </div>
+      <div class="table-wrap">
+        <table class="table" style="width:100%;">
+          <thead>
+            <tr>
+              <th>Asset &amp; Location</th>
+              <th>Task / Plan</th>
+              <th>Scheduled Date</th>
+              <th>Due Status</th>
+              <th style="text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              backlog.length === 0
+                ? `<tr><td colspan="5" style="text-align:center; padding:32px; color:var(--muted); font-size:13px;">No maintenance tasks currently queued. All equipment is on schedule.</td></tr>`
+                : backlog
+                    .map((item) => {
+                      const badgeClass =
+                        item.dueStatus === "OVERDUE"
+                          ? "status danger"
+                          : item.dueStatus === "DUE_TODAY"
+                          ? "status warning"
+                          : item.dueStatus === "DUE_SOON"
+                          ? "status warning"
+                          : "status info";
 
-        <div style="padding:32px 16px; text-align:center; color:var(--muted); font-size:13px;">
-          No maintenance jobs currently queued or waiting for parts.
+                      return `
+                        <tr>
+                          <td>
+                            <strong style="color:var(--ink); font-size:13px;">${item.assetName || item.assetId}</strong>
+                            <div style="font-size:11.5px; color:var(--color-accent-amber); font-family:var(--font-mono); font-weight:700;">${item.assetId}</div>
+                            <div style="font-size:11px; color:var(--muted); font-family:var(--font-mono);">${item.cafeId || "—"}</div>
+                          </td>
+                          <td>
+                            <div style="font-size:13px; font-weight:600; color:var(--ink);">${item.planName || "Periodic Service"}</div>
+                            <div style="font-size:11px; color:var(--muted);">${item.frequencyType || "QUARTERLY"}</div>
+                          </td>
+                          <td style="font-family:var(--font-mono); font-size:12.5px;">${item.dueDate || "—"}</td>
+                          <td>
+                            <span class="${badgeClass}" style="font-size:11px; font-weight:700;">${item.dueStatus}</span>
+                          </td>
+                          <td style="text-align:right;">
+                            <div style="display:flex; justify-content:flex-end; gap:6px;">
+                              <button class="btn btn-sm btn-primary complete-maint-btn" data-asset-id="${item.assetId}" data-plan-id="${item.scheduleId || ""}" type="button">Complete</button>
+                              <button class="btn btn-sm btn-secondary reschedule-maint-btn" data-asset-id="${item.assetId}" data-plan-id="${item.scheduleId || ""}" data-due="${item.dueDate || ""}" type="button">Reschedule</button>
+                            </div>
+                          </td>
+                        </tr>
+                      `;
+                    })
+                    .join("")
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Active Preventive Maintenance Plans -->
+    <div class="card" style="padding:24px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
+        <div>
+          <h3 style="font-size:16px; font-weight:700; margin:0 0 2px; color:var(--ink);">Preventive Maintenance Plans (${plans.length})</h3>
+          <p style="font-size:12.5px; color:var(--muted); margin:0;">Standard Operating Procedures, service intervals, and recurring schedules</p>
         </div>
+        <button class="btn btn-primary btn-sm" id="create-pm-plan-btn" type="button">+ New Plan</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="table" style="width:100%;">
+          <thead>
+            <tr>
+              <th>Plan ID &amp; Name</th>
+              <th>Target Asset / Category</th>
+              <th>Frequency</th>
+              <th>Next Due Date</th>
+              <th>Status</th>
+              <th style="text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              plans.length === 0
+                ? `<tr><td colspan="6" style="text-align:center; padding:32px; color:var(--muted); font-size:13px;">No preventive maintenance plans configured. Click "+ New Plan" to configure recurring SOP schedules.</td></tr>`
+                : plans
+                    .map((plan) => `
+                      <tr>
+                        <td>
+                          <strong style="color:var(--ink); font-size:13px;">${plan.name}</strong>
+                          <div style="font-size:11.5px; color:var(--color-accent-amber); font-family:var(--font-mono); font-weight:700;">${plan.planId}</div>
+                        </td>
+                        <td>
+                          <div style="font-size:13px; font-weight:600; color:var(--ink);">${plan.assetId || plan.category || "All Assets"}</div>
+                          <div style="font-size:11px; color:var(--muted); font-family:var(--font-mono);">${plan.cafeId || "All Cafés"}</div>
+                        </td>
+                        <td>
+                          <span class="status info" style="font-size:11px;">${plan.frequencyType}</span>
+                          <span style="font-size:11px; color:var(--muted);">(${plan.intervalDays}d)</span>
+                        </td>
+                        <td style="font-family:var(--font-mono); font-size:12.5px;">${plan.nextDueDate || "—"}</td>
+                        <td>
+                          <span class="status ${plan.isActive !== false ? "success" : "info"}" style="font-size:11px;">
+                            ${plan.isActive !== false ? "ACTIVE" : "INACTIVE"}
+                          </span>
+                        </td>
+                        <td style="text-align:right;">
+                          ${
+                            plan.isActive !== false
+                              ? `<button class="btn btn-sm btn-ghost cancel-pm-plan-btn" data-plan-id="${plan.planId}" type="button" style="color:var(--color-danger);">Deactivate</button>`
+                              : `<span style="font-size:11px; color:var(--muted);">Deactivated</span>`
+                          }
+                        </td>
+                      </tr>
+                    `)
+                    .join("")
+            }
+          </tbody>
+        </table>
       </div>
     </div>
   `;
@@ -693,11 +823,13 @@ let hasInitialFetchedAssets = false;
 
 async function loadLiveAssetData() {
   try {
-    const [ovRes, assetRes, woRes, cafesRes] = await Promise.all([
+    const [ovRes, assetRes, woRes, cafesRes, plansRes, backlogRes] = await Promise.all([
       apiGet("/assets/overview").catch(() => null),
       apiGet("/assets").catch(() => null),
       apiGet("/assets/work-orders").catch(() => null),
       apiGet("/cafes").catch(() => null),
+      apiGet("/assets/plans").catch(() => null),
+      apiGet("/assets/maintenance/backlog").catch(() => null),
     ]);
 
     if (ovRes?.data) cachedOverview = ovRes.data;
@@ -709,6 +841,12 @@ async function loadLiveAssetData() {
     }
     if (cafesRes?.data?.cafes) {
       cachedCafes = cafesRes.data.cafes;
+    }
+    if (plansRes?.data?.plans) {
+      cachedPlans = plansRes.data.plans;
+    }
+    if (backlogRes?.data?.backlog) {
+      cachedBacklog = backlogRes.data.backlog;
     }
   } catch (err) {
     console.warn("Asset data load notice:", err);
@@ -761,6 +899,47 @@ function rerender(root) {
         const assetId = e.currentTarget.dataset.id;
         openCreateWorkOrderModal(root, assetId);
       });
+    });
+    root.querySelectorAll(".complete-maint-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const assetId = e.currentTarget.dataset.assetId;
+        const planId = e.currentTarget.dataset.planId;
+        openCompleteMaintenanceModal(root, assetId, planId);
+      });
+    });
+    root.querySelectorAll(".reschedule-maint-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const assetId = e.currentTarget.dataset.assetId;
+        const planId = e.currentTarget.dataset.planId;
+        const due = e.currentTarget.dataset.due;
+        openRescheduleMaintenanceModal(root, assetId, planId, due);
+      });
+    });
+    root.querySelectorAll(".cancel-pm-plan-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const planId = e.currentTarget.dataset.planId;
+        confirmAction(`Are you sure you want to deactivate maintenance plan ${planId}?`, async () => {
+          try {
+            await apiPost(`/assets/plans/${planId}/cancel`, { reason: "Deactivated by Master/Admin" });
+            showToast(`Plan ${planId} deactivated.`, "success");
+            await loadLiveAssetData();
+            rerender(root);
+          } catch (err) {
+            showToast(err?.message || "Failed to deactivate plan", "coral");
+          }
+        });
+      });
+    });
+    root.querySelector("#evaluate-alerts-btn")?.addEventListener("click", async () => {
+      try {
+        showToast("Evaluating asset maintenance alerts...", "info");
+        const res = await apiPost("/assets/maintenance/evaluate-alerts", {});
+        showToast(`Evaluated ${res?.data?.evaluatedCount || 0} assets, ${res?.data?.alertsRaised || 0} alerts updated.`, "success");
+        await loadLiveAssetData();
+        rerender(root);
+      } catch (err) {
+        showToast(err?.message || "Alert evaluation failed", "coral");
+      }
     });
   } else {
     root.innerHTML = renderAssets();
@@ -830,6 +1009,47 @@ function wireAssetsEventListeners(root) {
       const assetId = e.currentTarget.dataset.id;
       openCreateWorkOrderModal(root, assetId);
     });
+  });
+  root.querySelectorAll(".complete-maint-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const assetId = e.currentTarget.dataset.assetId;
+      const planId = e.currentTarget.dataset.planId;
+      openCompleteMaintenanceModal(root, assetId, planId);
+    });
+  });
+  root.querySelectorAll(".reschedule-maint-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const assetId = e.currentTarget.dataset.assetId;
+      const planId = e.currentTarget.dataset.planId;
+      const due = e.currentTarget.dataset.due;
+      openRescheduleMaintenanceModal(root, assetId, planId, due);
+    });
+  });
+  root.querySelectorAll(".cancel-pm-plan-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const planId = e.currentTarget.dataset.planId;
+      confirmAction(`Are you sure you want to deactivate maintenance plan ${planId}?`, async () => {
+        try {
+          await apiPost(`/assets/plans/${planId}/cancel`, { reason: "Deactivated by Master/Admin" });
+          showToast(`Plan ${planId} deactivated.`, "success");
+          await loadLiveAssetData();
+          rerender(root);
+        } catch (err) {
+          showToast(err?.message || "Failed to deactivate plan", "coral");
+        }
+      });
+    });
+  });
+  root.querySelector("#evaluate-alerts-btn")?.addEventListener("click", async () => {
+    try {
+      showToast("Evaluating asset maintenance alerts...", "info");
+      const res = await apiPost("/assets/maintenance/evaluate-alerts", {});
+      showToast(`Evaluated ${res?.data?.evaluatedCount || 0} assets, ${res?.data?.alertsRaised || 0} alerts updated.`, "success");
+      await loadLiveAssetData();
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Alert evaluation failed", "coral");
+    }
   });
 }
 
@@ -1505,13 +1725,216 @@ function openNewMaintenancePlanModal(root) {
   const modal = openModal(content);
   modal.querySelector("#pm-cancel-btn")?.addEventListener("click", () => modal.close());
   modal.querySelector("#pm-submit-btn")?.addEventListener("click", async () => {
-    const title = modal.querySelector("#pm-title")?.value;
+    const title = modal.querySelector("#pm-title")?.value?.trim();
     if (!title) {
       showToast("Schedule title is required.", "error");
       return;
     }
-    showToast(`Maintenance plan "${title}" created and scheduled.`, "success");
-    modal.close();
-    rerender(root);
+    const category = modal.querySelector("#pm-cat")?.value;
+    const frequencyType = modal.querySelector("#pm-freq")?.value;
+    const sop = modal.querySelector("#pm-sop")?.value;
+    const submitBtn = modal.querySelector("#pm-submit-btn");
+
+    try {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating...";
+      await apiPost("/assets/plans", {
+        name: title,
+        category,
+        frequencyType,
+        jobPlan: { title, tasks: [{ order: 1, taskDescription: sop || title, isMandatory: true }] },
+      });
+      showToast(`Maintenance plan "${title}" created and scheduled.`, "success");
+      modal.close();
+      await loadLiveAssetData();
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Failed to create maintenance plan", "coral");
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Create Maintenance Schedule";
+    }
+  });
+}
+
+// Modal: Complete Scheduled Maintenance
+function openCompleteMaintenanceModal(root, assetId, planId) {
+  const asset = (cachedAssets || []).find((a) => a.assetId === assetId) || { name: assetId, assetId };
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  const content = `
+    <div style="max-width:560px; margin:0 auto; padding:10px 0;">
+      <h3 style="font-size:17px; font-weight:800; margin:0 0 4px; color:var(--ink);">Record Maintenance Completion</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin:0 0 16px;">
+        Complete scheduled servicing for <strong>${asset.name}</strong> (${asset.assetId})
+      </p>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div class="form-group" style="margin:0;">
+          <label class="label">Completion Date*</label>
+          <input type="date" id="comp-date" class="input" value="${todayStr}" style="font-size:12.5px;" required>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label class="label">Result Verdict*</label>
+          <select id="comp-result" class="input" style="font-size:12.5px;">
+            <option value="COMPLETED" selected>COMPLETED (Satisfactory)</option>
+            <option value="PASS">PASS (Inspection / Calibration)</option>
+            <option value="REQUIRES_FOLLOWUP">REQUIRES FOLLOW-UP</option>
+            <option value="FAILED">FAILED</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div class="form-group" style="margin:0;">
+          <label class="label">Technician / Performer*</label>
+          <input type="text" id="comp-performer" class="input" placeholder="e.g. Ramesh Kumar" value="${state.user?.name || ''}" style="font-size:12.5px;" required>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label class="label">Cost (₹)</label>
+          <input type="number" id="comp-cost" class="input" placeholder="0" min="0" step="0.01" style="font-size:12.5px;">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="label">Work Summary*</label>
+        <input type="text" id="comp-summary" class="input" placeholder="e.g. Replaced grouphead gaskets, descaled heat exchanger" style="font-size:12.5px;" required>
+      </div>
+
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="label">Evidence Document ID (REC-06)</label>
+        <input type="text" id="comp-doc-id" class="input" placeholder="e.g. DOC-2026-0001 (optional)" style="font-size:12.5px;">
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label class="label">Resolution / Service Notes</label>
+        <textarea id="comp-notes" class="input" rows="2" placeholder="Notes on equipment tolerances, parts used, etc." style="font-size:12px;"></textarea>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid var(--border-subtle); padding-top:14px;">
+        <button class="btn btn-ghost" id="comp-cancel-btn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="comp-submit-btn" type="button">Submit Completion</button>
+      </div>
+    </div>
+  `;
+
+  const modal = openModal(content);
+  modal.querySelector("#comp-cancel-btn")?.addEventListener("click", () => modal.close());
+  modal.querySelector("#comp-submit-btn")?.addEventListener("click", async () => {
+    const completedAt = modal.querySelector("#comp-date")?.value;
+    const result = modal.querySelector("#comp-result")?.value;
+    const performedBy = modal.querySelector("#comp-performer")?.value?.trim();
+    const costRupees = Number(modal.querySelector("#comp-cost")?.value) || 0;
+    const workSummary = modal.querySelector("#comp-summary")?.value?.trim();
+    const docId = modal.querySelector("#comp-doc-id")?.value?.trim();
+    const resolutionNotes = modal.querySelector("#comp-notes")?.value?.trim();
+
+    if (!workSummary) {
+      showToast("Work summary is required.", "error");
+      return;
+    }
+    if (!performedBy) {
+      showToast("Technician/Performer name is required.", "error");
+      return;
+    }
+
+    const submitBtn = modal.querySelector("#comp-submit-btn");
+    try {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Saving...";
+
+      const evidenceDocumentIds = docId ? [docId.toUpperCase()] : [];
+      await apiPost("/assets/maintenance/complete", {
+        assetId,
+        planId: planId || null,
+        completedAt,
+        result,
+        performedBy,
+        technicianName: performedBy,
+        costPaisa: Math.round(costRupees * 100),
+        workSummary,
+        resolutionNotes,
+        evidenceDocumentIds,
+      });
+
+      showToast(`Maintenance for ${asset.name} (${assetId}) recorded and resolved.`, "success");
+      modal.close();
+      await loadLiveAssetData();
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Failed to record maintenance completion", "coral");
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Submit Completion";
+    }
+  });
+}
+
+// Modal: Reschedule Maintenance Due Date
+function openRescheduleMaintenanceModal(root, assetId, planId, currentDue) {
+  const asset = (cachedAssets || []).find((a) => a.assetId === assetId) || { name: assetId, assetId };
+  const content = `
+    <div style="max-width:480px; margin:0 auto; padding:10px 0;">
+      <h3 style="font-size:17px; font-weight:800; margin:0 0 4px; color:var(--ink);">Reschedule Maintenance</h3>
+      <p style="font-size:12.5px; color:var(--muted); margin:0 0 16px;">
+        Adjust service due date for <strong>${asset.name}</strong> (${asset.assetId})
+      </p>
+
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="label">Current Scheduled Date</label>
+        <input type="text" class="input" value="${currentDue || '—'}" disabled style="font-size:12.5px; font-family:var(--font-mono);">
+      </div>
+
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="label">New Due Date*</label>
+        <input type="date" id="resched-date" class="input" style="font-size:12.5px;" required>
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label class="label">Mandatory Reason for Rescheduling*</label>
+        <textarea id="resched-reason" class="input" rows="3" placeholder="Explain operational, parts or technician constraints" style="font-size:12px;" required></textarea>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid var(--border-subtle); padding-top:14px;">
+        <button class="btn btn-ghost" id="resched-cancel-btn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="resched-submit-btn" type="button">Confirm Reschedule</button>
+      </div>
+    </div>
+  `;
+
+  const modal = openModal(content);
+  modal.querySelector("#resched-cancel-btn")?.addEventListener("click", () => modal.close());
+  modal.querySelector("#resched-submit-btn")?.addEventListener("click", async () => {
+    const newDueDate = modal.querySelector("#resched-date")?.value;
+    const reason = modal.querySelector("#resched-reason")?.value?.trim();
+
+    if (!newDueDate) {
+      showToast("New due date is required.", "error");
+      return;
+    }
+    if (!reason) {
+      showToast("Mandatory rescheduling reason is required.", "error");
+      return;
+    }
+
+    const submitBtn = modal.querySelector("#resched-submit-btn");
+    try {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Updating...";
+
+      await apiPost("/assets/maintenance/reschedule", {
+        assetId,
+        planId: planId || null,
+        newDueDate,
+        reason,
+      });
+
+      showToast(`Maintenance for ${asset.name} rescheduled to ${newDueDate}.`, "success");
+      modal.close();
+      await loadLiveAssetData();
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Failed to reschedule maintenance", "coral");
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Confirm Reschedule";
+    }
   });
 }

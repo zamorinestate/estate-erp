@@ -7,6 +7,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
+const compression = require('compression');
 
 const {
   connectDatabase,
@@ -31,10 +32,25 @@ const {
 } = require('./middleware/errorHandler');
 
 const apiRouter = require('./routes');
+const { documentStorageAdapter } = require('./services/documentStorageAdapter');
 const { getTrustedClientIp, getTrustedProxies } = require('./utils/clientIp');
 
 const SERVICE_NAME =
   'zamorin-cafe-erp-api';
+
+function isAllowedVercelOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return false;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:') return false;
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === 'zamorin-cafe-erp.vercel.app' || hostname === 'estate-erp.vercel.app') return true;
+    if (hostname.endsWith('.vercel.app') && (hostname.includes('zamorin') || hostname.includes('estate'))) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 function createCorsOptions(environment) {
   const allowedOrigins =
@@ -48,7 +64,8 @@ function createCorsOptions(environment) {
         !origin ||
         allowedOrigins.has('*') ||
         allowedOrigins.has(origin) ||
-        (!environment.production && (
+        isAllowedVercelOrigin(origin) ||
+        (!environment.production && !environment.staging && (
           origin === 'http://localhost:3000' ||
           origin === 'http://127.0.0.1:3000' ||
           origin === 'http://localhost:4000' ||
@@ -146,8 +163,9 @@ function createCsrfOriginProtection(environment) {
     if (
       !allowedOrigins.has('*') &&
       !allowedOrigins.has(normalizedOrigin) &&
+      !isAllowedVercelOrigin(normalizedOrigin) &&
       !(
-        !environment.production && (
+        !environment.production && !environment.staging && (
           normalizedOrigin === 'http://localhost:3000' ||
           normalizedOrigin === 'http://127.0.0.1:3000' ||
           normalizedOrigin === 'http://localhost:4000' ||
@@ -179,7 +197,45 @@ function createApp(environment) {
 
   app.use(requestContext);
   app.use(cookieParser());
-  app.use(helmet());
+  app.use(
+    helmet({
+      referrerPolicy: { policy: 'same-origin' },
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          frameAncestors: ["'none'"],
+          formAction: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          imgSrc: ["'self'", "data:", "https://images.unsplash.com"],
+          connectSrc: ["'self'", "https://zamorin-cafe-erp.vercel.app", "http://localhost:3000", "http://localhost:4000", "http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"],
+        },
+      },
+      frameguard: { action: 'deny' },
+    })
+  );
+
+  // Allow camera and geolocation for attendance verification on origin; deny unused microphone
+  app.use((req, res, next) => {
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(self)');
+    res.setHeader('X-Frame-Options', 'DENY');
+    next();
+  });
+
+  // High-performance gzip/deflate response compression (> 1KB threshold)
+  app.use(
+    compression({
+      threshold: 1024,
+      filter: (req, res) => {
+        if (req.headers['x-no-compression']) {
+          return false;
+        }
+        return compression.filter(req, res);
+      },
+    })
+  );
+
   app.use(
     express.json({
       limit: '1mb',
@@ -234,8 +290,6 @@ function createApp(environment) {
   app.get('/api/health', healthHandler);
   app.get('/health', healthHandler);
 
-  const { documentStorageAdapter } = require('./services/documentStorageAdapter');
-
   const readinessHandler = async (request, response) => {
     const database = getDatabaseState();
     let storageStatus = 'OK';
@@ -246,7 +300,18 @@ function createApp(environment) {
       storageStatus = 'UNAVAILABLE';
     }
 
-    const ready = database.readyState === 1;
+    const isStorageReady = storageStatus === 'OK' || storageStatus === 'HEALTHY';
+    const isDbReady = database.readyState === 1;
+    const isProd = process.env.NODE_ENV === 'production';
+    const ready = isProd ? (isDbReady && isStorageReady) : isDbReady;
+
+    const { malwareScannerService } = require('./services/malwareScannerService');
+    let scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false };
+    try {
+      scannerReport = await malwareScannerService.getStatus();
+    } catch {
+      scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false, details: 'Probe failed' };
+    }
 
     return response
       .status(ready ? 200 : 503)
@@ -256,6 +321,14 @@ function createApp(environment) {
         service: SERVICE_NAME,
         database: database.status,
         storage: storageStatus,
+        scanner: {
+          coreAppReady: scannerReport.CORE_APP_READY,
+          documentScannerReady: scannerReport.DOCUMENT_SCANNER_READY,
+          provider: scannerReport.scannerProvider,
+          engineVersion: scannerReport.engineVersion,
+          signatureVersion: scannerReport.signatureVersion,
+          isPrivateNetwork: scannerReport.isPrivateNetwork,
+        },
         timestamp: new Date().toISOString(),
         requestId: request.requestId || request.correlationId || null,
         correlationId: request.correlationId || null,
@@ -269,11 +342,71 @@ function createApp(environment) {
   app.get('/api/readiness', readinessHandler);
   app.get('/readiness', readinessHandler);
 
+  const stagingDiagnosticHandler = (request, response) => {
+    const isProd = process.env.NODE_ENV === 'production';
+    if (isProd) {
+      return response.status(403).json({
+        success: false,
+        error: {
+          code: 'STAGING_DIAGNOSTIC_DISABLED',
+          message: 'Staging diagnostic endpoint is disabled in production.',
+        },
+      });
+    }
+
+    let dbName = '';
+    try {
+      const mongoose = require('mongoose');
+      if (mongoose.connection && mongoose.connection.name) {
+        dbName = mongoose.connection.name;
+      } else if (process.env.MONGODB_URI) {
+        const parsed = new URL(process.env.MONGODB_URI.replace(/^mongodb(\+srv)?:\/\//, 'http://'));
+        dbName = parsed.pathname.replace(/^\//, '');
+      }
+    } catch (_) {}
+
+    const isProductionDatabase = /prod(uction)?/i.test(dbName) || dbName === 'zamorin_erp_production';
+    const syntheticDataMarker =
+      process.env.STAGING_SYNTHETIC_DATA_MARKER ||
+      (process.env.NODE_ENV === 'staging' || process.env.NODE_ENV === 'test' ? 'SYNTHETIC_STAGING_FIXTURE_ACTIVE' : null);
+
+    const allowActiveScan = Boolean(
+      (process.env.NODE_ENV === 'staging' || process.env.NODE_ENV === 'test') &&
+      !isProductionDatabase &&
+      syntheticDataMarker
+    );
+
+    return response.status(isProductionDatabase ? 403 : 200).json({
+      success: !isProductionDatabase,
+      environment: process.env.NODE_ENV || 'staging',
+      isProduction: isProd,
+      database: dbName || 'zamorin_erp_staging',
+      isProductionDatabase,
+      syntheticDataMarker,
+      allowActiveScan,
+      timestamp: new Date().toISOString(),
+      requestId: request.requestId || request.correlationId || null,
+    });
+  };
+
+  app.get('/health/staging', stagingDiagnosticHandler);
+  app.get('/api/health/staging', stagingDiagnosticHandler);
+  app.get('/api/v1/health/staging', stagingDiagnosticHandler);
+  app.get('/api/v1/staging/diagnostic', stagingDiagnosticHandler);
+  app.get('/api/staging/diagnostic', stagingDiagnosticHandler);
+  app.get('/staging/diagnostic', stagingDiagnosticHandler);
+
   const { createMaintenanceMiddleware } = require('./middleware/maintenanceMode');
   app.use(createMaintenanceMiddleware());
 
   app.use('/api/', apiLimiter);
   app.use('/api/v1', apiRouter);
+
+  // REC-03: Top-level canonical QR route & safe short alias
+  const { getPublicQrContext } = require('./controllers/cafeAccessController');
+  app.get('/cafe-access/qr/:token', getPublicQrContext);
+  app.get('/c/:token', getPublicQrContext);
+
   app.use(notFound);
   app.use(errorHandler);
 
@@ -440,6 +573,33 @@ function registerShutdownHandlers(
         });
     });
   }
+
+  process.on('uncaughtException', (error) => {
+    try {
+      const { logStructuredError } = require('./services/securityLogger');
+      logStructuredError(error, null, { fatal: true, event: 'uncaughtException' });
+    } catch {
+      console.error('[FATAL] Uncaught exception:', error.message);
+    }
+    shutdown('uncaughtException')
+      .finally(() => {
+        process.exit(1);
+      });
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    try {
+      const { logStructuredError } = require('./services/securityLogger');
+      const err = reason instanceof Error ? reason : new Error(String(reason));
+      logStructuredError(err, null, { fatal: true, event: 'unhandledRejection' });
+    } catch {
+      console.error('[FATAL] Unhandled rejection:', reason);
+    }
+    shutdown('unhandledRejection')
+      .finally(() => {
+        process.exit(1);
+      });
+  });
 
   return shutdown;
 }

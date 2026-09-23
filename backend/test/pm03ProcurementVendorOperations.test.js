@@ -517,6 +517,22 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
       }
       return true;
     });
+
+    if (po) {
+      if (typeof po.recalculateFulfillment !== 'function') {
+        po.recalculateFulfillment = function () {
+          if (typeof PurchaseOrder.prototype.recalculateFulfillment === 'function') {
+            return PurchaseOrder.prototype.recalculateFulfillment.call(this);
+          }
+        };
+      }
+      if (typeof po.save !== 'function') {
+        po.save = async function () { return this; };
+      }
+      if (typeof po.toObject !== 'function') {
+        po.toObject = function () { return { ...this }; };
+      }
+    }
     return makeQuery(po || null);
   });
 

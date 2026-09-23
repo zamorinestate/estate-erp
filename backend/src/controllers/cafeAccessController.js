@@ -34,6 +34,30 @@ function requireGovernance(req, cafeId = null) {
   }
 }
 
+const getPublicQrContext = asyncHandler(async (req, res) => {
+  const token = (req.params.token || req.query.token || '').trim();
+  if (!token) {
+    throw new ApiError(400, 'TOKEN_REQUIRED', 'Access QR token is required.');
+  }
+
+  const result = await cafeService.resolvePublicQrToken(token, {
+    clientIp: req.ip,
+    userAgent: req.headers['user-agent'],
+    correlationId: req.correlationId || req.headers['x-correlation-id'],
+  });
+
+  // If HTML requested from browser navigation, safe internal redirect
+  if (req.accepts && req.accepts('html') && !req.xhr && !req.path.startsWith('/api/')) {
+    return res.redirect(`/#cafe-access/qr/${encodeURIComponent(token)}`);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Café Operations gateway resolved successfully.',
+    data: result,
+  });
+});
+
 const resolveGateway = asyncHandler(async (req, res) => {
   const { method, credential } = req.body || {};
 
@@ -114,6 +138,31 @@ const rotateQr = asyncHandler(async (req, res) => {
   return res.status(200).json({
     success: true,
     message: 'QR access credential rotated successfully.',
+    data: result,
+  });
+});
+
+const revokeQr = asyncHandler(async (req, res) => {
+  const cafeId = (req.params.cafeId || '').trim().toUpperCase();
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'Café ID is required.');
+  }
+  requireGovernance(req, cafeId);
+  const { reason, currentPassword } = req.body || {};
+
+  const result = await cafeService.revokeQrCredential({
+    organisationId: req.auth.organisationId,
+    cafeId,
+    auth: req.auth,
+    reason,
+    currentPassword,
+    clientIp: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'QR access credential revoked successfully.',
     data: result,
   });
 });
@@ -213,13 +262,39 @@ const runAccessTest = asyncHandler(async (req, res) => {
   });
 });
 
+const verifyCafeBinding = asyncHandler(async (req, res) => {
+  const { cafeId } = req.body || {};
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'Café ID is required.');
+  }
+
+  const binding = await cafeService.verifyCafeAccessBinding({
+    userId: req.auth.userId,
+    role: req.auth.role,
+    organisationId: req.auth.organisationId,
+    assignedCafeIds: req.auth.assignedCafeIds,
+    primaryCafeId: req.auth.primaryCafeId,
+    targetCafeId: cafeId,
+    isPrimaryMaster: Boolean(req.auth.isPrimaryMaster),
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Café authorization binding verified.',
+    data: binding,
+  });
+});
+
 module.exports = {
+  getPublicQrContext,
   resolveGateway,
   getAccessSummary,
   revealPermanentPin,
   rotateQr,
+  revokeQr,
   rotateLink,
   emergencyLock,
   emergencyUnlock,
   runAccessTest,
+  verifyCafeBinding,
 };

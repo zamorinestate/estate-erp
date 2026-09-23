@@ -201,7 +201,9 @@ export function renderCafeGatewayPage() {
               <button type="button" id="gw-switch-pin-btn" class="btn btn-xs btn-ghost" style="color:var(--muted);font-size:12px;">
                 ↻ Change Location / PIN
               </button>
-              <a href="#login" style="font-size:12px;color:var(--muted);text-decoration:none;">Main Login</a>
+              <button type="button" id="gw-login-staff-btn" class="btn btn-xs btn-ghost" style="font-size:12px;color:var(--bronze-400, #d4a359);font-weight:600;cursor:pointer;">
+                Staff &amp; Manager Login →
+              </button>
             </div>
 
           </div>
@@ -415,6 +417,16 @@ export function wireCafeGatewayPage(container, { onSignInSuccess } = {}) {
     gatewayState.pinDigits = [];
     gatewayState.error = '';
     rerender();
+  });
+
+  // Staff & Manager Login with bound cafe context
+  container.querySelector('#gw-login-staff-btn')?.addEventListener('click', () => {
+    const cafeContext = gatewayState.cafe;
+    import('../main.js').then(({ mountAuthScreen }) => {
+      mountAuthScreen('login', { cafeContext });
+    }).catch(() => {
+      window.location.hash = '#login';
+    });
   });
 }
 

@@ -1520,6 +1520,40 @@
 .settings-field-helper { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 .settings-readonly-field { padding: 9px 12px; border-radius: var(--radius-sm); background: var(--surface-sunken); border: 1px solid var(--line); color: var(--ink); font-size: 13.5px; font-weight: 500; }
 
+/* Password / PIN eye toggle button */
+.pin-visibility-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--muted, #6f6a5c);
+  cursor: pointer;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm, 4px);
+  line-height: 1;
+  z-index: 10;
+  pointer-events: auto;
+  transition: color var(--motion-fast, 0.15s) ease, background var(--motion-fast, 0.15s) ease;
+}
+.pin-visibility-toggle:hover {
+  color: var(--ink, #1f1d1a);
+  background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+}
+.pin-visibility-toggle:focus-visible {
+  outline: 2px solid var(--bronze-500, #c9933e);
+  outline-offset: 2px;
+}
+.pin-visibility-toggle svg {
+  display: block;
+  pointer-events: none;
+}
+
+
 /* Settings toggle row */
 .settings-toggle-row {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -2142,261 +2176,50 @@
   background: radial-gradient(120% 120% at 50% 0%, #172136 0%, #0d1422 100%);
 }
 
-.auth-card-container {
-  width: 100%;
-  max-width: 580px;
-  display: flex;
-  justify-content: center;
-  margin: auto;
-  padding: 32px 0;
-  box-sizing: border-box;
-}
-
-.auth-card {
-  width: 100%;
-  max-width: 580px;
-  background: var(--surface, #ffffff);
-  border: 1px solid var(--line-strong, #d7d0bd);
-  border-top: 3px solid var(--bronze-500, #b17d38);
-  border-radius: var(--radius-card, 28px);
-  padding: 54px 48px 46px;
-  box-shadow: var(--shadow-card, 0 30px 70px rgba(16, 26, 48, .14)), 0 6px 18px rgba(16, 26, 48, .05);
-  box-sizing: border-box;
-  animation: authFadeIn 0.3s ease-out;
-}
-
-[data-theme="noir"] .auth-card,
-[data-theme="midnight"] .auth-card {
-  background: #141e30;
-  border-color: #283750;
-  border-top-color: #d4a359;
-}
-
-@keyframes authFadeIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.auth-brand-header {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-.auth-brand-header img {
-  width: 190px !important;
-  height: auto !important;
-  margin: 0 auto 14px !important;
-  display: block !important;
-}
-
-.auth-brand-title {
-  font-family: var(--font-display, "Fraunces", serif);
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  color: var(--ink-900, #101a30);
-  margin: 0 0 6px;
-}
-
-[data-theme="noir"] .auth-brand-title,
-[data-theme="midnight"] .auth-brand-title {
-  color: #f8fafc;
-}
-
-.auth-brand-subtitle {
-  font-size: 13.5px !important;
-  font-weight: 600;
-  color: var(--muted, #6f6a5c);
-  text-transform: uppercase;
-  letter-spacing: 2px !important;
-  margin: 0;
-}
-
-.auth-form-header {
-  text-align: center;
-  margin-bottom: 26px;
-}
-
-.auth-form-header h2 {
-  font-family: var(--font-display, "Fraunces", serif);
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--ink, #17140f);
-  margin: 0 0 6px;
-}
-
-.auth-form-header p {
-  font-size: 14.5px;
-  color: var(--muted, #6f6a5c);
-  line-height: 1.5;
-  margin: 0;
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.auth-field-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.auth-field-group label {
-  font-size: 14px !important;
-  font-weight: 600;
-  color: var(--ink-700, #29374f);
-  letter-spacing: 0.3px;
-}
-
-[data-theme="noir"] .auth-field-group label,
-[data-theme="midnight"] .auth-field-group label {
-  color: #cbd5e1;
-}
-
-.auth-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.auth-input {
-  width: 100%;
-  height: 52px !important;
-  padding: 0 18px !important;
-  font-size: 16px !important;
-  font-family: var(--font-ui, "Inter", sans-serif);
-  color: var(--ink, #17140f);
-  background: var(--paper-start, #faf9f6);
-  border: 1.5px solid var(--line-strong, #d7d0bd);
-  border-radius: var(--radius-input, 15px) !important;
-  box-sizing: border-box;
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-[data-theme="noir"] .auth-input,
-[data-theme="midnight"] .auth-input {
-  background: #1e293b;
-  border-color: #334155;
-  color: #f8fafc;
-}
-
-.auth-input:focus {
-  border-color: var(--bronze-500, #b17d38);
-  box-shadow: 0 0 0 3px rgba(177, 125, 56, 0.2);
-}
-
-.auth-code-input {
-  text-align: center;
-  font-family: var(--font-mono, monospace);
-  font-size: 24px !important;
-  height: 56px !important;
-  letter-spacing: 12px;
-  font-weight: 700;
-}
-
-.auth-link {
-  font-size: 13.5px !important;
-  font-weight: 600;
-  color: var(--bronze-600, #9a6a2c);
-  text-decoration: none;
-  transition: color 0.2s;
-}
-
-.auth-link:hover {
-  color: var(--bronze-700, #7c5322);
-  text-decoration: underline;
-}
-
-.auth-action-group {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 12px;
-}
-
-.auth-action-group .btn,
-#login-submit,
-#reset-req-submit,
-#reset-verify-submit,
-#reset-final-submit {
-  height: 54px !important;
-  font-size: 16px !important;
-  font-weight: 700 !important;
-  border-radius: 15px !important;
-  letter-spacing: 0.3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.auth-notice-banner {
-  padding: 12px 16px;
-  border-radius: 12px;
-  background: rgba(30, 122, 76, 0.1);
-  border: 1px solid rgba(30, 122, 76, 0.3);
-  color: #1e7a4c;
-  font-size: 13.5px;
-  font-weight: 500;
-  text-align: center;
-  margin-bottom: 12px;
-}
-
-.auth-error-banner {
-  padding: 12px 16px;
-  border-radius: 12px;
-  background: rgba(178, 59, 53, 0.1);
-  border: 1px solid rgba(178, 59, 53, 0.3);
-  color: #b23b35;
-  font-size: 13.5px;
-  font-weight: 500;
-  text-align: center;
-  margin-top: 6px;
-}
-
-@media (max-width: 600px) {
-  .auth-card-container {
-    max-width: 100%;
-    padding: 0;
-  }
-  .auth-card {
-    padding: 36px 24px 30px;
-    border-radius: 20px;
-  }
-  .auth-brand-header img {
-    width: 135px !important;
-  }
-  .auth-input {
-    height: 44px !important;
-    font-size: 14px !important;
-    border-radius: 12px !important;
-  }
-  .auth-action-group .btn,
-  #login-submit {
-    height: 44px !important;
-    font-size: 14px !important;
-    border-radius: 12px !important;
-  }
-}
-
 /* =============================================================================
    THERMAL RECEIPT & PRINT STYLES (80mm / 58mm POS & NARROW VIEWPORT)
    ============================================================================= */
 .pos-thermal-receipt {
   font-family: var(--font-mono, 'JetBrains Mono', 'Courier New', monospace);
   background: var(--surface-sunken, #fbfaf8);
-  padding: 18px;
+  padding: 16px;
   border-radius: var(--radius-sm, 6px);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.4;
   border: 1px solid var(--line, #e6e1d8);
   color: var(--ink, #1f1d1a);
   max-width: 380px;
   margin: 0 auto;
   box-sizing: border-box;
+  transition: width 0.15s ease, max-width 0.15s ease;
+}
+
+/* 80mm Standard Profile Preview */
+.pos-thermal-receipt.paper-80mm,
+.pos-thermal-receipt[data-paper-width="80"] {
+  max-width: 340px;
+  width: 100%;
+}
+
+/* 58mm Compact Profile Preview */
+.pos-thermal-receipt.paper-58mm,
+.pos-thermal-receipt[data-paper-width="58"] {
+  max-width: 240px;
+  width: 100%;
+  font-size: 10.5px;
+  padding: 12px 8px;
+}
+
+.pos-thermal-receipt.paper-58mm .receipt-title {
+  font-size: 13px;
+}
+
+.pos-thermal-receipt.paper-58mm .receipt-doc-type {
+  font-size: 10px;
+}
+
+.pos-thermal-receipt.paper-58mm .receipt-total-row {
+  font-size: 13px;
 }
 
 .pos-thermal-receipt .receipt-header {
@@ -2421,7 +2244,7 @@
   font-weight: 700;
   color: var(--bronze-600, #96613d);
   margin-top: 4px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .pos-thermal-receipt .receipt-row {
@@ -2441,7 +2264,7 @@
 .pos-thermal-receipt .receipt-total-row {
   display: flex;
   justify-content: space-between;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 800;
   margin-top: 4px;
   padding-top: 4px;
@@ -2451,71 +2274,176 @@
 
 .pos-thermal-receipt .receipt-footer {
   text-align: center;
-  margin-top: 12px;
+  margin-top: 10px;
   font-size: 10px;
   color: var(--muted, #6c665d);
 }
 
+.pos-thermal-receipt .receipt-item-line {
+  display: flex;
+  align-items: baseline;
+  font-size: 11px;
+  padding: 2px 0;
+  gap: 4px;
+}
+
+.pos-thermal-receipt.paper-58mm .receipt-item-line {
+  font-size: 10px;
+  gap: 2px;
+}
+
+.pos-thermal-receipt .receipt-item-name {
+  flex: 1;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  padding-right: 4px;
+}
+
+.pos-thermal-receipt .receipt-item-sl {
+  width: 20px;
+  color: var(--muted, #6c665d);
+  flex-shrink: 0;
+}
+
+.pos-thermal-receipt.paper-58mm .receipt-item-sl {
+  width: 16px;
+}
+
+.pos-thermal-receipt .receipt-item-qty {
+  width: 28px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.pos-thermal-receipt.paper-58mm .receipt-item-qty {
+  width: 20px;
+}
+
+.pos-thermal-receipt .receipt-item-amt {
+  width: 60px;
+  text-align: right;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.pos-thermal-receipt.paper-58mm .receipt-item-amt {
+  width: 44px;
+}
+
+/* =============================================================================
+   PRINT MEDIA STYLES (Physical Thermal Slip & Browser Print)
+   ============================================================================= */
 @media print {
-  /* Hide all surrounding interface chrome */
+  /* Suppress default browser page margins */
+  @page {
+    margin: 0 !important;
+    size: auto;
+  }
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    overflow: visible !important;
+  }
+
+  /* Hide application chrome and background elements */
   body * {
     visibility: hidden;
   }
 
-  /* Make thermal receipt container and its children visible */
+  /* Make receipt container and all its descendants strictly visible */
   .pos-thermal-receipt,
   .pos-thermal-receipt * {
-    visibility: visible;
+    visibility: visible !important;
   }
 
-  /* Position thermal receipt cleanly at top-left of page without browser headers/margins */
-  .pos-thermal-receipt {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100% !important;
-    max-width: 76mm !important; /* 80mm roll standard with 2mm margins */
+  /* Ensure modal ancestor hierarchy does not collapse or hide content */
+  #zamorin-global-modal,
+  #zamorin-global-modal .modal-wrapper,
+  #zamorin-global-modal .modal-container,
+  #zamorin-global-modal .modal-body {
+    position: static !important;
+    display: block !important;
+    visibility: visible !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
     margin: 0 !important;
-    padding: 4mm 2mm !important;
+    padding: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Suppress all non-receipt UI elements inside and outside modal */
+  #zamorin-global-modal .modal-backdrop,
+  #zamorin-global-modal .modal-header,
+  #zamorin-global-modal .modal-footer,
+  #zamorin-global-modal .modal-close,
+  #zamorin-global-modal .modal-actions,
+  #zamorin-global-modal .receipt-profile-toggle-bar,
+  #zamorin-global-modal .receipt-action-panel,
+  #zamorin-global-modal button,
+  .app-sidebar,
+  .app-header,
+  .app-toast-container,
+  .btn,
+  #pos-mobile-ticket-bar {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Thermal Receipt: Clean top-left print positioning with zero clipping */
+  .pos-thermal-receipt {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
     border: none !important;
     background: transparent !important;
     color: #000 !important;
-    font-size: 11px !important;
-    line-height: 1.3 !important;
     box-shadow: none !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
 
-  .pos-thermal-receipt .receipt-header,
-  .pos-thermal-receipt .receipt-title,
-  .pos-thermal-receipt .receipt-subtitle,
-  .pos-thermal-receipt .receipt-doc-type,
-  .pos-thermal-receipt .receipt-row,
-  .pos-thermal-receipt .receipt-total-row,
-  .pos-thermal-receipt .receipt-footer {
+  /* Default / 80mm Physical Thermal Slip (72mm printable on 80mm roll) */
+  .pos-thermal-receipt,
+  .pos-thermal-receipt.paper-80mm,
+  .pos-thermal-receipt[data-paper-width="80"] {
+    width: 72mm !important;
+    max-width: 72mm !important;
+    padding: 2mm 1.5mm !important;
+    font-size: 10.5px !important;
+    line-height: 1.3 !important;
+  }
+
+  /* 58mm Physical Thermal Slip (48mm printable on 58mm roll) */
+  .pos-thermal-receipt.paper-58mm,
+  .pos-thermal-receipt[data-paper-width="58"] {
+    width: 48mm !important;
+    max-width: 48mm !important;
+    padding: 1.5mm 0.5mm !important;
+    font-size: 9px !important;
+    line-height: 1.2 !important;
+  }
+
+  .pos-thermal-receipt * {
     color: #000 !important;
+    background: transparent !important;
   }
 
   .pos-thermal-receipt .receipt-divider {
     border-top: 1px dashed #000 !important;
+    margin: 6px 0 !important;
   }
 
   .pos-thermal-receipt .receipt-total-row {
     border-top: 1px solid #000 !important;
-  }
-
-  /* Suppress modal backdrops and controls during print */
-  #zamorin-global-modal,
-  .modal-backdrop,
-  .modal-footer,
-  .modal-header,
-  .app-sidebar,
-  .app-header,
-  .app-toast-container {
-    display: none !important;
-  }
-
-  @page {
-    margin: 0;
-    size: auto;
   }
 }

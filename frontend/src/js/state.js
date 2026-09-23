@@ -21,7 +21,14 @@ export const state = {
     lastSync: Date.now(),
   },
   role: null, // Derived from backend authenticated identity (/auth/me)
+  originalRole: null,
+  activeWorkspace: null,
+  supervisedEmployeeId: null,
+  isTrainingMode: false,
   route: "dashboard",
+  cafes: [],
+  selectedCafeId: (typeof localStorage !== "undefined" && localStorage.getItem("zamorin-selected-cafe-id")) || "ALL",
+  currentCafeId: (typeof localStorage !== "undefined" && localStorage.getItem("zamorin-selected-cafe-id") && localStorage.getItem("zamorin-selected-cafe-id") !== "ALL") ? localStorage.getItem("zamorin-selected-cafe-id") : "",
   attendance: {
     status: "not_checked_in", // not_checked_in | checked_in | checked_out
     checkInAt: null,

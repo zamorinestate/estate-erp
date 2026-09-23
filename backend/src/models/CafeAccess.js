@@ -51,17 +51,18 @@ const cafeAccessSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Permanent 6-digit Café PIN storage (AES-256-GCM iv:authTag:ciphertext)
+    // Permanent 6-digit Café PIN storage (Legacy commissioning artifact - retired in REC-02)
     permanentCafePinEncrypted: {
       type: String,
-      required: true,
+      required: false,
       select: false, // Never return in unprojected queries
     },
 
     // HMAC-SHA256 index for constant-time lookups without exposing plaintext
     permanentCafePinLookupHash: {
       type: String,
-      required: true,
+      required: false,
+      sparse: true,
       unique: true,
       index: true,
       select: false,
@@ -96,6 +97,42 @@ const cafeAccessSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+
+    qrRevokedAt: {
+      type: Date,
+      default: null,
+    },
+
+    qrRevokedBy: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: null,
+    },
+
+    qrRevokeReason: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: null,
+    },
+
+    qrHistory: [
+      {
+        version: Number,
+        action: {
+          type: String,
+          enum: ['CREATED', 'ROTATED', 'REVOKED', 'REACTIVATED'],
+        },
+        actionAt: {
+          type: Date,
+          default: Date.now,
+        },
+        actorUserId: String,
+        actorRole: String,
+        reason: String,
+      },
+    ],
 
     qrLastUsedAt: {
       type: Date,

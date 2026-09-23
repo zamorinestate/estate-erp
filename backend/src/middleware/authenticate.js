@@ -122,6 +122,8 @@ async function authenticate(
 
     request.auth = {
       userId: user.userId,
+      email: user.email,
+      name: user.name || user.email,
       organisationId: user.organisationId,
       role: user.role,
       isPrimaryMaster: Boolean(user.isPrimaryMaster),
@@ -129,6 +131,9 @@ async function authenticate(
       primaryCafeId:
         user.primaryCafeId || null,
       sessionId: session.sessionId,
+      capabilities: Array.isArray(user.capabilities)
+        ? user.capabilities.map((c) => String(c).trim().toUpperCase()).filter(Boolean)
+        : [],
       mfaVerified:
         Boolean(session.mfaVerified),
       mfaVerifiedAt:
@@ -141,6 +146,7 @@ async function authenticate(
         user.permissionsVersion,
     };
 
+    request.user = request.auth;
     request.authenticatedUser = user;
     request.authenticatedSession = session;
 

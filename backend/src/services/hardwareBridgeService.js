@@ -268,6 +268,15 @@ function compileThermalReceipt(orderData = {}, terminal = {}, cafeInfo = {}) {
   if (Number(sgst) > 0) {
     parts.push(Buffer.from(formatTwoColumn('SGST (2.5%):', `₹${sgst}`, width) + '\n', 'utf8'));
   }
+  if (orderData.roundOff != null && Number(orderData.roundOff) !== 0) {
+    const roVal = Number(orderData.roundOff);
+    const roStr = roVal < 0 ? `-₹${Math.abs(roVal).toFixed(2)}` : `+₹${roVal.toFixed(2)}`;
+    const preRound = orderData.preRoundingTotal != null ? Number(orderData.preRoundingTotal).toFixed(2) : null;
+    if (preRound) {
+      parts.push(Buffer.from(formatTwoColumn('Amount Before Round:', `₹${preRound}`, width) + '\n', 'utf8'));
+    }
+    parts.push(Buffer.from(formatTwoColumn('Round Off:', roStr, width) + '\n', 'utf8'));
+  }
 
   parts.push(Buffer.from(`${divider}\n`, 'utf8'));
   parts.push(ESC_POS_COMMANDS.FONT_2X_HEIGHT);
@@ -420,19 +429,39 @@ function routeKotItems(items = [], terminals = []) {
 }
 
 /**
- * Generates clean thermal HTML markup for browser fallback window.print().
+ * Safely encodes HTML entities to prevent XSS in print previews.
  */
-function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
+function escapeHtml(text) {
+  if (text === null || text === undefined) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Generates clean thermal HTML markup for browser fallback window.print().
+ * Supports both 58mm (48mm printable) and 80mm (72mm printable) thermal paper profiles.
+ */
+function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}, paperWidth = null) {
+  const is58 = paperWidth === 58 || paperWidth === '58' || orderData.paperWidth === 58 || orderData.paperWidth === '58';
+  const containerWidthMm = is58 ? '48mm' : '72mm';
+  const previewPx = is58 ? '220px' : '280px';
+  const baseFontSize = is58 ? '11px' : '13px';
+  const titleFontSize = is58 ? '15px' : '18px';
+
   const items = orderData.items || [];
   const itemsHtml = items
     .map(
       (it) => `
     <tr>
-      <td style="text-align:left; padding: 4px 0;">${sanitizeEscPosText(it.name)}</td>
-      <td style="text-align:center; padding: 4px 0;">${it.quantity || 1}</td>
-      <td style="text-align:right; padding: 4px 0;">₹${(Number(it.total || it.price || 0)).toFixed(2)}</td>
+      <td style="text-align:left; padding: 3px 0; word-break: break-word;">${escapeHtml(it.name)}</td>
+      <td style="text-align:center; padding: 3px 2px; white-space: nowrap;">${it.quantity || 1}</td>
+      <td style="text-align:right; padding: 3px 0; white-space: nowrap;">₹${(Number(it.total || it.price || 0)).toFixed(2)}</td>
     </tr>
-    ${it.notes ? `<tr><td colspan="3" style="font-size:11px; color:#555; padding-left:8px;">* ${sanitizeEscPosText(it.notes)}</td></tr>` : ''}
+    ${it.notes ? `<tr><td colspan="3" style="font-size:10px; color:#555; padding-left:4px;">* ${escapeHtml(it.notes)}</td></tr>` : ''}
   `
     )
     .join('');
@@ -445,43 +474,63 @@ function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
   <style>
     body {
       font-family: 'Courier New', Courier, monospace;
-      font-size: 13px;
+      font-size: ${baseFontSize};
       color: #000;
       background: #fff;
       margin: 0;
       padding: 10px;
     }
     .receipt-container {
-      width: 280px;
+      width: ${previewPx};
+      max-width: 100%;
       margin: 0 auto;
+      box-sizing: border-box;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .bold { font-weight: bold; }
-    .title { font-size: 18px; margin-bottom: 4px; }
-    .divider { border-top: 1px dashed #000; margin: 8px 0; }
-    .double-divider { border-top: 2px solid #000; margin: 8px 0; }
+    .title { font-size: ${titleFontSize}; margin-bottom: 4px; }
+    .divider { border-top: 1px dashed #000; margin: 6px 0; }
+    .double-divider { border-top: 2px solid #000; margin: 6px 0; }
     table { width: 100%; border-collapse: collapse; }
     @media print {
-      body { padding: 0; }
-      .receipt-container { width: 100%; }
+      @page {
+        margin: 0 !important;
+        size: auto;
+      }
+      body {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+        color: #000 !important;
+      }
+      .receipt-container {
+        width: ${containerWidthMm} !important;
+        max-width: ${containerWidthMm} !important;
+        margin: 0 !important;
+        padding: ${is58 ? '1.5mm 0.5mm' : '2mm 1.5mm'} !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
     }
   </style>
 </head>
 <body onload="window.print()">
-  <div class="receipt-container">
+  <div class="receipt-container ${is58 ? 'paper-58mm' : 'paper-80mm'}">
     <div class="text-center">
-      <div class="title bold">${sanitizeEscPosText(cafeInfo.brandName || 'ZAMORIN CAFE')}</div>
-      <div>${sanitizeEscPosText(cafeInfo.legalName || 'Zamorin Hospitality')}</div>
-      ${cafeInfo.gstin ? `<div>GSTIN: ${sanitizeEscPosText(cafeInfo.gstin)}</div>` : ''}
-      ${cafeInfo.fssai ? `<div>FSSAI: ${sanitizeEscPosText(cafeInfo.fssai)}</div>` : ''}
+      <div class="title bold">${escapeHtml(cafeInfo.brandName || 'ZAMORIN CAFE')}</div>
+      <div>${escapeHtml(cafeInfo.legalName || 'Zamorin Hospitality')}</div>
+      ${cafeInfo.gstin ? `<div>GSTIN: ${escapeHtml(cafeInfo.gstin)}</div>` : ''}
+      ${cafeInfo.fssai ? `<div>FSSAI: ${escapeHtml(cafeInfo.fssai)}</div>` : ''}
       ${orderData.isReprint ? `<div class="bold" style="background:#000;color:#fff;padding:2px 6px;margin-top:4px;">*** REPRINT #${orderData.reprintCount || 1} ***</div>` : ''}
       ${orderData.isVoid ? `<div class="bold" style="background:#000;color:#fff;padding:2px 6px;margin-top:4px;">*** VOID - CANCELLED BILL ***</div>` : ''}
     </div>
     <div class="divider"></div>
-    <div>Bill No: ${orderData.billNumber || orderData.orderId || 'ZC-001'}</div>
-    <div>Date: ${orderData.date || new Date().toISOString().slice(0, 10)} ${orderData.time || ''}</div>
-    ${orderData.tableNumber ? `<div>Table: ${orderData.tableNumber}</div>` : ''}
+    <div>Bill No: ${escapeHtml(orderData.billNumber || orderData.orderId || 'ZC-001')}</div>
+    <div>Date: ${escapeHtml(orderData.date || new Date().toISOString().slice(0, 10))} ${escapeHtml(orderData.time || '')}</div>
+    ${orderData.tableNumber ? `<div>Table: ${escapeHtml(orderData.tableNumber)}</div>` : ''}
     <div class="divider"></div>
     <table>
       <thead>
@@ -503,6 +552,15 @@ function generateFallbackHtmlReceipt(orderData = {}, cafeInfo = {}) {
     ${Number(orderData.discount || 0) > 0 ? `<div style="display:flex; justify-content:space-between;"><span>Discount:</span><span>-₹${(Number(orderData.discount)).toFixed(2)}</span></div>` : ''}
     ${Number(orderData.cgst || 0) > 0 ? `<div style="display:flex; justify-content:space-between;"><span>CGST (2.5%):</span><span>₹${(Number(orderData.cgst)).toFixed(2)}</span></div>` : ''}
     ${Number(orderData.sgst || 0) > 0 ? `<div style="display:flex; justify-content:space-between;"><span>SGST (2.5%):</span><span>₹${(Number(orderData.sgst)).toFixed(2)}</span></div>` : ''}
+    ${orderData.roundOff != null && Number(orderData.roundOff) !== 0 ? `
+    <div style="display:flex; justify-content:space-between; color:#555;">
+      <span>Amount Before Round:</span>
+      <span>₹${(Number(orderData.preRoundingTotal || (orderData.subtotal || 0) + (orderData.cgst || 0) + (orderData.sgst || 0) - (orderData.discount || 0))).toFixed(2)}</span>
+    </div>
+    <div style="display:flex; justify-content:space-between;">
+      <span>Round Off:</span>
+      <span>${Number(orderData.roundOff) < 0 ? `-₹${Math.abs(Number(orderData.roundOff)).toFixed(2)}` : `+₹${Number(orderData.roundOff).toFixed(2)}`}</span>
+    </div>` : ''}
     <div class="double-divider"></div>
     <div class="bold" style="display:flex; justify-content:space-between; font-size:15px;">
       <span>TOTAL:</span>
@@ -671,6 +729,7 @@ async function checkTerminalHealth(terminalId, organisationId) {
 module.exports = {
   ESC_POS_COMMANDS,
   sanitizeEscPosText,
+  escapeHtml,
   buildDrawerKickBuffer,
   buildEscPosQrBuffer,
   formatTwoColumn,

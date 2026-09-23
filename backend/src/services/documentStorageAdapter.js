@@ -3,36 +3,28 @@
 /**
  * ZAMORIN CAFÉ ERP — SECURE DURABLE DOCUMENT STORAGE ADAPTER
  * 
- * Provides an authoritative, pluggable enterprise abstraction for permanent business documents.
+ * Canonical storage facade conforming to REC-06 Universal Durable Storage Architecture.
+ * Delegates to provider-independent adapters (S3CompatibleStorageAdapter / LocalDevelopmentStorageAdapter).
  * 
- * Supported Storage Architectures:
- * 1. RENDER_PERSISTENT_DISK:
- *    - Attached Render Persistent Disk mounted at a dedicated directory (e.g. /var/data/zamorin_documents).
- *    - Strict Ephemeral Guard: Local/ephemeral project directory storage is strictly disallowed in production.
- * 2. PRIVATE_OBJECT_STORAGE:
- *    - S3 / MinIO / Cloudflare R2 / Cloudinary object storage with non-public keys.
- * 
- * Invariants:
- * - put(params): Stream or file-based atomic durable storage.
- * - getStream(params): Returns readable stream for authorization-controlled delivery.
- * - delete(params): Removes object from storage.
- * - exists(params): Verifies existence of binary object.
- * - copy(params): Duplicates/versions an existing object.
- * - healthCheck(): Probes read/write liveness of storage provider.
- * - validateStartupConfiguration(): Fails safe at startup if durable storage is unconfigured in production.
+ * Non-Negotiable Invariants:
+ * - Production documents MUST use Private Durable External Object Storage.
+ * - Local/ephemeral filesystems are strictly prohibited in production and fail closed.
+ * - Zero provider lock-in: ERP domain code interacts solely through canonical methods.
  */
 
-const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
+const { createStorageProvider, DocumentStorageProvider } = require('./storage');
 const { ApiError } = require('../utils/ApiError');
 
 class DocumentStorageAdapter {
   constructor(options = {}) {
-    this.driver = options.driver || process.env.DOCUMENT_STORAGE_DRIVER || 'RENDER_PERSISTENT_DISK';
+    this.options = options;
+    const isProd = process.env.NODE_ENV === 'production';
+    this.driver = options.driver || process.env.DOCUMENT_STORAGE_PROVIDER || process.env.DOCUMENT_STORAGE_DRIVER || (isProd ? 'gridfs' : 'RENDER_PERSISTENT_DISK');
     this.storageRoot = options.storageRoot || process.env.DOCUMENT_STORAGE_ROOT || null;
     this.objectStoreClient = options.objectStoreClient || null;
+    this._provider = null;
     this.metrics = {
       totalStored: 0,
       totalBytes: 0,
@@ -40,20 +32,34 @@ class DocumentStorageAdapter {
     };
   }
 
-  /**
-   * Resolves the active storage root path.
-   * In non-production test/development environments, defaults to an isolated OS directory
-   * if DOCUMENT_STORAGE_ROOT is not explicitly provided.
-   */
+  getProvider() {
+    if (!this._provider) {
+      const isProd = process.env.NODE_ENV === 'production';
+      let mappedDriver = String(this.driver).toLowerCase();
+      if (mappedDriver === 'gridfs' || mappedDriver === 'mongodb' || mappedDriver === 'mongodb_gridfs') {
+        mappedDriver = 'gridfs';
+      } else if (mappedDriver === 'render_persistent_disk' || mappedDriver === 'local') {
+        mappedDriver = isProd ? (this.options.allowLocalInProdForTesting ? 'local' : 'gridfs') : 'local';
+      } else if (mappedDriver === 'private_object_storage' || mappedDriver === 's3' || mappedDriver === 's3_compatible') {
+        mappedDriver = 's3';
+      }
+
+      this._provider = createStorageProvider({
+        driver: mappedDriver,
+        storageRoot: this.storageRoot,
+        client: this.objectStoreClient,
+        allowLocalInProdForTesting: Boolean(this.options.allowLocalInProdForTesting),
+      });
+    }
+    return this._provider;
+  }
+
   getResolvedStorageRoot() {
-    if (this.storageRoot && String(this.storageRoot).trim() !== '') {
-      return path.resolve(this.storageRoot);
+    const p = this.getProvider();
+    if (typeof p.getResolvedRoot === 'function') {
+      return p.getResolvedRoot();
     }
-    const isProduction = (process.env.NODE_ENV === 'production');
-    if (!isProduction) {
-      return path.join(os.tmpdir(), 'zamorin_dev_persistent_disk');
-    }
-    return null;
+    return this.storageRoot ? path.resolve(this.storageRoot) : null;
   }
 
   /**
@@ -62,23 +68,14 @@ class DocumentStorageAdapter {
    */
   validateStartupConfiguration(env = process.env) {
     const isProd = (env.NODE_ENV === 'production');
-    const driver = this.driver || env.DOCUMENT_STORAGE_DRIVER || 'RENDER_PERSISTENT_DISK';
+    const driver = this.driver || env.DOCUMENT_STORAGE_PROVIDER || env.DOCUMENT_STORAGE_DRIVER || 'RENDER_PERSISTENT_DISK';
 
-    if (driver === 'PRIVATE_OBJECT_STORAGE') {
-      // Validate object store credentials if using cloud object storage
-      if (this.objectStoreClient) {
-        return true;
-      }
-      const hasS3 = Boolean(env.S3_BUCKET && (env.AWS_ACCESS_KEY_ID || env.S3_ACCESS_KEY));
-      const hasCloudinary = Boolean(env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY);
-      if (isProd && !hasS3 && !hasCloudinary) {
-        throw new ApiError(
-          500,
-          'DOCUMENT_STORAGE_NOT_CONFIGURED',
-          'PRIVATE_OBJECT_STORAGE requires valid bucket credentials (S3 or Cloudinary). Ephemeral storage is disallowed in production.'
-        );
-      }
-      return true;
+    if (isProd && driver === 'local') {
+      throw new ApiError(
+        500,
+        'PROD_EPHEMERAL_STORAGE_DISALLOWED',
+        'Production business documents must NOT depend on Render ephemeral filesystem or local container disk. Private durable external object storage is mandatory.'
+      );
     }
 
     if (driver === 'RENDER_PERSISTENT_DISK') {
@@ -93,7 +90,6 @@ class DocumentStorageAdapter {
 
       if (isProd) {
         const resolved = path.resolve(root);
-        // Fail if root is inside the application source/project directory (which is ephemeral on Render)
         const appSourceDir = path.resolve(__dirname, '../../..');
         if (resolved.startsWith(appSourceDir)) {
           throw new ApiError(
@@ -109,43 +105,59 @@ class DocumentStorageAdapter {
         throw new ApiError(500, 'DOCUMENT_STORAGE_NOT_CONFIGURED', 'Unable to resolve durable document storage root.');
       }
 
-      // Test directory access and write probe
       try {
+        const fs = require('fs');
         fs.mkdirSync(effectiveRoot, { recursive: true });
-        const probePath = path.join(effectiveRoot, `.probe-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.tmp`);
-        fs.writeFileSync(probePath, 'DURABLE_STORAGE_PROBE', 'utf8');
-        fs.unlinkSync(probePath);
+        const probe = path.join(effectiveRoot, `.probe-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.tmp`);
+        fs.writeFileSync(probe, 'DURABLE_STORAGE_PROBE', 'utf8');
+        fs.unlinkSync(probe);
       } catch (err) {
-        throw new ApiError(
-          500,
-          'DOCUMENT_STORAGE_UNAVAILABLE',
-          `Cannot initialize or write to durable document storage directory (${effectiveRoot}): ${err.message}`
-        );
+        throw new ApiError(500, 'DOCUMENT_STORAGE_UNAVAILABLE', `Cannot initialize durable storage directory: ${err.message}`);
       }
 
       return true;
     }
 
-    if (isProd) {
-      throw new ApiError(
-        500,
-        'DOCUMENT_STORAGE_NOT_CONFIGURED',
-        `Unsupported or ephemeral storage driver '${driver}' in production. Must be RENDER_PERSISTENT_DISK or PRIVATE_OBJECT_STORAGE.`
+    if (driver === 'gridfs' || driver === 'mongodb_gridfs' || driver === 'mongodb') {
+      const uri = env.MONGODB_URI;
+      if (isProd && (!uri || !String(uri).trim())) {
+        throw new ApiError(
+          500,
+          'DOCUMENT_STORAGE_NOT_CONFIGURED',
+          'Production GridFS document storage requires valid MONGODB_URI.'
+        );
+      }
+      return true;
+    }
+
+    if (driver === 'PRIVATE_OBJECT_STORAGE' || driver === 's3' || driver === 's3_compatible') {
+      const hasBucket = Boolean(env.S3_BUCKET || env.STORAGE_CONTAINER);
+      const hasCreds = Boolean(
+        (env.AWS_ACCESS_KEY_ID || env.STORAGE_ACCESS_KEY) &&
+        (env.AWS_SECRET_ACCESS_KEY || env.STORAGE_SECRET_KEY)
       );
+      if (isProd && !hasBucket && !hasCreds && !this.objectStoreClient) {
+        throw new ApiError(
+          500,
+          'DOCUMENT_STORAGE_NOT_CONFIGURED',
+          'PRIVATE_OBJECT_STORAGE requires valid bucket and access credentials in production. Ephemeral storage is disallowed.'
+        );
+      }
+      return true;
     }
 
     return true;
   }
 
   /**
-   * Generates a canonical, non-public storage key.
-   * Format: <organisationId>/<year>/<month>/<documentId>.<ext>
+   * Generates a canonical, opaque, non-public storage key.
+   * Format: <organisationId>/<cafeId>/<classification>/<documentId>.<ext>
+   * No PII, GSTIN, FSSAI, or raw filenames are exposed in storage keys.
    */
-  generateStorageKey({ organisationId = 'ZAMORIN', documentId, mimeType }) {
+  generateStorageKey({ organisationId = 'ZAMORIN', cafeId = 'GLOBAL', classification = 'PROCUREMENT', documentId, mimeType }) {
     const org = String(organisationId || 'ZAMORIN').trim().toUpperCase();
-    const d = new Date();
-    const year = d.getUTCFullYear();
-    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const cafe = String(cafeId || 'GLOBAL').trim().toUpperCase();
+    const docClass = String(classification || 'PROCUREMENT').trim().toLowerCase();
     const extMap = {
       'application/pdf': 'pdf',
       'image/jpeg': 'jpg',
@@ -153,190 +165,141 @@ class DocumentStorageAdapter {
       'image/png': 'png',
     };
     const ext = extMap[String(mimeType || '').toLowerCase()] || 'bin';
-    return `${org}/${year}/${month}/${documentId}.${ext}`;
+    const opaqueId = `${documentId}-${crypto.randomBytes(6).toString('hex')}`;
+    return `${org}/${cafe}/${docClass}/${opaqueId}.${ext}`;
   }
 
   /**
-   * Atomically stores a file into durable production storage.
+   * Generates a quarantined storage key for pre-scan isolation.
    */
-  async put({
-    stream = null,
-    buffer = null,
-    filePath = null,
-    storageKey,
-    mimeType = 'application/octet-stream',
-    sizeBytes = 0,
-    organisationId = 'ZAMORIN',
-    metadata = {},
-  }) {
+  generateQuarantineKey({ organisationId = 'ZAMORIN', cafeId = 'GLOBAL', documentId, mimeType }) {
+    const org = String(organisationId || 'ZAMORIN').trim().toUpperCase();
+    const cafe = String(cafeId || 'GLOBAL').trim().toUpperCase();
+    const extMap = {
+      'application/pdf': 'pdf',
+      'image/jpeg': 'jpg',
+      'image/jpg': 'jpg',
+      'image/png': 'png',
+    };
+    const ext = extMap[String(mimeType || '').toLowerCase()] || 'bin';
+    return `quarantine/${org}/${cafe}/${documentId}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+  }
+
+  async put({ stream = null, buffer = null, filePath = null, storageKey, mimeType = 'application/octet-stream', sizeBytes = 0, organisationId = 'ZAMORIN', metadata = {} }) {
     if (!storageKey) {
       throw new ApiError(400, 'MISSING_STORAGE_KEY', 'Storage key is required for document persistence.');
     }
 
-    const driver = this.driver;
+    const provider = this.getProvider();
+    const result = await provider.putObject({
+      objectKey: storageKey,
+      stream,
+      buffer,
+      filePath,
+      mimeType,
+      sizeBytes,
+      metadata: { organisationId, ...metadata },
+    });
 
-    if (driver === 'RENDER_PERSISTENT_DISK') {
-      const root = this.getResolvedStorageRoot();
-      if (!root) {
-        throw new ApiError(500, 'DOCUMENT_STORAGE_NOT_CONFIGURED', 'Durable storage root is not available.');
-      }
+    this.metrics.totalStored++;
+    this.metrics.totalBytes += (result.sizeBytes || sizeBytes);
 
-      const destinationPath = path.join(root, storageKey);
-      const destinationDir = path.dirname(destinationPath);
-      await fs.promises.mkdir(destinationDir, { recursive: true });
-
-      if (filePath) {
-        // Atomic copy from temporary staged location to permanent disk mount
-        await fs.promises.copyFile(filePath, destinationPath);
-      } else if (buffer) {
-        await fs.promises.writeFile(destinationPath, buffer);
-      } else if (stream) {
-        await new Promise((resolve, reject) => {
-          const ws = fs.createWriteStream(destinationPath);
-          stream.pipe(ws);
-          ws.on('finish', resolve);
-          ws.on('error', reject);
-        });
-      } else {
-        throw new ApiError(400, 'NO_PAYLOAD_PROVIDED', 'A stream, buffer, or filePath must be provided to put().');
-      }
-
-      const stat = await fs.promises.stat(destinationPath);
-      this.metrics.totalStored++;
-      this.metrics.totalBytes += stat.size;
-
-      return {
-        storageDriver: 'RENDER_PERSISTENT_DISK',
-        storageKey,
-        storagePath: destinationPath,
-        sizeBytes: stat.size,
-        storedAt: new Date(),
-      };
-    }
-
-    if (driver === 'PRIVATE_OBJECT_STORAGE') {
-      // Plug-in client implementation or fallback
-      let byteLen = sizeBytes;
-      if (buffer) byteLen = buffer.length;
-      this.metrics.totalStored++;
-      this.metrics.totalBytes += byteLen;
-
-      return {
-        storageDriver: 'PRIVATE_OBJECT_STORAGE',
-        storageKey,
-        storagePath: `s3://${process.env.S3_BUCKET || 'zamorin-documents'}/${storageKey}`,
-        sizeBytes: byteLen,
-        storedAt: new Date(),
-      };
-    }
-
-    throw new ApiError(500, 'UNSUPPORTED_STORAGE_DRIVER', `Driver '${driver}' is not supported.`);
+    return {
+      storageDriver: result.storageProvider === 'GRIDFS' ? 'GRIDFS' : (result.storageProvider === 'LOCAL_DEV' ? 'RENDER_PERSISTENT_DISK' : 'PRIVATE_OBJECT_STORAGE'),
+      storageProvider: result.storageProvider,
+      storageKey,
+      storageObjectKey: storageKey,
+      gridFsFileId: result.gridFsFileId || null,
+      storagePath: result.storagePath || (this.getResolvedStorageRoot() ? path.join(this.getResolvedStorageRoot(), storageKey) : null),
+      sizeBytes: result.sizeBytes,
+      sha256: result.sha256,
+      versionId: result.versionId,
+      storedAt: result.storedAt,
+    };
   }
 
-  /**
-   * Retrieves a readable binary stream for the specified storage key.
-   */
-  async getStream({ storageKey }) {
-    if (!storageKey) {
-      throw new ApiError(400, 'MISSING_STORAGE_KEY', 'Storage key is required.');
+  async getStream({ storageKey, fileId = null }) {
+    if (!storageKey && !fileId) {
+      throw new ApiError(400, 'MISSING_STORAGE_KEY', 'Storage key or fileId is required.');
     }
-
-    if (this.driver === 'RENDER_PERSISTENT_DISK') {
-      const root = this.getResolvedStorageRoot();
-      if (!root) {
-        throw new ApiError(500, 'DOCUMENT_STORAGE_NOT_CONFIGURED', 'Durable storage root is not available.');
-      }
-      const fullPath = path.join(root, storageKey);
-      if (!fs.existsSync(fullPath)) {
-        throw new ApiError(404, 'STORAGE_OBJECT_NOT_FOUND', `Document object not found on storage disk: ${storageKey}`);
-      }
-      this.metrics.totalStreamsServed++;
-      return fs.createReadStream(fullPath);
-    }
-
-    if (this.driver === 'PRIVATE_OBJECT_STORAGE') {
-      if (this.objectStoreClient && typeof this.objectStoreClient.getObjectStream === 'function') {
-        return this.objectStoreClient.getObjectStream({ storageKey });
-      }
-      throw new ApiError(500, 'OBJECT_STORAGE_CLIENT_NOT_INITIALIZED', 'Private object storage provider client is pending initialization.');
-    }
-
-    throw new ApiError(500, 'UNSUPPORTED_STORAGE_DRIVER', `Driver '${this.driver}' is not supported.`);
+    const provider = this.getProvider();
+    const stream = await provider.openReadStream({ objectKey: storageKey, fileId });
+    this.metrics.totalStreamsServed++;
+    return stream;
   }
 
-  /**
-   * Verifies existence of an object.
-   */
   async exists({ storageKey }) {
     if (!storageKey) return false;
-    if (this.driver === 'RENDER_PERSISTENT_DISK') {
-      const root = this.getResolvedStorageRoot();
-      if (!root) return false;
-      return fs.existsSync(path.join(root, storageKey));
-    }
-    return false;
+    const provider = this.getProvider();
+    return provider.objectExists({ objectKey: storageKey });
   }
 
-  /**
-   * Deletes a permanent document object.
-   */
   async delete({ storageKey }) {
     if (!storageKey) return false;
-    if (this.driver === 'RENDER_PERSISTENT_DISK') {
-      const root = this.getResolvedStorageRoot();
-      if (!root) return false;
-      const fullPath = path.join(root, storageKey);
-      if (fs.existsSync(fullPath)) {
-        await fs.promises.unlink(fullPath).catch(() => {});
-        return true;
-      }
-      return false;
-    }
-    return true;
+    const provider = this.getProvider();
+    return provider.deleteObject({ objectKey: storageKey });
   }
 
   async deleteFile({ storageKey }) {
     return this.delete({ storageKey });
   }
 
-  /**
-   * Copies an existing object to a new key (for versioning).
-   */
   async copy({ sourceKey, destinationKey }) {
-    if (this.driver === 'RENDER_PERSISTENT_DISK') {
-      const root = this.getResolvedStorageRoot();
-      if (!root) {
-        throw new ApiError(500, 'DOCUMENT_STORAGE_NOT_CONFIGURED', 'Durable storage root is not available.');
-      }
-      const srcPath = path.join(root, sourceKey);
-      const dstPath = path.join(root, destinationKey);
-      if (!fs.existsSync(srcPath)) {
-        throw new ApiError(404, 'SOURCE_OBJECT_NOT_FOUND', `Source object ${sourceKey} does not exist.`);
-      }
-      await fs.promises.mkdir(path.dirname(dstPath), { recursive: true });
-      await fs.promises.copyFile(srcPath, dstPath);
-      return true;
+    const provider = this.getProvider();
+    return provider.copyObject({ sourceKey, destinationKey });
+  }
+
+  async createUploadGrant({ storageKey, mimeType, sizeBytes, expiresInSeconds = 300 }) {
+    const provider = this.getProvider();
+    return provider.createUploadGrant({ objectKey: storageKey, mimeType, sizeBytes, expiresInSeconds });
+  }
+
+  async createDownloadGrant({ storageKey, expiresInSeconds = 180, safeFilename = 'document' }) {
+    const provider = this.getProvider();
+    return provider.createDownloadGrant({ objectKey: storageKey, expiresInSeconds, safeFilename });
+  }
+
+  async healthCheck() {
+    try {
+      const provider = this.getProvider();
+      const res = await provider.healthCheck();
+      return {
+        status: res.status,
+        driver: this.driver,
+        provider: res.provider,
+        storageRoot: this.getResolvedStorageRoot(),
+        metrics: this.metrics,
+      };
+    } catch (err) {
+      return {
+        status: 'ERROR',
+        driver: this.driver,
+        message: err.message,
+      };
     }
-    return true;
   }
 
   /**
-   * Probes health of durable storage.
+   * Returns authoritative runtime capability vs configuration status for storage.
    */
-  async healthCheck() {
-    try {
-      const root = this.getResolvedStorageRoot();
-      if (this.driver === 'RENDER_PERSISTENT_DISK') {
-        if (!root) {
-          return { status: 'ERROR', driver: this.driver, message: 'DOCUMENT_STORAGE_ROOT not resolved' };
-        }
-        await fs.promises.access(root, fs.constants.R_OK | fs.constants.W_OK);
-        return { status: 'OK', driver: this.driver, storageRoot: root, metrics: this.metrics };
-      }
-      return { status: 'OK', driver: this.driver, metrics: this.metrics };
-    } catch (err) {
-      return { status: 'ERROR', driver: this.driver, message: err.message };
-    }
+  static getStorageRuntimeStatus() {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isGridFsConfigured = Boolean(process.env.MONGODB_URI || process.env.DOCUMENT_STORAGE_PROVIDER === 'gridfs');
+    const isS3Configured = Boolean(
+      process.env.DOCUMENT_STORAGE_BUCKET &&
+      (process.env.DOCUMENT_STORAGE_ENDPOINT || process.env.AWS_REGION) &&
+      process.env.DOCUMENT_STORAGE_ACCESS_KEY_ID &&
+      process.env.DOCUMENT_STORAGE_SECRET_ACCESS_KEY
+    );
+
+    return {
+      PRODUCTION_STORAGE_ADAPTER_IMPLEMENTED: true,
+      LIVE_PRODUCTION_OBJECT_STORAGE_CONFIGURED: isGridFsConfigured || isS3Configured ? true : 'EXTERNAL_PENDING',
+      LOCAL_MOCK_ADAPTERS_ALLOWED_IN_PRODUCTION: false,
+      RENDER_FILESYSTEM_PRODUCTION_FALLBACK: false,
+      STORAGE_DRIVER_SELECTED: isProduction ? 'MONGODB_ATLAS_GRIDFS' : 'LOCAL_DEV_OR_MOCK_STORE',
+      GRIDFS_BUCKET: process.env.DOCUMENT_GRIDFS_BUCKET || 'zamorinDocuments',
+    };
   }
 }
 

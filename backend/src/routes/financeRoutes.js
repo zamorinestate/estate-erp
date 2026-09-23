@@ -305,4 +305,8 @@ router.post(
   commitZReport
 );
 
+// 17. REC-17 Vendor Accounts Payable Ledger & Subledger
+const vendorLedgerRoutes = require('./vendorLedgerRoutes');
+router.use('/vendor-ledger', vendorLedgerRoutes);
+
 module.exports = router;

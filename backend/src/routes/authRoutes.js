@@ -26,6 +26,13 @@ const {
   listTrustedDevices,
   revokeTrustedDevice,
   revokeAllTrustedDevices,
+  getSelfPrivacySecurity,
+  setupAppPin,
+  changeAppPin,
+  disableAppPin,
+  getAppPinStatus,
+  unlockWithAppPin,
+  loginWithAppPin,
 } = require('../controllers/authController');
 
 const {
@@ -54,7 +61,7 @@ function normalizeAccountKey(req, fallbackIdentifierKey = 'email') {
     ''
   ).trim().toLowerCase();
 
-  if (!rawIdentifier && !orgId) {
+  if (!rawIdentifier) {
     return `auth:acct:anon:${ipKeyGenerator(getTrustedClientIp(req))}`;
   }
 
@@ -178,7 +185,7 @@ const passwordResetAccountRateLimiter = createPasswordResetAccountRateLimiter();
 
 const passkeyIpRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: process.env.AUTH_RATE_LIMIT_PASSKEY_IP_MAX ? Number(process.env.AUTH_RATE_LIMIT_PASSKEY_IP_MAX) : 150,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(getTrustedClientIp(req)),
@@ -188,7 +195,7 @@ const passkeyIpRateLimiter = rateLimit({
 
 const passkeyAccountRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 15,
+  limit: process.env.AUTH_RATE_LIMIT_PASSKEY_MAX ? Number(process.env.AUTH_RATE_LIMIT_PASSKEY_MAX) : 80,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   keyGenerator: (req) => normalizeAccountKey(req, 'email'),
@@ -219,17 +226,41 @@ const mfaAccountRateLimiter = rateLimit({
 // Authentication endpoints
 router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, login);
 router.post('/password/forgot', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, requestPasswordReset);
-router.post('/password/reset/verify', passwordResetIpRateLimiter, verifyPasswordResetCode);
-router.post('/password/reset', passwordResetIpRateLimiter, resetPassword);
+router.post('/password/reset/verify', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, verifyPasswordResetCode);
+router.post('/password/reset', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, resetPassword);
 router.post('/refresh', refreshSession);
 
+// Personal Six-Digit Application PIN Endpoints (ACP-05E-02)
+router.post('/app-pin/setup', authenticate, setupAppPin);
+router.post('/app-pin/change', authenticate, changeAppPin);
+router.post('/app-pin/disable', authenticate, disableAppPin);
+router.get('/app-pin/status', authenticate, getAppPinStatus);
+router.post('/app-pin/unlock', authenticate, unlockWithAppPin);
+router.post('/app-pin/login', passkeyIpRateLimiter, passkeyAccountRateLimiter, loginWithAppPin);
+
+// Feature Gate: Passkeys / WebAuthn are enabled by default unless explicitly disabled
+const isPasskeyEnabled = () => process.env.ENABLE_PASSKEY_AUTH !== 'false';
+
+const passkeyFeatureGate = (req, res, next) => {
+  if (!isPasskeyEnabled()) {
+    return res.status(404).json({
+      success: false,
+      code: 'FEATURE_DISABLED',
+      message: 'Passkey authentication is disabled in current release.',
+    });
+  }
+  next();
+};
+
 // Passkeys / WebAuthn Endpoints
-router.post('/passkeys/register/options', authenticate, passkeyIpRateLimiter, passkeyController.getRegistrationOptions);
-router.post('/passkeys/register/verify', authenticate, passkeyIpRateLimiter, passkeyController.verifyRegistration);
-router.post('/passkeys/authenticate/options', passkeyIpRateLimiter, passkeyAccountRateLimiter, passkeyController.getAuthenticationOptions);
-router.post('/passkeys/authenticate/verify', passkeyIpRateLimiter, passkeyAccountRateLimiter, passkeyController.verifyAuthentication);
-router.get('/passkeys', authenticate, passkeyController.listUserPasskeys);
-router.delete('/passkeys/:credentialId', authenticate, passkeyController.revokeUserPasskey);
+router.post('/passkeys/register/options', passkeyFeatureGate, authenticate, passkeyIpRateLimiter, passkeyController.getRegistrationOptions);
+router.post('/passkeys/register/verify', passkeyFeatureGate, authenticate, passkeyIpRateLimiter, passkeyController.verifyRegistration);
+router.post('/passkeys/authenticate/options', passkeyFeatureGate, passkeyIpRateLimiter, passkeyAccountRateLimiter, passkeyController.getAuthenticationOptions);
+router.post('/passkeys/authenticate/verify', passkeyFeatureGate, passkeyIpRateLimiter, passkeyAccountRateLimiter, passkeyController.verifyAuthentication);
+router.get('/passkeys', passkeyFeatureGate, authenticate, passkeyController.listUserPasskeys);
+router.delete('/passkeys', passkeyFeatureGate, authenticate, passkeyController.revokeAllUserPasskeys);
+router.patch('/passkeys/:credentialId', passkeyFeatureGate, authenticate, passkeyController.renameUserPasskey);
+router.delete('/passkeys/:credentialId', passkeyFeatureGate, authenticate, passkeyController.revokeUserPasskey);
 
 // Trusted Device Management Endpoints
 router.get('/trusted-devices', authenticate, listTrustedDevices);
@@ -246,6 +277,7 @@ router.get('/mfa/status', authenticate, getMfaStatus);
 router.post('/mfa/recovery-codes/regenerate', authenticate, mfaIpRateLimiter, regenerateRecoveryCodes);
 
 router.get('/me', authenticate, getCurrentUser);
+router.get('/me/privacy-security', authenticate, getSelfPrivacySecurity);
 
 router.post(
   '/step-up',
@@ -256,6 +288,7 @@ router.post(
 );
 
 router.post('/password/change', authenticate, changePassword);
+router.post('/change-password', authenticate, changePassword);
 router.post('/logout', authenticate, logout);
 router.post('/logout-all', authenticate, logoutAll);
 router.get('/sessions', authenticate, getSessions);

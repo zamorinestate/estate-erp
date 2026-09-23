@@ -144,14 +144,13 @@ test('P0 Remediation Verification Suite — Create Café & Café Operations Acce
   // P0-01 & P0-01B: AUTHORITATIVE GATEWAY CONTEXT & STRICT EXPIRATION
   // ---------------------------------------------------------------------------
   await t.test('P0-01: Permanent PIN in authentication flow is strictly rejected (PIN_AUTH_DISALLOWED)', async () => {
-    const pin = createdAccess.permanentCafePin;
-    assert.ok(pin, 'Permanent PIN must be returned during provisioning for emergency reveal only');
+    const testPin = '123456';
 
     await assert.rejects(
       async () => {
         await cafeService.resolveGatewayCredential({
           method: 'PIN',
-          credential: pin,
+          credential: testPin,
           clientIp: '127.0.0.1',
           userAgent: 'TestBrowser/1.0',
         });

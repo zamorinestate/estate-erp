@@ -705,10 +705,12 @@ describe('REAL TRUSTED-DEVICE / REMEMBER-THIS-DEVICE 31-POINT TEST SUITE', () =>
     assert.equal(routesContent.includes("router.post('/auth/register',"), false);
   });
 
-  // 31. Legacy rollback remains valid
-  test('31. Legacy login rollback mode remains intact', async () => {
-    const loginJs = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/pages/login.js'), 'utf8');
-    assert.ok(loginJs.includes('renderLogin'));
-    assert.ok(loginJs.includes('renderMfaChallenge'));
+  // 31. Legacy login permanently retired under REC-18
+  test('31. Legacy login permanently retired and Login 2.0 canonical', async () => {
+    const legacyPath = path.join(__dirname, '../../frontend/src/js/pages/login.js');
+    assert.equal(fs.existsSync(legacyPath), false, 'Legacy login.js must be permanently deleted');
+    const login2Js = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/pages/login2.js'), 'utf8');
+    assert.ok(login2Js.includes('renderLoginPage2'));
+    assert.ok(login2Js.includes('wireLoginPage2'));
   });
 });

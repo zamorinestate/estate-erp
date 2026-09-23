@@ -2,7 +2,7 @@
 // ZAMORIN CAFÉ ERP — SERVICE WORKER (PWA & OFFLINE KIOSK ENGINE)
 // =============================================================================
 
-const CACHE_VERSION = 'zamorin-pwa-v2.6.0';
+const CACHE_VERSION = 'zamorin-pwa-v2.8.0';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 
@@ -101,6 +101,20 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request).catch(() => {
         return caches.match('./index.html') || caches.match('/index.html');
+      })
+    );
+  }
+});
+
+// 5. Background Synchronization API Handler (REC-13 / R02-09)
+// Feature-detected by browser. Dispatches sync trigger to active client windows without in-memory dependency.
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'zamorin-pos-queue-sync') {
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window' }).then((clients) => {
+        for (const client of clients) {
+          client.postMessage({ type: 'TRIGGER_OFFLINE_SYNC', reason: 'BACKGROUND_SYNC' });
+        }
       })
     );
   }

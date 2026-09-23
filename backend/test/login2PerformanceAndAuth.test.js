@@ -27,9 +27,9 @@ describe('LOGIN-PAGE-2.0 Background & Auth Lifecycle Suite', () => {
     const login2Path = path.resolve(__dirname, '../../frontend/src/js/pages/login2.js');
     const content = fs.readFileSync(login2Path, 'utf8');
 
-    // Must contain scenic background image URLs
+    // Must contain standard background image collection
     assert.ok(content.includes('BACKGROUND_IMAGES = ['), 'login2.js must export BACKGROUND_IMAGES');
-    assert.ok(content.includes('images.unsplash.com/photo-1506905925346-21bda4d32df4'), 'login2.js must contain restored scenic URLs');
+    assert.ok(content.includes('navy-gradient-standard'), 'login2.js must contain standard background style');
 
     // Must not contain background rotation intervals
     assert.ok(!content.includes('setInterval(') && !content.includes('setInterval ('), 'login2.js must not auto-rotate backgrounds on an interval');

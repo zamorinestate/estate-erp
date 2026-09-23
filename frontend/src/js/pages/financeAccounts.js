@@ -796,9 +796,22 @@ async function renderJournalsTab(wrap) {
 async function renderAPTab(wrap) {
   let invoices = DEFAULT_AP_INVOICES;
   try {
-    const res = await apiGet("/finance/ap/invoices");
-    if (res && res.invoices && res.invoices.length > 0) {
-      invoices = res.invoices;
+    const queueRes = await apiGet("/api/v1/vendor-ledger/ap/queue").catch(() => null);
+    if (queueRes?.success && queueRes.data?.queue?.length > 0) {
+      invoices = queueRes.data.queue.map(q => ({
+        invoiceId: q.invoiceId,
+        vendorName: q.vendorName || q.vendorId,
+        supplierInvoiceNumber: q.invoiceNumber || q.purchaseOrderId,
+        dueDate: q.dueDate || '2026-09-25',
+        totalPaisa: q.totalPaisa || 100000,
+        outstandingPaisa: q.outstandingPaisa !== undefined ? q.outstandingPaisa : 100000,
+        paymentStatus: q.status || 'UNPAID',
+      }));
+    } else {
+      const res = await apiGet("/finance/ap/invoices");
+      if (res && res.invoices && res.invoices.length > 0) {
+        invoices = res.invoices;
+      }
     }
   } catch (err) {
     // Graceful fallback to default mock dataset
@@ -811,7 +824,12 @@ async function renderAPTab(wrap) {
           <h3 style="font-size:16px; font-weight:700; margin:0; color:var(--ink);">Accounts Payable — Supplier Invoices</h3>
           <p style="font-size:13px; color:var(--muted); margin:2px 0 0;">3-way PO matching, supplier liability tracking, hold management, and payment execution.</p>
         </div>
-        <button id="btn-tab-new-ap-bill" class="btn btn-primary btn-sm">+ Record AP Bill</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="btn-goto-vendor-ap-subledger" class="btn btn-secondary btn-sm" type="button" style="font-weight:600;">
+            🏛️ Open Supplier AP Subledger
+          </button>
+          <button id="btn-tab-new-ap-bill" class="btn btn-primary btn-sm">+ Record AP Bill</button>
+        </div>
       </div>
 
       <div style="overflow-x:auto;">
@@ -850,6 +868,7 @@ async function renderAPTab(wrap) {
   `;
 
   wrap.querySelector("#btn-tab-new-ap-bill")?.addEventListener("click", () => openNewAPBillModal(wrap));
+  wrap.querySelector("#btn-goto-vendor-ap-subledger")?.addEventListener("click", () => navigate("vendors/ap-queue"));
 
   wrap.querySelectorAll(".btn-pay-ap-bill").forEach((btn) => {
     btn.addEventListener("click", () => {

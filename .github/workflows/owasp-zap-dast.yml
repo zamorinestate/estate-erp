@@ -1,0 +1,122 @@
+name: OWASP ZAP DAST Staging Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Target Staging URL to scan'
+        required: true
+        default: 'https://zamorin-cafe-erp-staging.onrender.com'
+      scan_type:
+        description: 'Scan Type (baseline, full_active, api)'
+        required: true
+        default: 'baseline'
+        type: choice
+        options:
+          - baseline
+          - full_active
+          - api
+      target_env:
+        description: 'Target Environment (must be staging)'
+        required: true
+        default: 'staging'
+      confirm_active_scan:
+        description: 'Explicit confirmation for active full scan'
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches: [ 'owner-strategic-batch-03' ]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  zap_scan:
+    name: OWASP ZAP DAST Scanner (${{ matrix.target_label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_url: 'https://zamorin-cafe-erp-staging.onrender.com'
+            target_label: 'Backend Staging'
+          - target_url: 'https://zamorin-cafe-7n6khol16-zamorinestatepvt-ltd.vercel.app'
+            target_label: 'Frontend Preview'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Verify Staging Target & Production Denylist
+        run: |
+          TARGET="${{ inputs.target_url || matrix.target_url }}"
+          ENV_NAME="${{ inputs.target_env || 'staging' }}"
+          SCAN_TYPE="${{ inputs.scan_type || 'baseline' }}"
+          CONFIRM_ACTIVE="${{ inputs.confirm_active_scan || 'true' }}"
+
+          echo "Validating target: $TARGET in env: $ENV_NAME (scan: $SCAN_TYPE)"
+
+          if [ "$ENV_NAME" != "staging" ]; then
+            echo "::error::Target environment must be staging. Found: $ENV_NAME"
+            exit 2
+          fi
+
+          DENIED_HOSTS=(
+            "zamorin-cafe-erp.vercel.app"
+            "zamorin-cafe-erp-backend.onrender.com"
+            "zamorin.cafe"
+            "api.zamorin.cafe"
+            "zamorin_erp_production"
+          )
+
+          for host in "${DENIED_HOSTS[@]}"; do
+            if echo "$TARGET" | grep -F -qi "$host"; then
+              echo "::error::PRODUCTION_TARGET_REFUSED: Target matches production denylist item: $host"
+              exit 2
+            fi
+          done
+
+          if [[ "$TARGET" != https://* && "$TARGET" != http://localhost* && "$TARGET" != http://127.0.0.1* ]]; then
+            echo "::error::HTTPS_REQUIRED: Remote staging target must use HTTPS."
+            exit 2
+          fi
+
+          if [[ "$SCAN_TYPE" == "full_active" && "$CONFIRM_ACTIVE" != "true" ]]; then
+            echo "::error::ACTIVE_SCAN_NOT_CONFIRMED: Active full scan requires explicit confirmation."
+            exit 2
+          fi
+
+          echo "Target validation passed. Proceeding with ZAP scan."
+
+      - name: Probe Staging Diagnostic Fingerprint
+        run: |
+          TARGET="${{ inputs.target_url || matrix.target_url }}"
+          DIAG_URL="${TARGET%/}/api/v1/staging/diagnostic"
+          echo "Probing staging diagnostic at $DIAG_URL"
+          RESPONSE=$(curl -s -m 10 "$DIAG_URL" || true)
+          if echo "$RESPONSE" | grep -q '"isProductionDatabase":true'; then
+            echo "::error::ABORT_ACTIVE_SCAN: Target is connected to a production database."
+            exit 2
+          fi
+          echo "Fingerprint probe completed."
+
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.13.0
+        continue-on-error: true
+        with:
+          target: ${{ inputs.target_url || matrix.target_url }}
+          allow_issue_writing: false
+          fail_action: false
+          cmd_options: '-m 2'
+
+      - name: Run OWASP ZAP Full Active Scan
+        if: ${{ (inputs.confirm_active_scan || true) && (inputs.target_env || 'staging') == 'staging' }}
+        uses: zaproxy/action-full-scan@v0.13.0
+        continue-on-error: true
+        with:
+          target: ${{ inputs.target_url || matrix.target_url }}
+          allow_issue_writing: false
+          fail_action: false
+          cmd_options: '-m 2 -T 10'
+

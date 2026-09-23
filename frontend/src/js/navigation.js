@@ -31,60 +31,52 @@ const PRIMARY_MASTER_ITEMS = [
   // ── COMMAND ─────────────────────────────────────────────────────────────────
   { id: 'dashboard',     label: 'Command Centre',         icon: 'home',         route: 'dashboard',         group: 'COMMAND' },
 
-  // ── OPERATIONS ──────────────────────────────────────────────────────────────
+  // ── OPERATIONS (Fast-Lane Operational Controls) ──────────────────────────────
   { id: 'pos',           label: 'POS & Billing',          icon: 'pos',          route: 'pos',               group: 'OPERATIONS' },
-  { id: 'approvals',     label: 'Tasks & Oversight',      icon: 'tasks',        route: 'approvals',         group: 'OPERATIONS' },
   { id: 'attendance',    label: 'Attendance & Shifts',    icon: 'attendance',   route: 'attendance',        group: 'OPERATIONS' },
-  { id: 'dept-orders',   label: 'Department Orders',      icon: 'deptOrders',   route: 'dept-orders',       group: 'OPERATIONS' },
+  { id: 'approvals',     label: 'Tasks & Oversight',      icon: 'tasks',        route: 'approvals',         group: 'OPERATIONS' },
   { id: 'inventory',     label: 'Inventory',              icon: 'inventory',    route: 'inventory',         group: 'OPERATIONS' },
   { id: 'procurement',   label: 'Procurement',            icon: 'procurement',  route: 'procurement',       group: 'OPERATIONS' },
-  { id: 'assets',        label: 'Assets & Maintenance',   icon: 'assets',       route: 'assets',            group: 'OPERATIONS' },
-  { id: 'quality',       label: 'Quality & Compliance',   icon: 'quality',      route: 'quality',           group: 'OPERATIONS' },
+  { id: 'dept-orders',   label: 'Department Orders',      icon: 'deptOrders',   route: 'dept-orders',       group: 'OPERATIONS' },
 
-  // ── PEOPLE ───────────────────────────────────────────────────────────────────
-  { id: 'employees',     label: 'Employees',              icon: 'employees',    route: 'employees',         group: 'PEOPLE' },
-  { id: 'staff-home',    label: 'Staff Self-Service',     icon: 'user',         route: 'staff-home',        group: 'PEOPLE' },
-  { id: 'payroll',       label: 'Payroll & Payslips',     icon: 'payslip',      route: 'payroll',           group: 'PEOPLE', primaryMasterOnly: true },
-
-  // ── FINANCE ──────────────────────────────────────────────────────────────────
+  // ── FINANCE (Daily Financials, Cash & Treasury) ──────────────────────────────
+  { id: 'sales-cash',    label: 'Sales & Cash Book',      icon: 'finance',      route: 'sales-cash',        group: 'FINANCE' },
   { id: 'bills',         label: 'Bills & Receipts',       icon: 'bills',        route: 'bills',             group: 'FINANCE' },
   { id: 'expenses',      label: 'Expenses',               icon: 'expenses',     route: 'expenses',          group: 'FINANCE' },
-  { id: 'sales-cash',    label: 'Sales & Cash Book',      icon: 'finance',      route: 'sales-cash',        group: 'FINANCE' },
   { id: 'finance',       label: 'Finance & Accounts',     icon: 'finance',      route: 'finance',           group: 'FINANCE' },
   { id: 'passbook',      label: 'Passbook & Treasury',    icon: 'passbook',     route: 'passbook',          group: 'FINANCE', primaryMasterOnly: true },
   { id: 'ledger',        label: 'Personal Ledger & Owner Account', icon: 'ledger', route: 'ledger', group: 'FINANCE', primaryMasterOnly: true },
 
-  // ── COMMERCIAL ───────────────────────────────────────────────────────────────
-  { id: 'customers',     label: 'Customers & Loyalty',    icon: 'customers',    route: 'customers',         group: 'COMMERCIAL' },
+  // ── PEOPLE (Workforce Management) ────────────────────────────────────────────
+  { id: 'employees',     label: 'Employees',              icon: 'employees',    route: 'employees',         group: 'PEOPLE' },
+  { id: 'payroll',       label: 'Payroll & Payslips',     icon: 'payslip',      route: 'payroll',           group: 'PEOPLE', primaryMasterOnly: true },
+  { id: 'staff-home',    label: 'Staff Self-Service',     icon: 'user',         route: 'staff-home',        group: 'PEOPLE' },
+
+  // ── COMMERCIAL & REVENUE ─────────────────────────────────────────────────────
   { id: 'menu',          label: 'Menu Management',        icon: 'menuItem',     route: 'menu',              group: 'COMMERCIAL' },
+  { id: 'customers',     label: 'Customers & Loyalty',    icon: 'customers',    route: 'customers',         group: 'COMMERCIAL' },
   { id: 'vendors',       label: 'Vendors',                icon: 'vendors',      route: 'vendors',           group: 'COMMERCIAL' },
+  { id: 'reports',       label: 'Reports & Analytics',    icon: 'reports',      route: 'reports',           group: 'COMMERCIAL' },
   { id: 'revenue-share', label: 'Revenue Share & Outlets', icon: 'revenueShare', route: 'revenue-share',   group: 'COMMERCIAL', primaryMasterOnly: true },
 
-  // ── INSIGHTS ─────────────────────────────────────────────────────────────────
-  { id: 'reports',       label: 'Reports & Analytics',    icon: 'reports',      route: 'reports',           group: 'INSIGHTS' },
+  // ── FACILITIES & COMPLIANCE ──────────────────────────────────────────────────
+  { id: 'assets',        label: 'Assets & Maintenance',   icon: 'assets',       route: 'assets',            group: 'FACILITIES' },
+  { id: 'quality',       label: 'Quality & Compliance',   icon: 'quality',      route: 'quality',           group: 'FACILITIES' },
+  { id: 'mailops',       label: 'MailOps Communications', icon: 'announce',     route: 'mailops',           group: 'FACILITIES', primaryMasterOnly: true },
 
-  // ── ADMINISTRATION ───────────────────────────────────────────────────────────
-  { id: 'admin',         label: 'Administration',         icon: 'admin',        route: 'admin',             group: 'ADMINISTRATION' },
-
-  // ── SYSTEM ───────────────────────────────────────────────────────────────────
+  // ── SYSTEM & GOVERNANCE ──────────────────────────────────────────────────────
+  { id: 'admin',         label: 'Administration',         icon: 'admin',        route: 'admin',             group: 'SYSTEM' },
   { id: 'cafe-ops-devices', label: 'Devices & Sessions',  icon: 'devices',      route: 'cafe-ops-devices',  group: 'SYSTEM' },
   { id: 'system-health', label: 'System Health & Ops',    icon: 'settings',     route: 'system-health',     group: 'SYSTEM' },
   { id: 'settings',      label: 'Settings',               icon: 'settings',     route: 'settings',          group: 'SYSTEM' },
 ];
 
-// ─── Normal Master Navigation ─────────────────────────────────────────────────
-// Same as Primary Master EXCEPT: no Personal Ledger, no Universal Payroll,
-// no Staff Loans & Advances, no Revenue Share.
-const NORMAL_MASTER_ITEMS = PRIMARY_MASTER_ITEMS.filter(
-  (item) => !item.primaryMasterOnly
-);
-
 export const NAVIGATION = {
   // ── MASTER ───────────────────────────────────────────────────────────────────
   [ROLES.MASTER]: {
-    scopeLabel: 'Master View',
+    scopeLabel: 'Primary Master View',
+    items: PRIMARY_MASTER_ITEMS,
     primaryItems: PRIMARY_MASTER_ITEMS,
-    normalItems: NORMAL_MASTER_ITEMS,
     footnote: 'Full operational and financial control across all cafés.',
   },
 
@@ -92,19 +84,47 @@ export const NAVIGATION = {
   [ROLES.OWNER]: {
     scopeLabel: 'Owner Portal',
     items: [
+      // ── COMMAND ─────────────────────────────────────────────────────────────────
       { id: 'dashboard',    label: 'Overview',                icon: 'home',         route: 'dashboard',       group: 'COMMAND' },
-      { id: 'approvals',    label: 'Tasks & Oversight',       icon: 'tasks',        route: 'approvals',       group: 'OPERATIONS' },
-      { id: 'bills',        label: 'Bills & Receipts',        icon: 'bills',        route: 'bills',           group: 'FINANCE' },
+
+      // ── FINANCE & PERFORMANCE (Owner Fast-Lane) ─────────────────────────────────
+      { id: 'performance',  label: 'Café Performance',        icon: 'performance',  route: 'performance',     group: 'FINANCE' },
       { id: 'sales-cash',   label: 'Sales & Cash Book',       icon: 'finance',      route: 'sales-cash',      group: 'FINANCE' },
-      { id: 'performance',  label: 'Café Performance',        icon: 'performance',  route: 'performance',     group: 'INSIGHTS' },
-      { id: 'employees',    label: 'Employees',               icon: 'employees',    route: 'employees',       group: 'PEOPLE' },
-      { id: 'attendance',   label: 'Attendance & Shifts',     icon: 'attendance',   route: 'attendance',      group: 'PEOPLE' },
       { id: 'finance',      label: 'Finance Summary',         icon: 'finance',      route: 'finance',         group: 'FINANCE' },
-      { id: 'passbook',     label: 'Passbook & Treasury',     icon: 'passbook',     route: 'passbook',        group: 'FINANCE' },
+      { id: 'bills',        label: 'Bills & Receipts',        icon: 'bills',        route: 'bills',           group: 'FINANCE' },
       { id: 'ledger',       label: 'Personal Ledger & Owner Account', icon: 'ledger', route: 'ledger',       group: 'FINANCE' },
+      { id: 'passbook',     label: 'Passbook & Treasury',     icon: 'passbook',     route: 'passbook',        group: 'FINANCE' },
+      { id: 'revenue-share',label: 'Revenue Share & Outlets', icon: 'revenueShare', route: 'revenue-share', group: 'FINANCE' },
+
+      // ── PEOPLE & WORKFORCE ──────────────────────────────────────────────────────
+      { id: 'approvals',    label: 'Tasks & Oversight',       icon: 'tasks',        route: 'approvals',       group: 'PEOPLE' },
+      { id: 'attendance',   label: 'Attendance & Shifts',     icon: 'attendance',   route: 'attendance',      group: 'PEOPLE' },
+      { id: 'employees',    label: 'Employees',               icon: 'employees',    route: 'employees',       group: 'PEOPLE' },
       { id: 'payroll',      label: 'Payroll & Payslips',      icon: 'payslip',      route: 'payroll',         group: 'PEOPLE' },
-      { id: 'revenue-share',label: 'Revenue Share & Outlets', icon: 'revenueShare', route: 'revenue-share', group: 'COMMERCIAL' },
-      { id: 'reports',      label: 'Reports',                 icon: 'reports',      route: 'reports',         group: 'INSIGHTS' },
+
+      // ── COMMERCIAL INTELLIGENCE ─────────────────────────────────────────────────
+      { id: 'reports',      label: 'Reports',                 icon: 'reports',      route: 'reports',         group: 'COMMERCIAL' },
+      { id: 'owner-menu-pricing', label: 'Menu Engineering & Pricing', icon: 'finance', route: 'owner-menu-pricing', group: 'COMMERCIAL' },
+      { id: 'owner-customer-loyalty', label: 'Customer & Loyalty Intelligence', icon: 'users', route: 'owner-customer-loyalty', group: 'COMMERCIAL' },
+      { id: 'owner-supplier-intelligence', label: 'Supplier & Procurement Intelligence', icon: 'procurement', route: 'owner-supplier-intelligence', group: 'COMMERCIAL' },
+
+      // ── OPERATIONAL CONTROLS ────────────────────────────────────────────────────
+      { id: 'owner-complaints',  label: 'Complaints & Recovery',   icon: 'tasks',     route: 'owner-complaints',  group: 'OPERATIONS' },
+      { id: 'owner-food-safety', label: 'Food Safety & Recall', icon: 'quality',     route: 'owner-food-safety', group: 'OPERATIONS' },
+      { id: 'owner-utilities-waste', label: 'Utilities, Waste & Energy', icon: 'quality', route: 'owner-utilities-waste', group: 'OPERATIONS' },
+
+      // ── STRATEGY & GOVERNANCE ───────────────────────────────────────────────────
+      { id: 'owner-planning',    label: 'Planning, Budget & CAPEX', icon: 'finance', route: 'owner-planning', group: 'GOVERNANCE' },
+      { id: 'owner-risk-audit',  label: 'Risk, Audit & Fraud Control', icon: 'shield', route: 'owner-risk-audit', group: 'GOVERNANCE' },
+      { id: 'owner-compliance',  label: 'Compliance, Licence & Insurance', icon: 'tasks', route: 'owner-compliance', group: 'GOVERNANCE' },
+      { id: 'owner-asset-reliability', label: 'Asset Reliability & Maintenance', icon: 'assets', route: 'owner-asset-reliability', group: 'GOVERNANCE' },
+      { id: 'owner-academy',     label: 'SOP, Training & Academy',  icon: 'quality',     route: 'owner-academy',   group: 'GOVERNANCE' },
+      { id: 'owner-master-data', label: 'Master Data Governance',  icon: 'admin',     route: 'owner-master-data', group: 'GOVERNANCE' },
+      { id: 'owner-governance-delegation', label: 'Corporate Governance & Delegation', icon: 'shield', route: 'owner-governance-delegation', group: 'GOVERNANCE' },
+      { id: 'owner-bcdr',        label: 'Continuity & Disaster Recovery', icon: 'refresh',   route: 'owner-bcdr', group: 'GOVERNANCE' },
+      { id: 'owner-privacy-cyber', label: 'Privacy & Cybersecurity', icon: 'shield', route: 'owner-privacy-cyber', group: 'GOVERNANCE' },
+
+      // ── SYSTEM ───────────────────────────────────────────────────────────────────
       { id: 'system-health',label: 'System Health & Ops',     icon: 'settings',     route: 'system-health',   group: 'SYSTEM' },
       { id: 'settings',     label: 'Settings',                icon: 'settings',     route: 'settings',        group: 'SYSTEM' },
     ],
@@ -115,19 +135,29 @@ export const NAVIGATION = {
   [ROLES.CAFE_ADMIN]: {
     scopeLabel: 'Cafe Operations',
     items: [
+      // ── COMMAND ─────────────────────────────────────────────────────────────────
       { id: 'dashboard',    label: 'Cafe Operations Dashboard', icon: 'home',       route: 'dashboard',       group: 'COMMAND' },
+
+      // ── OPERATIONS (Store Floor Fast-Lane) ──────────────────────────────────────
       { id: 'pos',          label: 'POS & Billing',           icon: 'pos',          route: 'pos',             group: 'OPERATIONS' },
       { id: 'attendance',   label: 'Attendance & Shifts',     icon: 'attendance',   route: 'attendance',      group: 'OPERATIONS' },
-      { id: 'dept-orders',  label: 'Department Orders',       icon: 'deptOrders',   route: 'dept-orders',     group: 'OPERATIONS' },
       { id: 'inventory',    label: 'Inventory',               icon: 'inventory',    route: 'inventory',       group: 'OPERATIONS' },
       { id: 'procurement',  label: 'Procurement',             icon: 'procurement',  route: 'procurement',     group: 'OPERATIONS' },
-      { id: 'assets',       label: 'Assets & Maintenance',    icon: 'assets',       route: 'assets',          group: 'OPERATIONS' },
-      { id: 'quality',      label: 'Quality & Compliance',    icon: 'quality',      route: 'quality',         group: 'OPERATIONS' },
-      { id: 'expenses',     label: 'Expenses',                icon: 'expenses',     route: 'expenses',        group: 'FINANCE' },
+      { id: 'vendors',      label: 'Vendors',                 icon: 'vendors',      route: 'vendors',         group: 'OPERATIONS' },
+      { id: 'dept-orders',  label: 'Department Orders',       icon: 'deptOrders',   route: 'dept-orders',     group: 'OPERATIONS' },
+
+      // ── FINANCE & CASH ──────────────────────────────────────────────────────────
       { id: 'sales-cash',   label: 'Sales & Cash',            icon: 'finance',      route: 'sales-cash',      group: 'FINANCE' },
-      { id: 'customers',    label: 'Customers & Loyalty',     icon: 'customers',    route: 'customers',       group: 'COMMERCIAL' },
-      { id: 'reports',      label: 'Reports (this café)',      icon: 'reports',      route: 'reports',         group: 'INSIGHTS' },
-      { id: 'tasks',        label: 'Action Centre',           icon: 'tasks',        route: 'tasks',           group: 'INSIGHTS' },
+      { id: 'expenses',     label: 'Expenses',                icon: 'expenses',     route: 'expenses',        group: 'FINANCE' },
+
+      // ── STORE SUPPORT & COMPLIANCE ──────────────────────────────────────────────
+      { id: 'customers',    label: 'Customers & Loyalty',     icon: 'customers',    route: 'customers',       group: 'SUPPORT' },
+      { id: 'tasks',        label: 'Action Centre',           icon: 'tasks',        route: 'tasks',           group: 'SUPPORT' },
+      { id: 'reports',      label: 'Reports (this café)',      icon: 'reports',      route: 'reports',         group: 'SUPPORT' },
+      { id: 'quality',      label: 'Quality & Compliance',    icon: 'quality',      route: 'quality',         group: 'SUPPORT' },
+      { id: 'assets',       label: 'Assets & Maintenance',    icon: 'assets',       route: 'assets',          group: 'SUPPORT' },
+
+      // ── SYSTEM ───────────────────────────────────────────────────────────────────
       { id: 'cafe-ops-devices', label: 'Devices & Sessions',  icon: 'devices',      route: 'cafe-ops-devices',group: 'SYSTEM' },
       { id: 'settings',     label: 'Settings',                icon: 'settings',     route: 'settings',        group: 'SYSTEM' },
     ],
@@ -156,6 +186,7 @@ export const PRIMARY_MASTER_ONLY_ROUTES = new Set([
   'revenue-share',
   'org-identity',
   'organisation-identity',
+  'mailops',
 ]);
 
 // ─── Implicit routes — not in sidebar but accessible to all authenticated users ─
@@ -213,12 +244,39 @@ export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
 
   if (route.startsWith("settings/")) {
     const sub = route.slice("settings/".length).toLowerCase();
+    if (role === ROLES.STAFF || role === 'staff') {
+      const STAFF_ALLOWED_SETTINGS = new Set([
+        'profile',
+        'security',
+        'devices',
+        'notifications',
+        'appearance',
+        'accessibility',
+        'language',
+        'help',
+        'privacy',
+      ]);
+      return STAFF_ALLOWED_SETTINGS.has(sub);
+    }
     // Organisation governance / trash subroutes are restricted to MASTER
-    if (sub === "trash" || sub === "data-recovery" || sub === "admin" || sub === "system-administration") {
+    if (sub === "trash" || sub === "data-recovery" || sub === "admin" || sub === "system-administration" || sub === "templates") {
       return role === ROLES.MASTER;
     }
     // All personal preference and identity subroutes are accessible to all authenticated profiles
     return true;
+  }
+
+  // OF03: Allow OWNER read-only drill-down access into operational modules for assigned cafés
+  if (role === ROLES.OWNER || role === 'owner') {
+    const OWNER_OPERATIONAL_DRILLDOWN_ROUTES = new Set([
+      'dept-orders',
+      'inventory',
+      'procurement',
+      'vendors',
+      'expenses',
+      'customers',
+    ]);
+    if (OWNER_OPERATIONAL_DRILLDOWN_ROUTES.has(route)) return true;
   }
 
   const navConfig = NAVIGATION[role];
@@ -246,16 +304,11 @@ export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
     'org-identity': 'admin',
     'organisation-identity': 'admin',
     'performance': 'dashboard',
+    'settings': 'staff-settings',
+    'staff-settings': 'settings',
   };
 
-  // Block Primary-Master-only routes for Normal Masters
-  if (
-    role === ROLES.MASTER &&
-    !isPrimaryMaster &&
-    (PRIMARY_MASTER_ONLY_ROUTES.has(pathOnly) || PRIMARY_MASTER_ONLY_ROUTES.has(route) || PRIMARY_MASTER_ONLY_ROUTES.has(baseRoute))
-  ) {
-    return false;
-  }
+
 
   const allowed = items.map((i) => i.route);
 
@@ -275,12 +328,7 @@ export function getGroupedNavItems(role, isPrimaryMaster = false) {
   const navConfig = NAVIGATION[role];
   if (!navConfig) return {};
 
-  let items;
-  if (role === ROLES.MASTER) {
-    items = isPrimaryMaster ? navConfig.primaryItems : navConfig.normalItems;
-  } else {
-    items = navConfig.items;
-  }
+  const items = navConfig.items || navConfig.primaryItems || [];
 
   const groups = {};
   for (const item of items) {

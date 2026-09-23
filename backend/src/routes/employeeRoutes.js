@@ -8,6 +8,8 @@ const {
   listEmployees,
   getEmployee360,
   onboardEmployee,
+  setEmployeeCredentials,
+  updateEmployeeProfile,
   createEmployeeMovement,
   submitProbationReview,
   addEmployeeSkill,
@@ -15,6 +17,7 @@ const {
   listFoodSafetyTrainings,
   generateEmployeeLetter,
   initiateOffboarding,
+  deleteEmployeeAccount,
   getWorkforceIntegrity,
   listPositions,
   createPosition,
@@ -42,6 +45,9 @@ const {
   generateEmployeeBadgeQrCode,
   getEmployeeComplianceAlertsController,
   viewSensitiveFieldUnmasked,
+  getSelfTrainingAndCompetency,
+  acknowledgeSopSelf,
+  getTeamTrainingGaps,
 } = require('../controllers/employeeController');
 
 const router = express.Router();
@@ -102,14 +108,21 @@ router.get(
 // 6. Onboard New Employee
 router.post(
   '/',
-  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
   onboardEmployee
+);
+
+// Set / Reset Employee Credentials (Password & Operator PIN)
+router.post(
+  '/:userId/credentials',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  setEmployeeCredentials
 );
 
 // Stage 04: 9-Section Extended Registration
 router.post(
   '/register',
-  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
   registerEmployeeExtended
 );
 
@@ -251,6 +264,34 @@ router.get(
   exportProfileSummary
 );
 
+// Stage 06 Contextual: Employee Self Training & Competency
+router.get(
+  '/me/training',
+  authorize('EMPLOYEE:READ_SELF', {
+    allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'],
+    targetUserIdResolver: (req) => req.auth?.userId,
+    selfOnly: true,
+  }),
+  getSelfTrainingAndCompetency
+);
+
+router.post(
+  '/me/sops/:sopId/acknowledge',
+  authorize('EMPLOYEE:WRITE_SELF', {
+    allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'],
+    targetUserIdResolver: (req) => req.auth?.userId,
+    selfOnly: true,
+  }),
+  acknowledgeSopSelf
+);
+
+// Stage 06 Contextual: Manager / Team Training Gaps (Authorized Café Scoped)
+router.get(
+  '/team/training',
+  authorize('EMPLOYEE:READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  getTeamTrainingGaps
+);
+
 // 8. Individual Employee Profile (Administrative Access & Staff Self-Read)
 router.get(
   '/:userId',
@@ -259,6 +300,13 @@ router.get(
     targetUserIdResolver: (req) => req.params?.userId,
   }),
   getEmployee360
+);
+
+// Update Employee Profile (Position, Window, Department, Café & Details)
+router.patch(
+  '/:userId',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  updateEmployeeProfile
 );
 
 router.get(
@@ -311,11 +359,23 @@ router.post(
   generateEmployeeLetter
 );
 
-// 14. Offboarding Initiation
+// 14. Offboarding Initiation & Permanent Account Deletion
 router.post(
   '/:userId/offboard',
   authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
   initiateOffboarding
+);
+
+router.delete(
+  '/:userId',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  deleteEmployeeAccount
+);
+
+router.post(
+  '/:userId/delete',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  deleteEmployeeAccount
 );
 
 // ── Stage 04: Onboarding Readiness Checklist ─────────────────────────────────

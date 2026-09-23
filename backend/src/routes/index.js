@@ -38,6 +38,9 @@ const expenseRoutes =
 const financeRoutes =
   require('./financeRoutes');
 
+const vendorLedgerRoutes =
+  require('./vendorLedgerRoutes');
+
 const reportRoutes =
   require('./reportRoutes');
 
@@ -83,6 +86,51 @@ const approvalRoutes =
 const qualityRoutes =
   require('./qualityRoutes');
 
+const foodSafetyGovernanceRoutes =
+  require('./foodSafetyGovernanceRoutes');
+
+const ownerRiskAuditRoutes =
+  require('./ownerRiskAuditRoutes');
+
+const ownerPlanningRoutes =
+  require('./ownerPlanningRoutes');
+
+const ownerComplianceRoutes =
+  require('./ownerComplianceRoutes');
+
+const ownerSupplierIntelligenceRoutes =
+  require('./ownerSupplierIntelligenceRoutes');
+
+const ownerAcademyRoutes =
+  require('./ownerAcademyRoutes');
+
+const ownerAssetReliabilityRoutes =
+  require('./ownerAssetReliabilityRoutes');
+
+const ownerPrivacyCyberRoutes =
+  require('./ownerPrivacyCyberRoutes');
+
+const ownerBcdrRoutes =
+  require('./ownerBcdrRoutes');
+
+const ownerMasterDataRoutes =
+  require('./ownerMasterDataRoutes');
+
+const ownerComplaintsRoutes =
+  require('./ownerComplaintsRoutes');
+
+const ownerMenuPricingRoutes =
+  require('./ownerMenuPricingRoutes');
+
+const ownerCustomerLoyaltyRoutes =
+  require('./ownerCustomerLoyaltyRoutes');
+
+const ownerUtilitiesWasteRoutes =
+  require('./ownerUtilitiesWasteRoutes');
+
+const ownerGovernanceDelegationRoutes =
+  require('./ownerGovernanceDelegationRoutes');
+
 const assetRoutes =
   require('./assetRoutes');
 
@@ -97,6 +145,9 @@ const dashboardRoutes =
 
 const fileRoutes =
   require('./fileRoutes');
+
+const documentRoutes =
+  require('./documentRoutes');
 
 const trashRoutes =
   require('./trashRoutes');
@@ -226,6 +277,11 @@ router.use(
 );
 
 router.use(
+  '/vendor-ledger',
+  vendorLedgerRoutes
+);
+
+router.use(
   '/reports',
   reportRoutes
 );
@@ -301,6 +357,88 @@ router.use(
 );
 
 router.use(
+  '/food-safety',
+  foodSafetyGovernanceRoutes
+);
+
+router.use(
+  '/risk-audit',
+  ownerRiskAuditRoutes
+);
+
+router.use(
+  '/planning',
+  ownerPlanningRoutes
+);
+
+router.use(
+  '/compliance',
+  ownerComplianceRoutes
+);
+
+router.use(
+  '/supplier-intelligence',
+  ownerSupplierIntelligenceRoutes
+);
+
+router.use(
+  '/academy',
+  ownerAcademyRoutes
+);
+
+router.use(
+  '/asset-reliability',
+  ownerAssetReliabilityRoutes
+);
+
+router.use(
+  '/privacy-cyber',
+  ownerPrivacyCyberRoutes
+);
+
+router.use(
+  '/bcdr',
+  ownerBcdrRoutes
+);
+
+router.use(
+  '/master-data',
+  ownerMasterDataRoutes
+);
+
+router.use(
+  '/complaints',
+  ownerComplaintsRoutes
+);
+
+router.use(
+  '/menu-pricing',
+  ownerMenuPricingRoutes
+);
+
+router.use(
+  '/customer-loyalty',
+  ownerCustomerLoyaltyRoutes
+);
+
+router.use(
+  '/utilities-waste',
+  ownerUtilitiesWasteRoutes
+);
+
+router.use(
+  '/governance-delegation',
+  ownerGovernanceDelegationRoutes
+);
+
+// Strategic Portfolio /owner/* mounts
+router.use('/owner/complaints', ownerComplaintsRoutes);
+router.use('/owner/menu-pricing', ownerMenuPricingRoutes);
+router.use('/owner/customer-loyalty', ownerCustomerLoyaltyRoutes);
+router.use('/owner/utilities-waste', ownerUtilitiesWasteRoutes);
+router.use('/owner/governance-delegation', ownerGovernanceDelegationRoutes);
+
+router.use(
   '/assets',
   assetRoutes
 );
@@ -323,6 +461,11 @@ router.use(
 router.use(
   '/files',
   fileRoutes
+);
+
+router.use(
+  '/documents',
+  documentRoutes
 );
 
 router.use(
@@ -427,9 +570,17 @@ router.use(
 const sharedInfrastructureRoutes =
   require('./sharedInfrastructureRoutes');
 
+const dailyCloseRoutes =
+  require('./dailyCloseRoutes');
+
 router.use(
   '/shared-infra',
   sharedInfrastructureRoutes
+);
+
+router.use(
+  '/daily-close',
+  dailyCloseRoutes
 );
 
 router.use(

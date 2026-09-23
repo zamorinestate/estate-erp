@@ -210,12 +210,9 @@ describe('LOGIN-PAGE-2.0 Automatic MFA Orchestration 15-Point Suite', () => {
     assert.ok(login2Content.includes('autofocus'), 'renderMfaChallenge2 must set autofocus');
     assert.ok(login2Content.includes('codeInput.focus()'), 'wireMfaChallenge2 must focus code input');
 
-    // Also check legacy login.js
+    // Verify legacy login.js is permanently removed
     const loginPath = path.resolve(__dirname, '../../frontend/src/js/pages/login.js');
-    const loginContent = fs.readFileSync(loginPath, 'utf8');
-    assert.ok(loginContent.includes('autocomplete="one-time-code"'), 'legacy login.js must set autocomplete="one-time-code"');
-    assert.ok(loginContent.includes('renderMfaChallenge'), 'legacy login.js must export renderMfaChallenge');
-    assert.ok(loginContent.includes('wireMfaChallenge'), 'legacy login.js must export wireMfaChallenge');
+    assert.strictEqual(fs.existsSync(loginPath), false, 'legacy login.js must be permanently removed');
   });
 
   // TEST 6: Valid MFA completes authoritative session

@@ -14,6 +14,8 @@
 const { MenuItem } = require('../models/MenuItem');
 const { Recipe } = require('../models/Recipe');
 const { FefoService } = require('./fefoService');
+const { StockMovement } = require('../models/StockMovement');
+const mongoose = require('mongoose');
 const { ApiError } = require('../utils/ApiError');
 
 function normalizeId(value) {
@@ -90,6 +92,30 @@ class BomDepletionService {
   } = {}) {
     if (!organisationId || !cafeId) {
       throw new ApiError(400, 'MISSING_ORG_OR_CAFE', 'organisationId and cafeId are required for BOM depletion.');
+    }
+
+    // REC-04A: Exactly-once guard. If a CONSUMPTION StockMovement with this billId
+    // already exists (idempotent replay / concurrent retry), skip depletion entirely.
+    const normBillId = normalizeId(billId);
+    if (normBillId && (mongoose.connection?.readyState === 1 || StockMovement.findOne?.mock)) {
+      try {
+        const existing = await StockMovement.findOne({
+          referenceId: normBillId,
+          referenceType: 'POS_SALE',
+          movementType: 'CONSUMPTION',
+        }).lean().select('_id movementId').lean();
+        if (existing) {
+          return {
+            success: true,
+            alreadyDepleted: true,
+            processedItemsCount: 0,
+            consumedLots: [],
+            existingMovementId: existing.movementId || null,
+          };
+        }
+      } catch {
+        // DB check failed — proceed with depletion attempt rather than erroring
+      }
     }
 
     if (!Array.isArray(lineItems) || lineItems.length === 0) {

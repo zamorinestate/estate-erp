@@ -12,6 +12,11 @@ const { ApiError } = require('../utils/ApiError');
 
 // ─── 1. GET /api/v1/settings/company-identity ────────────────────────────────
 const getCompanyIdentity = asyncHandler(async (request, response) => {
+  const role = request.auth?.role;
+  if (role !== 'MASTER' && role !== 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Only Master and Owner have authority to access Organisation Identity.');
+  }
+
   const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN-01';
   const identity = await CompanyIdentityService.getCurrentIdentity(organisationId);
 
@@ -85,6 +90,11 @@ const updateCompanyIdentity = asyncHandler(async (request, response) => {
 
 // ─── 4. GET /api/v1/settings/company-identity/history ────────────────────────
 const getCompanyIdentityHistory = asyncHandler(async (request, response) => {
+  const role = request.auth?.role;
+  if (role !== 'MASTER' && role !== 'OWNER') {
+    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Only Master and Owner have authority to access Organisation Identity history.');
+  }
+
   const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN-01';
   const history = await CompanyIdentityService.getVersionHistory(organisationId);
 

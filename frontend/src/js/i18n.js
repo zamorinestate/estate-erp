@@ -8,8 +8,9 @@ const STORAGE_KEY = 'zamorin-lang';
 export const LANGUAGES = [
   { code: 'en', name: 'English', native: 'English', flag: '🇬🇧' },
   { code: 'ml', name: 'Malayalam', native: 'മലയാളം', flag: '🇮🇳' },
-  { code: 'kn', name: 'Kannada', native: 'ಕನ್ನಡ', flag: '🇮🇳' },
+  { code: 'ta', name: 'Tamil', native: 'தமிழ்', flag: '🇮🇳' },
   { code: 'hi', name: 'Hindi', native: 'हिन्दी', flag: '🇮🇳' },
+  { code: 'kn', name: 'Kannada', native: 'ಕನ್ನಡ', flag: '🇮🇳' },
 ];
 
 export const DICTIONARY = {
@@ -283,6 +284,74 @@ export const DICTIONARY = {
     shiftStatus: 'शिफ्ट स्थिति',
     onDuty: 'ड्यूटी पर',
     offDuty: 'ड्यूटी से बाहर',
+  },
+
+  ta: {
+    // Actions
+    save: 'சேமிக்க',
+    cancel: 'ரத்து செய்',
+    confirm: 'உறுதிப்படுத்து',
+    delete: 'நீக்கு',
+    edit: 'திருத்து',
+    back: 'பின்னால்',
+    settle: 'செட்டில் செய்',
+    refresh: 'புதுப்பிக்கு',
+    download: 'பதிவிறக்கு',
+    upload: 'பதிவேற்று',
+    search: 'தேடுக...',
+    filter: 'வடிகட்டு',
+    close: 'மூடு',
+    submit: 'சமர்ப்பி',
+    loading: 'ஏற்றுகிறது...',
+    status: 'நிலை',
+    date: 'தேதி',
+    amount: 'தொகை',
+    total: 'மொத்தம்',
+
+    // Navigation
+    dashboard: 'கட்டளை மையம்',
+    pos: 'பி.ஓ.எஸ் பில்லிங்',
+    attendance: 'வருகை & ஷிப்டுகள்',
+    inventory: 'சரக்கு இருப்பு (Inventory)',
+    procurement: 'கொள்முதல் & ஆர்டர்கள்',
+    assets: 'சொத்துக்கள் & பராமரிப்பு',
+    quality: 'தரம் & இணக்கம்',
+    employees: 'பணியாளர்கள் விவரம்',
+    payroll: 'சம்பளப் பட்டியல்',
+    bills: 'பில்கள் & ரசீதுகள்',
+    expenses: 'செலவுகள்',
+    finance: 'நிதி & கணக்குகள்',
+    passbook: 'பாஸ்புக்',
+    ledger: 'தனிப்பட்ட லெட்ஜர்',
+    customers: 'வாடிக்கையாளர்கள்',
+    menu: 'மெனு & ரெசிபி',
+    vendors: 'விற்பனையாளர்கள்',
+    revenueShare: 'வருவாய் பகிர்வு',
+    reports: 'அறிக்கைகள் & பகுப்பாய்வு',
+    admin: 'கணினி நிர்வாகம்',
+    settings: 'அமைப்புகள் & விருப்பங்கள்',
+    notifications: 'அறிவிப்புகள்',
+    staffHome: 'பணியாளர் தளம்',
+
+    // POS & Till
+    newOrder: 'புதிய ஆர்டர்',
+    dineIn: 'உணவருந்து (Dine-In)',
+    takeaway: 'பார்சல் (Takeaway)',
+    delivery: 'டெலிவரி',
+    pay: 'பணம் செலுத்து',
+    cash: 'ரொக்கம் (Cash)',
+    upi: 'யுபிஐ / கியூஆர்',
+    card: 'கார்டு (Card)',
+    settleTill: 'கணக்கு தீர்வு (Settle Till)',
+
+    // Attendance Kiosk
+    clockIn: 'பணி ஆரம்பம் (Clock In)',
+    clockOut: 'பணி நிறைவு (Clock Out)',
+    breakStart: 'இடைவேளை தொடங்கு',
+    breakEnd: 'இடைவேளை முடி',
+    shiftStatus: 'ஷிப்ட் நிலை',
+    onDuty: 'பணியில்',
+    offDuty: 'விடுப்பில்',
   },
 };
 

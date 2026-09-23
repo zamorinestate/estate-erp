@@ -7,6 +7,7 @@ const { ExportHistory } = require('../models/ExportHistory');
 const { CompanyIdentityService } = require('../services/companyIdentityService');
 const { generatePdf, generateXlsx } = require('../utils/exportGenerators');
 const auditService = require('../services/auditService');
+const { sanitizeRecordByRole } = require('../utils/dataClassifier');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 
@@ -92,13 +93,17 @@ router.post(
       organisationId: orgId,
     });
 
+    const sanitizedRows = Array.isArray(rows)
+      ? rows.map((r) => sanitizeRecordByRole(r, req.auth.role))
+      : rows;
+
     let exportResult;
     if (fmt === 'PDF') {
       exportResult = generatePdf({
         reportTitle,
         reportCode,
         columns,
-        rows,
+        rows: sanitizedRows,
         kpiCards,
         period,
         scope,
@@ -108,7 +113,7 @@ router.post(
       exportResult = generateXlsx({
         reportTitle,
         columns,
-        rows,
+        rows: sanitizedRows,
         period,
         scope,
         branding,

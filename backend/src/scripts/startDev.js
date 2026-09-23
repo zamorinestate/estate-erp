@@ -23,24 +23,55 @@ const {
   seedMasterUser,
   seedPermissionRules,
   seedSystemCommunicationSettings,
+  seedCafeOperationsData,
+  seedInventoryData,
+  seedVendorsData,
 } = require('./seedInitialData');
 
 async function main() {
-  console.log('[dev] Starting in-memory MongoDB...');
+  let uri = process.env.MONGODB_URI;
+  let mongod = null;
+  async function startInMemoryMongo() {
+    console.log('[dev] Starting in-memory MongoDB...');
+    mongod = await MongoMemoryServer.create({
+      instance: { dbName: 'zamorin_cafe_erp' },
+    });
+    const memoryUri = mongod.getUri();
+    console.log(`[dev] In-memory MongoDB ready at ${memoryUri}`);
+    return memoryUri;
+  }
 
-  const mongod = await MongoMemoryServer.create({
-    instance: { dbName: 'zamorin_cafe_erp' },
-  });
+  if (!uri) {
+    const net = require('net');
+    const isLocalMongo = await new Promise((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(800);
+      socket.on('connect', () => { socket.destroy(); resolve(true); });
+      socket.on('timeout', () => { socket.destroy(); resolve(false); });
+      socket.on('error', () => { resolve(false); });
+      socket.connect(27017, '127.0.0.1');
+    });
 
-  const uri = mongod.getUri();
+    if (isLocalMongo) {
+      uri = 'mongodb://127.0.0.1:27017/zamorin_cafe_erp';
+      console.log(`[dev] Persistent local MongoDB detected at ${uri}`);
+    } else {
+      uri = await startInMemoryMongo();
+    }
+  }
 
   // Override MONGODB_URI so the environment validator accepts it
   process.env.MONGODB_URI = uri;
 
-  console.log(`[dev] MongoDB ready at ${uri}`);
-
-  // Connect once for seeding
-  await connectDatabase({ uri });
+  // Connect once for seeding (with automatic fallback to in-memory if remote Atlas fails)
+  try {
+    await connectDatabase({ uri, serverSelectionTimeoutMS: 4000 });
+  } catch (err) {
+    console.warn(`[dev] Primary MongoDB connection failed (${err.message}). Falling back to in-memory MongoDB...`);
+    uri = await startInMemoryMongo();
+    process.env.MONGODB_URI = uri;
+    await connectDatabase({ uri });
+  }
 
   const organisationId =
     process.env.INITIAL_ORGANISATION_ID || 'ZAMORIN';
@@ -71,6 +102,11 @@ async function main() {
     masterEmail,
   });
 
+  console.log('[dev] Seeding cafes, operational inventory, and active suppliers...');
+  await seedCafeOperationsData(organisationId, masterUser.userId);
+  await seedInventoryData({ organisationId, masterUserId: masterUser.userId });
+  await seedVendorsData({ organisationId, masterUserId: masterUser.userId });
+
   console.log(
     `[dev] Seed complete — login: ${masterEmail} / ${masterPassword}`
   );
@@ -87,7 +123,7 @@ async function main() {
 
   // Keep mongod alive for the server lifetime
   process.on('exit', async () => {
-    await mongod.stop();
+    if (mongod) await mongod.stop();
   });
 }
 

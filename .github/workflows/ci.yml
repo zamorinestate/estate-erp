@@ -2,9 +2,13 @@ name: Zamorin Cafe ERP CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'owner-strategic-*' ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, 'owner-strategic-*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   backend-web:
@@ -22,12 +26,19 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
-      - name: Install Dependencies
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
         run: npm ci
 
       - name: Verify Backend JavaScript Syntax
         working-directory: ./backend
         run: npm run check
+
+      - name: Scan Repository for Committed Secrets
+        run: node scripts/scan_secrets.mjs
 
       - name: Run Canonical Regression Suite
         run: npm test
@@ -57,19 +68,19 @@ jobs:
           cache: 'gradle'
 
       - name: Grant Execute Permission to Gradlew
-        working-directory: ./android
+        working-directory: ./Platform/Android
         run: chmod +x gradlew
 
       - name: Run Android Native Unit Tests
-        working-directory: ./android
+        working-directory: ./Platform/Android
         run: ./gradlew test
 
       - name: Run Android Lint
-        working-directory: ./android
+        working-directory: ./Platform/Android
         run: ./gradlew lintDebug
 
       - name: Compile Debug APK
-        working-directory: ./android
+        working-directory: ./Platform/Android
         run: ./gradlew assembleDebug
 
   windows:
@@ -86,13 +97,15 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore Dependencies
-        run: dotnet restore windows/ZamorinCafeERP.sln
+        run: |
+          dotnet restore Platform/Windows/ZamorinCafeERP/ZamorinCafeERP.csproj
+          dotnet restore Platform/Windows/ZamorinCafeERP.Tests/ZamorinCafeERP.Tests.csproj
 
       - name: Run Windows Native Unit Tests
-        run: dotnet test windows/ZamorinCafeERP.Tests -c Release
+        run: dotnet test Platform/Windows/ZamorinCafeERP.Tests -c Release
 
       - name: Publish Windows Native Shell
-        run: dotnet publish windows/ZamorinCafeERP -c Release
+        run: dotnet publish Platform/Windows/ZamorinCafeERP -c Release
 
   apple:
     name: Apple Native Client CI
@@ -107,6 +120,8 @@ jobs:
           echo "=== Git Provenance Verification ==="
           CI_HEAD=$(git rev-parse HEAD)
           echo "Checked out HEAD: $CI_HEAD"
+          mkdir -p build/artifacts
+          echo "$CI_HEAD" > build/artifacts/checked-out-sha.txt
 
       - name: Select Xcode 26+ Toolchain & Audit Environment
         run: |
@@ -116,20 +131,33 @@ jobs:
           elif [ -d "/Applications/Xcode_26.app" ]; then
             sudo xcode-select -s /Applications/Xcode_26.app
           fi
-          echo "=== Host Environment ==="
-          sw_vers
-          uname -m
-          echo "=== Developer Directory ==="
-          xcode-select -p
-          echo "=== Toolchain Versions ==="
-          xcodebuild -version
-          swift --version
-          echo "=== Installed SDKs ==="
-          xcodebuild -showsdks
-          echo "=== SDK Exact Versions ==="
-          echo "iphoneos: $(xcrun --sdk iphoneos --show-sdk-version)"
-          echo "iphonesimulator: $(xcrun --sdk iphonesimulator --show-sdk-version)"
-          echo "macosx: $(xcrun --sdk macosx --show-sdk-version)"
+          mkdir -p build/artifacts
+          EVIDENCE_FILE="build/artifacts/toolchain-raw-evidence.txt"
+          echo "=== Apple CI Toolchain Raw Evidence ===" | tee "$EVIDENCE_FILE"
+          echo "Checked out SHA: $(git rev-parse HEAD)" | tee -a "$EVIDENCE_FILE"
+          echo "--- Runner Environment Variables ---" | tee -a "$EVIDENCE_FILE"
+          echo "ImageOS: $ImageOS" | tee -a "$EVIDENCE_FILE"
+          echo "ImageVersion: $ImageVersion" | tee -a "$EVIDENCE_FILE"
+          echo "RUNNER_OS: $RUNNER_OS" | tee -a "$EVIDENCE_FILE"
+          echo "RUNNER_ARCH: $RUNNER_ARCH" | tee -a "$EVIDENCE_FILE"
+          echo "--- sw_vers ---" | tee -a "$EVIDENCE_FILE"
+          sw_vers | tee -a "$EVIDENCE_FILE"
+          echo "--- uname -m ---" | tee -a "$EVIDENCE_FILE"
+          uname -m | tee -a "$EVIDENCE_FILE"
+          echo "--- xcode-select -p ---" | tee -a "$EVIDENCE_FILE"
+          xcode-select -p | tee -a "$EVIDENCE_FILE"
+          echo "--- xcodebuild -version ---" | tee -a "$EVIDENCE_FILE"
+          xcodebuild -version | tee -a "$EVIDENCE_FILE"
+          echo "--- swift --version ---" | tee -a "$EVIDENCE_FILE"
+          swift --version | tee -a "$EVIDENCE_FILE"
+          echo "--- xcodebuild -showsdks ---" | tee -a "$EVIDENCE_FILE"
+          xcodebuild -showsdks | tee -a "$EVIDENCE_FILE"
+          echo "--- xcrun --sdk iphoneos --show-sdk-version ---" | tee -a "$EVIDENCE_FILE"
+          xcrun --sdk iphoneos --show-sdk-version | tee -a "$EVIDENCE_FILE"
+          echo "--- xcrun --sdk iphonesimulator --show-sdk-version ---" | tee -a "$EVIDENCE_FILE"
+          xcrun --sdk iphonesimulator --show-sdk-version | tee -a "$EVIDENCE_FILE"
+          echo "--- xcrun --sdk macosx --show-sdk-version ---" | tee -a "$EVIDENCE_FILE"
+          xcrun --sdk macosx --show-sdk-version | tee -a "$EVIDENCE_FILE"
 
       - name: Discover Simulators & Prepare Environments
         run: |
@@ -146,7 +174,7 @@ jobs:
       - name: Build iOS Application (iPhone Simulator)
         run: |
           xcodebuild build \
-            -project apple/ios/ZamorinCafeERP.xcodeproj \
+            -project Platform/Apple/ios/ZamorinCafeERP.xcodeproj \
             -scheme ZamorinCafeERP \
             -destination "generic/platform=iOS Simulator" \
             CODE_SIGNING_ALLOWED=NO \
@@ -157,7 +185,7 @@ jobs:
           IPHONE_ID=$(xcrun simctl list devices available -j | jq -r '[.devices[] | .[] | select(.name | contains("iPhone"))][0].udid')
           echo "Targeting iPhone Simulator UDID: $IPHONE_ID"
           xcodebuild test \
-            -project apple/ios/ZamorinCafeERP.xcodeproj \
+            -project Platform/Apple/ios/ZamorinCafeERP.xcodeproj \
             -scheme ZamorinCafeERP \
             -destination "id=$IPHONE_ID" \
             -resultBundlePath build/artifacts/iPhoneSimulator.xcresult \
@@ -167,7 +195,7 @@ jobs:
       - name: Build iPadOS Application (iPad Simulator)
         run: |
           xcodebuild build \
-            -project apple/ios/ZamorinCafeERP.xcodeproj \
+            -project Platform/Apple/ios/ZamorinCafeERP.xcodeproj \
             -scheme ZamorinCafeERP \
             -destination "generic/platform=iOS Simulator" \
             TARGETED_DEVICE_FAMILY="2" \
@@ -179,7 +207,7 @@ jobs:
           IPAD_ID=$(xcrun simctl list devices available -j | jq -r '[.devices[] | .[] | select(.name | contains("iPad"))][0].udid')
           echo "Targeting iPad Simulator UDID: $IPAD_ID"
           xcodebuild test \
-            -project apple/ios/ZamorinCafeERP.xcodeproj \
+            -project Platform/Apple/ios/ZamorinCafeERP.xcodeproj \
             -scheme ZamorinCafeERP \
             -destination "id=$IPAD_ID" \
             -resultBundlePath build/artifacts/iPadSimulator.xcresult \
@@ -189,7 +217,7 @@ jobs:
       - name: Build macOS Application
         run: |
           xcodebuild build \
-            -project apple/macos/ZamorinCafeERP.xcodeproj \
+            -project Platform/Apple/macos/ZamorinCafeERP.xcodeproj \
             -scheme ZamorinCafeERPMac \
             -destination "platform=macOS" \
             CODE_SIGNING_ALLOWED=NO \
@@ -198,7 +226,7 @@ jobs:
       - name: Run macOS Unit Tests (macOS XCTest)
         run: |
           xcodebuild test \
-            -project apple/macos/ZamorinCafeERP.xcodeproj \
+            -project Platform/Apple/macos/ZamorinCafeERP.xcodeproj \
             -scheme ZamorinCafeERPMac \
             -destination "platform=macOS" \
             -resultBundlePath build/artifacts/macOS.xcresult \

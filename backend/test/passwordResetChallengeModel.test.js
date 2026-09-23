@@ -17,7 +17,7 @@ function makeChallenge(overrides = {}) {
     status: 'PENDING',
     verificationAttempts: 0,
     maxVerificationAttempts: 5,
-    codeExpiresAt: new Date(now + 10 * 60 * 1000),
+    codeExpiresAt: new Date(now + 5 * 60 * 1000),
     resetTokenHash: 'hashed-reset-token',
     resetTokenExpiresAt: new Date(now + 15 * 60 * 1000),
     absoluteExpiresAt: new Date(now + 30 * 60 * 1000),

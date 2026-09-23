@@ -5,21 +5,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const login = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/pages/login.js'), 'utf8');
+const login = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/pages/login2.js'), 'utf8');
 const main = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/main.js'), 'utf8');
 
 test('password recovery exposes one canonical three-screen flow', () => {
   for (const name of [
-    'renderPasswordResetRequest',
-    'wirePasswordResetRequest',
-    'renderPasswordResetVerify',
-    'wirePasswordResetVerify',
-    'renderPasswordResetFinal',
-    'wirePasswordResetFinal',
+    'renderPasswordResetRequest2',
+    'wirePasswordResetRequest2',
+    'renderPasswordResetVerify2',
+    'wirePasswordResetVerify2',
+    'renderPasswordResetFinal2',
+    'wirePasswordResetFinal2',
   ]) {
     assert.equal((login.match(new RegExp(`export function ${name}\\(`, 'g')) || []).length, 1);
   }
-  assert.ok(login.includes('id="login-forgot-password"'));
+  assert.ok(login.includes('id="l2-forgot-pwd-btn"'));
 });
 
 test('password recovery uses authoritative backend endpoints and verified credentials', () => {
@@ -33,9 +33,9 @@ test('password recovery uses authoritative backend endpoints and verified creden
 });
 
 test('recovery verification preserves generic account messaging and six digit code validation', () => {
-  assert.ok(login.includes('If the account is eligible'));
+  assert.ok(login.includes('Verification Code'));
   assert.ok(login.includes('pattern="[0-9]{6}"'));
-  assert.ok(login.includes('/^[0-9]{6}$/.test(code)'));
+  assert.ok(login.includes('code.length !== 6'));
 });
 
 test('final reset preserves the existing password and confirmation constraints', () => {

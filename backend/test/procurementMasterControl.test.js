@@ -15,6 +15,7 @@ const { AuditEvent } = require('../src/models/AuditEvent');
 const { RolePermission } = require('../src/models/RolePermission');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
 const { PurchaseRequisition } = require('../src/models/PurchaseRequisition');
+const { InventoryLot } = require('../src/models/InventoryLot');
 const authService = require('../src/services/authService');
 const auditService = require('../src/services/auditService');
 
@@ -270,6 +271,8 @@ test('SCR-020: Procurement Master Control & Source-to-Pay Integration Suite', as
   AuditEvent.prototype.save = async function () { return this; };
   t.mock.method(StockMovement, 'create', async (movement) => movement);
   StockMovement.prototype.save = async function () { return this; };
+  t.mock.method(InventoryLot, 'create', async (data) => data);
+  InventoryLot.prototype.save = async function () { return this; };
 
   PurchaseOrder.prototype.save = async function () {
     const existingIndex = mockOrders.findIndex((o) => o.purchaseOrderId === this.purchaseOrderId);

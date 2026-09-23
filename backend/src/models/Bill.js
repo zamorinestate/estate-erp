@@ -28,6 +28,7 @@ const PAYMENT_METHODS = [
   'CARD',
   'CREDIT',
   'COMPLIMENTARY',
+  'STAFF_MEAL',
   'MIXED',
   'SPLIT',
 ];
@@ -38,6 +39,8 @@ const ORDER_TYPES = [
   'TAKEAWAY',
   'DELIVERY',
   'SCHEDULED_PICKUP',
+  'STAFF_MEAL',
+  'COMPLIMENTARY',
 ];
 
 const TAX_CLASSIFICATIONS = [
@@ -293,6 +296,23 @@ const refundRecordSchema = new mongoose.Schema(
       default: 'COMPLETED',
     },
 
+    channel: {
+      type: String,
+      default: 'POS',
+    },
+
+    complaintId: {
+      type: String,
+      default: null,
+    },
+
+    idempotencyKey: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true,
+    },
+
     createdAt: {
       type: Date,
       default: Date.now,
@@ -408,6 +428,13 @@ const billSchema = new mongoose.Schema(
       index: true,
     },
 
+    businessDate: {
+      type: String,
+      trim: true,
+      index: true,
+      default: null, // YYYY-MM-DD operational business trading day
+    },
+
     orderType: {
       type: String,
       enum: ORDER_TYPES,
@@ -518,6 +545,12 @@ const billSchema = new mongoose.Schema(
       default: '',
     },
 
+    isTraining: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     taxConfigVersion: {
       type: String,
       trim: true,
@@ -569,10 +602,33 @@ const billSchema = new mongoose.Schema(
       default: 0,
     },
 
+    preRoundingTotalPaisa: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    roundOffPaisa: {
+      type: Number,
+      default: 0,
+    },
+
     totalPaisa: {
       type: Number,
       required: true,
       min: 0,
+    },
+
+    taxRuleVersion: {
+      type: String,
+      trim: true,
+      default: 'GST_ROUNDING_V1_2026',
+    },
+
+    roundingPolicyVersion: {
+      type: String,
+      trim: true,
+      default: 'ZAMORIN_PAYABLE_ROUNDING_50P_V1',
     },
 
     refundedTotalPaisa: {
@@ -612,6 +668,24 @@ const billSchema = new mongoose.Schema(
       type: [reprintRecordSchema],
       default: [],
     },
+
+    printStatus: {
+      type: String,
+      enum: ['NOT_REQUESTED', 'PRINT_PENDING', 'PRINT_DISPATCHED', 'PRINTED', 'PRINT_FAILED'],
+      default: 'NOT_REQUESTED',
+      index: true,
+    },
+
+    printJobs: [
+      {
+        printJobId: { type: String, trim: true },
+        jobType: { type: String, default: 'RECEIPT' },
+        status: { type: String, default: 'QUEUED' },
+        dispatchedAt: { type: Date, default: Date.now },
+        completedAt: { type: Date, default: null },
+        failureCode: { type: String, default: null },
+      },
+    ],
 
     businessDate: {
       type: String,
@@ -682,6 +756,25 @@ const billSchema = new mongoose.Schema(
       index: true,
     },
 
+    // REC-04A: Explicit BOM/inventory depletion reconciliation state.
+    // 'DEPLETED' = stock consumed successfully.
+    // 'FAILED'   = depletion threw; bill is COMPLETED but stock was NOT consumed.
+    //              Operations must reconcile manually. Queryable for alert dashboards.
+    // 'NOT_ATTEMPTED' = BOM not applicable (no recipe linked).
+    // 'ALREADY_DEPLETED' = idempotent replay; depletion skipped safely.
+    bomDepletionStatus: {
+      type: String,
+      enum: ['NOT_ATTEMPTED', 'DEPLETED', 'FAILED', 'ALREADY_DEPLETED'],
+      default: 'NOT_ATTEMPTED',
+      index: true,
+    },
+
+    bomDepletionError: {
+      type: String,
+      default: null,
+      maxlength: 250,
+    },
+
     clientOfflineId: {
       type: String,
       trim: true,
@@ -691,6 +784,43 @@ const billSchema = new mongoose.Schema(
 
     offlineCreatedAt: {
       type: Date,
+      default: null,
+    },
+
+    // REC-04B: Canonical immutable checkout identity.
+    // Database-level uniqueness prevents multi-process / multi-worker duplicate sale creation.
+    saleAttemptId: {
+      type: String,
+      trim: true,
+      index: true,
+      sparse: true,
+      default: null,
+    },
+
+    // REC-13A: Review governance tracking for offline transactions
+    reviewedByUserId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+
+    reviewedByRole: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+
+    reviewReason: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
+    reviewId: {
+      type: String,
+      trim: true,
       default: null,
     },
   },
@@ -709,7 +839,12 @@ billSchema.index(
 
 billSchema.index(
   { organisationId: 1, invoiceNumber: 1 },
-  { name: 'org_invoice_number' }
+  { unique: true, sparse: true, name: 'org_invoice_number_unique' }
+);
+
+billSchema.index(
+  { organisationId: 1, cafeId: 1, saleAttemptId: 1 },
+  { unique: true, sparse: true, name: 'org_cafe_sale_attempt_unique' }
 );
 
 billSchema.index(

@@ -636,6 +636,75 @@ async function updateNotificationPreferences(req, res) {
   });
 }
 
+/**
+ * POST /api/v1/settings/preferences/reset
+ * Resets personal UX preferences (theme, fontSize, density, locale, accessibility, notifications)
+ * to default baseline. Requires confirmed: true in body.
+ * Strictly self-scoped to req.user.userId.
+ * Never modifies user model, role, permissions, assigned cafes, salary, or payroll.
+ */
+async function resetMyPreferences(req, res) {
+  const { userId, organisationId, role } = req.user;
+  const { confirmed } = req.body || {};
+
+  if (!confirmed) {
+    throw new ApiError(400, 'CONFIRMATION_REQUIRED', 'Confirmation (confirmed: true) is required to reset personal preferences.');
+  }
+
+  const defaultNotifications = [];
+  for (const category of NOTIFICATION_CATEGORIES) {
+    for (const channel of NOTIFICATION_CHANNELS) {
+      const isPolicyLocked = POLICY_REQUIRED_NOTIFICATIONS.has(`${category}:${channel}`);
+      defaultNotifications.push({
+        category,
+        channel,
+        enabled: true,
+        policyLocked: isPolicyLocked,
+      });
+    }
+  }
+
+  const resetFields = {
+    theme: 'paper',
+    fontSize: 'standard',
+    density: 'standard',
+    locale: 'en-IN',
+    timeFormat: '12h',
+    accessibility: {
+      reducedMotion: false,
+      highContrast: false,
+      enhancedFocus: false,
+      increasedSpacing: false,
+      underlineLinks: false,
+      preferDataTables: false,
+    },
+    notifications: defaultNotifications,
+  };
+
+  await UserPreference.findOneAndUpdate(
+    { userId },
+    { $set: resetFields },
+    { upsert: true, new: true }
+  );
+
+  await auditService.recordAuditEvent({
+    organisationId,
+    actorUserId: userId,
+    actorRole: role,
+    module: 'SETTINGS',
+    action: 'PREFERENCES_RESET',
+    entityType: 'USER_PREFERENCE',
+    entityId: userId,
+    metadata: { resetFields: Object.keys(resetFields) },
+  });
+
+  res.json({
+    success: true,
+    message: 'Personal preferences reset to system defaults.',
+    data: resetFields,
+  });
+}
+
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // LANGUAGE CATALOGUE
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1744,6 +1813,7 @@ module.exports = {
   updateAccessibilityPreferences,
   updateWorkspacePreferences,
   updateNotificationPreferences,
+  resetMyPreferences,
   getLanguageCatalogue,
   getSecurityOverview,
   updateSecurityPolicy,

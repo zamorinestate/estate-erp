@@ -41,6 +41,7 @@ import { renderStaffLoansAdvances, wireStaffLoansAdvances } from "./pages/staffL
 import { renderStaffDocuments, wireStaffDocuments } from "./pages/staffDocuments.js";
 import { renderPayrollManagement, wirePayrollManagement, setPayrollActiveTab } from "./pages/payrollManagement.js";
 import { renderAnnouncements, wireAnnouncements } from "./pages/announcements.js";
+import { renderMailOpsCommandCentre, wireMailOpsCommandCentre } from "./pages/mailOpsCommandCentre.js";
 import { renderNotAvailable, renderNotBuiltYet } from "./pages/notAvailable.js";
 import { renderVendors, wireVendors, setVendorsActiveTab } from "./pages/vendors.js";
 import { renderProcurement, wireProcurement, setProcurementActiveTab } from "./pages/procurement.js";
@@ -65,6 +66,21 @@ import { renderCafeDeviceEnroll, wireCafeDeviceEnroll, resetCafeDeviceEnrollUi }
 import { renderCafeTerminalWelcome, wireCafeTerminalWelcome } from "./pages/cafeTerminalWelcome.js";
 import { renderOrgIdentity, wireOrgIdentity } from "./pages/organisationIdentity.js";
 import { renderSystemHealthPage, initSystemHealthPage } from "./pages/systemHealth.js";
+import { renderOwnerFoodSafety, wireOwnerFoodSafety, setOwnerFoodSafetySection } from "./pages/ownerFoodSafety.js";
+import { renderOwnerRiskAudit, wireOwnerRiskAudit, setOwnerRiskAuditSection } from "./pages/ownerRiskAudit.js";
+import { renderOwnerPlanning, wireOwnerPlanning, setOwnerPlanningSection } from "./pages/ownerPlanning.js";
+import { renderOwnerCompliance, wireOwnerCompliance, setOwnerComplianceSection } from "./pages/ownerCompliance.js";
+import { renderOwnerSupplierIntelligence, initOwnerSupplierIntelligenceEvents, setOwnerSupplierSection } from "./pages/ownerSupplierIntelligence.js";
+import { renderOwnerAcademy, initOwnerAcademyEvents, setOwnerAcademySection } from "./pages/ownerAcademy.js";
+import { renderOwnerAssetReliability, initOwnerAssetReliabilityEvents, setOwnerAssetReliabilitySection } from "./pages/ownerAssetReliability.js";
+import { renderOwnerPrivacyCyber, initOwnerPrivacyCyberEvents, setOwnerPrivacyCyberSection } from "./pages/ownerPrivacyCyber.js";
+import { renderOwnerBcdr, initOwnerBcdrEvents, setOwnerBcdrSection } from "./pages/ownerBcdr.js";
+import { renderOwnerMasterData, initOwnerMasterDataEvents, setOwnerMasterDataSection } from "./pages/ownerMasterData.js";
+import { renderOwnerComplaints, initOwnerComplaintsEvents, setOwnerComplaintsSection } from "./pages/ownerComplaints.js";
+import { renderOwnerMenuPricing, initOwnerMenuPricingEvents, setOwnerMenuPricingSection } from "./pages/ownerMenuPricing.js";
+import { renderOwnerCustomerLoyalty, initOwnerCustomerLoyaltyEvents, setOwnerCustomerLoyaltySection } from "./pages/ownerCustomerLoyalty.js";
+import { renderOwnerUtilitiesWaste, initOwnerUtilitiesWasteEvents, setOwnerUtilitiesWasteSection } from "./pages/ownerUtilitiesWaste.js";
+import { renderOwnerGovernanceDelegation, initOwnerGovernanceDelegationEvents, setOwnerGovernanceDelegationSection } from "./pages/ownerGovernanceDelegation.js";
 
 // ROLE_LABELS: display-safe generic labels used only for topbar scope chip
 // until /auth/me bootstrap provides the real user's display name.
@@ -100,18 +116,25 @@ export function hideNavProgressBar() {
 }
 
 export function getIsPrimaryMaster() {
+  // ⚠️ PRIMARY MASTER LOCK — identity-anchored.
+  // ONLY MU-0001 / pradeeshk331@gmail.com may ever be Primary Master.
+  // Fail-closed: any other MASTER account returns false.
+  const user = state.auth?.user || state.user || {};
+  const userId = user.userId || user.id || user._id;
+  const isVerifiedIdentity =
+    (userId === "MU-0001" &&
+      String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com") ||
+    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+
+  if (!isVerifiedIdentity) return false;
+
+  // Identity verified — respect any explicit isPrimaryMaster flag
   if (state.auth?.user?.isPrimaryMaster !== undefined) return Boolean(state.auth.user.isPrimaryMaster);
   if (state.user?.isPrimaryMaster !== undefined) return Boolean(state.user.isPrimaryMaster);
   if (state.isPrimaryMaster !== undefined) return Boolean(state.isPrimaryMaster);
-  // In dev / preview / master context, default to Primary Master unless explicitly marked as normal
-  if (state.role === ROLES.MASTER || state.role === "master") {
-    const isExplicitNormal = Boolean(
-      state.auth?.user?.isPrimaryMaster === false ||
-      state.user?.isPrimaryMaster === false ||
-      state.isPrimaryMaster === false
-    );
-    return !isExplicitNormal;
-  }
+
+  // Verified identity with MASTER role: grant Primary Master by default
+  if (state.role === ROLES.MASTER || state.role === "master") return true;
   return false;
 }
 
@@ -501,6 +524,111 @@ async function renderPage() {
       wireTasks(content);
       break;
 
+    case "owner-food-safety":
+    case "food-safety":
+      setOwnerFoodSafetySection(subroute || "overview");
+      content.innerHTML = renderOwnerFoodSafety();
+      wireOwnerFoodSafety();
+      break;
+
+    case "owner-risk-audit":
+    case "risk-audit":
+      setOwnerRiskAuditSection(subroute || "overview");
+      content.innerHTML = renderOwnerRiskAudit();
+      wireOwnerRiskAudit();
+      break;
+
+    case "owner-planning":
+    case "planning":
+      setOwnerPlanningSection(subroute || "overview");
+      content.innerHTML = renderOwnerPlanning();
+      wireOwnerPlanning();
+      break;
+
+    case "owner-compliance":
+    case "compliance":
+      setOwnerComplianceSection(subroute || "overview");
+      content.innerHTML = renderOwnerCompliance();
+      wireOwnerCompliance();
+      break;
+
+    case "owner-supplier-intelligence":
+    case "supplier-intelligence":
+      setOwnerSupplierSection(subroute || "overview");
+      content.innerHTML = renderOwnerSupplierIntelligence();
+      initOwnerSupplierIntelligenceEvents();
+      break;
+
+    case "owner-academy":
+    case "academy":
+      setOwnerAcademySection(subroute || "overview");
+      content.innerHTML = renderOwnerAcademy();
+      initOwnerAcademyEvents();
+      break;
+
+    case "owner-asset-reliability":
+    case "asset-reliability":
+      setOwnerAssetReliabilitySection(subroute || "overview");
+      content.innerHTML = renderOwnerAssetReliability();
+      initOwnerAssetReliabilityEvents();
+      break;
+
+    case "owner-privacy-cyber":
+    case "privacy-cyber":
+      setOwnerPrivacyCyberSection(subroute || "overview");
+      content.innerHTML = renderOwnerPrivacyCyber();
+      initOwnerPrivacyCyberEvents();
+      break;
+
+    case "owner-bcdr":
+    case "bcdr":
+      setOwnerBcdrSection(subroute || "overview");
+      content.innerHTML = renderOwnerBcdr();
+      initOwnerBcdrEvents();
+      break;
+
+    case "owner-master-data":
+    case "master-data":
+      setOwnerMasterDataSection(subroute || "overview");
+      content.innerHTML = renderOwnerMasterData();
+      initOwnerMasterDataEvents();
+      break;
+
+    case "owner-complaints":
+    case "complaints":
+      setOwnerComplaintsSection(subroute || "overview");
+      content.innerHTML = renderOwnerComplaints();
+      initOwnerComplaintsEvents();
+      break;
+
+    case "owner-menu-pricing":
+    case "menu-pricing":
+      setOwnerMenuPricingSection(subroute || "matrix");
+      content.innerHTML = renderOwnerMenuPricing();
+      initOwnerMenuPricingEvents();
+      break;
+
+    case "owner-customer-loyalty":
+    case "customer-loyalty":
+      setOwnerCustomerLoyaltySection(subroute || "analytics");
+      content.innerHTML = renderOwnerCustomerLoyalty();
+      initOwnerCustomerLoyaltyEvents();
+      break;
+
+    case "owner-utilities-waste":
+    case "utilities-waste":
+      setOwnerUtilitiesWasteSection(subroute || "overview");
+      content.innerHTML = renderOwnerUtilitiesWaste();
+      initOwnerUtilitiesWasteEvents();
+      break;
+
+    case "owner-governance-delegation":
+    case "governance-delegation":
+      setOwnerGovernanceDelegationSection(subroute || "overview");
+      content.innerHTML = renderOwnerGovernanceDelegation();
+      initOwnerGovernanceDelegationEvents();
+      break;
+
     case "approvals":
       content.innerHTML = renderTasks({ title: "Approvals Waiting on You" });
       wireTasks(content);
@@ -566,8 +694,9 @@ async function renderPage() {
       break;
 
     case "mailops":
-      navigate("dashboard");
-      return;
+      content.innerHTML = renderMailOpsCommandCentre(subroute);
+      wireMailOpsCommandCentre(content, subroute);
+      break;
 
     case "menu":
       setMenuActiveTab?.(subroute || "overview");
@@ -612,17 +741,27 @@ async function renderPage() {
       wireCafeOperationsDevices(content, subroute);
       break;
 
+    case "c":
+    case "cafe":
     case "cafe-gateway":
-      stopCafeOpsInactivityTimer();
-      mountPublicCafeGateway(content);
-      break;
-
     case "cafe-access": {
       stopCafeOpsInactivityTimer();
+      let token = "";
+      let method = "QR";
       if (subroute.startsWith("qr/")) {
-        mountPublicCafeGateway(content, { method: "QR", token: subroute.slice(3) });
+        token = subroute.slice(3);
+        method = "QR";
       } else if (subroute.startsWith("link/")) {
-        mountPublicCafeGateway(content, { method: "LINK", token: subroute.slice(5) });
+        token = subroute.slice(5);
+        method = "LINK";
+      } else if (subroute) {
+        // Form: /c/<public-ref>/login or /c/<public-ref>
+        const parts = subroute.split("/").filter(Boolean);
+        token = parts[0] || "";
+        method = "LINK";
+      }
+      if (token) {
+        mountPublicCafeGateway(content, { method, token });
       } else {
         mountPublicCafeGateway(content);
       }

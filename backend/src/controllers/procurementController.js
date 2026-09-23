@@ -60,6 +60,9 @@ const {
   InventoryLot,
 } = require('../models/InventoryLot');
 
+const { SupplierActionPlan } = require('../models/SupplierActionPlan');
+const { BusinessContract } = require('../models/BusinessContract');
+
 const {
   BusinessDocument,
 } = require('../models/BusinessDocument');
@@ -71,6 +74,13 @@ const {
 const {
   documentStorageAdapter,
 } = require('../services/documentStorageAdapter');
+
+const {
+  ThreeWayMatchService,
+} = require('../services/threeWayMatchService');
+
+const { Notification } = require('../models/Notification');
+const { User } = require('../models/User');
 
 const fs = require('fs');
 
@@ -109,6 +119,54 @@ function parsePositiveInteger(value, fallback, maximum) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, maximum);
+}
+
+async function notifyMasterOfOrderEvent({
+  organisationId,
+  cafeId,
+  purchaseOrderId,
+  title,
+  message,
+  priority = 'NORMAL',
+  category = 'OPERATIONS',
+  actorUserId,
+}) {
+  try {
+    const masterUsers = await User.find({
+      organisationId,
+      role: { $in: ['MASTER', 'OWNER'] },
+      accountStatus: 'ACTIVE',
+    }).select('userId email name role').lean();
+
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const master of masterUsers) {
+      const randId = Math.floor(1000 + Math.random() * 9000);
+      await Notification.create({
+        notificationId: `NT-${dateStr}-${randId}`,
+        organisationId,
+        cafeId: cafeId || 'ALL',
+        eventType: 'PROCUREMENT_ORDER_ALERT',
+        category,
+        recipientUserId: master.userId,
+        recipientRole: master.role,
+        recipientEmail: master.email,
+        title,
+        message,
+        priority,
+        channels: ['IN_APP'],
+        sourceModule: 'PROCUREMENT',
+        sourceEntityType: 'PURCHASE_ORDER',
+        sourceEntityId: purchaseOrderId,
+        deduplicationKey: `PO_${purchaseOrderId}_${Date.now()}_${master.userId}`,
+        correlationId: `CORR-PO-${purchaseOrderId}-${randId}`,
+        createdBy: actorUserId || 'SYSTEM',
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
+      });
+    }
+  } catch (err) {
+    console.warn('[notifyMasterOfOrderEvent] Non-fatal notification dispatch error:', err.message);
+  }
 }
 
 /**
@@ -254,6 +312,35 @@ function assertCafeAccess(request, cafeId) {
       'You do not have access to this café.'
     );
   }
+}
+
+function assertProcurementMutationAccess(request, cafeId) {
+  if (!request.auth || !request.auth.role) {
+    throw new ApiError(401, 'UNAUTHORIZED', 'Authentication required.');
+  }
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Staff is strictly denied procurement access.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'FORBIDDEN_MUTATION', 'Owner is strictly read-only for procurement operations.');
+  }
+  if (!['MASTER', 'CAFE_ADMIN'].includes(request.auth.role)) {
+    throw new ApiError(403, 'FORBIDDEN_ROLE', `Role ${request.auth.role} is not authorized for procurement operations.`);
+  }
+  assertCafeAccess(request, cafeId);
+}
+
+function assertOrderRequestAccess(request, cafeId) {
+  if (!request.auth || !request.auth.role) {
+    throw new ApiError(401, 'UNAUTHORIZED', 'Authentication required.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'FORBIDDEN_MUTATION', 'Owner is strictly read-only for procurement operations.');
+  }
+  if (!['MASTER', 'CAFE_ADMIN', 'STAFF'].includes(request.auth.role)) {
+    throw new ApiError(403, 'FORBIDDEN_ROLE', `Role ${request.auth.role} is not authorized for order operations.`);
+  }
+  assertCafeAccess(request, cafeId);
 }
 
 const poLocks = new Map();
@@ -402,17 +489,33 @@ const createOrder = asyncHandler(async (request, response) => {
   if (!cafeId || !vendorId) {
     throw new ApiError(400, 'MISSING_FIELDS', 'cafeId and vendorId are required.');
   }
+  if (cafeId === 'ALL') {
+    throw new ApiError(400, 'INVALID_CAFE_SCOPE', 'A specific destination café outlet must be selected for purchase order delivery.');
+  }
   assertCafeAccess(request, cafeId);
 
   // Validate vendor existence
-  const vendor = await Vendor.findOne({
+  let vendor = await Vendor.findOne({
     vendorId,
     organisationId: request.auth.organisationId,
     status: 'ACTIVE',
   }).lean();
 
   if (!vendor) {
-    throw new ApiError(404, 'VENDOR_NOT_FOUND', 'Active vendor not found.');
+    // Resilient fallback by vendor name or tradeName
+    vendor = await Vendor.findOne({
+      organisationId: request.auth.organisationId,
+      status: 'ACTIVE',
+      $or: [
+        { nameLower: vendorId.toLowerCase() },
+        { name: new RegExp(`^${vendorId}$`, 'i') },
+        { tradeName: new RegExp(`^${vendorId}$`, 'i') },
+      ],
+    }).lean();
+  }
+
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', `Active vendor '${vendorId}' not found.`);
   }
 
   if (!Array.isArray(lineItems) || lineItems.length === 0) {
@@ -437,9 +540,33 @@ const createOrder = asyncHandler(async (request, response) => {
 
   for (const li of lineItems) {
     const iId = normalizeId(li.itemId);
-    const item = itemMap[iId];
+    let item = itemMap[iId];
     if (!item) {
-      throw new ApiError(400, 'ITEM_NOT_FOUND', `Active item ${iId} not found.`);
+      item = await GlobalInventoryItem.findOne({
+        organisationId: request.auth.organisationId,
+        $or: [{ itemId: iId }, { sku: iId }, { name: new RegExp(`^${iId}$`, 'i') }],
+        status: 'ACTIVE',
+      }).lean();
+      if (item) {
+        itemMap[iId] = item;
+      }
+    }
+    if (!item) {
+      const vendorCat = (vendor.itemCatalogue || []).find(
+        (c) => c.itemId === iId || (c.itemName && c.itemName.toLowerCase() === iId.toLowerCase())
+      );
+      if (vendorCat) {
+        item = {
+          itemId: vendorCat.itemId || iId,
+          name: vendorCat.itemName || iId,
+          baseUnit: vendorCat.uom || 'units',
+          unitCostPaisa: vendorCat.currentPricePaisa || 0,
+        };
+        itemMap[iId] = item;
+      }
+    }
+    if (!item) {
+      throw new ApiError(400, 'ITEM_NOT_FOUND', `Active item '${iId}' not found in catalog.`);
     }
 
     const qty = Number(li.orderedQuantityBase);
@@ -510,6 +637,9 @@ const createOrder = asyncHandler(async (request, response) => {
     minimumDigits: 4,
   });
 
+  const shouldSubmitDirectly = request.body.status === 'SUBMITTED' || request.body.submitDirectly === true;
+  const initialStatus = shouldSubmitDirectly ? 'SUBMITTED' : 'DRAFT';
+
   const order = new PurchaseOrder({
     purchaseOrderId: seqId,
     organisationId: request.auth.organisationId,
@@ -521,7 +651,10 @@ const createOrder = asyncHandler(async (request, response) => {
     taxPaisa: tax,
     discountPaisa: discount,
     totalPaisa,
-    status: 'DRAFT',
+    status: initialStatus,
+    deliveryMatchRemark: 'PENDING',
+    submittedByUserId: shouldSubmitDirectly ? request.auth.userId : null,
+    submittedAt: shouldSubmitDirectly ? new Date() : null,
     orderDate: getIstBusinessDate(),
     expectedDeliveryDate: expectedDeliveryDate && /^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate) ? expectedDeliveryDate : null,
     terms: typeof terms === 'string' ? terms.trim() : '',
@@ -532,13 +665,25 @@ const createOrder = asyncHandler(async (request, response) => {
 
   await order.save();
 
+  // Notify Master window so Master sees the order request immediately
+  await notifyMasterOfOrderEvent({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    purchaseOrderId: seqId,
+    title: `New Order Request: ${seqId}`,
+    message: `Order request ${seqId} placed by ${request.auth.userId} (${request.auth.role}) for Café ${cafeId} (${processedLineItems.length} items from ${vendor.name || vendorId}). Expected delivery: ${order.expectedDeliveryDate || 'Same Day'}.`,
+    priority: 'NORMAL',
+    category: 'OPERATIONS',
+    actorUserId: request.auth.userId,
+  });
+
   await recordRequestAudit({
     request,
     module: 'PROCUREMENT',
     action: 'CREATE_PURCHASE_ORDER',
     entityType: 'PURCHASE_ORDER',
     entityId: seqId,
-    after: { purchaseOrderId: seqId, cafeId, vendorId, totalPaisa, lineItemCount: processedLineItems.length },
+    after: { purchaseOrderId: seqId, cafeId, vendorId, totalPaisa, lineItemCount: processedLineItems.length, status: initialStatus },
     result: 'SUCCESS',
     riskClassification: 'LOW',
   });
@@ -601,6 +746,10 @@ const submitOrder = asyncHandler(async (request, response) => {
  * Move SUBMITTED → APPROVED.
  */
 const approveOrder = asyncHandler(async (request, response) => {
+  if (request.auth?.role !== 'MASTER') {
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to approve purchase orders.');
+  }
+
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const { notes } = request.body;
 
@@ -738,10 +887,43 @@ const receiveOrder = asyncHandler(async (request, response) => {
   const rawDeliveries = request.body.deliveries || (request.body.receivedItems
     ? request.body.receivedItems.map((r) => ({
         itemId: r.itemId,
-        quantityReceived: r.receivedQuantityBase || r.quantityReceived,
+        lineId: r.lineId || r._id,
+        quantityReceived: r.receivedQuantityBase !== undefined ? r.receivedQuantityBase : r.quantityReceived,
+        acceptedQuantity: r.acceptedQuantity !== undefined ? r.acceptedQuantity : (r.acceptedQty !== undefined ? r.acceptedQty : (r.receivedQuantityBase !== undefined ? r.receivedQuantityBase : r.quantityReceived)),
+        rejectedQuantity: r.rejectedQuantity !== undefined ? r.rejectedQuantity : (r.rejectedQty || 0),
+        disposition: r.disposition || null,
+        rejectionReason: r.rejectionReason || null,
+        lotNumber: r.lotNumber || null,
+        manufacturingDate: r.manufacturingDate || null,
+        expiryDate: r.expiryDate || null,
+        expectedDeliveryDate: r.expectedDeliveryDate || null,
+        notes: r.notes || '',
       }))
-    : []);
-  const { vendorInvoiceNumber, vendorInvoiceDate } = request.body;
+    : (request.body.items
+      ? request.body.items.map((r) => ({
+          itemId: r.itemId,
+          lineId: r.lineId || r._id,
+          quantityReceived: r.receivedQuantityBase !== undefined ? r.receivedQuantityBase : r.quantityReceived,
+          acceptedQuantity: r.acceptedQuantity !== undefined ? r.acceptedQuantity : (r.acceptedQty !== undefined ? r.acceptedQty : (r.receivedQuantityBase !== undefined ? r.receivedQuantityBase : (r.quantityReceived !== undefined ? r.quantityReceived : (r.deliveredQty || 0)))),
+          rejectedQuantity: r.rejectedQuantity !== undefined ? r.rejectedQuantity : (r.rejectedQty || 0),
+          disposition: r.disposition || null,
+          rejectionReason: r.rejectionReason || null,
+          lotNumber: r.lotNumber || null,
+          manufacturingDate: r.manufacturingDate || null,
+          expiryDate: r.expiryDate || null,
+          expectedDeliveryDate: r.expectedDeliveryDate || null,
+          notes: r.notes || '',
+        }))
+      : []));
+
+  const {
+    vendorInvoiceNumber,
+    vendorInvoiceDate,
+    deliveryNote,
+    deliveryNoteNumber,
+    idempotencyKey: rawIdempotencyKey,
+    notes = '',
+  } = request.body;
 
   if (!Array.isArray(rawDeliveries) || rawDeliveries.length === 0) {
     throw new ApiError(400, 'DELIVERIES_REQUIRED', 'At least one item delivery quantity is required.');
@@ -756,108 +938,320 @@ const receiveOrder = asyncHandler(async (request, response) => {
   if (!order) {
     throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
   }
-  assertCafeAccess(request, order.cafeId);
+  assertProcurementMutationAccess(request, order.cafeId);
 
-  if (!['ORDERED', 'PARTIALLY_RECEIVED'].includes(order.status)) {
+  // Idempotent retry check
+  const idempotencyKey = normalizeId(rawIdempotencyKey || request.headers?.['idempotency-key']);
+  if (idempotencyKey && Array.isArray(order.grnReceipts)) {
+    const existing = order.grnReceipts.find(
+      (r) => r.idempotencyKey && r.idempotencyKey === idempotencyKey
+    );
+    if (existing) {
+      return response.status(200).json({
+        success: true,
+        data: {
+          order: order.toObject(),
+          grn: existing,
+          isIdempotentReplay: true,
+          movementsCreated: [],
+        },
+        correlationId: request.correlationId || null,
+      });
+    }
+  }
+
+  if (!['ORDERED', 'ORDER_PLACED', 'APPROVED', 'PARTIALLY_RECEIVED'].includes(order.status)) {
     throw new ApiError(409, 'INVALID_STATUS', `Cannot receive goods for a purchase order in ${order.status} status.`);
   }
 
   const businessDate = getIstBusinessDate();
   const datePart = businessDate.replace(/-/g, '');
   const movementsCreated = [];
+  const grnItems = [];
+  const now = new Date();
 
   for (const del of deliveries) {
     const iId = normalizeId(del.itemId);
-    const qtyReceived = Number(del.quantityReceived);
-
-    if (!Number.isFinite(qtyReceived) || qtyReceived <= 0) {
-      continue; // Skip zero or invalid received entries
-    }
-
-    const lineItem = order.lineItems.find((li) => li.itemId === iId);
+    const lineItem = order.lineItems.find(
+      (li) => (del.lineId && (String(li._id) === String(del.lineId) || li.lineId === del.lineId)) || li.itemId === iId
+    );
     if (!lineItem) {
       throw new ApiError(400, 'INVALID_LINE_ITEM', `Item ${iId} is not in this purchase order.`);
     }
 
-    // Check cafe stock config exists
-    const stockConfig = await CafeInventoryConfig.findOne({
-      organisationId: request.auth.organisationId,
-      cafeId: order.cafeId,
-      itemId: iId,
-    });
+    const previouslyAccepted = Number(lineItem.acceptedReceivedQty || lineItem.receivedQuantityBase || 0);
+    const orderedQty = Number(lineItem.orderedQuantityBase || 0);
+    const closedShort = Number(lineItem.closedShortQty || 0);
+    const buyerCancelled = Number(lineItem.buyerCancelledQty || 0);
+    const remainingOpen = Math.max(0, orderedQty - previouslyAccepted - closedShort - buyerCancelled);
 
-    if (!stockConfig) {
-      throw new ApiError(404, 'STOCK_CONFIG_NOT_FOUND', `Stock config for item ${iId} at café ${order.cafeId} not found.`);
+    const acceptedQty = Number(
+      del.acceptedQuantity !== undefined
+        ? del.acceptedQuantity
+        : del.acceptedQty !== undefined
+        ? del.acceptedQty
+        : del.quantityAccepted !== undefined
+        ? del.quantityAccepted
+        : del.quantityReceived !== undefined
+        ? del.quantityReceived
+        : 0
+    );
+    const rejectedQty = Number(
+      del.rejectedQuantity !== undefined
+        ? del.rejectedQuantity
+        : del.rejectedQty !== undefined
+        ? del.rejectedQty
+        : del.quantityRejected !== undefined
+        ? del.quantityRejected
+        : 0
+    );
+    const deliveredQty = Number(
+      del.deliveredQty !== undefined
+        ? del.deliveredQty
+        : del.quantityDelivered !== undefined
+        ? del.quantityDelivered
+        : acceptedQty + rejectedQty
+    );
+
+    if (!Number.isFinite(acceptedQty) || acceptedQty < 0 || !Number.isFinite(rejectedQty) || rejectedQty < 0) {
+      throw new ApiError(400, 'INVALID_QUANTITY', 'Accepted and rejected quantities must be non-negative numbers.');
     }
 
-    const balanceBefore = stockConfig.currentQuantityBase;
-    const balanceAfter = balanceBefore + qtyReceived;
+    // Concurrency / overdelivery guard
+    if (acceptedQty > remainingOpen) {
+      throw new ApiError(
+        400,
+        'QUANTITY_EXCEEDS_OUTSTANDING',
+        `Accepted quantity (${acceptedQty}) exceeds open outstanding quantity (${remainingOpen}) for item ${iId}.`
+      );
+    }
 
-    // Generate movement ID
-    const movId = await SequenceCounter.generateId({
-      organisationId: request.auth.organisationId,
-      sequenceKey: `STOCK_MOVEMENT_${datePart}`,
-      prefix: `SMOV-${datePart}`,
-      minimumDigits: 4,
-    });
-
-    // Create StockMovement record
-    const movement = new StockMovement({
-      movementId: movId,
-      organisationId: request.auth.organisationId,
-      cafeId: order.cafeId,
-      itemId: iId,
-      movementType: 'RECEIPT',
-      quantityDelta: qtyReceived,
-      balanceBefore,
-      balanceAfter,
-      businessDate,
-      serverTimestamp: new Date(),
-      status: 'ACTIVE',
-      sourceModule: 'PROCUREMENT',
-      sourceRecordId: purchaseOrderId,
-      description: `Goods receipt for PO ${purchaseOrderId}`,
-      createdByUserId: request.auth.userId,
-      createdByRole: request.auth.role,
-      correlationId: request.correlationId || null,
-    });
-
-    await movement.save();
-    movementsCreated.push(movId);
-
-    // Atomic update to cafe inventory
-    await CafeInventoryConfig.findOneAndUpdate(
-      {
+    // Only ACCEPTED quantity updates inventory and creates StockMovement
+    if (acceptedQty > 0) {
+      let stockConfig = await CafeInventoryConfig.findOne({
         organisationId: request.auth.organisationId,
         cafeId: order.cafeId,
         itemId: iId,
-      },
-      {
-        $inc: { currentQuantityBase: qtyReceived },
-        $set: { lastModifiedByUserId: request.auth.userId },
+      });
+
+      if (!stockConfig) {
+        stockConfig = new CafeInventoryConfig({
+          organisationId: request.auth.organisationId,
+          cafeId: order.cafeId,
+          itemId: iId,
+          currentQuantityBase: 0,
+          availableQuantityBase: 0,
+          createdByUserId: request.auth.userId,
+        });
       }
-    );
 
-    // Update PO line item
-    lineItem.receivedQuantityBase += qtyReceived;
-  }
+      const balanceBefore = Number(stockConfig.currentQuantityBase || 0);
+      const balanceAfter = balanceBefore + acceptedQty;
 
-  // Determine overall status
-  let allCompleted = true;
-  let anyReceived = false;
+      const movId = await SequenceCounter.generateId({
+        organisationId: request.auth.organisationId,
+        sequenceKey: `STOCK_MOVEMENT_${datePart}`,
+        prefix: `SMOV-${datePart}`,
+        minimumDigits: 4,
+      });
 
-  for (const li of order.lineItems) {
-    if (li.receivedQuantityBase >= li.orderedQuantityBase) {
-      anyReceived = true;
-    } else if (li.receivedQuantityBase > 0) {
-      anyReceived = true;
-      allCompleted = false;
-    } else {
-      allCompleted = false;
+      const movement = new StockMovement({
+        movementId: movId,
+        organisationId: request.auth.organisationId,
+        cafeId: order.cafeId,
+        itemId: iId,
+        movementType: 'RECEIPT',
+        quantityBase: acceptedQty,
+        quantityDelta: acceptedQty,
+        balanceBeforeBase: balanceBefore,
+        balanceAfterBase: balanceAfter,
+        balanceBefore,
+        balanceAfter,
+        businessDate,
+        serverTimestamp: now,
+        status: 'ACTIVE',
+        sourceModule: 'PROCUREMENT',
+        sourceRecordId: purchaseOrderId,
+        description: `Goods receipt for PO ${purchaseOrderId}`,
+        performedByUserId: request.auth.userId,
+        createdByUserId: request.auth.userId,
+        createdByRole: request.auth.role,
+        correlationId: request.correlationId || null,
+      });
+
+      await movement.save();
+      movementsCreated.push(movId);
+
+      await CafeInventoryConfig.findOneAndUpdate(
+        {
+          organisationId: request.auth.organisationId,
+          cafeId: order.cafeId,
+          itemId: iId,
+        },
+        {
+          $inc: { currentQuantityBase: acceptedQty, availableQuantityBase: acceptedQty },
+          $set: { lastModifiedByUserId: request.auth.userId },
+        },
+        { upsert: true, new: true }
+      );
+
+      // Create InventoryLot in AVAILABLE status
+      const lotId = await SequenceCounter.generateId({
+        organisationId: request.auth.organisationId,
+        sequenceKey: `LOT_${datePart}`,
+        prefix: `LOT-${datePart}`,
+        minimumDigits: 4,
+      });
+
+      const lotRecord = new InventoryLot({
+        organisationId: request.auth.organisationId,
+        lotId,
+        supplierLot: del.lotNumber || `SLOT-${Date.now().toString().slice(-6)}`,
+        itemId: iId,
+        cafeId: order.cafeId,
+        vendorId: order.vendorId,
+        procurementReference: order.purchaseOrderId,
+        storageLocation: 'Main Store',
+        mfgDate: del.manufacturingDate ? new Date(del.manufacturingDate).toISOString().slice(0, 10) : null,
+        expiryDate: del.expiryDate ? new Date(del.expiryDate).toISOString().slice(0, 10) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        unit: lineItem.baseUnit || 'units',
+        initialQuantity: acceptedQty,
+        quantityBase: acceptedQty,
+        remainingQuantity: acceptedQty,
+        receivedAt: now,
+        status: 'AVAILABLE',
+      });
+      await lotRecord.save();
     }
+
+    // Rejected items: quarantined, do NOT update usable stock
+    if (rejectedQty > 0) {
+      lineItem.rejectedQty = (lineItem.rejectedQty || 0) + rejectedQty;
+
+      const qLotId = await SequenceCounter.generateId({
+        organisationId: request.auth.organisationId,
+        sequenceKey: `LOT_Q_${datePart}`,
+        prefix: `LOTQ-${datePart}`,
+        minimumDigits: 4,
+      });
+
+      const qLotDoc = new InventoryLot({
+        organisationId: request.auth.organisationId,
+        lotId: qLotId,
+        supplierLot: del.lotNumber || `REJ-${Date.now().toString().slice(-6)}`,
+        itemId: iId,
+        cafeId: order.cafeId,
+        vendorId: order.vendorId,
+        procurementReference: order.purchaseOrderId,
+        storageLocation: 'Quarantine Holding Bay',
+        expiryDate: del.expiryDate ? new Date(del.expiryDate).toISOString().slice(0, 10) : businessDate,
+        unit: lineItem.baseUnit || 'units',
+        initialQuantity: rejectedQty,
+        quantityBase: rejectedQty,
+        remainingQuantity: rejectedQty,
+        receivedAt: now,
+        status: 'QUARANTINE',
+        quarantineReason: del.rejectionReason || 'Rejected during dock receiving',
+        quarantineDate: now,
+        quarantinedByUserId: request.auth.userId,
+        dispositionStatus: 'RETURN_TO_VENDOR',
+      });
+      await qLotDoc.save();
+    }
+
+    // Update line item accepted quantities
+    lineItem.acceptedReceivedQty = previouslyAccepted + acceptedQty;
+    lineItem.receivedQuantityBase = lineItem.acceptedReceivedQty;
+
+    // Remaining shortfall after this receipt
+    const shortfall = Math.max(0, orderedQty - lineItem.acceptedReceivedQty - closedShort - buyerCancelled);
+
+    // Handle line item disposition
+    if (del.disposition === 'BACKORDER') {
+      lineItem.backorderedQty = shortfall;
+      lineItem.backorderDetails = {
+        expectedDeliveryDate: del.expectedDeliveryDate ? new Date(del.expectedDeliveryDate) : null,
+        confirmationRef: del.confirmationRef || '',
+        note: del.notes || '',
+        backorderedAt: now,
+        backorderedByUserId: request.auth.userId,
+        isOverdue: del.expectedDeliveryDate ? new Date(del.expectedDeliveryDate) < now : false,
+      };
+      lineItem.fulfillmentStatus = 'BACKORDERED';
+    } else if (del.disposition === 'VENDOR_CANNOT_SUPPLY') {
+      lineItem.vendorUnavailableQty = shortfall;
+      lineItem.vendorUnavailableDetails = {
+        reason: del.rejectionReason || 'OUT_OF_STOCK',
+        note: del.notes || '',
+        recordedAt: now,
+        recordedByUserId: request.auth.userId,
+      };
+      lineItem.fulfillmentStatus = 'VENDOR_UNAVAILABLE';
+    } else if (del.disposition === 'CLOSE_REMAINING') {
+      lineItem.closedShortQty = (lineItem.closedShortQty || 0) + shortfall;
+      lineItem.closeShortDetails = {
+        reason: del.notes || 'Closed remaining during receipt',
+        note: del.notes || '',
+        closedAt: now,
+        closedByUserId: request.auth.userId,
+        isVendorFault: true,
+      };
+      lineItem.outstandingQty = 0;
+      lineItem.fulfillmentStatus = 'CLOSED_SHORT';
+    }
+
+    grnItems.push({
+      itemId: iId,
+      deliveredQty,
+      acceptedQty,
+      rejectedQty,
+      lotNumber: del.lotNumber || null,
+      manufacturingDate: del.manufacturingDate || null,
+      expiryDate: del.expiryDate || null,
+      rejectionReason: del.rejectionReason || null,
+      disposition: del.disposition || null,
+      notes: del.notes || '',
+    });
   }
 
-  order.status = allCompleted ? 'RECEIVED' : (anyReceived ? 'PARTIALLY_RECEIVED' : order.status);
+  // Generate immutable GRN record
+  const grnId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `GRN_${datePart}`,
+    prefix: `GRN-${datePart}`,
+    minimumDigits: 4,
+  });
+
+  const grnRecord = {
+    grnId,
+    idempotencyKey: idempotencyKey || grnId,
+    deliveryNoteNumber: String(deliveryNoteNumber || deliveryNote || '').trim(),
+    receivedAt: now,
+    receivedByUserId: request.auth.userId,
+    items: grnItems,
+    notes: notes || '',
+    status: grnItems.some((g) => g.rejectedQty > 0) ? 'PARTIAL' : 'ACCEPTED',
+  };
+
+  if (!order.grnReceipts) order.grnReceipts = [];
+  order.grnReceipts.push(grnRecord);
+
+  // Recalculate fulfillment and order statuses
+  order.recalculateFulfillment();
+
+  const allLinesFulfilled = (order.lineItems || []).every(
+    (l) => (Number(l.acceptedReceivedQty) || 0) >= (Number(l.orderedQuantityBase) || 0)
+  );
+  const anyLineReceived = (order.lineItems || []).some(
+    (l) => (Number(l.acceptedReceivedQty) || 0) > 0
+  );
+
+  order.status = allLinesFulfilled ? 'RECEIVED' : (anyLineReceived ? 'PARTIALLY_RECEIVED' : order.status);
+  if (allLinesFulfilled) {
+    order.receivingStatus = 'POSTED_TO_INVENTORY';
+  } else if (anyLineReceived) {
+    order.receivingStatus = 'PARTIALLY_RECEIVED';
+  }
   order.receivedDate = businessDate;
   if (vendorInvoiceNumber) order.vendorInvoiceNumber = String(vendorInvoiceNumber).trim();
   if (vendorInvoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(vendorInvoiceDate)) order.vendorInvoiceDate = vendorInvoiceDate;
@@ -871,16 +1265,634 @@ const receiveOrder = asyncHandler(async (request, response) => {
     action: 'RECEIVE_PURCHASE_ORDER',
     entityType: 'PURCHASE_ORDER',
     entityId: purchaseOrderId,
-    after: { status: order.status, movementsCreatedCount: movementsCreated.length },
+    after: {
+      status: order.status,
+      fulfillmentStatus: order.fulfillmentStatus,
+      grnId,
+      movementsCreatedCount: movementsCreated.length,
+    },
     result: 'SUCCESS',
     riskClassification: 'MEDIUM',
   });
 
   return response.status(200).json({
     success: true,
-    data: { order: order.toObject(), movementsCreated },
+    data: {
+      order: order.toObject(),
+      grn: grnRecord,
+      movementsCreated,
+    },
     correlationId: request.correlationId || null,
   });
+});
+
+/**
+ * PUT/POST /procurement/orders/:purchaseOrderId/edit
+ * Edit an existing Purchase Order (Cashier / Café Admin / Master).
+ * Tracks edits before and after approval.
+ * If edited after approval, resets approval state and mandates Master re-approval.
+ */
+const editOrder = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const { lineItems, expectedDeliveryDate, terms, notes, reason } = request.body;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertOrderRequestAccess(request, order.cafeId);
+
+  if (['CLOSED', 'CANCELLED'].includes(order.status)) {
+    throw new ApiError(409, 'INVALID_STATUS', `Cannot edit an order in ${order.status} status.`);
+  }
+
+  const wasApproved = order.status === 'APPROVED' || !!(order.masterApproval && order.masterApproval.approvedAt);
+
+  // Validate and update line items if supplied
+  if (Array.isArray(lineItems) && lineItems.length > 0) {
+    const itemIds = lineItems.map((li) => normalizeId(li.itemId));
+    const items = await GlobalInventoryItem.find({
+      organisationId: request.auth.organisationId,
+      itemId: { $in: itemIds },
+      status: 'ACTIVE',
+    }).lean();
+    const itemMap = {};
+    for (const item of items) {
+      itemMap[item.itemId] = item;
+    }
+
+    let subtotalPaisa = 0;
+    const processedLineItems = [];
+
+    for (const li of lineItems) {
+      const iId = normalizeId(li.itemId);
+      const item = itemMap[iId];
+      if (!item) {
+        throw new ApiError(400, 'ITEM_NOT_FOUND', `Active item ${iId} not found.`);
+      }
+
+      const qty = Number(li.orderedQuantityBase);
+      let unitPrice = Number(li.unitPricePaisa);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new ApiError(400, 'INVALID_QUANTITY', `Ordered quantity for item ${iId} must be positive.`);
+      }
+
+      if (!Number.isInteger(unitPrice) || unitPrice < 0) {
+        unitPrice = item.unitCostPaisa || 0;
+      }
+
+      const totalLinePaisa = Math.round(qty * unitPrice);
+      subtotalPaisa += totalLinePaisa;
+
+      processedLineItems.push({
+        itemId: iId,
+        itemNameSnapshot: item.name,
+        baseUnit: item.baseUnit,
+        orderedQuantityBase: qty,
+        receivedQuantityBase: li.receivedQuantityBase || 0,
+        acceptedReceivedQty: li.acceptedReceivedQty || 0,
+        rejectedQty: li.rejectedQty || 0,
+        unitPricePaisa: unitPrice,
+        totalLinePaisa,
+        lineNotes: typeof li.lineNotes === 'string' ? li.lineNotes.trim() : '',
+      });
+    }
+
+    order.lineItems = processedLineItems;
+    order.subtotalPaisa = subtotalPaisa;
+    order.totalPaisa = Math.max(0, subtotalPaisa + (order.taxPaisa || 0) - (order.discountPaisa || 0));
+  }
+
+  if (expectedDeliveryDate && /^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
+    order.expectedDeliveryDate = expectedDeliveryDate;
+  }
+  if (typeof terms === 'string') order.terms = terms.trim();
+  if (typeof notes === 'string') order.notes = notes.trim();
+
+  // Snapshot before change
+  const previousSnapshot = {
+    status: order.status,
+    totalPaisa: order.totalPaisa,
+    itemCount: (order.lineItems || []).length,
+  };
+
+  const editReason = String(reason || request.body.editReason || 'Correction by café staff').trim();
+
+  if (wasApproved) {
+    // Edited AFTER approval:
+    order.editCountAfterApproval = (order.editCountAfterApproval || 0) + 1;
+    order.needsReapproval = true;
+    order.status = 'SUBMITTED'; // reset to SUBMITTED requiring Master re-approval
+    order.masterApproval = {
+      approvedAt: null,
+      approvedByUserId: null,
+      approvalNotes: `Approval invalidated due to post-approval modification on ${new Date().toISOString()}`,
+    };
+
+    await notifyMasterOfOrderEvent({
+      organisationId: request.auth.organisationId,
+      cafeId: order.cafeId,
+      purchaseOrderId,
+      title: `⚠️ Approved Order Edited: ${purchaseOrderId}`,
+      message: `Order ${purchaseOrderId} for ${order.cafeId} was edited after approval by ${request.auth.userId} (${request.auth.role}). Reason: ${editReason}. Master re-approval is required.`,
+      priority: 'HIGH',
+      category: 'OPERATIONS',
+      actorUserId: request.auth.userId,
+    });
+  } else {
+    // Edited BEFORE approval:
+    order.editCountBeforeApproval = (order.editCountBeforeApproval || 0) + 1;
+
+    await notifyMasterOfOrderEvent({
+      organisationId: request.auth.organisationId,
+      cafeId: order.cafeId,
+      purchaseOrderId,
+      title: `Order Request Updated: ${purchaseOrderId}`,
+      message: `Order request ${purchaseOrderId} for ${order.cafeId} was updated before approval by ${request.auth.userId}. Reason: ${editReason}.`,
+      priority: 'NORMAL',
+      category: 'OPERATIONS',
+      actorUserId: request.auth.userId,
+    });
+  }
+
+  if (!order.editHistory) order.editHistory = [];
+  order.editHistory.push({
+    editedAt: new Date(),
+    editedByUserId: request.auth.userId,
+    editedByRole: request.auth.role,
+    reason: editReason,
+    wasApproved,
+    changesSummary: `Updated line items (${order.lineItems.length}) - Total: ₹${(order.totalPaisa / 100).toFixed(2)}`,
+    previousSnapshot,
+  });
+
+  order.lastModifiedByUserId = request.auth.userId;
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'EDIT_PURCHASE_ORDER',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: {
+      editCountBeforeApproval: order.editCountBeforeApproval,
+      editCountAfterApproval: order.editCountAfterApproval,
+      needsReapproval: order.needsReapproval,
+      status: order.status,
+    },
+    result: 'SUCCESS',
+    riskClassification: wasApproved ? 'MEDIUM' : 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject(), purchaseOrder: order.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /procurement/orders/:purchaseOrderId/verify-delivery
+ * Receive & verify delivery, submit vendor bill/receipt, auto-post to inventory, notify Master for approval.
+ */
+const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertOrderRequestAccess(request, order.cafeId);
+
+  const rawDeliveries = request.body.deliveries || request.body.receivedItems || request.body.items;
+  if (!Array.isArray(rawDeliveries) || rawDeliveries.length === 0) {
+    throw new ApiError(400, 'DELIVERIES_REQUIRED', 'At least one line item verification is required.');
+  }
+
+  const {
+    deliveryNoteNumber,
+    deliveryNote,
+    vendorInvoiceNumber,
+    vendorInvoiceDate,
+    notes = '',
+    fileBase64,
+    fileName,
+    fileType,
+    billDocument,
+  } = request.body;
+
+  // Check receipt file from multer or body base64
+  const file = request.file;
+  let receiptAttachment = null;
+
+  if (file || fileBase64 || billDocument) {
+    const attachId = `ATT-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+    const fname = file ? file.originalname : (fileName || billDocument?.filename || `vendor_bill_${purchaseOrderId}.pdf`);
+    const mtype = file ? file.mimetype : (fileType || billDocument?.mimeType || 'application/pdf');
+    const size = file ? file.size : (fileBase64 ? Buffer.from(fileBase64, 'base64').length : (billDocument?.sizeBytes || 1024));
+    let b64Data = null;
+    if (file && fs.existsSync(file.path)) {
+      b64Data = fs.readFileSync(file.path, 'base64');
+    } else {
+      b64Data = fileBase64 || billDocument?.dataBase64 || null;
+    }
+
+    receiptAttachment = {
+      attachmentId: attachId,
+      filename: fname,
+      mimeType: mtype,
+      sizeBytes: size,
+      dataBase64: b64Data,
+      storagePath: file ? file.path : '',
+      uploadedAt: new Date(),
+      uploadedByUserId: request.auth.userId,
+      uploadedByRole: request.auth.role,
+      note: String(notes || 'Vendor bill / receipt submitted with delivery verification').trim(),
+    };
+  }
+
+  const businessDate = getIstBusinessDate();
+  const datePart = businessDate.replace(/-/g, '');
+  const now = new Date();
+  const movementsCreated = [];
+  const grnItems = [];
+
+  // Itemized verification
+  for (const del of rawDeliveries) {
+    const iId = normalizeId(del.itemId);
+    const lineItem = order.lineItems.find((li) => li.itemId === iId);
+    if (!lineItem) {
+      throw new ApiError(400, 'INVALID_LINE_ITEM', `Item ${iId} is not in this purchase order.`);
+    }
+
+    const orderedQty = Number(lineItem.orderedQuantityBase || 0);
+    const deliveredQty = Number(del.deliveredQty !== undefined ? del.deliveredQty : (del.quantityReceived !== undefined ? del.quantityReceived : orderedQty));
+    const acceptedQty = Number(del.acceptedQty !== undefined ? del.acceptedQty : (del.acceptedQuantity !== undefined ? del.acceptedQuantity : deliveredQty));
+    const rejectedQty = Number(del.rejectedQty || del.rejectedQuantity || 0);
+    const missingQty = Math.max(0, orderedQty - acceptedQty);
+    const discrepancyReason = String(del.discrepancyReason || del.rejectionReason || del.notes || (missingQty > 0 ? 'Item shortage on delivery' : '')).trim();
+
+    // ── ACTION 1: Automatically add accepted items to inventory ──────────────
+    if (acceptedQty > 0) {
+      let stockConfig = await CafeInventoryConfig.findOne({
+        organisationId: request.auth.organisationId,
+        cafeId: order.cafeId,
+        itemId: iId,
+      });
+
+      if (!stockConfig) {
+        stockConfig = new CafeInventoryConfig({
+          organisationId: request.auth.organisationId,
+          cafeId: order.cafeId,
+          itemId: iId,
+          currentQuantityBase: 0,
+          availableQuantityBase: 0,
+          createdByUserId: request.auth.userId,
+        });
+      }
+
+      const balanceBefore = Number(stockConfig.currentQuantityBase || 0);
+      const balanceAfter = balanceBefore + acceptedQty;
+
+      const movId = await SequenceCounter.generateId({
+        organisationId: request.auth.organisationId,
+        sequenceKey: `STOCK_MOVEMENT_${datePart}`,
+        prefix: `SMOV-${datePart}`,
+        minimumDigits: 4,
+      });
+
+      const movement = new StockMovement({
+        movementId: movId,
+        organisationId: request.auth.organisationId,
+        cafeId: order.cafeId,
+        itemId: iId,
+        movementType: 'RECEIPT',
+        quantityBase: acceptedQty,
+        quantityDelta: acceptedQty,
+        balanceBeforeBase: balanceBefore,
+        balanceAfterBase: balanceAfter,
+        balanceBefore,
+        balanceAfter,
+        businessDate,
+        serverTimestamp: now,
+        status: 'ACTIVE',
+        sourceModule: 'PROCUREMENT',
+        sourceRecordId: purchaseOrderId,
+        referenceId: purchaseOrderId,
+        referenceType: 'PURCHASE_ORDER',
+        description: `Verified goods receipt for PO ${purchaseOrderId}`,
+        performedByUserId: request.auth.userId,
+        createdByUserId: request.auth.userId,
+        createdByRole: request.auth.role,
+        correlationId: request.correlationId || null,
+      });
+      await movement.save();
+      movementsCreated.push(movId);
+
+      await CafeInventoryConfig.findOneAndUpdate(
+        {
+          organisationId: request.auth.organisationId,
+          cafeId: order.cafeId,
+          itemId: iId,
+        },
+        {
+          $inc: { currentQuantityBase: acceptedQty, availableQuantityBase: acceptedQty },
+          $set: { lastModifiedByUserId: request.auth.userId },
+        },
+        { upsert: true, new: true }
+      );
+
+      const lotId = await SequenceCounter.generateId({
+        organisationId: request.auth.organisationId,
+        sequenceKey: `LOT_${datePart}`,
+        prefix: `LOT-${datePart}`,
+        minimumDigits: 4,
+      });
+
+      const lotRecord = new InventoryLot({
+        organisationId: request.auth.organisationId,
+        lotId,
+        supplierLot: del.lotNumber || `SLOT-${Date.now().toString().slice(-6)}`,
+        itemId: iId,
+        cafeId: order.cafeId,
+        vendorId: order.vendorId,
+        procurementReference: order.purchaseOrderId,
+        storageLocation: 'Main Store',
+        mfgDate: del.manufacturingDate ? new Date(del.manufacturingDate).toISOString().slice(0, 10) : null,
+        expiryDate: del.expiryDate ? new Date(del.expiryDate).toISOString().slice(0, 10) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        unit: lineItem.baseUnit || 'units',
+        initialQuantity: acceptedQty,
+        quantityBase: acceptedQty,
+        remainingQuantity: acceptedQty,
+        receivedAt: now,
+        status: 'AVAILABLE',
+      });
+      await lotRecord.save();
+    }
+
+    lineItem.acceptedReceivedQty = (lineItem.acceptedReceivedQty || 0) + acceptedQty;
+    lineItem.receivedQuantityBase = lineItem.acceptedReceivedQty;
+    lineItem.rejectedQty = (lineItem.rejectedQty || 0) + rejectedQty;
+
+    grnItems.push({
+      itemId: iId,
+      deliveredQty,
+      acceptedQty,
+      rejectedQty,
+      missingQty,
+      discrepancyReason,
+      lotNumber: del.lotNumber || null,
+      notes: del.notes || '',
+    });
+  }
+
+  // Create GRN record
+  const grnId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `GRN_${datePart}`,
+    prefix: `GRN-${datePart}`,
+    minimumDigits: 4,
+  });
+
+  const grnRecord = {
+    grnId,
+    idempotencyKey: grnId,
+    deliveryNoteNumber: String(deliveryNoteNumber || deliveryNote || '').trim(),
+    receivedAt: now,
+    receivedByUserId: request.auth.userId,
+    items: grnItems,
+    receiptAttachments: receiptAttachment ? [receiptAttachment] : [],
+    notes: notes || '',
+    status: grnItems.some((g) => g.missingQty > 0 || g.rejectedQty > 0) ? 'PARTIAL' : 'ACCEPTED',
+  };
+
+  if (!order.grnReceipts) order.grnReceipts = [];
+  order.grnReceipts.push(grnRecord);
+
+  if (receiptAttachment) {
+    if (!order.receiptAttachments) order.receiptAttachments = [];
+    order.receiptAttachments.push(receiptAttachment);
+  }
+
+  const missingCount = grnItems.reduce((acc, g) => acc + (g.missingQty || 0), 0);
+  const isFullyFulfilled = (order.lineItems || []).every(
+    (l) => (Number(l.acceptedReceivedQty) || 0) >= (Number(l.orderedQuantityBase) || 0)
+  );
+
+  order.status = 'VERIFIED_PENDING_MASTER_APPROVAL';
+  order.receivingStatus = (missingCount === 0 && isFullyFulfilled) ? 'FULLY_RECEIVED' : 'PARTIALLY_RECEIVED';
+  order.deliveryMatchRemark = (missingCount === 0 && isFullyFulfilled) ? 'COMPLETED' : 'PARTIAL';
+  order.receivedDate = businessDate;
+  if (vendorInvoiceNumber) order.vendorInvoiceNumber = String(vendorInvoiceNumber).trim();
+  if (vendorInvoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(vendorInvoiceDate)) order.vendorInvoiceDate = vendorInvoiceDate;
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  // ── ACTION: Analyze and Update Vendor Ledger & AP Subledger ──
+  let apBillResult = null;
+  try {
+    const vendorLedgerService = require('../services/vendorLedgerService');
+    apBillResult = await vendorLedgerService.postVendorBillFromReceipt({
+      organisationId: request.auth.organisationId,
+      purchaseOrderId,
+      supplierInvoiceNumber: vendorInvoiceNumber || deliveryNoteNumber || `INV-${purchaseOrderId}`,
+      invoiceDate: vendorInvoiceDate || businessDate,
+      dueDate: order.expectedDeliveryDate || businessDate,
+      claimedAmountPaisa: order.totalPaisa,
+      claimedTaxPaisa: order.taxPaisa || 0,
+      notes: notes || 'Delivery physical count verified and receipt/invoice uploaded',
+      auth: request.auth,
+    });
+  } catch (ledgerErr) {
+    console.warn(`Vendor ledger post warning for PO ${purchaseOrderId}: ${ledgerErr.message}`);
+  }
+
+  // ── ACTION 2: Notify Master window with module to approve order & bills ──
+  const discrepancyText = missingCount > 0 ? ` (${missingCount} units reported missing/short)` : ' (Quantities fully verified)';
+  const billText = receiptAttachment ? ' Vendor bill/receipt attached.' : '';
+
+  await notifyMasterOfOrderEvent({
+    organisationId: request.auth.organisationId,
+    cafeId: order.cafeId,
+    purchaseOrderId,
+    title: `📦 Delivery Verified: ${purchaseOrderId}`,
+    message: `Delivery for ${order.cafeId} was verified by ${request.auth.userId}${discrepancyText}.${billText} Awaiting Master approval.`,
+    priority: missingCount > 0 ? 'HIGH' : 'NORMAL',
+    category: 'OPERATIONS',
+    actorUserId: request.auth.userId,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'VERIFY_DELIVERY_SUBMIT_BILL',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: {
+      status: order.status,
+      deliveryMatchRemark: order.deliveryMatchRemark,
+      receivingStatus: order.receivingStatus,
+      grnId,
+      receiptAttachmentAttached: !!receiptAttachment,
+      movementsCreatedCount: movementsCreated.length,
+      missingCount,
+      vendorLedgerPosted: !!apBillResult,
+    },
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      order: order.toObject(),
+      purchaseOrder: order.toObject(),
+      grn: grnRecord,
+      receiptAttachment,
+      movementsCreated,
+      vendorLedger: apBillResult,
+      deliveryMatchRemark: order.deliveryMatchRemark,
+    },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /procurement/orders/:purchaseOrderId/master-approve
+ * Master verifies and approves the order, discrepancy notes, and attached bills.
+ * Finalizes the order process.
+ */
+const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
+  if (request.auth?.role !== 'MASTER') {
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to approve purchase orders.');
+  }
+
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const { notes } = request.body;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+
+  order.status = 'APPROVED';
+  order.needsReapproval = false;
+  order.masterApproval = {
+    approvedAt: new Date(),
+    approvedByUserId: request.auth.userId,
+    approvalNotes: String(notes || 'Approved by Master with attached vendor bill verified').trim(),
+  };
+
+  // Recalculate fulfillment
+  const allLinesFulfilled = (order.lineItems || []).every(
+    (l) => (Number(l.acceptedReceivedQty) || 0) >= (Number(l.orderedQuantityBase) || 0)
+  );
+  if (allLinesFulfilled && order.grnReceipts?.length > 0) {
+    order.receivingStatus = 'POSTED_TO_INVENTORY';
+    order.status = 'CLOSED';
+  } else if (order.grnReceipts?.length > 0) {
+    order.receivingStatus = 'PARTIALLY_RECEIVED';
+  }
+
+  order.lastModifiedByUserId = request.auth.userId;
+  await order.save();
+
+  await notifyMasterOfOrderEvent({
+    organisationId: request.auth.organisationId,
+    cafeId: order.cafeId,
+    purchaseOrderId,
+    title: `✅ Order & Bills Approved: ${purchaseOrderId}`,
+    message: `Master ${request.auth.userId} approved order ${purchaseOrderId} and bills. Order process is complete.`,
+    priority: 'NORMAL',
+    category: 'OPERATIONS',
+    actorUserId: request.auth.userId,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'MASTER_APPROVE_ORDER_AND_BILL',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { status: order.status, approvedBy: request.auth.userId },
+    result: 'SUCCESS',
+    riskClassification: 'MEDIUM',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject(), purchaseOrder: order.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * GET /procurement/orders/:purchaseOrderId/receipt-bill/:attachmentId?
+ * Stream the attached vendor bill/receipt file so Master can download it to hand over to accounts.
+ */
+const downloadOrderReceiptBill = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const attachmentId = request.params.attachmentId ? normalizeId(request.params.attachmentId) : null;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+
+  assertCafeAccess(request, order.cafeId);
+
+  // Find attachment
+  let attach = null;
+  if (attachmentId) {
+    attach = (order.receiptAttachments || []).find((a) => a.attachmentId === attachmentId);
+  } else if (order.receiptAttachments?.length > 0) {
+    attach = order.receiptAttachments[order.receiptAttachments.length - 1];
+  }
+
+  if (!attach) {
+    // Check inside grnReceipts
+    for (const grn of (order.grnReceipts || [])) {
+      if (grn.receiptAttachments && grn.receiptAttachments.length > 0) {
+        attach = attachmentId ? grn.receiptAttachments.find((a) => a.attachmentId === attachmentId) : grn.receiptAttachments[0];
+        if (attach) break;
+      }
+    }
+  }
+
+  if (!attach) {
+    throw new ApiError(404, 'ATTACHMENT_NOT_FOUND', 'No attached vendor bill found for this purchase order.');
+  }
+
+  response.setHeader('Content-Type', attach.mimeType || 'application/pdf');
+  response.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(attach.filename || 'vendor_bill.pdf')}"`);
+
+  if (attach.dataBase64) {
+    const buf = Buffer.from(attach.dataBase64, 'base64');
+    return response.status(200).send(buf);
+  } else if (attach.storagePath && fs.existsSync(attach.storagePath)) {
+    return fs.createReadStream(attach.storagePath).pipe(response);
+  } else {
+    // Fallback: send text representation
+    const textData = `Vendor Bill for PO ${purchaseOrderId}\nAttachment: ${attach.filename}\nUploaded: ${attach.uploadedAt}`;
+    return response.status(200).send(Buffer.from(textData));
+  }
 });
 
 /**
@@ -2135,6 +3147,47 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
           const quality = item.qualityCondition || 'ACCEPTABLE';
 
           poLine.receivedQuantityBase = (poLine.receivedQuantityBase || 0) + acceptedQty;
+          poLine.acceptedReceivedQty = poLine.receivedQuantityBase;
+          if (rejectedQty > 0) {
+            poLine.rejectedQty = (poLine.rejectedQty || 0) + rejectedQty;
+          }
+
+          const shortfall = Math.max(
+            0,
+            (poLine.orderedQuantityBase || 0) - poLine.acceptedReceivedQty - (poLine.closedShortQty || 0) - (poLine.buyerCancelledQty || 0)
+          );
+          if (item.disposition === 'BACKORDER') {
+            poLine.backorderedQty = shortfall;
+            poLine.backorderDetails = {
+              expectedDeliveryDate: item.expectedDeliveryDate ? new Date(item.expectedDeliveryDate) : null,
+              confirmationRef: item.confirmationRef || '',
+              note: item.notes || '',
+              backorderedAt: now,
+              backorderedByUserId: request.auth.userId,
+              isOverdue: item.expectedDeliveryDate ? new Date(item.expectedDeliveryDate) < now : false,
+            };
+            poLine.fulfillmentStatus = 'BACKORDERED';
+          } else if (item.disposition === 'VENDOR_CANNOT_SUPPLY') {
+            poLine.vendorUnavailableQty = shortfall;
+            poLine.vendorUnavailableDetails = {
+              reason: item.rejectionReason || 'OUT_OF_STOCK',
+              note: item.notes || '',
+              recordedAt: now,
+              recordedByUserId: request.auth.userId,
+            };
+            poLine.fulfillmentStatus = 'VENDOR_UNAVAILABLE';
+          } else if (item.disposition === 'CLOSE_REMAINING') {
+            poLine.closedShortQty = (poLine.closedShortQty || 0) + shortfall;
+            poLine.closeShortDetails = {
+              reason: item.notes || 'Closed remaining during GRN',
+              note: item.notes || '',
+              closedAt: now,
+              closedByUserId: request.auth.userId,
+              isVendorFault: true,
+            };
+            poLine.outstandingQty = 0;
+            poLine.fulfillmentStatus = 'CLOSED_SHORT';
+          }
 
           const inspectionId = await SequenceCounter.generateId({
             organisationId: request.auth.organisationId,
@@ -2392,6 +3445,7 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
           details: `Goods receipt recorded with inspection and lot creation. Status: ${po.status}.`,
         });
 
+        po.recalculateFulfillment();
         await po.save(sessionOpt);
 
         await recordRequestAudit({
@@ -2562,63 +3616,134 @@ const getProcurementIntegrity = asyncHandler(async (request, response) => {
  * List documents attached to a purchase order.
  */
 const getOrderDocuments = asyncHandler(async (request, response) => {
-  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
-  const poQuery = PurchaseOrder.findOne({
+  request.auth = request.auth || request.user || {};
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
+  const po = await PurchaseOrder.findOne({
     purchaseOrderId,
     organisationId: request.auth.organisationId,
-  });
-  const po = poQuery && typeof poQuery.lean === 'function' ? await poQuery.lean() : await poQuery;
+  }).lean();
 
   if (!po) {
     throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
   }
+
+  // Staff strictly prohibited from listing procurement documents
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'PROCUREMENT_RESOURCE_DENIED', 'Staff are prohibited from listing PO documents.');
+  }
+
   assertCafeAccess(request, po.cafeId);
 
-  const documents = await BusinessDocument.find({
+  const filter = {
     organisationId: request.auth.organisationId,
-    relatedModule: 'PURCHASE_ORDER',
     relatedRecordId: purchaseOrderId,
     isDeleted: false,
-  })
-    .select('-fileData -versions.fileData')
+  };
+
+  if (request.query && request.query.documentType) {
+    filter.documentType = String(request.query.documentType).trim();
+  }
+
+  const documents = await BusinessDocument.find(filter)
+    .select('-fileData -versions.fileData -fileBuffer')
     .sort({ createdAt: -1 })
     .lean();
 
+  // Strip internal storage paths / keys from client display
+  const sanitized = documents.map((d) => ({
+    documentId: d.documentId,
+    documentType: d.documentType,
+    originalFilename: d.safeDisplayFileName || d.originalFilename,
+    documentNumber: d.documentNumber,
+    entityName: d.entityName,
+    invoiceDate: d.invoiceDate,
+    amountPaisa: d.amountPaisa,
+    gstin: d.gstin,
+    sizeBytes: d.sizeBytes,
+    currentVersion: d.currentVersion,
+    scanStatus: d.scanStatus,
+    uploadStatus: d.uploadStatus,
+    documentStatus: d.documentStatus || d.status,
+    uploadedBy: d.uploadedBy,
+    uploadedAt: d.uploadedAt,
+    metadata: d.metadata || {},
+    versionsCount: (d.versions || []).length,
+  }));
+
   return response.status(200).json({
     success: true,
-    data: { documents, count: documents.length },
+    data: { documents: sanitized, count: sanitized.length },
     correlationId: request.correlationId || null,
   });
 });
 
 /**
  * POST /procurement/orders/:purchaseOrderId/documents
- * Attach a business document (e.g. signed PO, vendor invoice, delivery challan) to a purchase order.
+ * Attach a business document (supplier invoice, delivery challan, receipt, quotation, credit note)
+ * to a purchase order with full metadata validation and 3-way match reconciliation.
  */
 const attachOrderDocument = asyncHandler(async (request, response) => {
-  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
-  const poQuery = PurchaseOrder.findOne({
+  request.auth = request.auth || request.user || {};
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
+  const po = await PurchaseOrder.findOne({
     purchaseOrderId,
     organisationId: request.auth.organisationId,
   });
-  const po = poQuery && typeof poQuery.lean === 'function' ? await poQuery.lean() : await poQuery;
 
   if (!po) {
     throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
   }
+
+  // Role Gate: Master and assigned Cafe Admin only. Owner is view/download only. Staff denied.
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'PROCUREMENT_RESOURCE_DENIED', 'Staff are prohibited from attaching procurement documents.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'OWNER_PROCUREMENT_ATTACH_DENIED', 'Owner authority is restricted to view/download for procurement evidence.');
+  }
+
   assertCafeAccess(request, po.cafeId);
 
   const file = request.file;
   const body = request.body || {};
+  const docType = String(body.documentType || 'SUPPLIER_INVOICE').trim();
+  const docNum = String(body.documentNumber || body.invoiceNumber || body.challanNumber || body.referenceNumber || '').trim();
+  const docDate = body.documentDate || body.invoiceDate || body.challanDate || null;
+  const supplierId = String(body.supplierId || body.vendorId || po.vendorId || '').trim();
+  const gstin = String(body.supplierGSTIN || body.gstin || '').trim();
+  const amountPaisa = body.amountPaisa !== undefined
+    ? Number(body.amountPaisa)
+    : (body.totalAmount !== undefined ? Math.round(Number(body.totalAmount) * 100) : null);
+
+  const docMetadata = {
+    ...body,
+    purchaseOrderId,
+    supplierId,
+    vendorId: supplierId,
+    invoiceNumber: docNum,
+    invoiceDate: docDate,
+    challanNumber: docNum,
+    challanDate: docDate,
+    vehicleRef: body.vehicleRef || body.transportRef || null,
+    linkedGrn: body.linkedGrn || null,
+  };
 
   const doc = await DocumentAttachmentService.attachDocument({
     ...body,
     organisationId: request.auth.organisationId,
     cafeId: po.cafeId,
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
     relatedModule: 'PURCHASE_ORDER',
     relatedRecordId: purchaseOrderId,
-    documentType: body.documentType || 'PURCHASE_ORDER',
-    originalFilename: file ? file.originalname : (body.originalFilename || `${purchaseOrderId}_attachment.pdf`),
+    documentType: docType,
+    documentNumber: docNum,
+    entityName: supplierId,
+    invoiceDate: docDate,
+    amountPaisa,
+    gstin,
+    metadata: docMetadata,
+    originalFilename: file ? file.originalname : (body.originalFilename || `${purchaseOrderId}_${docType.toLowerCase()}.pdf`),
     mimeType: file ? file.mimetype : (body.mimeType || 'application/pdf'),
     sizeBytes: file ? file.size : (body.sizeBytes || (body.fileBuffer ? body.fileBuffer.length : (body.fileBase64 ? Buffer.from(body.fileBase64, 'base64').length : 1024))),
     tempFilePath: file ? file.path : null,
@@ -2627,89 +3752,1418 @@ const attachOrderDocument = asyncHandler(async (request, response) => {
     auth: request.auth,
   });
 
+  // Link secondary procurement references on PO
+  if (docType === 'SUPPLIER_INVOICE') {
+    const existingInv = (po.invoices || []).find((i) => i.invoiceNumber && i.invoiceNumber.trim().toUpperCase() === docNum.toUpperCase());
+    if (!existingInv) {
+      po.invoices.push({
+        invoiceId: doc.documentId,
+        invoiceNumber: docNum || doc.documentId,
+        invoiceDate: docDate ? new Date(docDate).toISOString().slice(0, 10) : getIstBusinessDate(),
+        amountPaisa: amountPaisa || po.totalPaisa || 0,
+        taxPaisa: Math.round(Number(body.cgst || 0) + Number(body.sgst || 0) + Number(body.igst || 0)),
+        totalPaisa: amountPaisa || po.totalPaisa || 0,
+        status: 'CAPTURED',
+      });
+    }
+  } else if (docType === 'DELIVERY_CHALLAN') {
+    if (!po.deliveryChallanIds) po.deliveryChallanIds = [];
+    if (!po.deliveryChallanIds.includes(docNum || doc.documentId)) {
+      po.deliveryChallanIds.push(docNum || doc.documentId);
+    }
+  } else if (docType === 'QUOTATION') {
+    if (!po.quotationIds) po.quotationIds = [];
+    if (!po.quotationIds.includes(docNum || doc.documentId)) {
+      po.quotationIds.push(docNum || doc.documentId);
+    }
+  } else if (docType === 'CREDIT_NOTE' || docType === 'DEBIT_NOTE') {
+    if (!po.creditDebitNoteIds) po.creditDebitNoteIds = [];
+    if (!po.creditDebitNoteIds.includes(docNum || doc.documentId)) {
+      po.creditDebitNoteIds.push(docNum || doc.documentId);
+    }
+  }
+
+  // Update 3-Way Match evaluation (without auto-advancing PO status!)
+  const matchResult = ThreeWayMatchService.reconcileProcurementDocuments({
+    purchaseOrder: typeof po.toObject === 'function' ? po.toObject() : po,
+    grnReceipts: po.grnReceipts,
+    supplierInvoices: po.invoices,
+  });
+
+  po.threeWayMatch = {
+    matchStatus: matchResult.matchStatus,
+    matchedAt: new Date(),
+    matchedByUserId: request.auth.userId,
+    priceVariancePaisa: matchResult.priceVariancePaisa || 0,
+    quantityVarianceBase: matchResult.quantityVarianceBase || 0,
+    taxVariancePaisa: matchResult.taxVariancePaisa || 0,
+    isExceptionApproved: false,
+    exceptionReason: '',
+  };
+
+  // Add milestone
+  if (Array.isArray(po.milestones)) {
+    po.milestones.push({
+      milestoneKey: `DOC_${docType}`,
+      label: `Attached ${docType.replace(/_/g, ' ')}: ${doc.safeDisplayFileName || doc.originalFilename}`,
+      timestamp: new Date(),
+      actorUserId: request.auth.userId,
+      details: `Document ID: ${doc.documentId}, Version: ${doc.currentVersion}`,
+    });
+  }
+
+  // DO NOT MUTATE po.status: Presence of document is evidence, not authority to approve or pay.
+  if (typeof po.save === 'function') {
+    await po.save();
+  }
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'PO_DOCUMENT_ATTACHED',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    cafeId: po.cafeId,
+    metadata: {
+      documentId: doc.documentId,
+      documentType: docType,
+      documentNumber: docNum,
+      reconciliationStatus: matchResult.reconciliationStatus,
+      warnings: doc.metadata?.warnings || [],
+    },
+  }).catch(() => {});
+
   return response.status(201).json({
     success: true,
     message: 'Document attached to purchase order successfully.',
-    data: doc,
+    data: {
+      ...(typeof doc.toObject === 'function' ? doc.toObject() : doc),
+      document: doc,
+      threeWayMatch: po.threeWayMatch,
+      warnings: doc.metadata?.warnings || [],
+    },
     correlationId: request.correlationId || null,
   });
 });
 
 /**
- * GET /procurement/orders/:purchaseOrderId/documents/:documentId/download
- * Binary download with Content-Disposition, X-Export-Id, and SHA-256 verification.
+ * GET /procurement/orders/:purchaseOrderId/documents/:documentId/preview
+ * Inline stream with Content-Disposition inline for browser viewing.
  */
-const downloadOrderDocument = asyncHandler(async (request, response) => {
-  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
-  const documentId = normalizeId(request.params.documentId);
+const previewOrderDocument = asyncHandler(async (request, response) => {
+  request.auth = request.auth || request.user || {};
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
+  const documentId = normalizeId(request.params.documentId || request.params.docId);
 
-  const poQuery = PurchaseOrder.findOne({
+  const po = await PurchaseOrder.findOne({
     purchaseOrderId,
     organisationId: request.auth.organisationId,
-  });
-  const po = poQuery && typeof poQuery.lean === 'function' ? await poQuery.lean() : await poQuery;
+  }).lean();
 
   if (!po) {
     throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
   }
+
+  // Staff strictly prohibited from preview
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'PROCUREMENT_RESOURCE_DENIED', 'Staff are prohibited from previewing procurement documents.');
+  }
+
   assertCafeAccess(request, po.cafeId);
 
   const doc = await BusinessDocument.findOne({
     documentId,
-    relatedModule: 'PURCHASE_ORDER',
-    relatedRecordId: purchaseOrderId,
     organisationId: request.auth.organisationId,
+    $or: [
+      { relatedRecordId: purchaseOrderId },
+      { entityId: purchaseOrderId },
+    ],
     isDeleted: false,
-  }).select('+fileBuffer');
+  });
 
   if (!doc) {
     throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'Attachment document not found for this purchase order.');
   }
 
-  // Security scanning gate
-  if (doc.securityScanStatus === 'REJECTED') {
-    throw new ApiError(403, 'MALWARE_DETECTED', 'Document access blocked: file rejected by security scanner.');
+  // Canonical REC-06 execution-time re-authorization & fail-closed malware gate
+  DocumentAttachmentService.assertDocumentAuthorization(doc, request.auth, 'PREVIEW');
+
+  const key = doc.storageObjectKey || doc.storageKey;
+  if (!key) {
+    throw new ApiError(404, 'STORAGE_OBJECT_NOT_FOUND', 'Storage reference missing.');
   }
 
-  const exportId = `EXP-DOC-${Date.now().toString(36).toUpperCase()}`;
+  const safeFilename = doc.safeDisplayFileName || doc.originalFilename;
   response.setHeader('Content-Type', doc.mimeType);
-  response.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(doc.originalFilename)}"`);
-  response.setHeader('X-Export-Id', exportId);
-  response.setHeader('X-File-Checksum', doc.checksum || '');
+  response.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(safeFilename)}"`);
   response.setHeader('X-Content-Type-Options', 'nosniff');
+  if (doc.sizeBytes) {
+    response.setHeader('Content-Length', doc.sizeBytes);
+  }
 
-  // Stream from storage key if available
-  if (doc.storageKey) {
-    try {
-      const stream = await documentStorageAdapter.getStream({ storageKey: doc.storageKey });
-      response.setHeader('Content-Length', doc.sizeBytes);
-      return stream.pipe(response);
-    } catch (err) {
-      if (doc.storagePath && fs.existsSync(doc.storagePath)) {
-        const stat = await fs.promises.stat(doc.storagePath);
-        response.setHeader('Content-Length', stat.size);
-        const stream = fs.createReadStream(doc.storagePath);
-        return stream.pipe(response);
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'PO_DOCUMENT_PREVIEWED',
+    entityType: 'BUSINESS_DOCUMENT',
+    entityId: documentId,
+    cafeId: po.cafeId,
+    metadata: { purchaseOrderId, documentType: doc.documentType },
+  }).catch(() => {});
+
+  const stream = await documentStorageAdapter.getStream({ storageKey: key });
+  return stream.pipe(response);
+});
+
+/**
+ * GET /procurement/orders/:purchaseOrderId/documents/:documentId/download
+ * Binary download with Content-Disposition attachment, X-Export-Id, and SHA-256 verification.
+ */
+const downloadOrderDocument = asyncHandler(async (request, response) => {
+  request.auth = request.auth || request.user || {};
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
+  const documentId = normalizeId(request.params.documentId || request.params.docId);
+
+  const po = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  }).lean();
+
+  if (!po) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+
+  // Staff strictly prohibited from downloading procurement documents
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'PROCUREMENT_RESOURCE_DENIED', 'Staff are prohibited from downloading procurement documents.');
+  }
+
+  assertCafeAccess(request, po.cafeId);
+
+  let doc = null;
+  const docFind = BusinessDocument.findOne({
+    documentId,
+    organisationId: request.auth.organisationId,
+    $or: [
+      { relatedRecordId: purchaseOrderId },
+      { entityId: purchaseOrderId },
+    ],
+    isDeleted: false,
+  });
+
+  if (docFind && typeof docFind.select === 'function') {
+    doc = await docFind.select();
+  } else {
+    doc = await docFind;
+  }
+
+  if (!doc) {
+    throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'Attachment document not found for this purchase order.');
+  }
+
+  // Canonical REC-06 execution-time re-authorization & malware gate
+  DocumentAttachmentService.assertDocumentAuthorization(doc, request.auth, 'DOWNLOAD');
+
+  const key = doc.storageObjectKey || doc.storageKey;
+  if (!key) {
+    throw new ApiError(404, 'STORAGE_OBJECT_NOT_FOUND', 'Storage reference missing.');
+  }
+
+  const exportId = `EXP-PO-DOC-${Date.now().toString(36).toUpperCase()}`;
+  const safeFilename = doc.safeDisplayFileName || doc.originalFilename;
+  response.setHeader('Content-Type', doc.mimeType);
+  response.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeFilename)}"`);
+  response.setHeader('X-Export-Id', exportId);
+  response.setHeader('X-File-Checksum', doc.sha256 || doc.checksum || '');
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  if (doc.sizeBytes) {
+    response.setHeader('Content-Length', doc.sizeBytes);
+  }
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'PO_DOCUMENT_DOWNLOADED',
+    entityType: 'BUSINESS_DOCUMENT',
+    entityId: documentId,
+    cafeId: po.cafeId,
+    metadata: { purchaseOrderId, documentType: doc.documentType, exportId },
+  }).catch(() => {});
+
+  const stream = await documentStorageAdapter.getStream({ storageKey: key });
+  return stream.pipe(response);
+});
+
+/**
+ * POST /procurement/orders/:purchaseOrderId/documents/:documentId/replace-version
+ * Replaces a procurement document with an updated version, preserving audit history.
+ */
+const replaceOrderDocumentVersion = asyncHandler(async (request, response) => {
+  request.auth = request.auth || request.user || {};
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
+  const documentId = normalizeId(request.params.documentId || request.params.docId);
+
+  const po = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  }).lean();
+
+  if (!po) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'PROCUREMENT_RESOURCE_DENIED', 'Staff are prohibited from replacing document versions.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'OWNER_PROCUREMENT_MUTATION_DENIED', 'Owner authority is restricted to view/download.');
+  }
+
+  assertCafeAccess(request, po.cafeId);
+
+  const file = request.file;
+  const body = request.body || {};
+
+  const updatedDoc = await DocumentAttachmentService.replaceVersion({
+    documentId,
+    organisationId: request.auth.organisationId,
+    originalFilename: file ? file.originalname : body.originalFilename,
+    mimeType: file ? file.mimetype : body.mimeType,
+    sizeBytes: file ? file.size : body.sizeBytes,
+    tempFilePath: file ? file.path : null,
+    fileBuffer: body.fileBuffer || null,
+    fileBase64: body.fileBase64 || null,
+    changeReason: body.changeReason || body.reason || 'Procurement document correction',
+    auth: request.auth,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'PO_DOCUMENT_VERSION_REPLACED',
+    entityType: 'BUSINESS_DOCUMENT',
+    entityId: documentId,
+    cafeId: po.cafeId,
+    metadata: {
+      purchaseOrderId,
+      newVersion: updatedDoc.currentVersion,
+      changeReason: body.changeReason,
+    },
+  }).catch(() => {});
+
+  return response.status(200).json({
+    success: true,
+    message: `Document version replaced successfully (v${updatedDoc.currentVersion}).`,
+    data: updatedDoc,
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * DELETE /procurement/orders/:purchaseOrderId/documents/:documentId
+ * Archives an attachment from the active PO view, preserving audit history and retention policy.
+ */
+const archiveOrderDocument = asyncHandler(async (request, response) => {
+  request.auth = request.auth || request.user || {};
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
+  const documentId = normalizeId(request.params.documentId || request.params.docId);
+
+  const po = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  }).lean();
+
+  if (!po) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'PROCUREMENT_RESOURCE_DENIED', 'Staff are prohibited from archiving procurement documents.');
+  }
+  if (request.auth.role === 'OWNER') {
+    throw new ApiError(403, 'OWNER_PROCUREMENT_MUTATION_DENIED', 'Owner authority is restricted to view/download.');
+  }
+
+  assertCafeAccess(request, po.cafeId);
+
+  const result = await DocumentAttachmentService.deleteDocument({
+    documentId,
+    organisationId: request.auth.organisationId,
+    reason: request.body?.reason || 'Procurement document archived from active view',
+    auth: request.auth,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'PO_DOCUMENT_ARCHIVED',
+    entityType: 'BUSINESS_DOCUMENT',
+    entityId: documentId,
+    cafeId: po.cafeId,
+    metadata: { purchaseOrderId, reason: request.body?.reason },
+  }).catch(() => {});
+
+  return response.status(200).json({
+    success: true,
+    message: result.message || 'Document archived successfully.',
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * GET /procurement/orders/:purchaseOrderId/matching-status
+ * Returns three-way matching reconciliation summary.
+ */
+const getPoDocumentMatchingStatus = asyncHandler(async (request, response) => {
+  request.auth = request.auth || request.user || {};
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
+  const po = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  }).lean();
+
+  if (!po) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+
+  if (request.auth.role === 'STAFF') {
+    throw new ApiError(403, 'PROCUREMENT_RESOURCE_DENIED', 'Staff are prohibited from viewing matching status.');
+  }
+
+  assertCafeAccess(request, po.cafeId);
+
+  const matchSummary = ThreeWayMatchService.reconcileProcurementDocuments({
+    purchaseOrder: po,
+    grnReceipts: po.grnReceipts,
+    supplierInvoices: po.invoices,
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: matchSummary,
+    correlationId: request.correlationId || null,
+  });
+});
+
+const getSupplierContextualIntelligence = asyncHandler(async (request, response) => {
+  const { organisationId } = request.auth;
+  const vendorId = String(request.params.vendorId || '').trim().toUpperCase();
+
+  const vendor = await Vendor.findOne({ organisationId, vendorId }).lean();
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', `Vendor ${vendorId} not found.`);
+  }
+
+  const [recentOrders, actionPlans, contracts, recentInspections] = await Promise.all([
+    PurchaseOrder.find({ organisationId, vendorId }).sort({ createdAt: -1 }).limit(10).lean(),
+    SupplierActionPlan.find({ organisationId, vendorId, isDeleted: false }).lean(),
+    BusinessContract.find({ organisationId, vendorId, isDeleted: false }).lean(),
+    IncomingInspection.find({ organisationId, vendorId }).sort({ inspectedAt: -1 }).limit(10).lean(),
+  ]);
+
+  const recentPrices = [];
+  const priceItemMap = new Map();
+  for (const po of recentOrders) {
+    for (const item of po.lineItems || []) {
+      if (item.itemId && !priceItemMap.has(item.itemId)) {
+        priceItemMap.set(item.itemId, true);
+        recentPrices.push({
+          itemId: item.itemId,
+          itemName: item.name || item.itemName,
+          lastUnitCostPaisa: item.unitCostPaisa || 0,
+          purchaseOrderId: po.purchaseOrderId,
+          orderDate: po.createdAt,
+        });
       }
     }
   }
 
-  const payload = doc.fileBuffer || (doc.fileData ? Buffer.from(doc.fileData, 'base64') : null);
-  if (!payload) {
-    throw new ApiError(404, 'FILE_CONTENT_UNAVAILABLE', 'Attachment file binary content is unavailable.');
+  const failedInspections = recentInspections.filter((i) => i.result === 'FAIL' || i.result === 'REJECTED');
+  const openQualityIssueCount = failedInspections.length;
+
+  const warnings = [];
+  if (openQualityIssueCount > 0) {
+    warnings.push({
+      code: 'OPEN_QUALITY_REJECTION',
+      severity: 'WARN',
+      message: `${openQualityIssueCount} recent incoming inspection(s) rejected or flagged for quality.`,
+    });
   }
 
-  response.setHeader('Content-Length', payload.length);
-  return response.send(payload);
+  const now = new Date();
+  const expiringContracts = contracts.filter(
+    (c) => c.status === 'ACTIVE' && c.expiryDate && new Date(c.expiryDate) < new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+  );
+  if (expiringContracts.length > 0) {
+    warnings.push({
+      code: 'CONTRACT_EXPIRING_SOON',
+      severity: 'WARN',
+      message: `Supplier contract ${expiringContracts[0].contractReference || expiringContracts[0].contractId} is expiring within 30 days.`,
+    });
+  }
+
+  if (actionPlans.some((ap) => ap.status === 'ACTIVE' || ap.status === 'DUE')) {
+    warnings.push({
+      code: 'ACTIVE_ACTION_PLAN',
+      severity: 'INFO',
+      message: 'Supplier is currently operating under an active performance improvement action plan.',
+    });
+  }
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      vendorId,
+      vendorName: vendor.name,
+      rating: vendor.rating || 0,
+      deliveryReliabilityPercentage: vendor.deliveryScore || 95,
+      openQualityIssuesCount: openQualityIssueCount,
+      recentPrices,
+      contractsSummary: {
+        totalContracts: contracts.length,
+        activeContracts: contracts.filter((c) => c.status === 'ACTIVE').length,
+      },
+      actionPlansSummary: {
+        totalPlans: actionPlans.length,
+        activePlans: actionPlans.filter((ap) => ap.status === 'ACTIVE').length,
+      },
+      warnings,
+      isVendorBlocked: false,
+      governanceGuidance:
+        'Contextual warnings provided for buyer informed decision-making; warnings do not trigger automatic vendor rejection.',
+    },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/vendor-confirm
+ * Record pre-delivery vendor confirmation (quantities, expected date, ref).
+ */
+const vendorConfirmOrder = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const { confirmations = [], confirmationReference = '', confirmationDate } = request.body;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  if (['CANCELLED', 'CLOSED'].includes(order.status)) {
+    throw new ApiError(400, 'INVALID_STATUS', `Cannot confirm a purchase order in ${order.status} status.`);
+  }
+
+  for (const conf of confirmations) {
+    const iId = normalizeId(conf.itemId);
+    const lineItem = order.lineItems.find(
+      (li) => (conf.lineId && String(li._id) === String(conf.lineId)) || li.itemId === iId
+    );
+    if (!lineItem) {
+      throw new ApiError(400, 'INVALID_LINE_ITEM', `Item ${iId} not in purchase order.`);
+    }
+
+    const ordered = Number(lineItem.orderedQuantityBase || 0);
+    const confirmedSupply = Number(conf.confirmedSupplyQty || 0);
+    const backorder = Number(conf.backorderQty || 0);
+    const cannotSupply = Number(conf.cannotSupplyQty || 0);
+
+    if (confirmedSupply < 0 || backorder < 0 || cannotSupply < 0) {
+      throw new ApiError(400, 'INVALID_QUANTITY', 'Quantities must be non-negative.');
+    }
+
+    if (confirmedSupply + backorder + cannotSupply > ordered) {
+      throw new ApiError(
+        400,
+        'QUANTITY_EXCEEDS_ORDERED',
+        `Sum of confirmed (${confirmedSupply}), backorder (${backorder}), and cannot-supply (${cannotSupply}) exceeds ordered (${ordered}) for item ${iId}.`
+      );
+    }
+
+    lineItem.vendorConfirmationDetails = {
+      confirmedSupplyQty: confirmedSupply,
+      backorderQty: backorder,
+      cannotSupplyQty: cannotSupply,
+      expectedDeliveryDate: conf.expectedDeliveryDate ? new Date(conf.expectedDeliveryDate) : null,
+      confirmationReference: String(confirmationReference || conf.confirmationReference || '').trim(),
+      confirmedAt: new Date(),
+      confirmedByUserId: request.auth.userId,
+    };
+
+    if (backorder > 0) {
+      lineItem.backorderedQty = backorder;
+      lineItem.backorderDetails = {
+        expectedDeliveryDate: conf.expectedDeliveryDate ? new Date(conf.expectedDeliveryDate) : null,
+        confirmationRef: String(confirmationReference || conf.confirmationReference || '').trim(),
+        note: conf.note || '',
+        backorderedAt: new Date(),
+        backorderedByUserId: request.auth.userId,
+        isOverdue: conf.expectedDeliveryDate ? new Date(conf.expectedDeliveryDate) < new Date() : false,
+      };
+    }
+
+    if (cannotSupply > 0) {
+      lineItem.vendorUnavailableQty = cannotSupply;
+      lineItem.vendorUnavailableDetails = {
+        reason: conf.unavailableReason || 'OUT_OF_STOCK',
+        note: conf.note || '',
+        recordedAt: new Date(),
+        recordedByUserId: request.auth.userId,
+      };
+    }
+
+    if (confirmedSupply < ordered) {
+      lineItem.fulfillmentStatus = 'PARTIALLY_CONFIRMED';
+    } else {
+      lineItem.fulfillmentStatus = 'VENDOR_CONFIRMED';
+    }
+  }
+
+  order.recalculateFulfillment();
+  order.supplierAcknowledgedAt = new Date();
+  order.supplierAcknowledgementStatus = order.lineItems.some((l) => l.vendorUnavailableQty > 0)
+    ? 'ACCEPTED_WITH_CHANGES'
+    : 'ACCEPTED';
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'VENDOR_CONFIRM_PURCHASE_ORDER',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { fulfillmentStatus: order.fulfillmentStatus },
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/lines/:lineId/backorder
+ */
+const backorderLine = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const rawLineId = String(request.params.lineId || '').trim();
+  const { backorderedQty, expectedDeliveryDate, confirmationRef = '', note = '' } = request.body;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  const lineItem = order.lineItems.find(
+    (li) => String(li._id) === rawLineId || li.itemId === rawLineId.toUpperCase()
+  );
+  if (!lineItem) {
+    throw new ApiError(404, 'LINE_ITEM_NOT_FOUND', `Line item ${rawLineId} not found on PO.`);
+  }
+
+  const outstanding = lineItem.outstandingQty !== undefined
+    ? lineItem.outstandingQty
+    : Math.max(0, lineItem.orderedQuantityBase - (lineItem.acceptedReceivedQty || lineItem.receivedQuantityBase || 0) - (lineItem.closedShortQty || 0) - (lineItem.buyerCancelledQty || 0));
+
+  const targetQty = backorderedQty !== undefined ? Number(backorderedQty) : outstanding;
+  if (!Number.isFinite(targetQty) || targetQty <= 0) {
+    throw new ApiError(400, 'INVALID_QUANTITY', 'Backordered quantity must be greater than zero.');
+  }
+  if (targetQty > outstanding) {
+    throw new ApiError(400, 'QUANTITY_EXCEEDS_OUTSTANDING', `Backordered quantity (${targetQty}) cannot exceed outstanding quantity (${outstanding}).`);
+  }
+
+  lineItem.backorderedQty = targetQty;
+  lineItem.backorderDetails = {
+    expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : null,
+    confirmationRef: String(confirmationRef).trim(),
+    note: String(note).trim(),
+    backorderedAt: new Date(),
+    backorderedByUserId: request.auth.userId,
+    isOverdue: expectedDeliveryDate ? new Date(expectedDeliveryDate) < new Date() : false,
+  };
+  lineItem.fulfillmentStatus = 'BACKORDERED';
+
+  order.recalculateFulfillment();
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'BACKORDER_PO_LINE',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { lineId: lineItem._id, backorderedQty: targetQty, expectedDeliveryDate },
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject(), lineItem: lineItem.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/lines/:lineId/vendor-unavailable
+ */
+const vendorUnavailableLine = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const rawLineId = String(request.params.lineId || '').trim();
+  const { unavailableQty, reason = 'OUT_OF_STOCK', note = '' } = request.body;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  const lineItem = order.lineItems.find(
+    (li) => String(li._id) === rawLineId || li.itemId === rawLineId.toUpperCase()
+  );
+  if (!lineItem) {
+    throw new ApiError(404, 'LINE_ITEM_NOT_FOUND', `Line item ${rawLineId} not found on PO.`);
+  }
+
+  const outstanding = lineItem.outstandingQty !== undefined
+    ? lineItem.outstandingQty
+    : Math.max(0, lineItem.orderedQuantityBase - (lineItem.acceptedReceivedQty || lineItem.receivedQuantityBase || 0) - (lineItem.closedShortQty || 0) - (lineItem.buyerCancelledQty || 0));
+
+  const targetQty = unavailableQty !== undefined ? Number(unavailableQty) : outstanding;
+  if (!Number.isFinite(targetQty) || targetQty <= 0) {
+    throw new ApiError(400, 'INVALID_QUANTITY', 'Unavailable quantity must be greater than zero.');
+  }
+  if (targetQty > outstanding) {
+    throw new ApiError(400, 'QUANTITY_EXCEEDS_OUTSTANDING', `Unavailable quantity (${targetQty}) cannot exceed outstanding quantity (${outstanding}).`);
+  }
+
+  lineItem.vendorUnavailableQty = targetQty;
+  lineItem.vendorUnavailableDetails = {
+    reason: String(reason).trim().toUpperCase(),
+    note: String(note).trim(),
+    recordedAt: new Date(),
+    recordedByUserId: request.auth.userId,
+  };
+  lineItem.fulfillmentStatus = 'VENDOR_UNAVAILABLE';
+
+  order.recalculateFulfillment();
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'VENDOR_UNAVAILABLE_PO_LINE',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { lineId: lineItem._id, unavailableQty: targetQty, reason },
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject(), lineItem: lineItem.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/lines/:lineId/close-short
+ */
+const closeShortLine = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const rawLineId = String(request.params.lineId || '').trim();
+  const { quantity, reason = 'Supplier short supply', note = '', isVendorFault = true } = request.body;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  const lineItem = order.lineItems.find(
+    (li) => String(li._id) === rawLineId || li.itemId === rawLineId.toUpperCase()
+  );
+  if (!lineItem) {
+    throw new ApiError(404, 'LINE_ITEM_NOT_FOUND', `Line item ${rawLineId} not found on PO.`);
+  }
+
+  const outstanding = lineItem.outstandingQty !== undefined
+    ? lineItem.outstandingQty
+    : Math.max(0, lineItem.orderedQuantityBase - (lineItem.acceptedReceivedQty || lineItem.receivedQuantityBase || 0) - (lineItem.closedShortQty || 0) - (lineItem.buyerCancelledQty || 0));
+
+  const qtyToClose = quantity !== undefined ? Number(quantity) : outstanding;
+  if (!Number.isFinite(qtyToClose) || qtyToClose <= 0) {
+    throw new ApiError(400, 'INVALID_QUANTITY', 'Quantity to close short must be greater than zero.');
+  }
+  if (qtyToClose > outstanding) {
+    throw new ApiError(400, 'QUANTITY_EXCEEDS_OUTSTANDING', `Close-short quantity (${qtyToClose}) exceeds remaining open quantity (${outstanding}).`);
+  }
+
+  lineItem.closedShortQty = (lineItem.closedShortQty || 0) + qtyToClose;
+  lineItem.closeShortDetails = {
+    reason: String(reason).trim(),
+    note: String(note).trim(),
+    closedAt: new Date(),
+    closedByUserId: request.auth.userId,
+    isVendorFault: Boolean(isVendorFault),
+  };
+
+  order.recalculateFulfillment();
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'CLOSE_SHORT_PO_LINE',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { lineId: lineItem._id, closedShortQty: lineItem.closedShortQty, reason },
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject(), lineItem: lineItem.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/lines/:lineId/cancel-line
+ */
+const cancelLine = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const rawLineId = String(request.params.lineId || '').trim();
+  const { cancelledQty, reason = 'Buyer cancelled', note = '' } = request.body;
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  const lineItem = order.lineItems.find(
+    (li) => String(li._id) === rawLineId || li.itemId === rawLineId.toUpperCase()
+  );
+  if (!lineItem) {
+    throw new ApiError(404, 'LINE_ITEM_NOT_FOUND', `Line item ${rawLineId} not found on PO.`);
+  }
+
+  const outstanding = lineItem.outstandingQty !== undefined
+    ? lineItem.outstandingQty
+    : Math.max(0, lineItem.orderedQuantityBase - (lineItem.acceptedReceivedQty || lineItem.receivedQuantityBase || 0) - (lineItem.closedShortQty || 0) - (lineItem.buyerCancelledQty || 0));
+
+  const targetQty = cancelledQty !== undefined ? Number(cancelledQty) : outstanding;
+  if (!Number.isFinite(targetQty) || targetQty <= 0) {
+    throw new ApiError(400, 'INVALID_QUANTITY', 'Cancelled quantity must be greater than zero.');
+  }
+  if (targetQty > outstanding) {
+    throw new ApiError(400, 'QUANTITY_EXCEEDS_OUTSTANDING', `Cancelled quantity (${targetQty}) exceeds remaining open quantity (${outstanding}).`);
+  }
+
+  lineItem.buyerCancelledQty = (lineItem.buyerCancelledQty || 0) + targetQty;
+  lineItem.buyerCancellationDetails = {
+    reason: String(reason).trim(),
+    note: String(note).trim(),
+    cancelledAt: new Date(),
+    cancelledByUserId: request.auth.userId,
+  };
+
+  order.recalculateFulfillment();
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'BUYER_CANCEL_PO_LINE',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { lineId: lineItem._id, buyerCancelledQty: lineItem.buyerCancelledQty, reason },
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject(), lineItem: lineItem.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/lines/:lineId/substitute/propose
+ */
+const proposeSubstitution = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const rawLineId = String(request.params.lineId || '').trim();
+  const {
+    proposedItemId,
+    proposedItemName,
+    proposedQuantityBase,
+    proposedUnitPricePaisa,
+    reason = '',
+  } = request.body;
+
+  if (!proposedItemId || proposedUnitPricePaisa === undefined) {
+    throw new ApiError(400, 'PROPOSAL_FIELDS_REQUIRED', 'proposedItemId and proposedUnitPricePaisa are required.');
+  }
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  const lineItem = order.lineItems.find(
+    (li) => String(li._id) === rawLineId || li.itemId === rawLineId.toUpperCase()
+  );
+  if (!lineItem) {
+    throw new ApiError(404, 'LINE_ITEM_NOT_FOUND', `Line item ${rawLineId} not found on PO.`);
+  }
+
+  const originalUnitPricePaisa = Number(lineItem.unitPricePaisa || 0);
+  const newUnitPricePaisa = Number(proposedUnitPricePaisa);
+  const priceDifferencePaisa = newUnitPricePaisa - originalUnitPricePaisa;
+  const propQty = Number(proposedQuantityBase || lineItem.orderedQuantityBase);
+
+  lineItem.substitution = {
+    status: 'PROPOSED',
+    proposedItemId: normalizeId(proposedItemId),
+    proposedItemName: String(proposedItemName || proposedItemId).trim(),
+    proposedQuantityBase: propQty,
+    proposedUnitPricePaisa: newUnitPricePaisa,
+    originalUnitPricePaisa,
+    priceDifferencePaisa,
+    reason: String(reason).trim(),
+    proposedAt: new Date(),
+    proposedByUserId: request.auth.userId,
+    decidedAt: null,
+    decidedByUserId: null,
+    decisionReason: '',
+  };
+  lineItem.fulfillmentStatus = 'SUBSTITUTION_PENDING';
+
+  order.recalculateFulfillment();
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'PROPOSE_PO_SUBSTITUTION',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { lineId: lineItem._id, proposedItemId, priceDifferencePaisa },
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      order: order.toObject(),
+      lineItem: lineItem.toObject(),
+      priceImpact: {
+        originalUnitPricePaisa,
+        proposedUnitPricePaisa: newUnitPricePaisa,
+        priceDifferencePaisa,
+        totalVariancePaisa: priceDifferencePaisa * propQty,
+      },
+    },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/lines/:lineId/substitute/decide
+ */
+const decideSubstitution = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const rawLineId = String(request.params.lineId || '').trim();
+  const { decision, reason = '' } = request.body;
+
+  if (!['APPROVE', 'REJECT'].includes(String(decision).toUpperCase())) {
+    throw new ApiError(400, 'INVALID_DECISION', "decision must be 'APPROVE' or 'REJECT'.");
+  }
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  const lineItem = order.lineItems.find(
+    (li) => String(li._id) === rawLineId || li.itemId === rawLineId.toUpperCase()
+  );
+  if (!lineItem) {
+    throw new ApiError(404, 'LINE_ITEM_NOT_FOUND', `Line item ${rawLineId} not found on PO.`);
+  }
+
+  if (!lineItem.substitution || lineItem.substitution.status !== 'PROPOSED') {
+    throw new ApiError(400, 'NO_PROPOSED_SUBSTITUTION', 'No pending substitution proposal to decide.');
+  }
+
+  const isApproved = String(decision).toUpperCase() === 'APPROVE';
+  lineItem.substitution.status = isApproved ? 'APPROVED' : 'REJECTED';
+  lineItem.substitution.decidedAt = new Date();
+  lineItem.substitution.decidedByUserId = request.auth.userId;
+  lineItem.substitution.decisionReason = String(reason).trim();
+
+  if (isApproved) {
+    lineItem.lineNotes = `${lineItem.lineNotes ? lineItem.lineNotes + '; ' : ''}Approved substitute: ${lineItem.substitution.proposedItemId} (${lineItem.substitution.proposedItemName})`.trim();
+  }
+
+  order.recalculateFulfillment();
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: isApproved ? 'APPROVE_PO_SUBSTITUTION' : 'REJECT_PO_SUBSTITUTION',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: { lineId: lineItem._id, decision: lineItem.substitution.status, reason },
+    result: 'SUCCESS',
+    riskClassification: 'MEDIUM',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: { order: order.toObject(), lineItem: lineItem.toObject() },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * POST /orders/:purchaseOrderId/lines/:lineId/source-elsewhere
+ */
+const sourceElsewhere = asyncHandler(async (request, response) => {
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const rawLineId = String(request.params.lineId || '').trim();
+  const { replacementVendorId, shortageQty, notes = '' } = request.body;
+
+  if (!replacementVendorId) {
+    throw new ApiError(400, 'REPLACEMENT_VENDOR_REQUIRED', 'replacementVendorId is required to source elsewhere.');
+  }
+
+  const order = await PurchaseOrder.findOne({
+    purchaseOrderId,
+    organisationId: request.auth.organisationId,
+  });
+
+  if (!order) {
+    throw new ApiError(404, 'NOT_FOUND', 'Purchase order not found.');
+  }
+  assertProcurementMutationAccess(request, order.cafeId);
+
+  const lineItem = order.lineItems.find(
+    (li) => String(li._id) === rawLineId || li.itemId === rawLineId.toUpperCase()
+  );
+  if (!lineItem) {
+    throw new ApiError(404, 'LINE_ITEM_NOT_FOUND', `Line item ${rawLineId} not found on PO.`);
+  }
+
+  // Idempotency / duplicate protection: Cannot double-source the shortage
+  if (lineItem.sourceElsewhere && lineItem.sourceElsewhere.status === 'SOURCED') {
+    throw new ApiError(
+      409,
+      'ALREADY_SOURCED_ELSEWHERE',
+      `Line item shortage has already been sourced elsewhere via PO ${lineItem.sourceElsewhere.replacementPurchaseOrderId}.`
+    );
+  }
+
+  const openQty = lineItem.outstandingQty !== undefined
+    ? lineItem.outstandingQty
+    : Math.max(0, lineItem.orderedQuantityBase - (lineItem.acceptedReceivedQty || lineItem.receivedQuantityBase || 0) - (lineItem.closedShortQty || 0) - (lineItem.buyerCancelledQty || 0));
+
+  const targetQty = shortageQty !== undefined ? Number(shortageQty) : (lineItem.vendorUnavailableQty || openQty);
+  if (!Number.isFinite(targetQty) || targetQty <= 0) {
+    throw new ApiError(400, 'INVALID_QUANTITY', 'Shortage quantity to source must be greater than zero.');
+  }
+
+  // Create a replacement draft PO for Vendor B
+  const datePart = getIstBusinessDate().replace(/-/g, '');
+  const replacementPoId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `PO_${datePart}`,
+    prefix: `PO-${datePart}`,
+    minimumDigits: 4,
+  });
+
+  const repVendor = await Vendor.findOne({
+    organisationId: request.auth.organisationId,
+    vendorId: normalizeId(replacementVendorId),
+  }).lean();
+
+  const replacementPo = new PurchaseOrder({
+    purchaseOrderId: replacementPoId,
+    organisationId: order.organisationId,
+    cafeId: order.cafeId,
+    vendorId: normalizeId(replacementVendorId),
+    vendorNameSnapshot: repVendor ? repVendor.name : replacementVendorId,
+    status: 'DRAFT',
+    lineItems: [
+      {
+        itemId: lineItem.itemId,
+        itemNameSnapshot: lineItem.itemNameSnapshot || lineItem.itemId,
+        itemType: lineItem.itemType || 'GOODS',
+        packSize: lineItem.packSize || '1 UNIT',
+        uomConversionFactor: lineItem.uomConversionFactor || 1,
+        baseUnit: lineItem.baseUnit || 'units',
+        orderedQuantityBase: targetQty,
+        unitPricePaisa: lineItem.unitPricePaisa,
+        totalLinePaisa: targetQty * lineItem.unitPricePaisa,
+        lineNotes: `Source elsewhere replacement for PO ${order.purchaseOrderId} line ${lineItem.itemId}`,
+      },
+    ],
+    subtotalPaisa: targetQty * lineItem.unitPricePaisa,
+    totalPaisa: targetQty * lineItem.unitPricePaisa,
+    notes: `Replacement order for shortage on ${order.purchaseOrderId}. ${notes}`.trim(),
+    createdByUserId: request.auth.userId,
+  });
+
+  await replacementPo.save();
+
+  // Close/record shortage on original PO line
+  lineItem.sourceElsewhere = {
+    status: 'SOURCED',
+    shortageQty: targetQty,
+    replacementVendorId: normalizeId(replacementVendorId),
+    replacementPurchaseOrderId: replacementPoId,
+    sourcedAt: new Date(),
+    sourcedByUserId: request.auth.userId,
+  };
+
+  order.recalculateFulfillment();
+  order.lastModifiedByUserId = request.auth.userId;
+
+  await order.save();
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'SOURCE_ELSEWHERE_PO_LINE',
+    entityType: 'PURCHASE_ORDER',
+    entityId: purchaseOrderId,
+    after: {
+      lineId: lineItem._id,
+      replacementVendorId,
+      replacementPurchaseOrderId: replacementPoId,
+      shortageQty: targetQty,
+    },
+    result: 'SUCCESS',
+    riskClassification: 'MEDIUM',
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      order: order.toObject(),
+      lineItem: lineItem.toObject(),
+      replacementPurchaseOrder: replacementPo.toObject(),
+    },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * GET /suppliers/:vendorId/fulfillment-metrics
+ * Calculates canonical vendor performance metrics (Fill rate, Backorder rate, Short-supply rate, On-time delivery).
+ */
+const getVendorFulfillmentAnalytics = asyncHandler(async (request, response) => {
+  const { organisationId } = request.auth;
+  const vendorId = normalizeId(request.params.vendorId);
+
+  const vendor = await Vendor.findOne({ organisationId, vendorId }).lean();
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', `Vendor ${vendorId} not found.`);
+  }
+
+  const orders = await PurchaseOrder.find({ organisationId, vendorId }).lean();
+
+  let totalOrderedQty = 0;
+  let totalAcceptedQty = 0;
+  let totalBuyerCancelledQty = 0;
+  let totalBackorderedQty = 0;
+  let totalShortSupplyQty = 0;
+  let totalLinesCount = 0;
+  let fullyReceivedLinesCount = 0;
+  let onTimeDeliveriesCount = 0;
+  let totalDeliveriesCount = 0;
+
+  for (const po of orders) {
+    for (const line of po.lineItems || []) {
+      totalLinesCount += 1;
+      const ord = Number(line.orderedQuantityBase || 0);
+      const acc = Number(line.acceptedReceivedQty || line.receivedQuantityBase || 0);
+      const bCanc = Number(line.buyerCancelledQty || 0);
+      const back = Number(line.backorderedQty || 0);
+      const unavail = Number(line.vendorUnavailableQty || 0);
+      const clShort = Number(line.closedShortQty || 0);
+
+      totalOrderedQty += ord;
+      totalAcceptedQty += acc;
+      totalBuyerCancelledQty += bCanc;
+      totalBackorderedQty += back;
+      totalShortSupplyQty += (unavail + clShort);
+
+      if (acc >= ord && ord > 0) {
+        fullyReceivedLinesCount += 1;
+      }
+    }
+
+    for (const grn of po.grnReceipts || []) {
+      totalDeliveriesCount += 1;
+      if (po.expectedDeliveryDate && grn.receivedAt) {
+        const exp = new Date(po.expectedDeliveryDate);
+        if (new Date(grn.receivedAt) <= exp) {
+          onTimeDeliveriesCount += 1;
+        }
+      } else {
+        onTimeDeliveriesCount += 1;
+      }
+    }
+  }
+
+  const effectiveOrderedQty = Math.max(0, totalOrderedQty - totalBuyerCancelledQty);
+  const fillRatePercent = effectiveOrderedQty > 0
+    ? Math.min(100, Math.round((totalAcceptedQty / effectiveOrderedQty) * 10000) / 100)
+    : 100;
+
+  const completeLineFulfillmentRatePercent = totalLinesCount > 0
+    ? Math.round((fullyReceivedLinesCount / totalLinesCount) * 10000) / 100
+    : 100;
+
+  const backorderRatePercent = totalOrderedQty > 0
+    ? Math.round((totalBackorderedQty / totalOrderedQty) * 10000) / 100
+    : 0;
+
+  const shortSupplyRatePercent = totalOrderedQty > 0
+    ? Math.round((totalShortSupplyQty / totalOrderedQty) * 10000) / 100
+    : 0;
+
+  const onTimeDeliveryPercent = totalDeliveriesCount > 0
+    ? Math.round((onTimeDeliveriesCount / totalDeliveriesCount) * 10000) / 100
+    : 100;
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      vendorId,
+      vendorName: vendor.name,
+      metrics: {
+        fillRatePercent,
+        completeLineFulfillmentRatePercent,
+        backorderRatePercent,
+        shortSupplyRatePercent,
+        onTimeDeliveryPercent,
+        totalOrdersCount: orders.length,
+        totalLinesCount,
+        totalOrderedQty,
+        totalAcceptedQty,
+        totalBuyerCancelledQty,
+        totalBackorderedQty,
+        totalShortSupplyQty,
+      },
+    },
+    correlationId: request.correlationId || null,
+  });
+});
+
+/**
+ * REC-17A: Physical Receipt -> Accounts Handoff (SENT_TO_ACCOUNTS / READY_FOR_AP_REVIEW)
+ * Explicitly packages physical receiving outcome (GRN, accepted/rejected quantities, variances)
+ * and dispatches to Accounts Payable Queue.
+ */
+const sendToAccounts = asyncHandler(async (request, response) => {
+  assertProcurementMutationAccess(request);
+  const { organisationId } = request.auth;
+  const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
+  const { notes = '', supplierInvoiceNumber, claimedAmountPaisa } = request.body || {};
+
+  const po = await PurchaseOrder.findOne({ organisationId, purchaseOrderId });
+  if (!po) {
+    throw new ApiError(404, 'PO_NOT_FOUND', `Purchase order ${purchaseOrderId} not found.`);
+  }
+
+  assertCafeAccess(request, po.cafeId);
+
+  const hasReceipts = (po.grnReceipts && po.grnReceipts.length > 0) ||
+    ['PARTIALLY_RECEIVED', 'RECEIVED', 'RECEIVED_PENDING_FINAL_POSTING', 'POSTED_TO_INVENTORY'].includes(po.receivingStatus);
+
+  if (!hasReceipts) {
+    throw new ApiError(
+      400,
+      'RECEIVING_REQUIRED_FOR_ACCOUNTS_HANDOFF',
+      `PO ${purchaseOrderId} has zero physical receipts recorded. Physical inspection and GRN receipt are required before sending to Accounts.`
+    );
+  }
+
+  const itemsPacket = (po.lineItems || []).map((li) => ({
+    itemId: li.itemId,
+    itemName: li.description || li.itemId,
+    orderedQty: Number(li.orderedQuantityBase || 0),
+    deliveredQty: Number(li.receivedQuantityBase || 0) + Number(li.rejectedQty || 0),
+    acceptedQty: Number(li.acceptedReceivedQty || li.receivedQuantityBase || 0),
+    rejectedQty: Number(li.rejectedQty || 0),
+    missingQty: Math.max(0, Number(li.orderedQuantityBase || 0) - Number(li.receivedQuantityBase || 0) - Number(li.rejectedQty || 0)),
+    backorderedQty: Number(li.backorderedQty || 0),
+    closedShortQty: Number(li.closedShortQty || 0),
+    unitPricePaisa: Number(li.unitPricePaisa || 0),
+    acceptedPayableBasisPaisa: Number(li.acceptedReceivedQty || li.receivedQuantityBase || 0) * Number(li.unitPricePaisa || 0),
+  }));
+
+  const totalAcceptedPayablePaisa = itemsPacket.reduce((s, it) => s + it.acceptedPayableBasisPaisa, 0);
+  const rawClaimPaisa = claimedAmountPaisa !== undefined ? Number(claimedAmountPaisa) : (po.totalPaisa || totalAcceptedPayablePaisa);
+  const heldVariancePaisa = Math.max(0, rawClaimPaisa - totalAcceptedPayablePaisa);
+
+  const packet = {
+    purchaseOrderId: po.purchaseOrderId,
+    vendorId: po.vendorId,
+    vendorName: po.vendorNameSnapshot || po.vendorId,
+    cafeId: po.cafeId,
+    orderDate: po.orderDate,
+    expectedDeliveryDate: po.expectedDeliveryDate,
+    receivingStatus: po.receivingStatus,
+    fulfillmentStatus: po.fulfillmentStatus,
+    grnReceipts: (po.grnReceipts || []).map((g) => ({
+      grnId: g.grnId,
+      receiptDate: g.receiptDate,
+      receivedByUserId: g.receivedByUserId,
+      totalAcceptedQty: g.totalAcceptedQty,
+      totalRejectedQty: g.totalRejectedQty,
+    })),
+    grnReceiptsCount: (po.grnReceipts || []).length,
+    matchStatus: po.threeWayMatch?.matchStatus || 'MATCHED',
+    deliveryChallanIds: po.deliveryChallanIds || [],
+    supplierInvoiceNumber: supplierInvoiceNumber || po.invoices?.[0]?.invoiceNumber || 'INV-PENDING',
+    items: itemsPacket,
+    supplierClaimedAmountPaisa: rawClaimPaisa,
+    approvedPayableAmountPaisa: totalAcceptedPayablePaisa,
+    heldDisputedAmountPaisa: heldVariancePaisa,
+    notes: notes.trim(),
+  };
+
+  po.accountsHandoff = {
+    status: 'SENT_TO_ACCOUNTS',
+    sentAt: new Date(),
+    sentByUserId: request.auth.userId,
+    packet,
+  };
+
+  await po.save();
+
+  let apInvoice = null;
+  try {
+    const vendorLedgerService = require('../services/vendorLedgerService');
+    const invRes = await vendorLedgerService.postVendorBillFromReceipt({
+      organisationId,
+      purchaseOrderId: po.purchaseOrderId,
+      supplierInvoiceNumber: packet.supplierInvoiceNumber,
+      claimedAmountPaisa: rawClaimPaisa,
+      notes: `Handoff from Dock Receiving for PO ${po.purchaseOrderId}. ${notes}`.trim(),
+      auth: request.auth,
+    });
+    apInvoice = invRes.apInvoice;
+  } catch (err) {
+    const { APInvoice } = require('../models/APInvoice');
+    apInvoice = await APInvoice.findOne({ organisationId, poReferenceId: po.purchaseOrderId });
+  }
+
+  await recordRequestAudit({
+    request,
+    module: 'PROCUREMENT',
+    action: 'SEND_TO_ACCOUNTS',
+    entityType: 'PURCHASE_ORDER',
+    entityId: po.purchaseOrderId,
+    cafeId: po.cafeId,
+    afterState: {
+      accountsHandoffStatus: 'SENT_TO_ACCOUNTS',
+      approvedPayableAmountPaisa: totalAcceptedPayablePaisa,
+      heldDisputedAmountPaisa: heldVariancePaisa,
+      apInvoiceId: apInvoice?.invoiceId || null,
+    },
+  });
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      purchaseOrderId: po.purchaseOrderId,
+      accountsHandoff: po.accountsHandoff,
+      accountsHandoffStatus: 'SENT_TO_ACCOUNTS',
+      sentAt: po.accountsHandoff.sentAt,
+      approvedPayableAmountPaisa: totalAcceptedPayablePaisa,
+      heldDisputedAmountPaisa: heldVariancePaisa,
+      packet,
+      apInvoice,
+    },
+    correlationId: request.correlationId || null,
+  });
 });
 
 module.exports = {
   getOrderDocuments,
   attachOrderDocument,
+  previewOrderDocument,
   downloadOrderDocument,
+  replaceOrderDocumentVersion,
+  archiveOrderDocument,
+  getPoDocumentMatchingStatus,
   listOrders,
   getOrder,
   createOrder,
+  editOrder,
+  verifyDeliveryAndSubmitBill,
+  masterApproveOrderAndBill,
+  downloadOrderReceiptBill,
   submitOrder,
   approveOrder,
   orderSent,
@@ -2731,6 +5185,17 @@ module.exports = {
   updateAsnStatus,
   cancelAsn,
   getProcurementIntegrity,
+  getSupplierContextualIntelligence,
+  vendorConfirmOrder,
+  backorderLine,
+  vendorUnavailableLine,
+  closeShortLine,
+  cancelLine,
+  proposeSubstitution,
+  decideSubstitution,
+  sourceElsewhere,
+  getVendorFulfillmentAnalytics,
+  sendToAccounts,
   _setPoLocksDisabled,
   commitWithRetry,
   executeTransactionWithRetry,

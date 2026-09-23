@@ -324,21 +324,24 @@ const downloadEmployeeMonthlyPayslip = asyncHandler(
       throw new ApiError(400, 'VALIDATION_FAILED', 'Valid employeeId and periodKey (YYYY-MM) are required.');
     }
 
-    // Role privacy gate: STAFF can only access their own payslip
-    if (role === 'STAFF' || role === 'CASHIER') {
-      const isSelf = [
-        userId,
-        request.auth.employeeId,
-        request.auth.employeeNumber,
-      ].filter(Boolean).map((id) => String(id).toUpperCase());
+    // Role privacy gate: Non-Primary-Master roles cannot access colleague payslips by default (F01)
+    const isPrimaryMaster = Boolean(
+      role === 'MASTER' &&
+      (request.auth.isPrimaryMaster === true || (request.auth.isPrimaryMaster !== false && userId === 'MU-0001'))
+    );
+    const selfIdentifiers = [
+      userId,
+      request.auth.employeeId,
+      request.auth.employeeNumber,
+    ].filter(Boolean).map((id) => String(id).toUpperCase());
+    const isSelf = selfIdentifiers.includes(requestedEmployeeId);
 
-      if (!isSelf.includes(requestedEmployeeId)) {
-        throw new ApiError(
-          403,
-          'PAYSLIP_ACCESS_FORBIDDEN',
-          'Access to colleague payslips is strictly forbidden under DPDP Act 2023.'
-        );
-      }
+    if (!isPrimaryMaster && !isSelf) {
+      throw new ApiError(
+        403,
+        'PAYSLIP_ACCESS_FORBIDDEN',
+        'Access to colleague payslips requires Primary Master or explicit payroll authorization under DPDP Act 2023.'
+      );
     }
 
     // Locate payslip

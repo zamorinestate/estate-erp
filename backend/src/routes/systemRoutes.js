@@ -24,7 +24,7 @@ const { documentStorageAdapter } = require('../services/documentStorageAdapter')
 
 // Restrict all operational routes strictly to MASTER and OWNER
 router.use(authenticate);
-router.use(authorize(['MASTER', 'OWNER']));
+router.use(authorize(['MASTER', 'PRIMARY_MASTER', 'OWNER']));
 
 /**
  * GET /api/v1/system/overview

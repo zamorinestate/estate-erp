@@ -31,6 +31,7 @@ import { renderStaffPayslips, wireStaffPayslips } from "./staffPayslips.js";
 import { renderStaffLoansAdvances, wireStaffLoansAdvances } from "./staffLoansAdvances.js";
 import { setupModalA11y } from "../utils/modalA11y.js";
 import { openChangePasswordModal } from "../components/changePasswordModal.js";
+import { icon } from "../icons.js";
 
 // ── 23 supported languages (English + 22 Eighth Schedule Indian Languages) ───
 const ALL_LANGUAGES = [
@@ -67,7 +68,7 @@ const THEMES = [
 ];
 
 const FONT_SIZES = [
-  { code: "small",       label: "S",  name: "Small (13px)" },
+  { code: "compact",     label: "S",  name: "Compact (13px)" },
   { code: "standard",    label: "M",  name: "Standard (14.5px)" },
   { code: "large",       label: "L",  name: "Large (16px)" },
   { code: "extra-large", label: "XL", name: "Extra Large (18px)" },
@@ -261,6 +262,16 @@ export const SETTINGS_DESTINATIONS = {
     keywords: "admin administration organisation governance defaults roles audit",
     permission: "master_only",
   },
+  templates: {
+    id: "templates",
+    label: "Café Configuration Templates",
+    route: "settings/templates",
+    category: "ORGANISATION GOVERNANCE",
+    icon: "📋",
+    desc: "Manage blueprint templates for new cafés, approval limits, business day cutoffs & packaging rules.",
+    keywords: "template cafe blueprint cutoff packaging receipt approval limits configuration",
+    permission: "master_only",
+  },
 };
 
 // Active sub-section within Settings
@@ -302,6 +313,8 @@ function renderSettingsShell(sectionId, innerContentHtml, options = {}) {
     "appearance",
     "accessibility",
     "language",
+    "privacy",
+    "help",
   ]);
 
   // Reject unauthorized section for STAFF
@@ -340,6 +353,13 @@ function renderSettingsShell(sectionId, innerContentHtml, options = {}) {
           SETTINGS_DESTINATIONS.appearance,
           SETTINGS_DESTINATIONS.accessibility,
           SETTINGS_DESTINATIONS.language,
+        ],
+      },
+      {
+        title: "PRIVACY & SUPPORT",
+        items: [
+          SETTINGS_DESTINATIONS.privacy,
+          SETTINGS_DESTINATIONS.help,
         ],
       },
     ];
@@ -394,6 +414,7 @@ function renderSettingsShell(sectionId, innerContentHtml, options = {}) {
         items: [
           SETTINGS_DESTINATIONS.trash,
           SETTINGS_DESTINATIONS.admin,
+          SETTINGS_DESTINATIONS.templates,
         ],
       });
     }
@@ -498,6 +519,13 @@ function renderOverview() {
           SETTINGS_DESTINATIONS.accessibility,
         ],
       },
+      {
+        groupTitle: "PRIVACY & SUPPORT",
+        items: [
+          SETTINGS_DESTINATIONS.privacy,
+          SETTINGS_DESTINATIONS.help,
+        ],
+      },
     ];
   } else {
     categorizedSections = [
@@ -545,13 +573,27 @@ function renderOverview() {
         items: [
           SETTINGS_DESTINATIONS.trash,
           SETTINGS_DESTINATIONS.admin,
+          SETTINGS_DESTINATIONS.templates,
         ],
       });
     }
   }
 
   const displayName = user.preferredName || user.name || user.fullName || "Your Account";
-  const roleLabel = { [ROLES.MASTER]: "Master User", [ROLES.OWNER]: "Café Owner", [ROLES.CAFE_ADMIN]: "Café Admin", [ROLES.STAFF]: "Staff" }[role] || "Account";
+  const isUserPrimaryMaster = Boolean(
+    user.isPrimaryMaster ||
+    user.userId === "MU-0001" ||
+    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com"
+  );
+  const userAccountRole = String(user.role || (isUserPrimaryMaster ? "MASTER" : role)).toUpperCase();
+  const roleLabel = isUserPrimaryMaster
+    ? "Primary Master"
+    : ({
+        [ROLES.MASTER.toUpperCase()]: "Master User",
+        [ROLES.OWNER.toUpperCase()]: "Café Owner",
+        [ROLES.CAFE_ADMIN.toUpperCase()]: "Café Admin",
+        [ROLES.STAFF.toUpperCase()]: "Staff",
+      }[userAccountRole] || "Account");
 
   let totalVisibleItems = 0;
 
@@ -617,6 +659,9 @@ function renderOverview() {
             <div style="font-size:16px; font-weight:700; color:var(--ink); font-family:var(--font-display);">${escHtml(displayName)}</div>
             <div style="font-size:12px; color:var(--muted); margin-top:2px; display:flex; align-items:center; gap:8px;">
               <span class="status success" style="font-size:10.5px; padding:1px 6px;">${escHtml(roleLabel)}</span>
+              ${isUserPrimaryMaster && role !== ROLES.MASTER ? `
+                <span class="status info" style="font-size:10.5px; padding:1px 6px;">Workspace: ${{ [ROLES.OWNER]: "Owner Portal", [ROLES.CAFE_ADMIN]: "Café Operations", [ROLES.STAFF]: "Staff Window" }[role] || role}</span>
+              ` : ""}
               <span>ID: <strong>${escHtml(user.userId || "USR-0001")}</strong></span>
               <span>· ${escHtml(user.organisationId || "Zamorin Speciality Coffee")}</span>
             </div>
@@ -930,13 +975,23 @@ function renderEmployment() {
 function renderAccess() {
   const user = state.auth?.user || state.user || {};
   const cafes = user.assignedCafeIds || [];
-  const role = state.role || ROLES.STAFF;
+  const isUserPrimaryMaster = Boolean(
+    user.isPrimaryMaster ||
+    user.userId === "MU-0001" ||
+    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com"
+  );
+  const userAccountRole = String(user.role || (isUserPrimaryMaster ? "MASTER" : state.role || ROLES.STAFF)).toUpperCase();
   const roleLabels = {
-    [ROLES.MASTER]: "Master User — Full organisation administrative authority",
-    [ROLES.OWNER]: "Café Owner — Business, revenue and operational scope",
-    [ROLES.CAFE_ADMIN]: "Café Administrator — Unit-level management scope",
-    [ROLES.STAFF]: "Staff — Operational terminal and self-service scope",
+    [ROLES.MASTER.toUpperCase()]: isUserPrimaryMaster
+      ? "Primary Master — Full organisation administrative authority & system governance"
+      : "Master User — Full organisation administrative authority",
+    [ROLES.OWNER.toUpperCase()]: "Café Owner — Business, revenue and operational scope",
+    [ROLES.CAFE_ADMIN.toUpperCase()]: "Café Administrator — Unit-level management scope",
+    [ROLES.STAFF.toUpperCase()]: "Staff — Operational terminal and self-service scope",
   };
+  const effectiveRoleLabel = isUserPrimaryMaster
+    ? roleLabels[ROLES.MASTER.toUpperCase()]
+    : (roleLabels[userAccountRole] || roleLabels[ROLES.STAFF.toUpperCase()]);
 
   const content = `
     <!-- Role Summary Card -->
@@ -951,7 +1006,10 @@ function renderAccess() {
 
       <div style="padding:16px; background:var(--surface-sunken); border-radius:var(--radius-sm, 8px); border:1px solid var(--line);">
         <div class="settings-field-label">Current Role</div>
-        <div style="font-size:15px; font-weight:700; color:var(--ink); margin-top:2px;">${escHtml(roleLabels[role] || role)}</div>
+        <div style="font-size:15px; font-weight:700; color:var(--ink); margin-top:2px;">${escHtml(effectiveRoleLabel)}</div>
+        ${isUserPrimaryMaster && state.role && state.role !== ROLES.MASTER ? `
+          <div style="font-size:12px; color:var(--gold, #b45309); font-weight:600; margin-top:4px;">Currently inspecting workspace: ${escHtml({ [ROLES.OWNER]: "Owner Portal", [ROLES.CAFE_ADMIN]: "Café Operations", [ROLES.STAFF]: "Staff Window" }[state.role] || state.role)}</div>
+        ` : ""}
         <div class="settings-field-helper" style="margin-top:4px;">Governed under <strong>${escHtml(user.organisationId || "Zamorin Speciality Coffee")}</strong>.</div>
       </div>
     </div>
@@ -1152,11 +1210,12 @@ function renderSecurity() {
       </div>
     </div>
 
+    ${(typeof window !== "undefined" && window.__ENABLE_PASSKEY_AUTH__ !== false) ? `
     <!-- Biometric Passkeys & Security Keys (FIDO2 / WebAuthn) -->
     <div class="settings-section-card">
       <div class="settings-card-header">
         <div>
-          <h2 class="settings-card-title">Biometric Passkeys (Face ID / Fingerprint / Windows Hello)</h2>
+          <h2 class="settings-card-title">Biometric Passkeys (Fingerprint / Touch ID / Windows Hello)</h2>
           <div class="settings-card-subtitle">Fast, passwordless hardware authentication bound to your registered devices.</div>
         </div>
         <button class="btn btn-primary btn-sm" id="settings-register-passkey-btn" type="button">
@@ -1166,6 +1225,29 @@ function renderSecurity() {
 
       <div id="settings-passkeys-container" style="display:flex; flex-direction:column; gap:8px;">
         <div style="color:var(--muted); font-size:13px; padding:12px 0;">Loading registered biometric passkeys...</div>
+      </div>
+      <div id="settings-revoke-all-passkeys-wrap" style="display:none; margin-top:10px; text-align:right;">
+        <button id="settings-revoke-all-passkeys-btn" class="btn btn-ghost btn-sm" type="button" style="color:var(--danger, #b23b35); font-size:12px;">
+          🗑️ Revoke All Passkeys (clear all registered devices)
+        </button>
+      </div>
+    </div>
+    ` : ""}
+
+    <!-- Six-Digit Application PIN (ACP-05E-02) -->
+    <div class="settings-section-card" id="settings-app-pin-card">
+      <div class="settings-card-header">
+        <div>
+          <h2 class="settings-card-title">Six-Digit App PIN</h2>
+          <div class="settings-card-subtitle">Personal 6-digit numeric PIN to quickly unlock your application session on this device.</div>
+        </div>
+        <div id="settings-app-pin-badge">
+          <span class="settings-status-chip" style="font-size:9.5px;">Loading...</span>
+        </div>
+      </div>
+
+      <div id="settings-app-pin-content" style="padding:14px 16px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:var(--radius-sm, 8px);">
+        <div style="color:var(--muted); font-size:13px;">Checking PIN configuration status...</div>
       </div>
     </div>
 
@@ -2165,6 +2247,109 @@ function renderUpdatesSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RENDER: Café Configuration Templates (SCR-023 / Chapter 22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderTemplatesSection() {
+  const content = `
+    <!-- Template Management Intro Card -->
+    <div class="settings-section-card">
+      <div class="settings-card-header">
+        <div>
+          <h2 class="settings-card-title">Café Configuration Templates (Blueprints)</h2>
+          <div class="settings-card-subtitle">Standardized operational parameters for new and existing branches: Cutoff hours, approval limits, and packaging defaults.</div>
+        </div>
+        <button id="settings-create-template-toggle" class="btn btn-primary btn-sm" style="font-weight:700;">
+          + Create Blueprint Template
+        </button>
+      </div>
+
+      <!-- Create Template Form (Hidden by default) -->
+      <div id="settings-create-template-form" style="display:none; margin-top:16px; padding:16px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
+        <h3 style="font-size:14px; font-weight:700; color:var(--ink); margin-bottom:12px;">New Café Template</h3>
+        <form id="settings-new-template-form" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-name">Template Name *</label>
+            <input type="text" id="tpl-name" class="settings-field-input" placeholder="e.g. Standard Metro Café" required />
+          </div>
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-cutoff">Business-Day Cutoff Hour (0-12 IST) *</label>
+            <input type="number" id="tpl-cutoff" class="settings-field-input" value="4" min="0" max="12" required />
+            <span class="settings-field-helper">Orders before this hour map to the previous business trading date.</span>
+          </div>
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-po-limit">Max PO Auto-Approval Limit (₹)</label>
+            <input type="number" id="tpl-po-limit" class="settings-field-input" value="25000" min="0" />
+          </div>
+          <div class="settings-field-group">
+            <label class="settings-field-label" for="tpl-inv-limit">Inventory Adjustment Auto-Approval (₹)</label>
+            <input type="number" id="tpl-inv-limit" class="settings-field-input" value="5000" min="0" />
+          </div>
+          <div class="settings-field-group" style="grid-column: 1 / -1; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="tpl-default" />
+            <label for="tpl-default" style="font-size:13px; color:var(--ink); cursor:pointer;">Set as default blueprint for newly onboarded cafés</label>
+          </div>
+          <div style="grid-column: 1 / -1; display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            <button type="button" id="settings-cancel-template-btn" class="btn btn-secondary btn-sm">Cancel</button>
+            <button type="submit" id="settings-save-template-btn" class="btn btn-primary btn-sm">Save Template</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Templates List Container -->
+      <div id="settings-templates-list" style="margin-top:16px;">
+        <div style="color:var(--muted); font-size:13px; padding:12px 0;">Loading configuration templates...</div>
+      </div>
+    </div>
+
+    <!-- Apply Template to Café & Preview Overrides Card -->
+    <div class="settings-section-card">
+      <div class="settings-card-header">
+        <div>
+          <h2 class="settings-card-title">Apply Blueprint to Café &amp; Preview Overrides</h2>
+          <div class="settings-card-subtitle">Safely preview changes and overrides before applying a blueprint to an operational café.</div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:12px; align-items:end; margin-bottom:16px;">
+        <div class="settings-field-group">
+          <label class="settings-field-label" for="tpl-apply-cafe-select">Select Target Café *</label>
+          <select id="tpl-apply-cafe-select" class="settings-field-input">
+            <option value="">Choose a café...</option>
+          </select>
+        </div>
+        <div class="settings-field-group">
+          <label class="settings-field-label" for="tpl-apply-template-select">Select Template *</label>
+          <select id="tpl-apply-template-select" class="settings-field-input">
+            <option value="">Choose a template...</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" id="tpl-preview-btn" class="btn btn-secondary btn-sm" style="height:38px;">
+            Preview Overrides
+          </button>
+          <button type="button" id="tpl-apply-btn" class="btn btn-primary btn-sm" style="height:38px;">
+            Apply Blueprint
+          </button>
+        </div>
+      </div>
+
+      <div id="tpl-preview-result" style="display:none; padding:12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
+        <!-- Loaded on preview click -->
+      </div>
+    </div>
+  `;
+
+  return renderSettingsShell("templates", content, {
+    wide: true,
+    statusChip: {
+      type: "success",
+      label: "Governed Blueprints",
+    },
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN DISPATCH & WIRE
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2216,6 +2401,7 @@ export function renderSettingsShared() {
     case "connected":     return renderConnected();
     case "updates":       return renderUpdatesSection();
     case "help":          return renderHelp();
+    case "templates":     return renderTemplatesSection();
     default:              return renderOverview();
   }
 }
@@ -2361,6 +2547,10 @@ async function _wireCurrentSection(root) {
 
     case "help":
       _wireHelp(root);
+      break;
+
+    case "templates":
+      await _wireTemplates(root);
       break;
   }
 }
@@ -2687,162 +2877,293 @@ function _wireSecurity(root) {
     return window.btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
   };
 
-  // Load and render user passkeys
-  const loadPasskeys = async () => {
-    const container = root.querySelector("#settings-passkeys-container");
-    if (!container) return;
+  // Load and render user passkeys (Enabled by default in REC-19/REC-19A)
+  if (typeof window !== "undefined" && window.__ENABLE_PASSKEY_AUTH__ !== false) {
+    const loadPasskeys = async () => {
+      const container = root.querySelector("#settings-passkeys-container");
+      if (!container) return;
 
-    try {
-      const res = await apiGet("/auth/passkeys");
-      const passkeys = res?.data?.passkeys || [];
+      try {
+        const res = await apiGet("/auth/passkeys");
+        // API returns { success: true, data: [...] } — data is the array directly
+        const passkeys = Array.isArray(res?.data) ? res.data : (res?.data?.passkeys || []);
 
-      if (passkeys.length === 0) {
-        container.innerHTML = `
-          <div style="padding:14px 16px; background:var(--surface-sunken); border:1px dashed var(--line); border-radius:var(--radius-sm, 8px); color:var(--muted); font-size:13px; text-align:center;">
-            🔒 No biometric passkeys enrolled yet. Click <strong>➕ Register New Passkey</strong> above to enable instant Face ID / Fingerprint sign-in.
-          </div>
-        `;
-        return;
-      }
+        if (passkeys.length === 0) {
+          container.innerHTML = `
+            <div style="padding:14px 16px; background:var(--surface-sunken); border:1px dashed var(--line); border-radius:var(--radius-sm, 8px); color:var(--muted); font-size:13px; text-align:center;">
+              🔒 No biometric passkeys enrolled yet. Click <strong>➕ Register New Passkey</strong> above to enable instant Fingerprint / Touch ID sign-in.
+            </div>
+          `;
+          return;
+        }
 
-      container.innerHTML = passkeys.map((p) => {
-        const isMobile = /iphone|ipad|android/i.test(p.deviceName || "");
-        const icon = isMobile ? "📱" : "💻";
-        const createdStr = p.createdAt ? new Date(p.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Recently";
-        const lastUsedStr = p.lastUsedAt ? new Date(p.lastUsedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "Never";
+        container.innerHTML = passkeys.map((p) => {
+          const name = p.friendlyName || p.deviceName || "Registered Biometric Authenticator";
+          const isMobile = /iphone|ipad|android/i.test(name);
+          const icon = isMobile ? "📱" : "💻";
+          const createdStr = p.createdAt ? new Date(p.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Recently";
+          const lastUsedStr = p.lastUsedAt ? new Date(p.lastUsedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "Never";
 
-        return `
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:var(--radius-sm, 8px);">
-            <div style="display:flex; align-items:center; gap:12px;">
-              <div style="font-size:20px;">${icon}</div>
-              <div>
-                <div style="font-size:13.5px; font-weight:700; color:var(--ink);">${escHtml(p.deviceName || "Registered Biometric Authenticator")}</div>
-                <div class="settings-field-helper">Enrolled: ${escHtml(createdStr)} · Last used: ${escHtml(lastUsedStr)}</div>
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:var(--radius-sm, 8px);">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div style="font-size:20px;">${icon}</div>
+                <div>
+                  <div style="font-size:13.5px; font-weight:700; color:var(--ink);">${escHtml(name)}</div>
+                  <div class="settings-field-helper">Enrolled: ${escHtml(createdStr)} · Last used: ${escHtml(lastUsedStr)}</div>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="settings-status-chip success" style="font-size:9.5px;">Active</span>
+                <button class="btn btn-ghost btn-sm" data-rename-passkey="${escHtml(p.credentialId)}" data-current-name="${escHtml(name)}" type="button" style="color:var(--ink-secondary, #475569);">
+                  ✏️ Rename
+                </button>
+                <button class="btn btn-ghost btn-sm" data-revoke-passkey="${escHtml(p.credentialId)}" type="button" style="color:var(--danger, #b23b35);">
+                  🗑️ Revoke
+                </button>
               </div>
             </div>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <span class="settings-status-chip success" style="font-size:9.5px;">Active</span>
-              <button class="btn btn-ghost btn-sm" data-revoke-passkey="${escHtml(p.credentialId)}" type="button" style="color:var(--danger, #b23b35);">
-                🗑️ Revoke
-              </button>
-            </div>
-          </div>
-        `;
-      }).join("");
+          `;
+        }).join("");
 
-      // Wire revoke buttons
-      container.querySelectorAll("[data-revoke-passkey]").forEach((btn) => {
-        btn.addEventListener("click", async (e) => {
-          const credId = e.currentTarget.dataset.revokePasskey;
-          confirmAction("Revoke this biometric passkey? You will need to re-enroll this device to use biometric login.", async () => {
-            try {
-              await apiDelete(`/auth/passkeys/${encodeURIComponent(credId)}`);
-              showToast("Biometric passkey revoked successfully.", "mint");
-              loadPasskeys();
-            } catch (err) {
-              showToast(err.message || "Failed to revoke passkey.", "amber");
+        // Revoke All button (shown when at least one passkey exists)
+        const revokeAllWrap = root.querySelector("#settings-revoke-all-passkeys-wrap");
+        if (revokeAllWrap) revokeAllWrap.style.display = "block";
+
+        // Wire rename buttons
+        container.querySelectorAll("[data-rename-passkey]").forEach((btn) => {
+          btn.addEventListener("click", async (e) => {
+            const credId = e.currentTarget.dataset.renamePasskey;
+            const currentName = e.currentTarget.dataset.currentName || "";
+            const newName = window.prompt("Enter a new friendly name for this biometric passkey:", currentName);
+            if (newName && newName.trim() && newName.trim() !== currentName) {
+              try {
+                await apiPatch(`/auth/passkeys/${encodeURIComponent(credId)}`, {
+                  friendlyName: newName.trim(),
+                });
+                showToast("Passkey renamed successfully.", "mint");
+                loadPasskeys();
+              } catch (err) {
+                showToast(err.message || "Failed to rename passkey.", "amber");
+              }
             }
           });
         });
+
+        // Wire revoke buttons
+        container.querySelectorAll("[data-revoke-passkey]").forEach((btn) => {
+          btn.addEventListener("click", async (e) => {
+            const credId = e.currentTarget.dataset.revokePasskey;
+            confirmAction("Revoke this biometric passkey? You will need to re-enroll this device to use biometric login.", async () => {
+              try {
+                await apiDelete(`/auth/passkeys/${encodeURIComponent(credId)}`);
+                showToast("Biometric passkey revoked successfully.", "mint");
+                loadPasskeys();
+              } catch (err) {
+                showToast(err.message || "Failed to revoke passkey.", "amber");
+              }
+            });
+          });
+        });
+      } catch (err) {
+        container.innerHTML = `
+          <div style="padding:12px; color:var(--muted); font-size:12.5px;">
+            Biometric credentials loaded. (Offline mode / server verified)
+          </div>
+        `;
+      }
+    };
+
+    loadPasskeys();
+
+    // Revoke All Passkeys (clears orphaned / corrupted credentials)
+    root.querySelector("#settings-revoke-all-passkeys-btn")?.addEventListener("click", () => {
+      confirmAction(
+        "Revoke ALL biometric passkeys on all devices? You will need to re-enroll each device to use biometric sign-in again.",
+        async () => {
+            try {
+              await apiDelete("/auth/passkeys");
+              const wrap = root.querySelector("#settings-revoke-all-passkeys-wrap");
+              if (wrap) wrap.style.display = "none";
+              showToast("All passkeys removed. You can now register fresh.", "mint");
+              loadPasskeys();
+            } catch (err) {
+              showToast(err.message || "Failed to revoke all passkeys.", "amber");
+            }
+          }
+        );
       });
-    } catch (err) {
-      container.innerHTML = `
-        <div style="padding:12px; color:var(--muted); font-size:12.5px;">
-          Biometric credentials loaded. (Offline mode / server verified)
-        </div>
-      `;
-    }
-  };
 
-  loadPasskeys();
 
-  // Register Passkey on This Device
-  root.querySelector("#settings-register-passkey-btn")?.addEventListener("click", async () => {
-    if (!window.PublicKeyCredential) {
-      showToast("WebAuthn biometric authentication is not supported by this browser.", "amber");
-      return;
-    }
+    let isRegisteringPasskey = false;
+    let activeRegistrationAbortController = null;
 
-    const registerBtn = root.querySelector("#settings-register-passkey-btn");
-    if (registerBtn) {
-      registerBtn.disabled = true;
-      registerBtn.textContent = "Requesting Handshake...";
-    }
-
-    try {
-      // 1. Get registration options from server
-      const optRes = await apiPost("/auth/passkeys/register/options", {
-        authenticatorType: "PLATFORM",
-      });
-
-      const options = optRes?.data?.options;
-      const challengeId = optRes?.data?.challengeId;
-
-      if (!options || !challengeId) {
-        throw new Error("Failed to receive registration challenge from server.");
+    root.querySelector("#settings-register-passkey-btn")?.addEventListener("click", async () => {
+      if (!window.PublicKeyCredential) {
+        showToast("WebAuthn biometric authentication is not supported by this browser.", "amber");
+        return;
       }
 
-      const publicKeyOptions = {
-        ...options,
-        challenge: base64urlToBuffer(options.challenge),
-        user: {
-          ...options.user,
-          id: base64urlToBuffer(options.user.id),
-        },
-        excludeCredentials: options.excludeCredentials?.map((c) => ({
-          ...c,
-          id: base64urlToBuffer(c.id),
-        })),
-      };
-
-      if (registerBtn) registerBtn.textContent = "Touch Sensor / Scan Face...";
-
-      // 2. Browser platform authenticator ceremony
-      const credential = await navigator.credentials.create({
-        publicKey: publicKeyOptions,
-      });
-
-      if (!credential) {
-        throw new Error("Biometric enrollment cancelled.");
+      if (isRegisteringPasskey) {
+        return; // Prevent duplicate button clicks
       }
+      isRegisteringPasskey = true;
 
-      if (registerBtn) registerBtn.textContent = "Verifying Signature...";
-
-      const rawAttestation = credential.response?.attestationObject
-        ? bufferToBase64url(credential.response.attestationObject)
-        : "";
-
-      const verifyPayload = {
-        id: credential.id,
-        rawId: bufferToBase64url(credential.rawId),
-        type: credential.type,
-        response: {
-          clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
-          attestationObject: rawAttestation,
-          transports: credential.response.getTransports ? credential.response.getTransports() : ["internal"],
-        },
-      };
-
-      const deviceName = `${navigator.userAgent.includes("iPhone") ? "iPhone" : navigator.userAgent.includes("Mac") ? "Mac" : navigator.userAgent.includes("Android") ? "Android Phone" : "Workstation"} (${navigator.userAgent.includes("Chrome") ? "Chrome" : navigator.userAgent.includes("Safari") ? "Safari" : "Browser"})`;
-
-      // 3. Verify registration with backend
-      await apiPost("/auth/passkeys/register/verify", {
-        response: verifyPayload,
-        challengeId,
-        deviceName,
-      });
-
-      showToast("🎉 Passkey registered successfully on this device!", "mint");
-      loadPasskeys();
-    } catch (err) {
-      showToast(err.message || "Passkey registration was cancelled or not completed.", "amber");
-    } finally {
+      const registerBtn = root.querySelector("#settings-register-passkey-btn");
       if (registerBtn) {
-        registerBtn.disabled = false;
-        registerBtn.textContent = "➕ Register New Passkey";
+        registerBtn.disabled = true;
+        registerBtn.textContent = "Requesting Handshake...";
       }
-    }
-  });
+
+      // Pre-ceremony teardown: abort any lingering passkey operations and yield event loop
+      if (typeof window !== "undefined" && typeof window.__ZAMORIN_ABORT_WEBAUTHN__ === "function") {
+        window.__ZAMORIN_ABORT_WEBAUTHN__();
+      }
+      if (activeRegistrationAbortController) {
+        try {
+          activeRegistrationAbortController.abort();
+        } catch {}
+        activeRegistrationAbortController = null;
+      }
+      activeRegistrationAbortController = new AbortController();
+
+      // Brief microtask yield to ensure browser WebAuthn coordinator clears prior state
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      try {
+        // 1. Get registration options from server
+        const optRes = await apiPost("/auth/passkeys/register/options", {
+          authenticatorType: "PLATFORM",
+          authenticatorAttachment: "platform",
+        });
+
+        const options = optRes?.data?.options;
+        const challengeId = optRes?.data?.challengeId;
+
+        if (!options || !challengeId) {
+          throw new Error("Failed to receive registration challenge from server.");
+        }
+
+        const userEntityName = options.user?.name || state.user?.email || state.user?.name || "Zamorin Employee";
+        const userEntityDisplayName = options.user?.displayName || state.user?.name || state.user?.email || "Zamorin Employee";
+
+        const publicKeyOptions = {
+          ...options,
+          challenge: base64urlToBuffer(options.challenge),
+          user: {
+            ...options.user,
+            id: base64urlToBuffer(options.user.id),
+            name: userEntityName,
+            displayName: userEntityDisplayName,
+          },
+          excludeCredentials: options.excludeCredentials?.map((c) => ({
+            ...c,
+            id: base64urlToBuffer(c.id),
+          })),
+        };
+
+        if (registerBtn) registerBtn.textContent = "Touch Sensor / Scan Face...";
+
+        // 2. Browser platform authenticator ceremony
+        let credential;
+        try {
+          credential = await navigator.credentials.create({
+            publicKey: publicKeyOptions,
+            signal: activeRegistrationAbortController.signal,
+          });
+        } catch (credErr) {
+          const msg = credErr?.message?.toLowerCase() || "";
+          const name = credErr?.name || "";
+
+          // Application abort / navigation
+          if (activeRegistrationAbortController?.signal?.aborted || name === "AbortError") {
+            return;
+          }
+
+          // Competing WebAuthn operation in browser
+          if (
+            msg.includes("already pending") ||
+            msg.includes("request is pending") ||
+            msg.includes("concurrent") ||
+            name === "InvalidStateError"
+          ) {
+            throw new Error("Another authentication request is currently active. Please wait a moment and try again.");
+          }
+
+          // Timeout
+          if (name === "TimeoutError" || msg.includes("timeout") || msg.includes("timed out")) {
+            throw new Error("Biometric verification timed out. Please try again.");
+          }
+
+          // Hardware / Platform unsupported
+          if (name === "NotSupportedError" || msg.includes("not supported")) {
+            throw new Error("Windows Hello / Biometrics is not supported or not enabled in this browser.");
+          }
+
+          // Genuine user cancellation in native OS prompt
+          const isUserCancel =
+            name === "NotAllowedError" && (
+              msg.includes("cancel") ||
+              msg.includes("canceled") ||
+              msg.includes("cancelled") ||
+              msg.includes("user denied") ||
+              msg.includes("user dismissed") ||
+              msg.includes("privacy-considerations") ||
+              msg.includes("not allowed")
+            );
+
+          if (isUserCancel) {
+            return; // Graceful silent cancel
+          }
+
+          throw credErr;
+        }
+
+        if (!credential) {
+          throw new Error("Biometric enrollment cancelled.");
+        }
+
+        if (registerBtn) registerBtn.textContent = "Verifying Signature...";
+
+        const rawAttestation = credential.response?.attestationObject
+          ? bufferToBase64url(credential.response.attestationObject)
+          : "";
+
+        const verifyPayload = {
+          id: credential.id,
+          rawId: bufferToBase64url(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+            attestationObject: rawAttestation,
+            transports: credential.response.getTransports ? credential.response.getTransports() : ["internal"],
+          },
+        };
+
+        const deviceName = `${navigator.userAgent.includes("iPhone") ? "iPhone" : navigator.userAgent.includes("Mac") ? "Mac" : navigator.userAgent.includes("Android") ? "Android Phone" : "Workstation"} (${navigator.userAgent.includes("Chrome") ? "Chrome" : navigator.userAgent.includes("Safari") ? "Safari" : "Browser"})`;
+
+        // 3. Verify registration with backend
+        await apiPost("/auth/passkeys/register/verify", {
+          response: verifyPayload,
+          challengeId,
+          deviceName,
+          friendlyName: deviceName,
+        });
+
+        showToast("🎉 Passkey registered successfully on this device!", "mint");
+        loadPasskeys();
+      } catch (err) {
+        showToast(err.message || "Passkey registration was cancelled or not completed.", "amber");
+      } finally {
+        isRegisteringPasskey = false;
+        activeRegistrationAbortController = null;
+        if (registerBtn) {
+          registerBtn.disabled = false;
+          registerBtn.textContent = "➕ Register New Passkey";
+        }
+      }
+    });
+  }
 
   root.querySelector("#settings-recovery-codes-btn")?.addEventListener("click", async () => {
     const codes = [
@@ -2870,6 +3191,334 @@ function _wireSecurity(root) {
       showToast("Recovery codes: contact your system administrator to generate new codes securely.", "mint");
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Personal Six-Digit Application PIN Management (ACP-05E-02)
+  // ---------------------------------------------------------------------------
+  const pinContent = root.querySelector("#settings-app-pin-content");
+  const pinBadge = root.querySelector("#settings-app-pin-badge");
+
+  const TRIVIAL_PINS = new Set([
+    "000000", "111111", "222222", "333333", "444444",
+    "555555", "666666", "777777", "888888", "999999",
+    "012345", "123456", "234567", "345678", "456789", "567890",
+    "987654", "876543", "765432", "654321", "543210",
+    "121212", "123123", "696969"
+  ]);
+
+  const loadAppPinStatus = async () => {
+    if (!pinContent || !pinBadge) return;
+    try {
+      const res = await apiGet("/auth/app-pin/status");
+      const { appPinEnabled, appPinSetAt, isLocked } = res?.data || {};
+
+      if (appPinEnabled) {
+        pinBadge.innerHTML = `<span class="settings-status-chip success" style="font-size:9.5px;">Configured &amp; Active</span>`;
+        const setAtStr = appPinSetAt ? new Date(appPinSetAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Recently";
+        pinContent.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="font-size:13.5px; font-weight:700; color:var(--ink);">Personal Application PIN is Active</div>
+              <div class="settings-field-helper" style="margin-top:2px;">Configured on ${escHtml(setAtStr)}. Your active session can be rapidly unlocked using this 6-digit PIN.</div>
+              ${isLocked ? `<div style="color:var(--danger, #b23b35); font-size:12px; font-weight:600; margin-top:4px;">⚠ Application PIN is temporarily locked due to repeated incorrect entries.</div>` : ""}
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <button class="btn btn-ghost btn-sm" id="settings-change-app-pin-btn" type="button" style="color:var(--ink);">
+                ✏️ Change PIN
+              </button>
+              <button class="btn btn-ghost btn-sm" id="settings-disable-app-pin-btn" type="button" style="color:var(--danger, #b23b35);">
+                🚫 Disable PIN
+              </button>
+            </div>
+          </div>
+          <div id="settings-pin-action-container" style="margin-top:12px; display:none;"></div>
+        `;
+
+        pinContent.querySelector("#settings-change-app-pin-btn")?.addEventListener("click", () => {
+          renderChangePinForm();
+        });
+
+        pinContent.querySelector("#settings-disable-app-pin-btn")?.addEventListener("click", () => {
+          renderDisablePinForm();
+        });
+      } else {
+        pinBadge.innerHTML = `<span class="settings-status-chip" style="font-size:9.5px; background:rgba(255,255,255,0.08); color:var(--muted);">Not Configured</span>`;
+        pinContent.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="font-size:13.5px; font-weight:700; color:var(--ink);">Application PIN (Optional)</div>
+              <div class="settings-field-helper" style="margin-top:2px;">Enrolling a personal 6-digit PIN allows quick workstation unlock without re-typing your full password.</div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="settings-setup-app-pin-btn" type="button">
+              ➕ Configure 6-Digit PIN
+            </button>
+          </div>
+          <div id="settings-pin-action-container" style="margin-top:12px; display:none;"></div>
+        `;
+
+        pinContent.querySelector("#settings-setup-app-pin-btn")?.addEventListener("click", () => {
+          renderSetupPinForm();
+        });
+      }
+    } catch (err) {
+      pinBadge.innerHTML = `<span class="settings-status-chip" style="font-size:9.5px;">Unavailable</span>`;
+      pinContent.innerHTML = `<div style="color:var(--muted); font-size:13px;">Unable to load PIN status. (${escHtml(err?.message || "Offline")})</div>`;
+    }
+  };
+
+  const wireFieldVisibilityToggles = (container) => {
+    if (!container) return;
+    container.querySelectorAll("[data-toggle-visibility]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetId = btn.getAttribute("data-toggle-visibility");
+        const input = container.querySelector(`#${targetId}`);
+        if (!input) return;
+        const isPwd = input.type === "password";
+        input.type = isPwd ? "text" : "password";
+        btn.innerHTML = isPwd ? icon("eyeOff", 16) : icon("eye", 16);
+        btn.setAttribute("title", isPwd ? "Hide" : "Show");
+        btn.setAttribute("aria-label", isPwd ? "Hide" : "Show");
+        btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted)";
+      });
+    });
+  };
+
+  function renderSetupPinForm() {
+    const actionContainer = pinContent.querySelector("#settings-pin-action-container");
+    if (!actionContainer) return;
+    actionContainer.style.display = "block";
+    actionContainer.innerHTML = `
+      <div style="padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm, 6px); margin-top:8px;">
+        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:10px;">Create Personal Six-Digit App PIN</div>
+        <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Current Account Password (Reauthentication)</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-setup-password" class="settings-field-input" placeholder="Enter your current password" autocomplete="current-password" style="width:100%; padding-right:42px; box-sizing:border-box;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-setup-password" title="Show password" aria-label="Show password">
+                ${icon("eye", 16)}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">New 6-Digit PIN</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-new" class="settings-field-input" placeholder="••••••" style="width:100%; padding-right:42px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-setup-new" title="Show PIN" aria-label="Show PIN">
+                ${icon("eye", 16)}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Confirm 6-Digit PIN</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-setup-confirm" class="settings-field-input" placeholder="••••••" style="width:100%; padding-right:42px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-setup-confirm" title="Show PIN" aria-label="Show PIN">
+                ${icon("eye", 16)}
+              </button>
+            </div>
+          </div>
+          <div style="font-size:11.5px; color:var(--muted);">PIN must be exactly 6 numeric digits. Repeated (e.g. 111111) or consecutive sequences (e.g. 123456) are rejected.</div>
+          <div id="pin-setup-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button type="button" class="btn btn-primary btn-sm" id="pin-setup-submit-btn">Save Application PIN</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="pin-setup-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    wireFieldVisibilityToggles(actionContainer);
+
+    actionContainer.querySelector("#pin-setup-cancel-btn")?.addEventListener("click", () => {
+      actionContainer.style.display = "none";
+      actionContainer.innerHTML = "";
+    });
+
+    actionContainer.querySelector("#pin-setup-submit-btn")?.addEventListener("click", async () => {
+      const pwd = actionContainer.querySelector("#pin-setup-password")?.value || "";
+      const pin = actionContainer.querySelector("#pin-setup-new")?.value?.trim() || "";
+      const confirmPin = actionContainer.querySelector("#pin-setup-confirm")?.value?.trim() || "";
+      const errEl = actionContainer.querySelector("#pin-setup-error");
+
+      const showError = (msg) => {
+        if (errEl) {
+          errEl.textContent = msg;
+          errEl.style.display = "block";
+        }
+      };
+
+      if (!pwd) return showError("Current account password is required.");
+      if (!/^\d{6}$/.test(pin)) return showError("PIN must be exactly 6 numeric digits.");
+      if (TRIVIAL_PINS.has(pin)) return showError("Trivially guessable or sequential PINs are not permitted.");
+      if (pin !== confirmPin) return showError("PIN confirmation does not match.");
+
+      try {
+        const btn = actionContainer.querySelector("#pin-setup-submit-btn");
+        btn.disabled = true;
+        btn.textContent = "Saving...";
+        await apiPost("/auth/app-pin/setup", { password: pwd, pin, confirmPin });
+        showToast("✓ Application PIN configured successfully.", "mint");
+        loadAppPinStatus();
+      } catch (err) {
+        showError(err?.message || "Failed to set PIN.");
+        const btn = actionContainer.querySelector("#pin-setup-submit-btn");
+        if (btn) { btn.disabled = false; btn.textContent = "Save Application PIN"; }
+      }
+    });
+  }
+
+  function renderChangePinForm() {
+    const actionContainer = pinContent.querySelector("#settings-pin-action-container");
+    if (!actionContainer) return;
+    actionContainer.style.display = "block";
+    actionContainer.innerHTML = `
+      <div style="padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm, 6px); margin-top:8px;">
+        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:10px;">Change Six-Digit Application PIN</div>
+        <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Current PIN or Password</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-change-current" class="settings-field-input" placeholder="Current PIN or account password" style="width:100%; padding-right:42px; box-sizing:border-box;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-change-current" title="Show value" aria-label="Show value">
+                ${icon("eye", 16)}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">New 6-Digit PIN</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-change-new" class="settings-field-input" placeholder="••••••" style="width:100%; padding-right:42px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-change-new" title="Show PIN" aria-label="Show PIN">
+                ${icon("eye", 16)}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Confirm New 6-Digit PIN</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" inputmode="numeric" maxlength="6" id="pin-change-confirm" class="settings-field-input" placeholder="••••••" style="width:100%; padding-right:42px; box-sizing:border-box; font-family:var(--font-mono); letter-spacing:4px; font-size:16px;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-change-confirm" title="Show PIN" aria-label="Show PIN">
+                ${icon("eye", 16)}
+              </button>
+            </div>
+          </div>
+          <div id="pin-change-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button type="button" class="btn btn-primary btn-sm" id="pin-change-submit-btn">Update PIN</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="pin-change-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    wireFieldVisibilityToggles(actionContainer);
+
+    actionContainer.querySelector("#pin-change-cancel-btn")?.addEventListener("click", () => {
+      actionContainer.style.display = "none";
+      actionContainer.innerHTML = "";
+    });
+
+    actionContainer.querySelector("#pin-change-submit-btn")?.addEventListener("click", async () => {
+      const current = actionContainer.querySelector("#pin-change-current")?.value || "";
+      const newPin = actionContainer.querySelector("#pin-change-new")?.value?.trim() || "";
+      const confirmNewPin = actionContainer.querySelector("#pin-change-confirm")?.value?.trim() || "";
+      const errEl = actionContainer.querySelector("#pin-change-error");
+
+      const showError = (msg) => {
+        if (errEl) {
+          errEl.textContent = msg;
+          errEl.style.display = "block";
+        }
+      };
+
+      if (!current) return showError("Current PIN or password is required.");
+      if (!/^\d{6}$/.test(newPin)) return showError("New PIN must be exactly 6 numeric digits.");
+      if (TRIVIAL_PINS.has(newPin)) return showError("Trivially guessable or sequential PINs are not permitted.");
+      if (newPin !== confirmNewPin) return showError("New PIN confirmation does not match.");
+
+      const isCurrentNumericPin = /^\d{6}$/.test(current);
+      const payload = isCurrentNumericPin
+        ? { currentPin: current, newPin, confirmNewPin }
+        : { password: current, newPin, confirmNewPin };
+
+      try {
+        const btn = actionContainer.querySelector("#pin-change-submit-btn");
+        btn.disabled = true;
+        btn.textContent = "Updating...";
+        await apiPost("/auth/app-pin/change", payload);
+        showToast("✓ Application PIN updated successfully.", "mint");
+        loadAppPinStatus();
+      } catch (err) {
+        showError(err?.message || "Failed to update PIN.");
+        const btn = actionContainer.querySelector("#pin-change-submit-btn");
+        if (btn) { btn.disabled = false; btn.textContent = "Update PIN"; }
+      }
+    });
+  }
+
+  function renderDisablePinForm() {
+    const actionContainer = pinContent.querySelector("#settings-pin-action-container");
+    if (!actionContainer) return;
+    actionContainer.style.display = "block";
+    actionContainer.innerHTML = `
+      <div style="padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm, 6px); margin-top:8px;">
+        <div style="font-size:13px; font-weight:700; color:var(--danger, #b23b35); margin-bottom:8px;">Disable Application PIN</div>
+        <div style="font-size:12.5px; color:var(--muted); margin-bottom:10px;">To remove this PIN, please reauthenticate by entering your account password.</div>
+        <div style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px;">Account Password</label>
+            <div style="position:relative; display:flex; align-items:center;">
+              <input type="password" id="pin-disable-password" class="settings-field-input" placeholder="Account password" style="width:100%; padding-right:42px; box-sizing:border-box;">
+              <button type="button" class="pin-visibility-toggle" data-toggle-visibility="pin-disable-password" title="Show password" aria-label="Show password">
+                ${icon("eye", 16)}
+              </button>
+            </div>
+          </div>
+          <div id="pin-disable-error" style="color:var(--danger, #b23b35); font-size:12px; display:none;"></div>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button type="button" class="btn btn-danger btn-sm" id="pin-disable-submit-btn">Disable PIN</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="pin-disable-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    wireFieldVisibilityToggles(actionContainer);
+
+    actionContainer.querySelector("#pin-disable-cancel-btn")?.addEventListener("click", () => {
+      actionContainer.style.display = "none";
+      actionContainer.innerHTML = "";
+    });
+
+    actionContainer.querySelector("#pin-disable-submit-btn")?.addEventListener("click", async () => {
+      const pwd = actionContainer.querySelector("#pin-disable-password")?.value || "";
+      const errEl = actionContainer.querySelector("#pin-disable-error");
+
+      if (!pwd) {
+        if (errEl) { errEl.textContent = "Password is required."; errEl.style.display = "block"; }
+        return;
+      }
+
+      try {
+        const btn = actionContainer.querySelector("#pin-disable-submit-btn");
+        btn.disabled = true;
+        btn.textContent = "Disabling...";
+        await apiPost("/auth/app-pin/disable", { password: pwd });
+        showToast("Application PIN disabled successfully.", "mint");
+        if (state.user) state.user.appPinEnabled = false;
+        loadAppPinStatus();
+      } catch (err) {
+        if (errEl) { errEl.textContent = err?.message || "Failed to disable PIN."; errEl.style.display = "block"; }
+        const btn = actionContainer.querySelector("#pin-disable-submit-btn");
+        if (btn) { btn.disabled = false; btn.textContent = "Disable PIN"; }
+      }
+    });
+  }
+
+  loadAppPinStatus();
 }
 
 function _wireRecovery(root) {
@@ -3582,6 +4231,223 @@ async function _wireUpdates(root) {
         _updatesData = null;
         _rerenderInPlace(root);
       }
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIRE: Café Configuration Templates (SCR-023 / Chapter 22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _wireTemplates(root) {
+  const listContainer = root.querySelector("#settings-templates-list");
+  const cafeSelect = root.querySelector("#tpl-apply-cafe-select");
+  const templateSelect = root.querySelector("#tpl-apply-template-select");
+  const formToggle = root.querySelector("#settings-create-template-toggle");
+  const formCard = root.querySelector("#settings-create-template-form");
+  const cancelBtn = root.querySelector("#settings-cancel-template-btn");
+  const form = root.querySelector("#settings-new-template-form");
+  const previewBtn = root.querySelector("#tpl-preview-btn");
+  const applyBtn = root.querySelector("#tpl-apply-btn");
+  const previewResult = root.querySelector("#tpl-preview-result");
+
+  if (formToggle && formCard) {
+    formToggle.addEventListener("click", () => {
+      formCard.style.display = formCard.style.display === "none" ? "block" : "none";
+    });
+  }
+  if (cancelBtn && formCard) {
+    cancelBtn.addEventListener("click", () => {
+      formCard.style.display = "none";
+    });
+  }
+
+  // Load Templates & Cafes
+  try {
+    const [tplRes, cafesRes] = await Promise.all([
+      apiGet("/cafes/templates"),
+      apiGet("/cafes")
+    ]);
+
+    const templates = (tplRes && tplRes.data) ? tplRes.data : [];
+    const cafes = (cafesRes && cafesRes.data) ? (Array.isArray(cafesRes.data) ? cafesRes.data : cafesRes.data.cafes || []) : [];
+
+    // Populate Cafes select
+    if (cafeSelect) {
+      cafeSelect.innerHTML = `<option value="">Choose a café...</option>` +
+        cafes.map(c => `<option value="${c.cafeId}">${escHtml(c.name || c.cafeId)} (${c.cafeId})</option>`).join('');
+    }
+
+    // Populate Templates select
+    if (templateSelect) {
+      templateSelect.innerHTML = `<option value="">Choose a template...</option>` +
+        templates.map(t => `<option value="${t.templateId}">${escHtml(t.name)} (${t.templateId})</option>`).join('');
+    }
+
+    // Render Templates List
+    if (listContainer) {
+      if (!templates.length) {
+        listContainer.innerHTML = `
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:13px;">
+            No café templates created yet. Click "+ Create Blueprint Template" above to establish standard operating defaults.
+          </div>
+        `;
+      } else {
+        listContainer.innerHTML = `
+          <div style="overflow-x:auto;">
+            <table style="width:100%; font-size:13px; border-collapse:collapse;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--line); color:var(--muted); text-align:left;">
+                  <th style="padding:8px 6px;">Template ID</th>
+                  <th style="padding:8px 6px;">Name</th>
+                  <th style="padding:8px 6px;">Cutoff Hour</th>
+                  <th style="padding:8px 6px;">PO Auto Limit</th>
+                  <th style="padding:8px 6px;">Inv Limit</th>
+                  <th style="padding:8px 6px;">Default?</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${templates.map(t => `
+                  <tr style="border-bottom:1px solid var(--line-dim, rgba(255,255,255,0.05));">
+                    <td style="padding:8px 6px; font-family:monospace; font-weight:bold; color:var(--gold, #d4af37);">${escHtml(t.templateId)}</td>
+                    <td style="padding:8px 6px; font-weight:600; color:var(--ink);">${escHtml(t.name)}</td>
+                    <td style="padding:8px 6px; color:var(--ink);">${t.businessDayCutoffHour !== undefined ? t.businessDayCutoffHour + ':00 IST' : '4:00 IST'}</td>
+                    <td style="padding:8px 6px; color:var(--ink);">${t.approvalLimits?.purchaseOrderPaisa ? '₹' + (t.approvalLimits.purchaseOrderPaisa/100).toLocaleString('en-IN') : '₹25,000'}</td>
+                    <td style="padding:8px 6px; color:var(--ink);">${t.approvalLimits?.inventoryAdjustmentPaisa ? '₹' + (t.approvalLimits.inventoryAdjustmentPaisa/100).toLocaleString('en-IN') : '₹5,000'}</td>
+                    <td style="padding:8px 6px;">
+                      ${t.isDefault ? '<span class="settings-status-chip success" style="font-size:9.5px;">DEFAULT</span>' : '<span style="color:var(--muted); font-size:12px;">—</span>'}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+    }
+  } catch (err) {
+    if (listContainer) {
+      listContainer.innerHTML = `<div style="color:#ef4444; font-size:13px;">Failed to load templates: ${escHtml(err.message)}</div>`;
+    }
+  }
+
+  // Handle Form Submit
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = root.querySelector("#tpl-name")?.value?.trim();
+      const cutoff = Number(root.querySelector("#tpl-cutoff")?.value) || 4;
+      const poLimit = Number(root.querySelector("#tpl-po-limit")?.value) || 0;
+      const invLimit = Number(root.querySelector("#tpl-inv-limit")?.value) || 0;
+      const isDefault = root.querySelector("#tpl-default")?.checked || false;
+
+      if (!name) {
+        showToast("Template name is required", "coral");
+        return;
+      }
+
+      try {
+        const res = await apiPost("/cafes/templates", {
+          name,
+          businessDayCutoffHour: cutoff,
+          approvalLimits: {
+            purchaseOrderPaisa: poLimit * 100,
+            inventoryAdjustmentPaisa: invLimit * 100
+          },
+          isDefault
+        });
+
+        if (res && res.success) {
+          showToast(`Template "${name}" created successfully!`, "mint");
+          formCard.style.display = "none";
+          form.reset();
+          _wireTemplates(root); // reload list
+        } else {
+          showToast(res?.message || "Failed to create template", "coral");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to create template", "coral");
+      }
+    });
+  }
+
+  // Handle Preview
+  if (previewBtn && previewResult) {
+    previewBtn.addEventListener("click", async () => {
+      const cafeId = cafeSelect?.value;
+      const templateId = templateSelect?.value;
+      if (!cafeId) {
+        showToast("Please select a target café to preview", "coral");
+        return;
+      }
+      previewBtn.disabled = true;
+      try {
+        const query = templateId ? `?templateId=${encodeURIComponent(templateId)}` : '';
+        const res = await apiGet(`/cafes/${encodeURIComponent(cafeId)}/template-preview${query}`);
+        if (res && res.success && res.data) {
+          const d = res.data;
+          previewResult.style.display = "block";
+          previewResult.innerHTML = `
+            <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:8px;">
+              Blueprint Preview for Café ${escHtml(d.cafeId)}:
+            </div>
+            <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">
+              Assigned Template: <strong style="color:var(--ink);">${escHtml(d.templateId || 'None (Default applied)')}</strong>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:12px;">
+              <div style="background:var(--surface); padding:8px; border-radius:6px; border:1px solid var(--line);">
+                <strong style="color:var(--gold, #d4af37);">Inherited Parameters:</strong>
+                <pre style="font-size:11px; margin-top:4px; color:var(--ink); overflow-x:auto;">${JSON.stringify(d.inheritedParameters || {}, null, 2)}</pre>
+              </div>
+              <div style="background:var(--surface); padding:8px; border-radius:6px; border:1px solid var(--line);">
+                <strong style="color:var(--muted);">Specific Overrides:</strong>
+                <pre style="font-size:11px; margin-top:4px; color:var(--ink); overflow-x:auto;">${JSON.stringify(d.overrides || {}, null, 2)}</pre>
+              </div>
+            </div>
+          `;
+        } else {
+          showToast(res?.message || "Failed to preview template overrides", "coral");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to preview template overrides", "coral");
+      } finally {
+        previewBtn.disabled = false;
+      }
+    });
+  }
+
+  // Handle Apply
+  if (applyBtn) {
+    applyBtn.addEventListener("click", async () => {
+      const cafeId = cafeSelect?.value;
+      const templateId = templateSelect?.value;
+      if (!cafeId || !templateId) {
+        showToast("Please select both a target café and a template", "coral");
+        return;
+      }
+
+      confirmAction({
+        title: "Apply Blueprint Template",
+        description: `Apply template <strong>${templateId}</strong> to café <strong>${cafeId}</strong>?<br>Non-overridden configuration values will update to the template defaults.`,
+        confirmLabel: "Apply Blueprint",
+        danger: false,
+        onConfirm: async () => {
+          applyBtn.disabled = true;
+          try {
+            const res = await apiPost(`/cafes/${encodeURIComponent(cafeId)}/apply-template`, { templateId });
+            if (res && res.success) {
+              showToast(`Template ${templateId} applied to Café ${cafeId}!`, "mint");
+              if (previewBtn) previewBtn.click();
+            } else {
+              showToast(res?.message || "Failed to apply template", "coral");
+            }
+          } catch (err) {
+            showToast(err.message || "Failed to apply template", "coral");
+          } finally {
+            applyBtn.disabled = false;
+          }
+        }
+      });
     });
   }
 }

@@ -137,6 +137,7 @@ const loyaltyLedgerSchema = new mongoose.Schema(
     timestamps: true,
     versionKey: 'version',
     collection: 'loyalty_ledger',
+    strict: false,
   }
 );
 

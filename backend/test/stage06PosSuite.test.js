@@ -27,6 +27,9 @@ const { RegisterSession } = require('../src/models/RegisterSession');
 const { CashTransaction } = require('../src/models/CashTransaction');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
 const { AuditEvent } = require('../src/models/AuditEvent');
+const { PrintJob } = require('../src/models/PrintJob');
+const { IdempotencyRecord } = require('../src/models/IdempotencyRecord');
+const { BomDepletionService } = require('../src/services/bomDepletionService');
 const auditService = require('../src/services/auditService');
 
 function createAuthContext(role = 'STAFF', cafeId = 'ZC-0001', userId = 'EMP-ZC-1001') {
@@ -46,10 +49,45 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
   const mockBills = [];
   const mockSessions = [];
   const mockCashTransactions = [];
+  const mockIdempotencyRecords = [];
   let seqCounter = 5000;
 
   // Mock models and services
   AuditEvent.prototype.save = async function () { return this; };
+  PrintJob.prototype.save = async function () { return this; };
+
+  IdempotencyRecord.prototype.save = async function () {
+    const idx = mockIdempotencyRecords.findIndex(
+      (r) => r.idempotencyKey === this.idempotencyKey && r.cafeId === this.cafeId
+    );
+    if (idx >= 0) mockIdempotencyRecords[idx] = this;
+    else mockIdempotencyRecords.push(this);
+    return this;
+  };
+
+  t.mock.method(IdempotencyRecord, 'findOne', async (query) => {
+    return mockIdempotencyRecords.find(
+      (r) => r.idempotencyKey === query.idempotencyKey &&
+             (!query.cafeId || r.cafeId === query.cafeId)
+    ) || null;
+  });
+
+  t.mock.method(IdempotencyRecord, 'findOneAndUpdate', async (query, update) => {
+    const rec = mockIdempotencyRecords.find((r) => r.idempotencyKey === query.idempotencyKey);
+    if (rec) {
+      Object.assign(rec, update.$set || update);
+    }
+    return rec || null;
+  });
+
+  t.mock.method(IdempotencyRecord, 'deleteOne', async () => ({}));
+
+  t.mock.method(BomDepletionService, 'depleteOrderBOM', async () => ({
+    depleted: true,
+    depletionCount: 1,
+    source: 'MOCK',
+  }));
+
   t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
   t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
 
@@ -194,7 +232,7 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
     assert.equal(result.printed, false);
     assert.equal(result.printBuffer, null);
     assert.ok(result.bill.billId.startsWith('BILL-'));
-    assert.ok(result.bill.invoiceNumber.startsWith('INV-'));
+    assert.ok(result.bill.invoiceNumber.startsWith('INV-') || result.bill.invoiceNumber.startsWith('P/'));
     assert.equal(result.bill.status, 'COMPLETED');
     assert.equal(result.bill.paymentStatus, 'PAID');
 

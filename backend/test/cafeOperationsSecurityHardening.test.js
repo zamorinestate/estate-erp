@@ -164,7 +164,7 @@ test('CAFÉ OPS-R01B Security Hardening Test Suite', async (t) => {
     assert.notEqual(res.headers['x-correlation-id'], 'invalid@bad!chars#$$$%');
     assert.match(
       res.headers['x-correlation-id'],
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      /^(REQ-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
       'Should generate a valid random UUID'
     );
   });

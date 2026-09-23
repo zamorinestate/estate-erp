@@ -5,6 +5,17 @@ const { User } = require('../models/User');
 const SequenceCounter = require('../models/SequenceCounter');
 const { UniversalQrService } = require('./universalQrService');
 const { ApiError } = require('../utils/ApiError');
+const { hashPassword } = require('./authService');
+const operatorSessionService = require('./operatorSessionService');
+
+function generateTemporaryPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let rand = '';
+  for (let i = 0; i < 6; i++) {
+    rand += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `Zamorin@${rand}!`;
+}
 
 const LIFECYCLE_STATES = [
   'ACTIVE',
@@ -88,7 +99,11 @@ async function registerEmployee(payload = {}, actor = {}) {
     assignedAssets = [],
     trainingRecords = [],
     onboardingChecklist = {},
-    passwordHash = '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQmG6W65WVRp7nJ6e9i1e',
+    password = '',
+    initialPassword = '',
+    passwordHash: customPasswordHash = null,
+    operatorPin = null,
+    pin = null,
   } = payload;
 
   if (!name || !name.trim()) {
@@ -162,6 +177,43 @@ async function registerEmployee(payload = {}, actor = {}) {
     // Non-blocking fallback
   }
 
+  // Compute password hash
+  let rawPassword = (password || initialPassword || '').trim();
+  let effectivePassword = rawPassword;
+  let finalPasswordHash = null;
+  if (rawPassword) {
+    if (rawPassword.length < 8) {
+      throw new ApiError(400, 'INVALID_PASSWORD', 'Password must be at least 8 characters long.');
+    }
+    finalPasswordHash = await hashPassword(rawPassword, { minLength: 8 });
+  } else if (customPasswordHash && customPasswordHash !== '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQmG6W65WVRp7nJ6e9i1e') {
+    finalPasswordHash = customPasswordHash;
+    effectivePassword = null;
+  } else {
+    effectivePassword = generateTemporaryPassword();
+    finalPasswordHash = await hashPassword(effectivePassword, { minLength: 8 });
+  }
+
+  // Compute operator PIN hash if provided
+  let rawPin = operatorPin !== undefined && operatorPin !== null && operatorPin !== ''
+    ? operatorPin
+    : (pin !== undefined && pin !== null && pin !== '' ? pin : null);
+  let operatorPinHash = null;
+  let operatorPinSetAt = null;
+
+  if (rawPin) {
+    const pinStr = String(rawPin).trim();
+    if (!/^\d{6}$/.test(pinStr)) {
+      throw new ApiError(400, 'INVALID_OPERATOR_PIN', 'Operator PIN must be exactly 6 numeric digits.');
+    }
+    const weakPins = ['000000', '111111', '123456', '654321', '999999', '121212'];
+    if (weakPins.includes(pinStr)) {
+      throw new ApiError(400, 'WEAK_OPERATOR_PIN', 'Please choose a stronger, non-sequential 6-digit PIN.');
+    }
+    operatorPinHash = await operatorSessionService.hashPin(pinStr);
+    operatorPinSetAt = new Date();
+  }
+
   const employee = await User.create({
     userId: newUserId,
     organisationId: organisationId.trim().toUpperCase(),
@@ -216,9 +268,21 @@ async function registerEmployee(payload = {}, actor = {}) {
     onboardingChecklist: checklist,
     isReadyForActivation: isReady,
     createdBy: actorUserId || 'SYSTEM',
-    passwordHash,
+    passwordHash: finalPasswordHash,
     mustChangePassword: true,
+    operatorPinHash,
+    operatorPinSetAt,
   });
+
+  const credentials = {
+    userId: newUserId,
+    email: employee.email,
+    temporaryPassword: effectivePassword,
+    operatorPin: rawPin ? String(rawPin).trim() : null,
+    operatorPinConfigured: Boolean(operatorPinHash),
+    mustChangePassword: true,
+  };
+  employee.credentials = credentials;
 
   return employee;
 }

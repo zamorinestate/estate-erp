@@ -162,7 +162,7 @@ const getTerminalHealth = asyncHandler(async (req, res) => {
  * Render standard HTML receipt preview for browser window.print() fallback.
  */
 const renderHtmlReceiptFallback = asyncHandler(async (req, res) => {
-  const { orderData = {}, cafeId } = req.body;
+  const { orderData = {}, cafeId, paperWidth } = req.body;
   const { organisationId } = req.auth;
 
   let cafeInfo = {};
@@ -180,7 +180,8 @@ const renderHtmlReceiptFallback = asyncHandler(async (req, res) => {
     }
   }
 
-  const html = hardwareBridgeService.generateFallbackHtmlReceipt(orderData, cafeInfo);
+  const width = paperWidth || orderData.paperWidth || 80;
+  const html = hardwareBridgeService.generateFallbackHtmlReceipt(orderData, cafeInfo, width);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   return res.status(200).send(html);
 });

@@ -22,6 +22,12 @@ const {
   updateWorkOrder,
   listMaintenancePlans,
   createMaintenancePlan,
+  getMaintenanceBacklog,
+  getMaintenanceHistory,
+  completeMaintenanceJob,
+  rescheduleMaintenanceJob,
+  cancelMaintenancePlan,
+  runMaintenanceAlertEvaluation,
   logMaintenanceJob,
   recordInspection,
 } = require('../controllers/assetController');
@@ -43,9 +49,19 @@ router.post('/work-orders/:workOrderId/resolve', updateWorkOrder);
 // Inspections
 router.post('/inspections', recordInspection);
 
+// Maintenance Backlog, Schedules & Alert Evaluation
+router.get('/maintenance/backlog', getMaintenanceBacklog);
+router.get('/maintenance/history', getMaintenanceHistory);
+router.post('/maintenance/evaluate-alerts', runMaintenanceAlertEvaluation);
+router.post('/maintenance/complete', completeMaintenanceJob);
+router.post('/maintenance/reschedule', rescheduleMaintenanceJob);
+router.post('/maintenance/jobs/:jobId/complete', completeMaintenanceJob);
+router.post('/maintenance/jobs/:jobId/reschedule', rescheduleMaintenanceJob);
+
 // Maintenance Plans
 router.get('/plans', listMaintenancePlans);
 router.post('/plans', createMaintenancePlan);
+router.post('/plans/:planId/cancel', cancelMaintenancePlan);
 
 // Asset Register CRUD & Lifecycle
 router.get('/', listAssets);
@@ -56,6 +72,7 @@ router.post('/:assetId/commission', commissionAsset);
 router.post('/:assetId/transfer', transferAsset);
 router.post('/:assetId/safety-hold', toggleSafetyHold);
 router.post('/:assetId/retire', retireAsset);
+router.get('/:assetId/maintenance', getMaintenanceHistory);
 router.post('/:assetId/maintenance', logMaintenanceJob);
 
 module.exports = router;

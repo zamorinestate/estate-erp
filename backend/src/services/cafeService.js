@@ -24,8 +24,32 @@ const {
   hashOpaqueToken,
 } = require('./cafeAccessCryptoService');
 const { ApiError } = require('../utils/ApiError');
+const { verifyPassword } = require('./authService');
+const {
+  INDIAN_STATE_CODES,
+  resolveStateByCode,
+  resolveStateByName,
+  validateGstinFormat,
+  validateFssaiNumber,
+  resolveFssaiEligibilityAndFee,
+  determineFssaiCategoryByTurnover,
+  resolveFinancialYear,
+} = require('../config/regulatoryCompliance2026');
+
+const VALID_LIFECYCLE_TRANSITIONS = Object.freeze({
+  DRAFT: ['VALIDATION'],
+  VALIDATION: ['DRAFT', 'PREVIEW'],
+  PREVIEW: ['VALIDATION', 'CREATED'],
+  CREATED: ['PROVISIONING'],
+  PROVISIONING: ['PROVISIONED', 'PROVISIONING_FAILED'],
+  PROVISIONING_FAILED: ['PROVISIONING'],
+  PROVISIONED: ['VERIFIED'],
+  VERIFIED: ['ACTIVATED'],
+  ACTIVATED: [],
+});
 
 const ALLOWED_CAFE_CREATE_FIELDS = [
+  'cafeId',
   'name',
   'displayName',
   'legalName',
@@ -40,6 +64,8 @@ const ALLOWED_CAFE_CREATE_FIELDS = [
   'internalCafeId',
   'storeNumber',
   'parentOrganisationId',
+  'estimatedAnnualTurnoverInr',
+  'annualTurnoverInr',
   'legalConstitution',
   'constitution',
   'legalOwnerName',
@@ -146,6 +172,23 @@ function sanitizeCreatePayload(body) {
   return sanitized;
 }
 
+function requireMasterCreationAuthority(auth) {
+  if (!auth || !auth.role) {
+    throw new ApiError(401, 'UNAUTHENTICATED', 'Authentication required.');
+  }
+
+  const role = auth.role.toUpperCase();
+  const isAllowed = role === 'MASTER';
+
+  if (!isAllowed) {
+    throw new ApiError(
+      403,
+      'CAFE_CREATION_DENIED',
+      'Only Master governance authority may create or provision new cafés.'
+    );
+  }
+}
+
 function requireGovernanceAuthority(auth) {
   if (!auth || !auth.role) {
     throw new ApiError(401, 'UNAUTHENTICATED', 'Authentication required.');
@@ -157,8 +200,8 @@ function requireGovernanceAuthority(auth) {
   if (!isAllowed) {
     throw new ApiError(
       403,
-      'CAFE_CREATION_DENIED',
-      'Only Primary Master, Normal Master, and Owner roles may create new cafés.'
+      'GOVERNANCE_ACCESS_REQUIRED',
+      'Only Master and Owner roles may perform this governance operation.'
     );
   }
 }
@@ -175,7 +218,7 @@ class CafeService {
     userAgent = null,
     correlationId = null,
   }) {
-    requireGovernanceAuthority(auth);
+    requireMasterCreationAuthority(auth);
 
     const organisationId = String(auth.organisationId || '').trim().toUpperCase();
     if (!organisationId) {
@@ -219,34 +262,10 @@ class CafeService {
       minimumDigits: 4,
     });
 
-    // 2. Generate cryptographically random, non-trivial Permanent 6-digit PIN with collision retry
-    let permanentPin = null;
-    let pinLookupHash = null;
-    let encryptedPin = null;
-
-    for (let attempt = 0; attempt < 25; attempt++) {
-      const candidatePin = generateSecureCafePin();
-      const candidateHash = computePinLookupHash(candidatePin);
-
-      const existingReservation = await CafePinReservation.findOne({
-        pinLookupHash: candidateHash,
-      }).lean();
-
-      if (!existingReservation) {
-        permanentPin = candidatePin;
-        pinLookupHash = candidateHash;
-        encryptedPin = encryptCafePin(candidatePin);
-        break;
-      }
-    }
-
-    if (!permanentPin || !pinLookupHash || !encryptedPin) {
-      throw new ApiError(
-        500,
-        'PIN_GENERATION_FAILED',
-        'Could not allocate a unique permanent Café PIN. Please retry.'
-      );
-    }
+    // 2. Legacy Permanent PIN generation retired in REC-02 (no reservations created)
+    const permanentPin = null;
+    const pinLookupHash = null;
+    const encryptedPin = null;
 
     // 3. Generate high-entropy, independent QR and Link tokens
     const qrToken = generateOpaqueToken();
@@ -279,19 +298,7 @@ class CafeService {
     }
 
     try {
-      // 4a. Reserve Permanent PIN
-      await CafePinReservation.create(
-        [
-          {
-            pinLookupHash,
-            cafeId,
-            organisationId,
-            assignedAt: new Date(),
-            isArchived: false,
-          },
-        ],
-        session ? { session } : {}
-      );
+      // 4a. Legacy Permanent PIN reservation is retired in REC-02 (omitted)
 
       // 4b. Create Stage 02 Universal QR Record for Café Login
       const { UniversalQrService } = require('./universalQrService');
@@ -315,7 +322,19 @@ class CafeService {
         // Non-blocking fallback if running in standalone test environment
       }
 
-      // 4c. Create Cafe Record with Full 12-Section Profile
+      // 4c. Resolve FSSAI 2026 eligibility and fee based on Kind of Business
+      const kindOfBusiness = (
+        sanitized.fssaiKindOfBusiness ||
+        sanitized.fssai?.kindOfBusiness ||
+        'RESTAURANT'
+      ).trim().toUpperCase();
+      const turnover = sanitized.estimatedAnnualTurnoverInr || sanitized.annualTurnoverInr || 0;
+      const fssaiResolution = resolveFssaiEligibilityAndFee({
+        kindOfBusiness,
+        annualTurnoverInr: turnover,
+      });
+
+      // 4d. Create Cafe Record with Full 12-Section Profile
       const [cafeDoc] = await Cafe.create(
         [
           {
@@ -411,11 +430,17 @@ class CafeService {
               fssai: {
                 isApplicable: sanitized.fssai?.isApplicable !== false,
                 number: sanitized.fssaiNumber || sanitized.fssai?.number || '',
-                licenseType: sanitized.fssaiType || sanitized.fssai?.licenseType || 'State Licence',
-                kindOfBusiness: sanitized.fssai?.kindOfBusiness || 'Food Service / Café',
-                issuingAuthority: sanitized.fssai?.issuingAuthority || 'FSSAI FoSCoS',
+                kindOfBusiness: fssaiResolution.kindOfBusiness || sanitized.fssaiKindOfBusiness || sanitized.fssai?.kindOfBusiness || 'RESTAURANT',
+                category: fssaiResolution.category || sanitized.fssaiType || sanitized.fssai?.category || 'STATE_LICENCE',
+                licenseType: fssaiResolution.category === 'REGISTRATION' ? 'Registration' : (fssaiResolution.category === 'CENTRAL_LICENCE' ? 'Central Licence' : 'State Licence'),
+                issuingAuthority: fssaiResolution.licensingAuthority || sanitized.fssai?.issuingAuthority || 'FSSAI FoSCoS',
+                eligibilityCriteria: fssaiResolution.eligibilityCriteria || '',
+                annualFeeInr: fssaiResolution.feePerAnnum || 0,
+                ruleVersion: fssaiResolution.ruleVersion || 'FSSAI_RULES_2026_V1',
                 validFrom: sanitized.fssai?.validFrom || null,
                 validTill: sanitized.fssaiExpiryDate || sanitized.fssai?.validTill || null,
+                isPerpetual: true,
+                status: 'ACTIVE',
                 certificateUrl: sanitized.fssai?.certificateUrl || '',
                 renewalReminderDate: sanitized.fssai?.renewalReminderDate || null,
               },
@@ -563,7 +588,7 @@ class CafeService {
       );
       createdCafe = cafeDoc;
 
-      // 4c. Create CafeAccess Record
+      // 4c. Create CafeAccess Record (PIN retired in REC-02)
       const [accessDoc] = await CafeAccess.create(
         [
           {
@@ -571,8 +596,6 @@ class CafeService {
             cafeId,
             accessStatus: 'ACTIVE',
             provisioningStatus: 'PROVISIONING',
-            permanentCafePinEncrypted: encryptedPin,
-            permanentCafePinLookupHash: pinLookupHash,
             qrCredentialHash,
             qrTokenEncrypted: encryptSecret(qrToken),
             qrVersion: 1,
@@ -591,7 +614,7 @@ class CafeService {
       );
       createdAccess = accessDoc;
 
-      // 4d. Auto-provision active Global Inventory Items with quantity 0
+      // 4d. Auto-provision active Global Inventory Items with quantity 0 (neutral locations: Main Store, Cold Room)
       try {
         const { GlobalInventoryItem } = require('../models/GlobalInventoryItem');
         const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
@@ -619,7 +642,7 @@ class CafeService {
             stockedHere: true,
             replenishmentEnabled: true,
             primaryLocation: 'Main Store',
-            storageLocations: ['Main Store'],
+            storageLocations: ['Main Store', 'Cold Room'],
             status: 'ACTIVE',
           }));
           await CafeInventoryConfig.insertMany(
@@ -631,21 +654,67 @@ class CafeService {
         // Non-blocking inventory setup
       }
 
-      // 5. Post-Creation Integrity Verification
-      const decryptedVerification = decryptCafePin(encryptedPin);
-      if (decryptedVerification !== permanentPin) {
-        throw new Error('Post-creation integrity check failed: PIN decryption mismatch.');
+      // 4e. Auto-provision FY-aware Tax Invoice & Receipt Sequences in SequenceCounter
+      try {
+        const fyInfo = resolveFinancialYear();
+        const gstinClean = (sanitized.gstin || sanitized.gstDetails?.gstin || '').toUpperCase();
+        const invoiceSeqKey = gstinClean
+          ? `GST_INV:${gstinClean}:${fyInfo.fyShort}:${cafeId}:INV`
+          : `INVOICE_${organisationId}_${cafeId}_${fyInfo.fyShort}`;
+
+        await SequenceCounter.findOneAndUpdate(
+          { organisationId, sequenceKey: invoiceSeqKey },
+          {
+            $setOnInsert: {
+              organisationId,
+              sequenceKey: invoiceSeqKey,
+              prefix: `INV/${fyInfo.fyShort}/${cafeId}`,
+              currentValue: 0,
+              minimumDigits: 5,
+            },
+          },
+          { upsert: true, session: session || undefined }
+        ).catch(() => {});
+
+        const receiptSeqKey = `RECEIPT_${organisationId}_${cafeId}_${fyInfo.fyShort}`;
+        await SequenceCounter.findOneAndUpdate(
+          { organisationId, sequenceKey: receiptSeqKey },
+          {
+            $setOnInsert: {
+              organisationId,
+              sequenceKey: receiptSeqKey,
+              prefix: `REC/${fyInfo.fyShort}/${cafeId}`,
+              currentValue: 0,
+              minimumDigits: 5,
+            },
+          },
+          { upsert: true, session: session || undefined }
+        ).catch(() => {});
+      } catch (_) {
+        // Non-blocking sequence pre-provisioning
       }
 
+      // 5. Post-Creation Integrity Verification
       createdAccess.provisioningStatus = 'READY';
       createdAccess.lastValidatedAt = new Date();
       createdAccess.lastValidationResult = {
-        pinVerified: true,
+        pinVerified: false, // Legacy PIN retired in REC-02
         qrVerified: true,
         linkVerified: true,
         timestamp: new Date().toISOString(),
       };
       await createdAccess.save(session ? { session } : {});
+
+      // Mark café lifecycle stage as ACTIVATED
+      createdCafe.lifecycleStage = 'ACTIVATED';
+      createdCafe.lifecycleHistory.push({
+        fromStage: 'CREATED',
+        toStage: 'ACTIVATED',
+        transitionedAt: new Date(),
+        transitionedBy: auth.userId,
+        reason: 'Canonical creation, provisioning, and activation completed.',
+      });
+      await createdCafe.save(session ? { session } : {});
 
       // If creator is OWNER, ensure newly created cafeId is in their assignedCafeIds
       if (auth.role === 'OWNER') {
@@ -678,9 +747,6 @@ class CafeService {
         }
         if (createdAccess?._id) {
           await CafeAccess.deleteOne({ _id: createdAccess._id }).catch(() => {});
-        }
-        if (pinLookupHash) {
-          await CafePinReservation.deleteOne({ pinLookupHash }).catch(() => {});
         }
       }
 
@@ -726,7 +792,7 @@ class CafeService {
         action: 'CAFE_ACCESS_CREATED',
         entityType: 'CAFE_ACCESS',
         entityId: cafeId,
-        reason: 'Permanent Café PIN, QR credential, and Login Link provisioned.',
+        reason: 'Universal QR credential and Login Link provisioned (Legacy PIN retired).',
         result: 'SUCCESS',
         riskClassification: 'CRITICAL',
         correlationId,
@@ -751,7 +817,7 @@ class CafeService {
         organisationId,
         provisioningStatus: 'READY',
         accessStatus: 'ACTIVE',
-        permanentCafePin: permanentPin, // Initial unmasked reveal only upon creation
+        permanentCafePin: null, // Retired in REC-02
         qrToken,
         qrUrl: `${publicOrigin}/cafe-access/qr/${qrToken}`,
         qrVersion: 1,
@@ -760,6 +826,796 @@ class CafeService {
         linkVersion: 1,
       },
     };
+  }
+
+  /**
+   * ==========================================================================
+   * REC-02: CANONICAL NEW CAFÉ / RESTAURANT ONBOARDING LIFECYCLE METHODS
+   * ==========================================================================
+   */
+
+  /**
+   * Stage: VALIDATION
+   * Validates business identity, structured location, GSTIN, FSSAI 2026 compliance.
+   */
+  async validateCafeCreationPayload({ cafeData = {}, isDraft = false, organisationId = null }) {
+    const errors = [];
+    const warnings = [];
+    const sanitized = sanitizeCreatePayload(cafeData);
+
+    const name = (sanitized.name || '').trim();
+    const displayName = (sanitized.displayName || sanitized.name || '').trim();
+
+    if (!name) errors.push('Café name is required.');
+    if (!displayName) errors.push('Café display name is required.');
+
+    // Duplicate name policy check within organisation (ignoring self if updating)
+    if (name && organisationId) {
+      const duplicate = await Cafe.findOne({
+        organisationId: String(organisationId).toUpperCase(),
+        name: { $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        status: { $ne: 'ARCHIVED' },
+      }).lean();
+
+      const targetCafeId = cafeData.cafeId || sanitized.cafeId || null;
+      if (duplicate && (!targetCafeId || duplicate.cafeId !== targetCafeId)) {
+        errors.push(`A café or restaurant named '${name}' already exists in this organisation.`);
+      }
+    }
+
+    const cafeType = sanitized.cafeType
+      ? sanitized.cafeType.trim().toUpperCase()
+      : 'STANDARD_CAFE';
+
+    if (!CAFE_TYPES.includes(cafeType)) {
+      errors.push(`Invalid business-unit type '${cafeType}'. Allowed: ${CAFE_TYPES.join(', ')}`);
+    }
+
+    // Structured address validation
+    const address = sanitized.address || {};
+    const stateCode = sanitized.stateCode || address.stateCode || '';
+    const stateName = sanitized.state || address.state || '';
+    const pinCode = sanitized.pincode || address.pinCode || address.pincode || '';
+
+    let resolvedState = null;
+    if (stateCode) {
+      resolvedState = resolveStateByCode(stateCode);
+      if (!resolvedState) {
+        errors.push(`Invalid Indian State Code '${stateCode}'.`);
+      }
+    } else if (stateName) {
+      resolvedState = resolveStateByName(stateName);
+      if (resolvedState) {
+        sanitized.stateCode = resolvedState.code;
+      }
+    }
+
+    if (!isDraft) {
+      if (!sanitized.addressLine1 && !address.street && !address.line1 && !address.building) {
+        errors.push('Street / Premises address is required.');
+      }
+      if (!sanitized.city && !address.city) {
+        errors.push('City is required.');
+      }
+      if (!pinCode) {
+        errors.push('PIN code is required.');
+      } else if (!/^\d{6}$/.test(String(pinCode).trim())) {
+        errors.push('PIN code must be a 6-digit numeric value.');
+      }
+
+      if (!resolvedState) {
+        errors.push('A valid Indian State or 2-digit State code is required for compliance.');
+      }
+
+      // Contact details validation
+      const email = sanitized.email || sanitized.contactProfile?.primaryContact?.email || '';
+      const phone = sanitized.phone || sanitized.contactProfile?.primaryContact?.mobile || '';
+
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        errors.push('Official business email format is invalid.');
+      }
+      if (phone && !/^\+?[0-9\s-]{10,15}$/.test(phone.trim())) {
+        errors.push('Primary business phone number format is invalid.');
+      }
+    }
+
+    // GSTIN validation & state consistency
+    const gstin = (sanitized.gstin || sanitized.gstDetails?.gstin || '').trim().toUpperCase();
+    if (gstin) {
+      const gstinResult = validateGstinFormat(gstin, resolvedState ? resolvedState.code : null);
+      if (!gstinResult.valid) {
+        errors.push(`GSTIN Error: ${gstinResult.reason}`);
+      } else {
+        sanitized.gstin = gstinResult.cleanGstin;
+        sanitized.pan = gstinResult.pan;
+      }
+    }
+
+    // FSSAI 2026 framework validation (Kind of Business & Turnover Bands)
+    const fssaiNumber = (sanitized.fssaiNumber || sanitized.fssai?.number || '').trim();
+    const kindOfBusiness = (
+      sanitized.fssaiKindOfBusiness ||
+      sanitized.fssai?.kindOfBusiness ||
+      cafeData.fssaiKindOfBusiness ||
+      cafeData.kindOfBusiness ||
+      'RESTAURANT'
+    ).trim().toUpperCase();
+    const turnover = cafeData.estimatedAnnualTurnoverInr || cafeData.annualTurnoverInr || sanitized.estimatedAnnualTurnoverInr || sanitized.annualTurnoverInr || 0;
+
+    let fssaiCategory = null;
+    if (fssaiNumber) {
+      const fssaiResult = validateFssaiNumber(fssaiNumber);
+      if (!fssaiResult.valid) {
+        errors.push(`FSSAI Error: ${fssaiResult.reason}`);
+      }
+    }
+
+    const fssaiResolution = resolveFssaiEligibilityAndFee({
+      kindOfBusiness,
+      annualTurnoverInr: turnover,
+    });
+    fssaiCategory = fssaiResolution;
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      warnings,
+      sanitized,
+      resolvedState,
+      fssaiCategory,
+    };
+  }
+
+  /**
+   * Stage: PREVIEW
+   * Generates a read-only review of the business unit configuration, sequences, and settings.
+   */
+  async previewCafeCreation({ auth, cafeData = {} }) {
+    requireMasterCreationAuthority(auth);
+
+    const organisationId = String(auth.organisationId || '').trim().toUpperCase();
+    if (!organisationId) {
+      throw new ApiError(400, 'ORGANISATION_REQUIRED', 'Valid organisation scope is required.');
+    }
+
+    const valResult = await this.validateCafeCreationPayload({
+      cafeData,
+      isDraft: false,
+      organisationId,
+    });
+
+    if (!valResult.valid) {
+      throw new ApiError(400, 'VALIDATION_FAILED', 'Validation errors in café payload.', valResult.errors);
+    }
+
+    const { sanitized, resolvedState, fssaiCategory } = valResult;
+    const fyInfo = resolveFinancialYear();
+
+    return {
+      businessIdentity: {
+        name: sanitized.name,
+        displayName: sanitized.displayName || sanitized.name,
+        legalName: sanitized.legalName || sanitized.name,
+        cafeType: sanitized.cafeType || 'STANDARD_CAFE',
+        establishmentCategory: sanitized.establishmentCategory || 'Café',
+        plannedOpeningDate: sanitized.openingDate || null,
+        organisationId,
+      },
+      contacts: {
+        primaryPhone: sanitized.phone || sanitized.contactProfile?.primaryContact?.mobile || '',
+        officialEmail: sanitized.email || sanitized.contactProfile?.primaryContact?.email || '',
+        localManager: sanitized.managerName || sanitized.contactProfile?.primaryContact?.name || '',
+      },
+      address: {
+        premises: sanitized.address?.building || sanitized.addressLine1 || '',
+        street: sanitized.address?.street || sanitized.addressLine1 || '',
+        locality: sanitized.address?.area || '',
+        city: sanitized.city || sanitized.address?.city || '',
+        district: sanitized.district || sanitized.address?.district || '',
+        state: resolvedState ? resolvedState.name : (sanitized.state || 'Kerala'),
+        stateCode: resolvedState ? resolvedState.code : (sanitized.stateCode || '32'),
+        pinCode: sanitized.pincode || sanitized.address?.pinCode || '',
+        country: 'India',
+      },
+      gstCompliance: {
+        isRegistered: Boolean(sanitized.gstin || sanitized.gstDetails?.isRegistered),
+        gstin: sanitized.gstin || '',
+        stateCode: resolvedState ? resolvedState.code : '',
+        verificationStatus: sanitized.gstin ? 'FORMAT_VALIDATED' : 'NOT_APPLICABLE',
+      },
+      fssaiCompliance: {
+        isApplicable: true,
+        fssaiNumber: sanitized.fssaiNumber || sanitized.fssai?.number || '',
+        kindOfBusiness: fssaiCategory?.kindOfBusiness || 'RESTAURANT',
+        kindOfBusinessDisplayName: fssaiCategory?.kindOfBusinessDisplayName || 'Food Services — Restaurants & Cafés',
+        category: fssaiCategory ? fssaiCategory.category : (sanitized.fssaiType || 'STATE_LICENCE'),
+        licensingAuthority: fssaiCategory?.licensingAuthority || 'State Food Safety Authority',
+        eligibilityCriteria: fssaiCategory?.eligibilityCriteria || '',
+        annualFeeInr: fssaiCategory?.feePerAnnum || 0,
+        feePerAnnum: fssaiCategory?.feePerAnnum || 0,
+        ruleVersion: fssaiCategory?.ruleVersion || 'FSSAI_RULES_2026_V1',
+        regime: '2026_AMENDMENT_PERPETUAL',
+        isPerpetual: true,
+        annualFeeTracking: true,
+      },
+      provisioningPreview: {
+        invoiceSeriesPreview: `INV/${fyInfo.fyShort}/[SERVER_ID]`,
+        receiptSeriesPreview: `REC/${fyInfo.fyShort}/[SERVER_ID]`,
+        financialYear: fyInfo.financialYear,
+        inventoryLocations: ['Main Store', 'Cold Room'],
+        zeroOpeningStockPolicy: true,
+        timezone: 'Asia/Kolkata',
+        currency: 'INR',
+        legacyPinGeneration: false,
+      },
+    };
+  }
+
+  /**
+   * Stage: DRAFT
+   * Creates or updates a non-operational Café draft.
+   */
+  async createCafeDraft({ auth, cafeData = {}, clientIp = null, userAgent = null, correlationId = null }) {
+    requireMasterCreationAuthority(auth);
+
+    const organisationId = String(auth.organisationId || '').trim().toUpperCase();
+    if (!organisationId) {
+      throw new ApiError(400, 'ORGANISATION_REQUIRED', 'Valid organisation scope is required.');
+    }
+
+    const valResult = await this.validateCafeCreationPayload({
+      cafeData,
+      isDraft: true,
+      organisationId,
+    });
+
+    if (!valResult.valid) {
+      throw new ApiError(400, 'DRAFT_VALIDATION_FAILED', 'Draft validation failed.', valResult.errors);
+    }
+
+    const sanitized = valResult.sanitized;
+    const name = sanitized.name;
+    const displayName = sanitized.displayName || name;
+
+    // Allocate sequential server-generated permanent Cafe ID
+    const cafeId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: 'CAFE',
+      prefix: 'ZC',
+      minimumDigits: 4,
+    });
+
+    const [cafeDoc] = await Cafe.create([
+      {
+        ...sanitized,
+        cafeId,
+        organisationId,
+        name,
+        displayName,
+        legalName: sanitized.legalName || name,
+        cafeType: sanitized.cafeType || 'STANDARD_CAFE',
+        status: 'DRAFT',
+        lifecycleStage: 'DRAFT',
+        address: {
+          building: sanitized.address?.building || '',
+          street: sanitized.address?.street || sanitized.addressLine1 || '',
+          line1: sanitized.addressLine1 || sanitized.address?.line1 || '',
+          area: sanitized.address?.area || '',
+          city: sanitized.city || sanitized.address?.city || '',
+          district: sanitized.district || sanitized.address?.district || '',
+          state: sanitized.state || sanitized.address?.state || 'Kerala',
+          stateCode: sanitized.stateCode || sanitized.address?.stateCode || '',
+          pinCode: sanitized.pincode || sanitized.address?.pinCode || '',
+          country: 'India',
+        },
+        contactProfile: {
+          primaryContact: {
+            name: sanitized.managerName || sanitized.contactProfile?.primaryContact?.name || '',
+            mobile: sanitized.phone || sanitized.contactProfile?.primaryContact?.mobile || '',
+            email: sanitized.email || sanitized.contactProfile?.primaryContact?.email || '',
+          },
+        },
+        registrations: {
+          gstin: (sanitized.gstin || sanitized.gstDetails?.gstin || '').toUpperCase(),
+          gstDetails: {
+            isRegistered: Boolean(sanitized.gstin || sanitized.gstDetails?.isRegistered),
+            gstin: (sanitized.gstin || sanitized.gstDetails?.gstin || '').toUpperCase(),
+            stateCode: sanitized.stateCode || '',
+            status: 'ACTIVE',
+            verificationStatus: sanitized.gstin ? 'FORMAT_VALIDATED' : 'NOT_APPLICABLE',
+          },
+          fssai: {
+            isApplicable: true,
+            number: sanitized.fssaiNumber || sanitized.fssai?.number || '',
+            kindOfBusiness: valResult.fssaiCategory?.kindOfBusiness || sanitized.fssaiKindOfBusiness || 'RESTAURANT',
+            category: valResult.fssaiCategory?.category || sanitized.fssaiType || 'STATE_LICENCE',
+            licensingAuthority: valResult.fssaiCategory?.licensingAuthority || 'State Food Safety Authority',
+            eligibilityCriteria: valResult.fssaiCategory?.eligibilityCriteria || '',
+            annualFeeInr: valResult.fssaiCategory?.feePerAnnum || 0,
+            ruleVersion: valResult.fssaiCategory?.ruleVersion || 'FSSAI_RULES_2026_V1',
+            isPerpetual: true,
+            status: 'ACTIVE',
+          },
+        },
+        lifecycleHistory: [
+          {
+            fromStage: 'INITIAL',
+            toStage: 'DRAFT',
+            transitionedAt: new Date(),
+            transitionedBy: auth.userId,
+            reason: 'Non-operational café draft created by governance user.',
+          },
+        ],
+        createdBy: auth.userId,
+        updatedBy: auth.userId,
+      },
+    ]);
+
+    await auditService.recordAuditEvent({
+      organisationId,
+      cafeId,
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      module: 'CAFE_MANAGEMENT',
+      action: 'CAFE_DRAFT_CREATED',
+      entityType: 'CAFE',
+      entityId: cafeId,
+      reason: 'New café draft initialized.',
+      result: 'SUCCESS',
+      riskClassification: 'LOW',
+      correlationId,
+      ipAddress: clientIp,
+      userAgent,
+      metadata: { cafeName: name, cafeId },
+    }).catch(() => {});
+
+    return { cafe: cafeDoc };
+  }
+
+  /**
+   * Updates an existing DRAFT café record before creation.
+   */
+  async updateCafeDraft({ organisationId, cafeId, auth, cafeData = {}, clientIp = null, userAgent = null, correlationId = null }) {
+    requireMasterCreationAuthority(auth);
+
+    const cafe = await Cafe.findOne({
+      organisationId: String(organisationId).toUpperCase(),
+      cafeId: String(cafeId).toUpperCase(),
+    });
+
+    if (!cafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Draft café not found.');
+    }
+
+    if (cafe.lifecycleStage !== 'DRAFT') {
+      throw new ApiError(400, 'NOT_A_DRAFT', `Cannot edit café in '${cafe.lifecycleStage}' stage as a draft.`);
+    }
+
+    const valResult = await this.validateCafeCreationPayload({
+      cafeData: { ...cafe.toObject(), ...cafeData, cafeId },
+      isDraft: true,
+      organisationId,
+    });
+
+    if (!valResult.valid) {
+      throw new ApiError(400, 'DRAFT_VALIDATION_FAILED', 'Draft validation failed.', valResult.errors);
+    }
+
+    Object.assign(cafe, valResult.sanitized);
+    cafe.updatedBy = auth.userId;
+    await cafe.save();
+
+    return { cafe };
+  }
+
+  /**
+   * Transitions the lifecycle stage of a café with strict state machine validation.
+   */
+  async transitionCafeLifecycleStage({
+    organisationId,
+    cafeId,
+    targetStage,
+    reason = '',
+    metadata = {},
+    auth,
+    clientIp = null,
+    userAgent = null,
+    correlationId = null,
+  }) {
+    requireMasterCreationAuthority(auth);
+
+    const cafe = await Cafe.findOne({
+      organisationId: String(organisationId).toUpperCase(),
+      cafeId: String(cafeId).toUpperCase(),
+    });
+
+    if (!cafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+    }
+
+    const currentStage = cafe.lifecycleStage || 'DRAFT';
+    const allowed = VALID_LIFECYCLE_TRANSITIONS[currentStage] || [];
+
+    if (!allowed.includes(targetStage)) {
+      throw new ApiError(
+        400,
+        'INVALID_LIFECYCLE_TRANSITION',
+        `Cannot transition café lifecycle from '${currentStage}' to '${targetStage}'. Allowed: [${allowed.join(', ')}]`
+      );
+    }
+
+    cafe.lifecycleStage = targetStage;
+    cafe.lifecycleHistory.push({
+      fromStage: currentStage,
+      toStage: targetStage,
+      transitionedAt: new Date(),
+      transitionedBy: auth.userId,
+      reason: reason || `Lifecycle transition to ${targetStage}`,
+      metadata,
+    });
+
+    await cafe.save();
+
+    await auditService.recordAuditEvent({
+      organisationId,
+      cafeId,
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      module: 'CAFE_MANAGEMENT',
+      action: 'CAFE_LIFECYCLE_TRANSITION',
+      entityType: 'CAFE',
+      entityId: cafeId,
+      reason: reason || `Transition from ${currentStage} to ${targetStage}`,
+      result: 'SUCCESS',
+      riskClassification: 'MEDIUM',
+      correlationId,
+      ipAddress: clientIp,
+      userAgent,
+      metadata: { fromStage: currentStage, toStage: targetStage },
+    }).catch(() => {});
+
+    return { cafe, previousStage: currentStage, currentStage: targetStage };
+  }
+
+  /**
+   * Stage: PROVISION
+   * Provisions all branch-level subsystems idempotently:
+   * Invoice/receipt sequences, inventory configs (zero stock), POS configs, CafeAccess, Admin assignment.
+   */
+  async provisionCafeSubsystems({
+    organisationId,
+    cafeId,
+    auth,
+    options = {},
+    clientIp = null,
+    userAgent = null,
+    correlationId = null,
+  }) {
+    requireMasterCreationAuthority(auth);
+
+    const cleanOrg = String(organisationId).toUpperCase();
+    const cleanCafe = String(cafeId).toUpperCase();
+
+    const cafe = await Cafe.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
+    if (!cafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+    }
+
+    // Set stage to PROVISIONING
+    cafe.lifecycleStage = 'PROVISIONING';
+    cafe.lifecycleHistory.push({
+      fromStage: cafe.lifecycleStage || 'CREATED',
+      toStage: 'PROVISIONING',
+      transitionedAt: new Date(),
+      transitionedBy: auth.userId,
+      reason: 'Subsystem provisioning initiated.',
+    });
+    await cafe.save();
+
+    try {
+      // 1. Invoice and Receipt Sequences in SequenceCounter
+      const fyInfo = resolveFinancialYear();
+      const gstinClean = (cafe.registrations?.gstin || '').toUpperCase();
+      const invoiceSeqKey = gstinClean
+        ? `GST_INV:${gstinClean}:${fyInfo.fyShort}:${cleanCafe}:INV`
+        : `INVOICE_${cleanOrg}_${cleanCafe}_${fyInfo.fyShort}`;
+
+      await SequenceCounter.findOneAndUpdate(
+        { organisationId: cleanOrg, sequenceKey: invoiceSeqKey },
+        {
+          $setOnInsert: {
+            organisationId: cleanOrg,
+            sequenceKey: invoiceSeqKey,
+            prefix: `INV/${fyInfo.fyShort}/${cleanCafe}`,
+            currentValue: 0,
+            minimumDigits: 5,
+          },
+        },
+        { upsert: true }
+      );
+
+      const receiptSeqKey = `RECEIPT_${cleanOrg}_${cleanCafe}_${fyInfo.fyShort}`;
+      await SequenceCounter.findOneAndUpdate(
+        { organisationId: cleanOrg, sequenceKey: receiptSeqKey },
+        {
+          $setOnInsert: {
+            organisationId: cleanOrg,
+            sequenceKey: receiptSeqKey,
+            prefix: `REC/${fyInfo.fyShort}/${cleanCafe}`,
+            currentValue: 0,
+            minimumDigits: 5,
+          },
+        },
+        { upsert: true }
+      );
+
+      // 2. Inventory Provisioning: Neutral locations, zero fake stock
+      const { GlobalInventoryItem } = require('../models/GlobalInventoryItem');
+      const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
+      const activeItems = await GlobalInventoryItem.find({ organisationId: cleanOrg, status: 'ACTIVE' }).lean();
+
+      if (activeItems.length > 0) {
+        for (const itm of activeItems) {
+          await CafeInventoryConfig.findOneAndUpdate(
+            { organisationId: cleanOrg, cafeId: cleanCafe, itemId: itm.itemId },
+            {
+              $setOnInsert: {
+                organisationId: cleanOrg,
+                cafeId: cleanCafe,
+                itemId: itm.itemId,
+                currentQuantityBase: 0, // Strict zero fake stock
+                availableQuantityBase: 0,
+                reservedQuantityBase: 0,
+                quarantinedQuantityBase: 0,
+                expiredQuantityBase: 0,
+                inTransitQuantityBase: 0,
+                incomingQuantityBase: 0,
+                minQuantityBase: 10,
+                parQuantityBase: 25,
+                maxQuantityBase: 50,
+                safetyStockBase: 5,
+                stockedHere: true,
+                replenishmentEnabled: true,
+                primaryLocation: 'Main Store',
+                storageLocations: ['Main Store', 'Cold Room'],
+                status: 'ACTIVE',
+              },
+            },
+            { upsert: true }
+          );
+        }
+      }
+
+      // 3. CafeAccess Provisioning (Zero PIN, QR + Link only)
+      let access = await CafeAccess.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
+      if (!access) {
+        const qrToken = generateOpaqueToken();
+        let linkToken = generateOpaqueToken();
+        while (linkToken === qrToken) {
+          linkToken = generateOpaqueToken();
+        }
+
+        access = await CafeAccess.create({
+          organisationId: cleanOrg,
+          cafeId: cleanCafe,
+          accessStatus: 'ACTIVE',
+          provisioningStatus: 'READY',
+          qrCredentialHash: hashOpaqueToken(qrToken),
+          qrTokenEncrypted: encryptSecret(qrToken),
+          qrVersion: 1,
+          qrEnabled: true,
+          qrCreatedAt: new Date(),
+          linkCredentialHash: hashOpaqueToken(linkToken),
+          linkTokenEncrypted: encryptSecret(linkToken),
+          linkVersion: 1,
+          linkEnabled: true,
+          linkCreatedAt: new Date(),
+          createdBy: auth.userId,
+          updatedBy: auth.userId,
+        });
+      }
+
+      // 4. Café Admin Assignment if requested
+      if (options.adminUserId) {
+        const adminUser = await User.findOne({ userId: options.adminUserId, organisationId: cleanOrg });
+        if (adminUser) {
+          await User.updateOne(
+            { userId: adminUser.userId, organisationId: cleanOrg },
+            { $addToSet: { assignedCafeIds: cleanCafe } }
+          );
+        }
+      }
+
+      // 5. Complete PROVISIONED transition
+      cafe.lifecycleStage = 'PROVISIONED';
+      cafe.lifecycleHistory.push({
+        fromStage: 'PROVISIONING',
+        toStage: 'PROVISIONED',
+        transitionedAt: new Date(),
+        transitionedBy: auth.userId,
+        reason: 'All branch subsystems provisioned successfully.',
+      });
+      await cafe.save();
+
+      await auditService.recordAuditEvent({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        module: 'CAFE_MANAGEMENT',
+        action: 'CAFE_PROVISIONED',
+        entityType: 'CAFE',
+        entityId: cleanCafe,
+        reason: 'Subsystems provisioned with zero fake stock, FY sequence, and retired PIN.',
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+        correlationId,
+        ipAddress: clientIp,
+        userAgent,
+      }).catch(() => {});
+
+      return { cafe, provisioningStatus: 'PROVISIONED' };
+    } catch (err) {
+      cafe.lifecycleStage = 'PROVISIONING_FAILED';
+      cafe.lifecycleHistory.push({
+        fromStage: 'PROVISIONING',
+        toStage: 'PROVISIONING_FAILED',
+        transitionedAt: new Date(),
+        transitionedBy: auth.userId,
+        reason: `Provisioning failed: ${err.message}`,
+      });
+      await cafe.save().catch(() => {});
+
+      throw new ApiError(500, 'PROVISIONING_FAILED', `Provisioning failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Stage: VERIFY
+   * Automated verification of all provisioning artifacts before activation is permitted.
+   */
+  async verifyCafeProvisioning({ organisationId, cafeId, auth }) {
+    requireMasterCreationAuthority(auth);
+
+    const cleanOrg = String(organisationId).toUpperCase();
+    const cleanCafe = String(cafeId).toUpperCase();
+
+    const cafe = await Cafe.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
+    if (!cafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+    }
+
+    const failureReasons = [];
+
+    // Verify identity & address
+    if (!cafe.name || !cafe.displayName) failureReasons.push('Café identity is incomplete.');
+    if (!cafe.address?.city) failureReasons.push('Structured location city is missing.');
+
+    // Verify sequences in SequenceCounter
+    const fyInfo = resolveFinancialYear();
+    const gstinClean = (cafe.registrations?.gstin || '').toUpperCase();
+    const invoiceSeqKey = gstinClean
+      ? `GST_INV:${gstinClean}:${fyInfo.fyShort}:${cleanCafe}:INV`
+      : `INVOICE_${cleanOrg}_${cleanCafe}_${fyInfo.fyShort}`;
+
+    const invoiceSeq = await SequenceCounter.findOne({ organisationId: cleanOrg, sequenceKey: invoiceSeqKey });
+    if (!invoiceSeq) {
+      failureReasons.push('Tax invoice sequence was not provisioned.');
+    }
+
+    // Verify inventory configs have zero fake opening stock
+    const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
+    const configs = await CafeInventoryConfig.find({ organisationId: cleanOrg, cafeId: cleanCafe }).lean();
+    for (const cfg of configs) {
+      if (cfg.currentQuantityBase !== 0) {
+        failureReasons.push(`Inventory item ${cfg.itemId} has non-zero opening stock.`);
+      }
+    }
+
+    // Verify CafeAccess exists without PIN
+    const access = await CafeAccess.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
+    if (!access) {
+      failureReasons.push('Café access record was not provisioned.');
+    } else if (access.permanentCafePinEncrypted) {
+      failureReasons.push('Legacy PIN was unexpectedly generated.');
+    }
+
+    if (failureReasons.length > 0) {
+      cafe.lifecycleStage = 'PROVISIONING_FAILED';
+      cafe.lifecycleHistory.push({
+        fromStage: cafe.lifecycleStage,
+        toStage: 'PROVISIONING_FAILED',
+        transitionedAt: new Date(),
+        transitionedBy: auth.userId,
+        reason: `Automated verification failed: ${failureReasons.join('; ')}`,
+      });
+      await cafe.save();
+      return { verified: false, failureReasons, cafe };
+    }
+
+    // Transitions to VERIFIED
+    cafe.lifecycleStage = 'VERIFIED';
+    cafe.lifecycleHistory.push({
+      fromStage: 'PROVISIONED',
+      toStage: 'VERIFIED',
+      transitionedAt: new Date(),
+      transitionedBy: auth.userId,
+      reason: 'All automated provisioning verifications passed.',
+    });
+    await cafe.save();
+
+    return { verified: true, cafe };
+  }
+
+  /**
+   * Stage: ACTIVATE
+   * Final activation step. Only allowed when lifecycleStage is VERIFIED.
+   */
+  async activateCafeLifecycle({
+    organisationId,
+    cafeId,
+    reason = 'Onboarding complete and operational activation authorized',
+    auth,
+    clientIp = null,
+    userAgent = null,
+    correlationId = null,
+  }) {
+    requireMasterCreationAuthority(auth);
+
+    const cleanOrg = String(organisationId).toUpperCase();
+    const cleanCafe = String(cafeId).toUpperCase();
+
+    const cafe = await Cafe.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
+    if (!cafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+    }
+
+    if (cafe.lifecycleStage !== 'VERIFIED') {
+      throw new ApiError(
+        400,
+        'CANNOT_ACTIVATE_UNVERIFIED_CAFE',
+        `Café must be in 'VERIFIED' stage before activation. Current stage: '${cafe.lifecycleStage}'.`
+      );
+    }
+
+    // Determine operational status based on opening date
+    const isFuture = cafe.openingDate && new Date(cafe.openingDate) > new Date();
+    const newStatus = isFuture ? 'SCHEDULED' : 'ACTIVE';
+
+    cafe.status = newStatus;
+    cafe.lifecycleStage = 'ACTIVATED';
+    cafe.activatedAt = new Date();
+    cafe.activatedBy = auth.userId;
+    cafe.lifecycleHistory.push({
+      fromStage: 'VERIFIED',
+      toStage: 'ACTIVATED',
+      transitionedAt: new Date(),
+      transitionedBy: auth.userId,
+      reason,
+      metadata: { finalStatus: newStatus, isFutureScheduled: isFuture },
+    });
+
+    await cafe.save();
+
+    await auditService.recordAuditEvent({
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      module: 'CAFE_MANAGEMENT',
+      action: 'CAFE_ACTIVATED',
+      entityType: 'CAFE',
+      entityId: cleanCafe,
+      reason,
+      result: 'SUCCESS',
+      riskClassification: 'HIGH',
+      correlationId,
+      ipAddress: clientIp,
+      userAgent,
+      metadata: { status: newStatus, lifecycleStage: 'ACTIVATED' },
+    }).catch(() => {});
+
+    return { cafe };
   }
 
   /**
@@ -817,13 +1673,13 @@ class CafeService {
     const publicOrigin = getPublicAppOrigin();
     let qrUrl = null;
     let linkUrl = null;
-    if (access.qrTokenEncrypted) {
+    if (access.qrTokenEncrypted && access.qrEnabled) {
       try {
         const qrToken = decryptSecret(access.qrTokenEncrypted);
         qrUrl = `${publicOrigin}/cafe-access/qr/${qrToken}`;
       } catch {}
     }
-    if (access.linkTokenEncrypted) {
+    if (access.linkTokenEncrypted && access.linkEnabled) {
       try {
         const linkToken = decryptSecret(access.linkTokenEncrypted);
         linkUrl = `${publicOrigin}/cafe-access/link/${linkToken}`;
@@ -838,8 +1694,13 @@ class CafeService {
       provisioningStatus: access.provisioningStatus,
       permanentCafePinMasked: '••••••',
       qrEnabled: Boolean(access.qrEnabled),
+      qrStatus: access.qrRevokedAt ? 'REVOKED' : access.qrEnabled ? 'ACTIVE' : 'DISABLED',
       qrVersion: access.qrVersion || 1,
       qrCreatedAt: access.qrCreatedAt,
+      qrRevokedAt: access.qrRevokedAt || null,
+      qrRevokedBy: access.qrRevokedBy || null,
+      qrRevokeReason: access.qrRevokeReason || null,
+      qrHistory: Array.isArray(access.qrHistory) ? access.qrHistory : [],
       qrLastUsedAt: access.qrLastUsedAt,
       qrUrl,
       linkEnabled: Boolean(access.linkEnabled),
@@ -885,7 +1746,7 @@ class CafeService {
       throw new ApiError(401, 'INVALID_CREDENTIALS', 'Reauthentication failed.');
     }
 
-    const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+    const validPassword = await verifyPassword(currentPassword, user.passwordHash);
     if (!validPassword) {
       throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
     }
@@ -942,7 +1803,7 @@ class CafeService {
         organisationId: String(organisationId).toUpperCase(),
       }).select('+passwordHash');
       if (user && user.passwordHash) {
-        const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
         if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
       }
     }
@@ -956,11 +1817,26 @@ class CafeService {
       throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
     }
 
+    const priorVersion = access.qrVersion || 1;
+    if (!access.qrHistory) access.qrHistory = [];
+    access.qrHistory.push({
+      version: priorVersion,
+      action: 'ROTATED',
+      actionAt: new Date(),
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      reason: `QR rotated to v${priorVersion + 1}`,
+    });
+
     const newQrToken = generateOpaqueToken();
     access.qrCredentialHash = hashOpaqueToken(newQrToken);
     access.qrTokenEncrypted = encryptSecret(newQrToken);
-    access.qrVersion = (access.qrVersion || 1) + 1;
+    access.qrVersion = priorVersion + 1;
+    access.qrEnabled = true;
     access.qrCreatedAt = new Date();
+    access.qrRevokedAt = null;
+    access.qrRevokedBy = null;
+    access.qrRevokeReason = null;
     access.updatedBy = auth.userId;
     await access.save();
 
@@ -978,6 +1854,9 @@ class CafeService {
       riskClassification: 'HIGH',
       ipAddress: clientIp,
       userAgent,
+      metadata: {
+        qrVersion: access.qrVersion,
+      },
     });
 
     const publicOrigin = getPublicAppOrigin();
@@ -987,6 +1866,96 @@ class CafeService {
       qrVersion: access.qrVersion,
       qrToken: newQrToken,
       qrUrl: `${publicOrigin}/cafe-access/qr/${newQrToken}`,
+    };
+  }
+
+  /**
+   * Explicitly revokes Café QR Credential: sets qrEnabled=false, closes gateway, retains café intact.
+   */
+  async revokeQrCredential({
+    organisationId,
+    cafeId,
+    auth,
+    reason = null,
+    currentPassword = null,
+    clientIp = null,
+    userAgent = null,
+  }) {
+    requireGovernanceAuthority(auth);
+
+    if (currentPassword) {
+      const user = await User.findOne({
+        userId: auth.userId,
+        organisationId: String(organisationId).toUpperCase(),
+      }).select('+passwordHash');
+      if (user && user.passwordHash) {
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
+        if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
+      }
+    }
+
+    const access = await CafeAccess.findOne({
+      organisationId: String(organisationId).toUpperCase(),
+      cafeId: String(cafeId).toUpperCase(),
+    });
+
+    if (!access) {
+      throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
+    }
+
+    if (!access.qrEnabled) {
+      return {
+        cafeId,
+        qrVersion: access.qrVersion,
+        qrEnabled: false,
+        qrRevokedAt: access.qrRevokedAt,
+        qrRevokeReason: access.qrRevokeReason,
+      };
+    }
+
+    if (!access.qrHistory) access.qrHistory = [];
+    access.qrHistory.push({
+      version: access.qrVersion || 1,
+      action: 'REVOKED',
+      actionAt: new Date(),
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      reason: reason || 'QR credential revoked by Master governance',
+    });
+
+    access.qrEnabled = false;
+    access.qrRevokedAt = new Date();
+    access.qrRevokedBy = auth.userId;
+    access.qrRevokeReason = reason || 'Revoked by governance authority';
+    access.updatedBy = auth.userId;
+    await access.save();
+
+    await auditService.recordAuditEvent({
+      organisationId,
+      cafeId,
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      module: 'CAFE_OPERATIONS',
+      action: 'CAFE_QR_REVOKED',
+      entityType: 'CAFE_ACCESS',
+      entityId: cafeId,
+      reason: reason || `QR access credential revoked for version ${access.qrVersion}. Gateway disabled.`,
+      result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
+      ipAddress: clientIp,
+      userAgent,
+      metadata: {
+        qrVersion: access.qrVersion,
+      },
+    });
+
+    return {
+      cafeId,
+      qrVersion: access.qrVersion,
+      qrEnabled: false,
+      qrRevokedAt: access.qrRevokedAt,
+      qrRevokedBy: access.qrRevokedBy,
+      qrRevokeReason: access.qrRevokeReason,
     };
   }
 
@@ -1009,7 +1978,7 @@ class CafeService {
         organisationId: String(organisationId).toUpperCase(),
       }).select('+passwordHash');
       if (user && user.passwordHash) {
-        const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
         if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
       }
     }
@@ -1078,7 +2047,7 @@ class CafeService {
         organisationId: String(organisationId).toUpperCase(),
       }).select('+passwordHash');
       if (user && user.passwordHash) {
-        const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+        const ok = await verifyPassword(currentPassword, user.passwordHash);
         if (!ok) throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
       }
     }
@@ -1204,7 +2173,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || cafe.status === 'ARCHIVED' || cafe.status === 'CLOSED') {
+    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -1249,6 +2218,182 @@ class CafeService {
       accessMethod: cleanMethod,
       expiresAt: expiresAt.toISOString(),
     };
+  }
+
+  /**
+   * REC-03: Resolves public QR or Link token to safe public café context.
+   * Zero secrets, zero ObjectIDs, zero employee data.
+   */
+  async resolvePublicQrToken(token, { clientIp = null, userAgent = null, correlationId = null } = {}) {
+    if (!token || typeof token !== 'string' || !token.trim()) {
+      throw new ApiError(400, 'TOKEN_REQUIRED', 'Access QR token is required.');
+    }
+
+    const cleanToken = token.trim();
+    let hash;
+    try {
+      hash = hashOpaqueToken(cleanToken);
+    } catch {
+      throw new ApiError(401, 'INVALID_OR_EXPIRED_CAFE_ACCESS', 'Invalid or unavailable café access link.');
+    }
+
+    const access = await CafeAccess.findOne({
+      qrCredentialHash: hash,
+    });
+
+    if (!access || !access.qrEnabled || access.qrRevokedAt) {
+      throw new ApiError(
+        401,
+        'CAFE_ACCESS_LINK_UNAVAILABLE',
+        'This café access link is unavailable or has expired.'
+      );
+    }
+
+    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+      throw new ApiError(
+        403,
+        'CAFE_ACCESS_UNAVAILABLE',
+        'Café Operations access is currently unavailable.'
+      );
+    }
+
+    const cafe = await Cafe.findOne({
+      organisationId: access.organisationId,
+      cafeId: access.cafeId,
+    }).lean();
+
+    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+      throw new ApiError(
+        403,
+        'CAFE_INACTIVE',
+        'Café Operations access is currently unavailable.'
+      );
+    }
+
+    // Touch last used timestamp
+    await CafeAccess.updateOne({ _id: access._id }, { qrLastUsedAt: new Date() }).catch(() => {});
+
+    // Return strictly safe public context (qrVersion removed per Section 6 minimization)
+    return {
+      cafeId: access.cafeId,
+      displayName: cafe.displayName || cafe.name,
+      city: cafe.address?.city || cafe.city || null,
+      organisationId: access.organisationId,
+      operationalStatus: cafe.status,
+      brandLogo: '/src/assets/zamorin-estate-mark.png',
+      loginEnabled: true,
+    };
+  }
+
+  /**
+   * REC-03: Validates post-authentication café access binding.
+   * Enforces: AUTHENTICATED USER + RESOLVED CAFÉ + ORGANISATION + ROLE + ACTIVE ASSIGNMENT.
+   */
+  async verifyCafeAccessBinding({
+    userId,
+    role,
+    organisationId,
+    assignedCafeIds = [],
+    primaryCafeId = null,
+    targetCafeId,
+    isPrimaryMaster = false,
+  }) {
+    if (!targetCafeId || typeof targetCafeId !== 'string' || !targetCafeId.trim()) {
+      throw new ApiError(400, 'TARGET_CAFE_REQUIRED', 'Target café identifier is required.');
+    }
+
+    const cleanRole = String(role || '').toUpperCase();
+    const cleanTargetCafeId = String(targetCafeId).trim().toUpperCase();
+
+    // 1. Target café must exist and belong to the organisation
+    const cafe = await Cafe.findOne({
+      organisationId: String(organisationId).toUpperCase(),
+      cafeId: cleanTargetCafeId,
+    }).lean();
+
+    if (!cafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Target café not found.');
+    }
+
+    if (['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+      throw new ApiError(403, 'CAFE_INACTIVE', 'Café is inactive or suspended.');
+    }
+
+    // 2. Role-based authorization binding check
+    if (cleanRole === 'MASTER') {
+      // Master is authorised across the organisation's cafés
+      return {
+        authorized: true,
+        isPrimaryMaster: Boolean(isPrimaryMaster),
+        cafeId: cleanTargetCafeId,
+        targetCafeId: cleanTargetCafeId,
+        cafeName: cafe.name,
+        displayName: cafe.displayName || cafe.name,
+      };
+    }
+
+    if (cleanRole === 'OWNER') {
+      const ownerCafes = [
+        ...(Array.isArray(assignedCafeIds) ? assignedCafeIds : [assignedCafeIds]),
+        primaryCafeId,
+      ]
+        .filter(Boolean)
+        .map((c) => String(c).trim().toUpperCase());
+
+      // If owner has explicitly assigned cafes, check assignment; otherwise authorised org-wide
+      if (ownerCafes.length === 0 || ownerCafes.includes(cleanTargetCafeId)) {
+        return {
+          authorized: true,
+          cafeId: cleanTargetCafeId,
+          targetCafeId: cleanTargetCafeId,
+          cafeName: cafe.name,
+          displayName: cafe.displayName || cafe.name,
+        };
+      }
+      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'Owner is not authorised for this café.');
+    }
+
+    if (cleanRole === 'CAFE_ADMIN' || cleanRole === 'ADMIN') {
+      const adminCafes = [
+        ...(Array.isArray(assignedCafeIds) ? assignedCafeIds : [assignedCafeIds]),
+        primaryCafeId,
+      ]
+        .filter(Boolean)
+        .map((c) => String(c).trim().toUpperCase());
+
+      if (adminCafes.includes(cleanTargetCafeId)) {
+        return {
+          authorized: true,
+          cafeId: cleanTargetCafeId,
+          targetCafeId: cleanTargetCafeId,
+          cafeName: cafe.name,
+          displayName: cafe.displayName || cafe.name,
+        };
+      }
+      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'Café Admin is not authorised for this café.');
+    }
+
+    if (cleanRole === 'STAFF' || cleanRole === 'EMPLOYEE') {
+      const staffCafes = [
+        ...(Array.isArray(assignedCafeIds) ? assignedCafeIds : [assignedCafeIds]),
+        primaryCafeId,
+      ]
+        .filter(Boolean)
+        .map((c) => String(c).trim().toUpperCase());
+
+      if (staffCafes.includes(cleanTargetCafeId)) {
+        return {
+          authorized: true,
+          cafeId: cleanTargetCafeId,
+          targetCafeId: cleanTargetCafeId,
+          cafeName: cafe.name,
+          displayName: cafe.displayName || cafe.name,
+        };
+      }
+      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'Employee is not authorised for this café.');
+    }
+
+    throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'User is not authorised for this café.');
   }
 
   /**

@@ -61,12 +61,10 @@ services:
         value: zamorin-cafe-erp.vercel.app
       - key: WEBAUTHN_ORIGIN
         value: https://zamorin-cafe-erp.vercel.app
-      - key: DOCUMENT_STORAGE_DRIVER
-        value: RENDER_PERSISTENT_DISK
-      - key: DOCUMENT_STORAGE_ROOT
-        value: /var/data/zamorin_documents
-    disk:
-      name: zamorin-documents-disk
-      mountPath: /var/data/zamorin_documents
-      sizeGB: 10
+      - key: DOCUMENT_STORAGE_PROVIDER
+        value: gridfs
+      - key: DOCUMENT_GRIDFS_BUCKET
+        value: zamorinDocuments
+      - key: DOCUMENT_STORAGE_MAX_BYTES
+        value: 15728640
 

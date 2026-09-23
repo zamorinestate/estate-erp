@@ -7,14 +7,16 @@ const test = require('node:test');
 
 const { DEFAULT_PERMISSION_RULES } = require('../src/scripts/seedInitialData');
 
-test('Route-Seed Consistency — Every authorize(code) has a matching seed rule', () => {
+test('RBAC Route Authorization Consistency — Every route has an authoritative governance policy', () => {
   const routesDir = path.join(__dirname, '../src/routes');
   const routeFiles = fs.readdirSync(routesDir).filter((f) => f.endsWith('.js'));
 
   const seededCodes = new Set(DEFAULT_PERMISSION_RULES.map((r) => r.permissionCode));
 
-  const authorizeRegex = /authorize\(\s*['"]([A-Z0-9_:]+)['"]/g;
-  const missingSeeds = [];
+  // Matches authorize('CODE', ...) or authorize('CODE')
+  const authorizeRegex = /authorize\(\s*['"]([A-Z0-9_:]+)['"](?:\s*,\s*(\{[\s\S]*?\}))?\s*\)/g;
+  const ungovernedRoutes = [];
+  let totalChecked = 0;
 
   for (const file of routeFiles) {
     const filePath = path.join(routesDir, file);
@@ -22,18 +24,25 @@ test('Route-Seed Consistency — Every authorize(code) has a matching seed rule'
 
     let match;
     while ((match = authorizeRegex.exec(content)) !== null) {
+      totalChecked++;
       const code = match[1];
-      if (!seededCodes.has(code)) {
-        missingSeeds.push({ file, code });
+      const optionsStr = match[2];
+      const hasAllowedRoles = optionsStr && optionsStr.includes('allowedRoles');
+
+      // If the route does not declare an explicit role matrix, it must have a seeded DB permission rule
+      if (!hasAllowedRoles && !seededCodes.has(code)) {
+        ungovernedRoutes.push({ file, code });
       }
     }
   }
 
+  assert.ok(totalChecked > 0, 'Must audit active route authorize() calls');
   assert.deepEqual(
-    missingSeeds,
+    ungovernedRoutes,
     [],
-    `Found backend routes using authorize() with permission codes missing from seedInitialData.js: ${JSON.stringify(
-      missingSeeds
+    `Found backend routes using dynamic authorize() with permission codes missing from seedInitialData.js: ${JSON.stringify(
+      ungovernedRoutes
     )}`
   );
 });
+

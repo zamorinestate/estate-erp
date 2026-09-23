@@ -18,6 +18,22 @@ const { SequenceCounter } = require('../src/models/SequenceCounter');
 const { AuditEvent } = require('../src/models/AuditEvent');
 const { DeviceRegistration } = require('../src/models/DeviceRegistration');
 const { OperatorSession } = require('../src/models/OperatorSession');
+const { Task } = require('../src/models/Task');
+const { Approval } = require('../src/models/Approval');
+const { UserPreference } = require('../src/models/UserPreference');
+const { Session } = require('../src/models/Session');
+const { Asset } = require('../src/models/Asset');
+const { Customer } = require('../src/models/Customer');
+const { QualityChecklist } = require('../src/models/QualityChecklist');
+const { CafeInventoryConfig } = require('../src/models/CafeInventoryConfig');
+const { PurchaseOrder } = require('../src/models/PurchaseOrder');
+const { GlobalInventoryItem } = require('../src/models/GlobalInventoryItem');
+const { StockTransfer } = require('../src/models/StockTransfer');
+const { MaintenanceJob } = require('../src/models/MaintenanceJob');
+const { RecallNotice } = require('../src/models/RecallNotice');
+const { Attendance } = require('../src/modules/attendance/Attendance');
+const { InventoryCycleCount } = require('../src/models/InventoryCycleCount');
+const { DepartmentOrder } = require('../src/models/DepartmentOrder');
 
 const authService = require('../src/services/authService');
 const auditService = require('../src/services/auditService');
@@ -247,11 +263,16 @@ test('CAFÉ OPS-04 — Final Cross-Role Release-Candidate Validation Suite', asy
     };
   });
 
-  t.mock.method(User, 'findOne', async (query) => {
-    if (query?.userId === 'USR-ADM-01') return { ...adminUser, toObject: () => adminUser };
-    if (query?.userId === 'USR-OWN-01') return { ...ownerUser, toObject: () => ownerUser };
-    if (query?.userId === 'USR-STF-01') return { ...staffUser, toObject: () => staffUser };
-    return { ...masterUser, toObject: () => masterUser };
+  t.mock.method(User, 'findOne', (query) => {
+    let u = masterUser;
+    if (query?.userId === 'USR-ADM-01') u = adminUser;
+    else if (query?.userId === 'USR-OWN-01') u = ownerUser;
+    else if (query?.userId === 'USR-STF-01') u = staffUser;
+    const res = { ...u, toObject: () => u, lean: () => u };
+    const p = Promise.resolve(res);
+    p.lean = () => Promise.resolve(u);
+    p.toObject = () => u;
+    return p;
   });
 
   t.mock.method(RolePermission, 'findEffectiveRules', async ({ role, permissionCode }) => [
@@ -269,18 +290,66 @@ test('CAFÉ OPS-04 — Final Cross-Role Release-Candidate Validation Suite', asy
   t.mock.method(SequenceCounter, 'generateId', async ({ prefix }) => `${prefix}-2026-0001`);
   t.mock.method(SequenceCounter, 'getNextNumber', async () => 1);
   t.mock.method(Bill, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Bill, 'aggregate', () => Promise.resolve([]));
   t.mock.method(CashTransaction, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Expense, 'find', () => createQueryMock([]));
+  t.mock.method(Expense, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Expense, 'aggregate', () => Promise.resolve([]));
+  t.mock.method(InventoryCycleCount, 'find', () => createQueryMock([]));
+  t.mock.method(InventoryCycleCount, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(CafeInventoryConfig, 'find', () => createQueryMock([]));
+  t.mock.method(CafeInventoryConfig, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(StockTransfer, 'find', () => createQueryMock([]));
+  t.mock.method(StockTransfer, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(PurchaseOrder, 'find', () => createQueryMock([]));
+  t.mock.method(PurchaseOrder, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Task, 'find', () => createQueryMock([]));
+  t.mock.method(Task, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Approval, 'find', () => createQueryMock([]));
+  t.mock.method(Approval, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(DeviceRegistration, 'find', () => createQueryMock([]));
+  t.mock.method(DeviceRegistration, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Session, 'countDocuments', () => Promise.resolve(1));
+  t.mock.method(Asset, 'find', () => createQueryMock([]));
+  t.mock.method(Asset, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Customer, 'find', () => createQueryMock([]));
+  t.mock.method(Customer, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(QualityChecklist, 'find', () => createQueryMock([]));
+  t.mock.method(QualityChecklist, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(MaintenanceJob, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(Attendance, 'aggregate', () => Promise.resolve([]));
+  t.mock.method(RecallNotice, 'find', () => createQueryMock([]));
+  t.mock.method(RecallNotice, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(DepartmentOrder, 'find', () => createQueryMock([]));
+  t.mock.method(DepartmentOrder, 'countDocuments', () => Promise.resolve(0));
+  t.mock.method(UserPreference, 'findOrCreateForUser', async () => ({
+    theme: 'paper',
+    fontSize: 'standard',
+    density: 'standard',
+    locale: 'en-IN',
+    timeFormat: '12h',
+    accessibility: {},
+    notifications: [],
+    workspace: {},
+  }));
 
-  t.mock.method(Cafe, 'findOne', async ({ cafeId }) => {
+  t.mock.method(GlobalInventoryItem, 'find', () => createQueryMock([]));
+  t.mock.method(GlobalInventoryItem, 'countDocuments', () => Promise.resolve(0));
+
+  t.mock.method(Cafe, 'findOne', ({ cafeId }) => {
+    let c = null;
     if (['ZC-0001', 'ZC-0002'].includes(cafeId)) {
-      return {
+      c = {
         cafeId,
         organisationId: 'ORG-ZAMORIN',
         status: 'ACTIVE',
         name: cafeId === 'ZC-0001' ? 'Zamorin Beach' : 'Zamorin Cyberpark',
       };
     }
-    return null;
+    const p = Promise.resolve(c);
+    p.select = () => p;
+    p.lean = () => p;
+    return p;
   });
 
   t.mock.method(Cafe, 'find', () => createQueryMock([

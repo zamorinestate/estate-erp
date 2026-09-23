@@ -280,10 +280,13 @@ const DEFAULT_PERMISSION_RULES = [
   { role: 'OWNER', permissionCode: 'PROCUREMENT_READ', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'READ', effect: 'ALLOW', scope: 'ORGANISATION', requiresMfa: true, requiresAuditEvent: false },
   { role: 'OWNER', permissionCode: 'PROCUREMENT_WRITE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'WRITE', effect: 'ALLOW', scope: 'ORGANISATION', requiresMfa: true, requiresReason: true, requiresAuditEvent: true },
   { role: 'OWNER', permissionCode: 'PROCUREMENT_APPROVE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'APPROVE', effect: 'ALLOW', scope: 'ORGANISATION', requiresMfa: true, requiresAuditEvent: true },
-  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_READ', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'READ', effect: 'ALLOW', scope: 'RECORD', requiresMfa: true, requiresAuditEvent: false },
-  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_WRITE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'WRITE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: true, requiresAuditEvent: true },
-  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_APPROVE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'APPROVE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: true, requiresAuditEvent: true },
-  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_RECEIVE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'RECEIVE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: true, requiresAuditEvent: true },
+  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_READ', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'READ', effect: 'ALLOW', scope: 'RECORD', requiresMfa: false, requiresAuditEvent: false },
+  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_WRITE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'WRITE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: false, requiresAuditEvent: true },
+  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_APPROVE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'APPROVE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: false, requiresAuditEvent: true },
+  { role: 'CAFE_ADMIN', permissionCode: 'PROCUREMENT_RECEIVE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'RECEIVE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: false, requiresAuditEvent: true },
+  { role: 'STAFF', permissionCode: 'PROCUREMENT_READ', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'READ', effect: 'ALLOW', scope: 'RECORD', requiresMfa: false, requiresAuditEvent: false, description: 'Staff may read purchase orders for their assigned café.' },
+  { role: 'STAFF', permissionCode: 'PROCUREMENT_WRITE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'WRITE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: false, requiresAuditEvent: true, description: 'Staff/Cashier may create and edit order requests for their assigned café.' },
+  { role: 'STAFF', permissionCode: 'PROCUREMENT_RECEIVE', module: 'PROCUREMENT', resource: 'PURCHASE_ORDER', action: 'RECEIVE', effect: 'ALLOW', scope: 'RECORD', requiresMfa: false, requiresAuditEvent: true, description: 'Staff/Cashier may verify delivery and submit GRN with vendor bill.' },
   {
     role: 'STAFF',
     permissionCode: 'USER:READ_SELF',
@@ -333,6 +336,147 @@ const DEFAULT_PERMISSION_RULES = [
     requiresMfa: false,
     description:
       'Staff may read their own notifications.',
+  },
+  // Master Self-Service
+  {
+    role: 'MASTER',
+    permissionCode: 'USER:READ_SELF',
+    module: 'USER',
+    resource: 'USER',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    description: 'Master may read own user information.',
+  },
+  {
+    role: 'MASTER',
+    permissionCode: 'EMPLOYEE:READ_SELF',
+    module: 'EMPLOYEE',
+    resource: 'EMPLOYEE',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    requiresAuditEvent: false,
+    description: 'Master may read own employee profile.',
+  },
+  {
+    role: 'MASTER',
+    permissionCode: 'EMPLOYEE:WRITE_SELF',
+    module: 'EMPLOYEE',
+    resource: 'EMPLOYEE',
+    action: 'WRITE',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    requiresAuditEvent: true,
+    description: 'Master may update own employee profile.',
+  },
+  {
+    role: 'MASTER',
+    permissionCode: 'NOTIFICATION:READ_SELF',
+    module: 'NOTIFICATION',
+    resource: 'NOTIFICATION',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    description: 'Master may read own notifications.',
+  },
+  // Owner Self-Service
+  {
+    role: 'OWNER',
+    permissionCode: 'USER:READ_SELF',
+    module: 'USER',
+    resource: 'USER',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    description: 'Owner may read own user information.',
+  },
+  {
+    role: 'OWNER',
+    permissionCode: 'EMPLOYEE:READ_SELF',
+    module: 'EMPLOYEE',
+    resource: 'EMPLOYEE',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    requiresAuditEvent: false,
+    description: 'Owner may read own employee profile.',
+  },
+  {
+    role: 'OWNER',
+    permissionCode: 'EMPLOYEE:WRITE_SELF',
+    module: 'EMPLOYEE',
+    resource: 'EMPLOYEE',
+    action: 'WRITE',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    requiresAuditEvent: true,
+    description: 'Owner may update own employee profile.',
+  },
+  {
+    role: 'OWNER',
+    permissionCode: 'NOTIFICATION:READ_SELF',
+    module: 'NOTIFICATION',
+    resource: 'NOTIFICATION',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    description: 'Owner may read own notifications.',
+  },
+  // Cafe Admin Self-Service
+  {
+    role: 'CAFE_ADMIN',
+    permissionCode: 'USER:READ_SELF',
+    module: 'USER',
+    resource: 'USER',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    description: 'Cafe Admin may read own user information.',
+  },
+  {
+    role: 'CAFE_ADMIN',
+    permissionCode: 'EMPLOYEE:READ_SELF',
+    module: 'EMPLOYEE',
+    resource: 'EMPLOYEE',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    requiresAuditEvent: false,
+    description: 'Cafe Admin may read own employee profile.',
+  },
+  {
+    role: 'CAFE_ADMIN',
+    permissionCode: 'EMPLOYEE:WRITE_SELF',
+    module: 'EMPLOYEE',
+    resource: 'EMPLOYEE',
+    action: 'WRITE',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    requiresAuditEvent: true,
+    description: 'Cafe Admin may update own employee profile.',
+  },
+  {
+    role: 'CAFE_ADMIN',
+    permissionCode: 'NOTIFICATION:READ_SELF',
+    module: 'NOTIFICATION',
+    resource: 'NOTIFICATION',
+    action: 'READ',
+    effect: 'ALLOW',
+    scope: 'SELF',
+    requiresMfa: false,
+    description: 'Cafe Admin may read own notifications.',
   },
   {
     role: 'MASTER',
@@ -1173,6 +1317,62 @@ async function seedInventoryData({ organisationId, masterUserId }) {
         status: 'ACTIVE',
         createdByUserId: masterUserId,
       },
+      {
+        organisationId,
+        itemId: 'ITM-MILK-01',
+        sku: 'ITM-MILK-01',
+        name: 'Organic Full Cream Milk',
+        category: 'DAIRY_FRESH',
+        baseUnit: 'liter',
+        criticality: 'CRITICAL',
+        lotControl: true,
+        shelfLifeDays: 5,
+        unitCostPaisa: 6000,
+        status: 'ACTIVE',
+        createdByUserId: masterUserId,
+      },
+      {
+        organisationId,
+        itemId: 'ITM-CREAM-01',
+        sku: 'ITM-CREAM-01',
+        name: 'Heavy Whipping Cream',
+        category: 'DAIRY_FRESH',
+        baseUnit: 'pack',
+        criticality: 'CRITICAL',
+        lotControl: true,
+        shelfLifeDays: 14,
+        unitCostPaisa: 12000,
+        status: 'ACTIVE',
+        createdByUserId: masterUserId,
+      },
+      {
+        organisationId,
+        itemId: 'ITM-COFFEE-01',
+        sku: 'ITM-COFFEE-01',
+        name: 'Arabica Dark Roast Beans',
+        category: 'COFFEE_BEANS',
+        baseUnit: 'kg',
+        criticality: 'CRITICAL',
+        lotControl: true,
+        shelfLifeDays: 90,
+        unitCostPaisa: 90000,
+        status: 'ACTIVE',
+        createdByUserId: masterUserId,
+      },
+      {
+        organisationId,
+        itemId: 'ITM-CUP-01',
+        sku: 'ITM-CUP-01',
+        name: 'Biodegradable Hot Coffee Cups (250ml)',
+        category: 'PACKAGING',
+        baseUnit: 'box',
+        criticality: 'STANDARD',
+        lotControl: false,
+        shelfLifeDays: 365,
+        unitCostPaisa: 45000,
+        status: 'ACTIVE',
+        createdByUserId: masterUserId,
+      },
     ];
 
     await GlobalInventoryItem.insertMany(items);
@@ -1180,7 +1380,7 @@ async function seedInventoryData({ organisationId, masterUserId }) {
     const cafes = ['ZC-0001', 'ZC-0002'];
     for (const cafeId of cafes) {
       for (const itm of items) {
-        const initialQty = itm.sku === 'CB-ARA-01' ? 45 : itm.sku === 'DY-MLK-01' ? 80 : 14;
+        const initialQty = itm.sku === 'CB-ARA-01' ? 45 : itm.sku === 'DY-MLK-01' ? 80 : 25;
         await CafeInventoryConfig.create({
           organisationId,
           cafeId,
@@ -1191,10 +1391,10 @@ async function seedInventoryData({ organisationId, masterUserId }) {
           quarantinedQuantityBase: 0,
           expiredQuantityBase: 0,
           inTransitQuantityBase: 0,
-          minQuantityBase: 20,
+          minQuantityBase: 10,
           parQuantityBase: 50,
           maxQuantityBase: 100,
-          safetyStockBase: 10,
+          safetyStockBase: 5,
           primaryLocation: 'Main Store',
           status: 'ACTIVE',
         });
@@ -1218,12 +1418,224 @@ async function seedInventoryData({ organisationId, masterUserId }) {
           supplierLot: `SUP-${itm.sku}-99`,
           itemId: itm.itemId,
           cafeId,
-          expiryDate: new Date(Date.now() + itm.shelfLifeDays * 86400000).toISOString().slice(0, 10),
+          expiryDate: new Date(Date.now() + (itm.shelfLifeDays || 90) * 86400000).toISOString().slice(0, 10),
           quantityBase: initialQty,
           status: 'AVAILABLE',
         });
       }
     }
+  }
+}
+
+async function seedVendorsData({ organisationId, masterUserId }) {
+  const { Vendor } = require('../models/Vendor');
+  const vendorCount = await Vendor.countDocuments({ organisationId });
+  if (vendorCount === 0) {
+    const vendors = [
+      {
+        vendorId: 'VEN-0001',
+        organisationId,
+        name: 'Malabar Fresh Dairy & Produce Ltd',
+        nameLower: 'malabar fresh dairy & produce ltd',
+        tradeName: 'Malabar Fresh',
+        supplierType: 'GOODS',
+        category: 'FOOD_BEVERAGE',
+        status: 'ACTIVE',
+        gstNumber: '32AABCU9603R1ZM',
+        panNumber: 'AABCU9603R',
+        fssaiLicense: '10019042000876',
+        paymentTerms: 'NET_30',
+        creditLimitInr: 500000,
+        approvedCafeIds: ['ZC-0001', 'ZC-0002', 'ZC-0003'],
+        contactPersons: [
+          {
+            contactId: 'CON-VEN-0001-01',
+            name: 'K. Rajeev Nair',
+            role: 'Sales & Delivery Lead',
+            department: 'SALES',
+            phone: '+91 98470 12345',
+            email: 'orders@malabarfresh.com',
+            isPrimary: true,
+            isActive: true,
+          },
+        ],
+        itemCatalogue: [
+          {
+            itemId: 'ITEM-1002',
+            supplierItemCode: 'MF-MLK-01',
+            itemName: 'Farm Fresh Whole Milk (3.5% Fat)',
+            uom: 'litre',
+            packSize: '1 LITRE PACK',
+            currentPricePaisa: 6200,
+            taxPercent: 5,
+            moq: 1,
+            sourcePriority: 'PREFERRED',
+            status: 'ACTIVE',
+          },
+          {
+            itemId: 'ITM-MILK-01',
+            supplierItemCode: 'MF-MILK-ORG',
+            itemName: 'Organic Full Cream Milk',
+            uom: 'liter',
+            packSize: '1 LITER',
+            currentPricePaisa: 6000,
+            taxPercent: 5,
+            moq: 1,
+            sourcePriority: 'PREFERRED',
+            status: 'ACTIVE',
+          },
+          {
+            itemId: 'ITM-CREAM-01',
+            supplierItemCode: 'MF-CRM-01',
+            itemName: 'Heavy Whipping Cream',
+            uom: 'pack',
+            packSize: '1 PACK (500ML)',
+            currentPricePaisa: 12000,
+            taxPercent: 5,
+            moq: 1,
+            sourcePriority: 'PREFERRED',
+            status: 'ACTIVE',
+          },
+        ],
+        performanceMetrics: {
+          otifPercent: 98.5,
+          onTimeDeliveryPercent: 99.0,
+          fullDeliveryPercent: 98.0,
+          fillRatePercent: 100,
+          rejectionRatePercent: 0.5,
+          averageLeadTimeDays: 1.0,
+        },
+        createdByUserId: masterUserId,
+      },
+      {
+        vendorId: 'VEN-0002',
+        organisationId,
+        name: 'Wayanad Estate Coffee Roasters',
+        nameLower: 'wayanad estate coffee roasters',
+        tradeName: 'Wayanad Roasters',
+        supplierType: 'GOODS',
+        category: 'FOOD_BEVERAGE',
+        status: 'ACTIVE',
+        gstNumber: '32AABCR8521Q1ZN',
+        panNumber: 'AABCR8521Q',
+        fssaiLicense: '10018041000543',
+        paymentTerms: 'NET_30',
+        creditLimitInr: 1000000,
+        approvedCafeIds: ['ZC-0001', 'ZC-0002', 'ZC-0003'],
+        contactPersons: [
+          {
+            contactId: 'CON-VEN-0002-01',
+            name: 'Anand Varma',
+            role: 'Head of Roasting & Supply',
+            department: 'SALES',
+            phone: '+91 94471 67890',
+            email: 'roastery@wayanadcoffee.in',
+            isPrimary: true,
+            isActive: true,
+          },
+        ],
+        itemCatalogue: [
+          {
+            itemId: 'ITEM-1001',
+            supplierItemCode: 'WY-ARA-01',
+            itemName: 'Arabica Whole Beans (Estate Blend)',
+            uom: 'kg',
+            packSize: '1 KG BAG',
+            currentPricePaisa: 85000,
+            taxPercent: 5,
+            moq: 1,
+            sourcePriority: 'PREFERRED',
+            status: 'ACTIVE',
+          },
+          {
+            itemId: 'ITM-COFFEE-01',
+            supplierItemCode: 'WY-DARK-01',
+            itemName: 'Arabica Dark Roast Beans',
+            uom: 'kg',
+            packSize: '1 KG BAG',
+            currentPricePaisa: 90000,
+            taxPercent: 5,
+            moq: 1,
+            sourcePriority: 'APPROVED',
+            status: 'ACTIVE',
+          },
+        ],
+        performanceMetrics: {
+          otifPercent: 97.0,
+          onTimeDeliveryPercent: 98.0,
+          fullDeliveryPercent: 96.0,
+          fillRatePercent: 100,
+          rejectionRatePercent: 0.8,
+          averageLeadTimeDays: 2.0,
+        },
+        createdByUserId: masterUserId,
+      },
+      {
+        vendorId: 'VEN-0003',
+        organisationId,
+        name: 'Kerala Eco Packaging Solutions Ltd',
+        nameLower: 'kerala eco packaging solutions ltd',
+        tradeName: 'EcoPack Kerala',
+        supplierType: 'GOODS',
+        category: 'PACKAGING',
+        status: 'ACTIVE',
+        gstNumber: '32AABCP1478P1ZQ',
+        panNumber: 'AABCP1478P',
+        fssaiLicense: '10020043000999',
+        paymentTerms: 'NET_15',
+        creditLimitInr: 300000,
+        approvedCafeIds: ['ZC-0001', 'ZC-0002', 'ZC-0003'],
+        contactPersons: [
+          {
+            contactId: 'CON-VEN-0003-01',
+            name: 'Priya Menon',
+            role: 'Enterprise Accounts',
+            department: 'SALES',
+            phone: '+91 97455 43210',
+            email: 'sales@ecopacksolutions.co.in',
+            isPrimary: true,
+            isActive: true,
+          },
+        ],
+        itemCatalogue: [
+          {
+            itemId: 'ITEM-1003',
+            supplierItemCode: 'EC-SYR-01',
+            itemName: 'Madagascar Vanilla Bean Syrup (750ml)',
+            uom: 'bottle',
+            packSize: '750 ML BOTTLE',
+            currentPricePaisa: 75000,
+            taxPercent: 18,
+            moq: 1,
+            sourcePriority: 'APPROVED',
+            status: 'ACTIVE',
+          },
+          {
+            itemId: 'ITM-CUP-01',
+            supplierItemCode: 'EC-CUP-250',
+            itemName: 'Biodegradable Hot Coffee Cups (250ml)',
+            uom: 'box',
+            packSize: '500 PCS BOX',
+            currentPricePaisa: 45000,
+            taxPercent: 12,
+            moq: 1,
+            sourcePriority: 'PREFERRED',
+            status: 'ACTIVE',
+          },
+        ],
+        performanceMetrics: {
+          otifPercent: 99.2,
+          onTimeDeliveryPercent: 99.5,
+          fullDeliveryPercent: 99.0,
+          fillRatePercent: 100,
+          rejectionRatePercent: 0.1,
+          averageLeadTimeDays: 1.5,
+        },
+        createdByUserId: masterUserId,
+      },
+    ];
+
+    await Vendor.insertMany(vendors);
   }
 }
 
@@ -1603,32 +2015,22 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   // 3. Seed Canonical Role Accounts for Complete Role Recognition
   const defaultPasswordHash = await bcrypt.hash('PK@NilaVega_8427!Cedar', 10);
 
-  // Normal Master Account (role MASTER, isPrimaryMaster: false)
-  const existingNormalMaster = await User.findOne({ organisationId, email: 'normal.master@example.com' });
-  if (!existingNormalMaster) {
-    await User.create({
-      userId: 'MU-0002',
-      organisationId,
-      name: 'Zamorin Normal Master',
-      email: 'normal.master@example.com',
-      role: 'MASTER',
-      accountStatus: 'ACTIVE',
-      passwordHash: defaultPasswordHash,
-      isPrimaryMaster: false,
-      createdBy: masterUserId,
-      updatedBy: masterUserId,
-    });
-  }
+  // Note: Normal Master role and window have been abolished.
+  // There is strictly only one Master: the Primary Master (MU-0001 / Pradeesh K).
 
-  // Owner Account
+
+  // Owner Account (Distinct from Primary Master Pradeesh K)
   const existingOwner = await User.findOne({ organisationId, email: 'owner@example.com' });
   if (!existingOwner) {
     await User.create({
       userId: 'OW-0001',
       organisationId,
-      name: 'Zamorin Owner',
+      name: 'Café Owner',
       email: 'owner@example.com',
       role: 'OWNER',
+      designation: 'Café Owner / Franchise Partner',
+      position: 'Café Owner / Franchise Partner',
+      department: 'Management',
       accountStatus: 'ACTIVE',
       primaryCafeId: 'ZC-0001',
       assignedCafeIds: ['ZC-0001', 'ZC-0002'],
@@ -1637,10 +2039,20 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       createdBy: masterUserId,
       updatedBy: masterUserId,
     });
-  } else if (!existingOwner.assignedCafeIds || existingOwner.assignedCafeIds.length === 0) {
-    existingOwner.primaryCafeId = existingOwner.primaryCafeId || 'ZC-0001';
-    existingOwner.assignedCafeIds = ['ZC-0001', 'ZC-0002'];
-    await existingOwner.save();
+  } else {
+    let changed = false;
+    if (!existingOwner.assignedCafeIds || existingOwner.assignedCafeIds.length === 0) {
+      existingOwner.primaryCafeId = existingOwner.primaryCafeId || 'ZC-0001';
+      existingOwner.assignedCafeIds = ['ZC-0001', 'ZC-0002'];
+      changed = true;
+    }
+    if (!existingOwner.designation) {
+      existingOwner.designation = 'Café Owner / Franchise Partner';
+      changed = true;
+    }
+    if (changed) {
+      await existingOwner.save();
+    }
   }
 
   // Admin Account (Ops)
@@ -1728,6 +2140,8 @@ module.exports = {
   seedExpensePolicyData,
   seedFinanceData,
   seedInventoryData,
+  seedVendorsData,
+  seedCafeOperationsData,
   seedMenuData,
   seedLoansData,
   runSeed,

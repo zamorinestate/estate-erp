@@ -637,6 +637,55 @@ function generateBankDisbursementSchedule({ payrollRunId, cafeId, paymentRecords
   };
 }
 
+/**
+ * Authoritative Direct Tax Statutory Form & Act Mapping (Effective-Dated)
+ * Boundary: 31 March 2026 (Income-tax Act, 1961) vs 1 April 2026 (Income-tax Act, 2025 / Section 393)
+ * - Form 140: Resident non-salary quarterly TDS statement (formerly Form 26Q)
+ * - Form 144: Non-resident non-salary quarterly TDS statement (formerly Form 27Q)
+ * - Form 138: Salary quarterly TDS statement (formerly Form 24Q)
+ * - Form 141: Specified Section 393(1) challan-cum-statement transactions
+ */
+function getStatutoryTdsFormMapping(date = new Date()) {
+  const d = new Date(date);
+  const isPost2026Act = d >= new Date('2026-04-01T00:00:00.000Z');
+
+  if (isPost2026Act) {
+    return {
+      governingAct: 'Income-tax Act, 2025',
+      governingSection: 'Section 393',
+      effectiveDate: '2026-04-01',
+      forms: {
+        salaryTdsQuarterly: 'FORM_138', // Formerly Form 24Q
+        residentNonSalaryTdsQuarterly: 'FORM_140', // Formerly Form 26Q
+        nonResidentTdsQuarterly: 'FORM_144', // Formerly Form 27Q
+        specifiedChallanCumStatement: 'FORM_141', // Section 393(1)
+      },
+      legacyAliases: {
+        FORM_24Q: 'SUPERSEDED_BY_FORM_138_POST_2026',
+        FORM_26Q: 'SUPERSEDED_BY_FORM_140_POST_2026',
+        FORM_27Q: 'SUPERSEDED_BY_FORM_144_POST_2026',
+      },
+    };
+  } else {
+    return {
+      governingAct: 'Income-tax Act, 1961',
+      governingSection: 'Section 192 / 194C / 194J',
+      effectiveDate: 'PRE_2026_HISTORICAL',
+      forms: {
+        salaryTdsQuarterly: 'FORM_24Q',
+        residentNonSalaryTdsQuarterly: 'FORM_26Q',
+        nonResidentTdsQuarterly: 'FORM_27Q',
+        specifiedChallanCumStatement: null,
+      },
+      legacyAliases: {
+        FORM_24Q: 'FORM_24Q_HISTORICAL',
+        FORM_26Q: 'FORM_26Q_HISTORICAL',
+        FORM_27Q: 'FORM_27Q_HISTORICAL',
+      },
+    };
+  }
+}
+
 module.exports = {
   STATUTORY_CONFIG,
   EPF_WAGE_CEILING_PAISA,
@@ -651,4 +700,5 @@ module.exports = {
   maskPanNumber,
   renderZamorinCorporatePayslipPdf,
   generateBankDisbursementSchedule,
+  getStatutoryTdsFormMapping,
 };

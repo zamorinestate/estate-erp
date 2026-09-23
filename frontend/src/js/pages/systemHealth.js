@@ -7,14 +7,17 @@
  * backup status, active alerts, kill switches, and maintenance mode.
  */
 
-import { api } from '../api.js';
+import { api } from '../apiClient.js';
+import { state } from '../state.js';
 
 export function renderSystemHealthPage() {
-  const user = JSON.parse(localStorage.getItem('zamorin_user') || '{}');
-  const role = (user.role || '').toUpperCase();
+  const user = state.auth?.user || state.user || JSON.parse(localStorage.getItem('zamorin_user') || '{}');
+  const role = String(user?.role || state.role || '').toUpperCase();
+  const isPrimaryMaster = Boolean(user?.isPrimaryMaster || state.isPrimaryMaster || role === 'PRIMARY_MASTER');
+  const isMasterOrOwner = role === 'MASTER' || role === 'PRIMARY_MASTER' || role === 'OWNER' || isPrimaryMaster;
 
-  // Role Gate: Strictly Master and Owner only
-  if (role !== 'MASTER' && role !== 'OWNER') {
+  // Role Gate: Strictly Master (including Primary Master) and Owner only
+  if (!isMasterOrOwner) {
     return `
       <div class="page-container" style="padding: 2.5rem; text-align: center;">
         <div class="card" style="max-width: 600px; margin: 3rem auto; padding: 2.5rem; border-left: 4px solid var(--danger-color, #dc2626);">

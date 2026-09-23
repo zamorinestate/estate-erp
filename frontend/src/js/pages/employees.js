@@ -3,11 +3,13 @@
 // World-Class HRIS + Workforce Administration + Employee 360 + Positioning
 // =============================================================================
 
-import { apiGet, apiPost } from "../apiClient.js";
+import { apiGet, apiPost, apiPatch } from "../apiClient.js";
 import { showToast, openModal, renderModuleErrorState } from "../components.js";
 import { state } from "../state.js";
 import { navigate } from "../router.js";
 import { exportCentreModal } from "../components/exportCentreModal.js";
+import { icon } from "../icons.js";
+import { debounce } from "../utils/perf.js";
 
 let activeSubpanel = "overview";
 let liveOverview = null;
@@ -23,6 +25,28 @@ let isLoadingData = false;
 function escapeHtml(str) {
   if (!str) return "";
   return String(str).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[m]);
+}
+
+export function getActiveViewer() {
+  let u = state.auth?.user || state.user;
+  if (!u || (!u.userId && !u.email)) {
+    try {
+      const stored = localStorage.getItem("zamorin_user");
+      if (stored) u = JSON.parse(stored);
+    } catch {}
+  }
+  return u || {};
+}
+
+export function isCurrentViewerPrimaryMaster() {
+  const viewer = getActiveViewer();
+  const vId = viewer.userId || viewer.id || viewer._id || "";
+  const vEmail = String(viewer.email || "").toLowerCase();
+  return (
+    viewer.isPrimaryMaster === true ||
+    (vId === "MU-0001" && vEmail === "pradeeshk331@gmail.com") ||
+    vEmail === "pradeeshk331@gmail.com"
+  );
 }
 
 let searchQuery = "";
@@ -91,7 +115,7 @@ function renderActiveSubpanel() {
     directory: {
       title: "Employee Directory & Profiles",
       icon: "👥",
-      desc: "Authoritative staff directory, 360 employee profiles and contact records.",
+      desc: "Authoritative staff directory, verified employee profiles and contact records.",
       actionsHtml: `<button class="btn btn-sm btn-primary" id="btn-child-onboard-emp" type="button">+ Onboard Employee</button>`
     },
     positions: {
@@ -359,8 +383,33 @@ function renderOverviewSubpanel() {
 }
 
 // ─── 2. EMPLOYEE DIRECTORY & SEARCH ──────────────────────────────────────────
-function renderDirectorySubpanel() {
-  let filtered = [...liveEmployees];
+// Map roles to the ERP window they access
+const WINDOW_LABEL = {
+  PRIMARY_MASTER: { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
+  MASTER:         { text: '🛡️ Primary Master', color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
+  OWNER:          { text: '👑 Owner Portal',    color: '#065f46', bg: '#d1fae5', border: '#34d399' },
+  CAFE_ADMIN:     { text: '🎯 Café Operations', color: '#4c1d95', bg: '#ede9fe', border: '#8b5cf6' },
+  STAFF:          { text: '👤 Employee / Staff Window', color: '#374151', bg: '#f3f4f6', border: '#9ca3af' },
+};
+
+function windowBadge(emp) {
+  const isPM =
+    emp.userId === 'MU-0001' ||
+    String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com' ||
+    emp.isPrimaryMaster === true;
+  const key = isPM ? 'PRIMARY_MASTER' : (String(emp.role || '').toUpperCase() in WINDOW_LABEL ? String(emp.role || '').toUpperCase() : 'STAFF');
+  const w = WINDOW_LABEL[key] || WINDOW_LABEL.STAFF;
+  return `<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:4px; white-space:nowrap; color:${w.color}; background:${w.bg}; border:1px solid ${w.border};">${w.text}</span>`;
+}
+
+function getFilteredEmployeesList() {
+  const cleanEmployees = liveEmployees.filter(e =>
+    !e.email?.toLowerCase().includes('perftest') &&
+    !e.email?.toLowerCase().includes('@zamorin.test') &&
+    !e.userId?.match(/^ST-\d{4,}$/) &&
+    !e.name?.match(/^Perf Staff/i)
+  );
+  let filtered = [...cleanEmployees];
 
   if (searchQuery) {
     const q = searchQuery.toLowerCase().trim();
@@ -384,6 +433,102 @@ function renderDirectorySubpanel() {
   if (selectedWorkerType !== "ALL") {
     filtered = filtered.filter(e => e.workerType === selectedWorkerType);
   }
+  return filtered;
+}
+
+function renderDirectoryRows(filtered) {
+  const isViewerPrimaryMaster = isCurrentViewerPrimaryMaster();
+  if (filtered.length === 0) {
+    return `
+      <tr>
+        <td colspan="11" style="text-align:center; padding:48px 20px; color:var(--muted);">
+          <div style="font-size:32px; margin-bottom:8px;">👥</div>
+          <div style="font-weight:600; font-size:14px; color:var(--ink); margin-bottom:4px;">No Employees Found</div>
+          <div style="font-size:12px;">Get started by onboarding your first café team member using the "+ Onboard Employee" button above.</div>
+        </td>
+      </tr>
+    `;
+  }
+  return filtered.map((emp, idx) => {
+    const isPrimaryMasterRow =
+      emp.userId === 'MU-0001' ||
+      String(emp.email || '').toLowerCase() === 'pradeeshk331@gmail.com' ||
+      emp.isPrimaryMaster === true;
+    // Designation: always show "Primary Master" for MU-0001 regardless of DB value
+    const displayDesignation = isPrimaryMasterRow ? 'Primary Master' : (emp.designation || 'Staff');
+    // Row freeze styling: golden locked border for Primary Master
+    const rowStyle = isPrimaryMasterRow
+      ? `border-bottom:1px solid rgba(0,0,0,0.04); background:linear-gradient(90deg,#fffbeb 0%,transparent 100%); border-left:3px solid #f59e0b;`
+      : `border-bottom:1px solid rgba(0,0,0,0.04); transition:background 0.15s ease;`;
+    const rowHover = isPrimaryMasterRow ? '' : `onmouseover="this.style.background='#fafaf9'" onmouseout="this.style.background='transparent'"`;
+    const frozenAttr = isPrimaryMasterRow ? 'data-frozen-row="MU-0001"' : '';
+    return `
+    <tr style="${rowStyle}" ${rowHover} ${frozenAttr}>
+      <td style="padding:12px 14px; color:var(--muted); font-size:11px; font-weight:600;">${idx + 1}</td>
+      <td style="padding:12px 14px;">
+        <div style="font-weight:700; color:var(--ink);">${escapeHtml(emp.name)}${isPrimaryMasterRow ? ' <span style="font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b;">🔒 FROZEN</span>' : ''}</div>
+        <div style="font-size:11px; color:var(--muted);">${escapeHtml(emp.userId)} · ${escapeHtml(emp.email)}</div>
+      </td>
+      <td style="padding:12px 14px; font-weight:${isPrimaryMasterRow ? '700' : '500'}; color:${isPrimaryMasterRow ? '#92400e' : 'inherit'};">
+        ${isPrimaryMasterRow ? '🛡️ Primary Master' : escapeHtml(displayDesignation)}
+      </td>
+      <td style="padding:12px 14px; color:var(--muted);">${escapeHtml(emp.department || 'Operations')}</td>
+      <td style="padding:12px 14px;"><span class="badge-tag badge-neutral" style="font-size:11.5px; font-weight:600;">${escapeHtml(emp.primaryCafeId || '—')}</span></td>
+      <td style="padding:12px 14px; font-size:12px;">${escapeHtml(emp.workerType || 'PERMANENT')}</td>
+      <td style="padding:12px 14px;">
+        <span class="badge-tag ${emp.role === 'MASTER' ? 'badge-accent' : emp.role === 'OWNER' ? 'badge-accent' : 'badge-neutral'}" style="font-size:11px; font-weight:700;">
+          ${isPrimaryMasterRow ? 'PRIMARY MASTER' : escapeHtml(emp.role || 'STAFF')}
+        </span>
+      </td>
+      <td style="padding:12px 14px;">${windowBadge(emp)}</td>
+      <td style="padding:12px 14px; font-size:12px; color:var(--muted);">${emp.joiningDate ? String(emp.joiningDate).split('T')[0] : '—'}</td>
+      <td style="padding:12px 14px;">
+        <span class="badge-tag ${emp.employmentStatus === 'ACTIVE' ? 'badge-success' : emp.employmentStatus === 'PROBATION' ? 'badge-warning' : 'badge-neutral'}" style="font-size:11.5px; font-weight:700;">
+          ${escapeHtml(emp.employmentStatus || 'ACTIVE')}
+        </span>
+      </td>
+      <td style="padding:12px 14px; text-align:right; white-space:nowrap;">
+        ${isPrimaryMasterRow && !isViewerPrimaryMaster ? `
+          <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:4px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b; display:inline-flex; align-items:center; gap:4px;" title="This account is protected by enterprise security freeze. Other administrators cannot edit or delete it.">
+            🔒 Protected
+          </span>
+          <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
+          <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
+        ` : isPrimaryMasterRow && isViewerPrimaryMaster ? `
+          <button class="btn btn-ghost edit-employee-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#059669; font-weight:600;" title="Edit Your Profile">✏️ Edit Profile</button>
+          <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Your Login Password &amp; POS PIN">🔑 My Login &amp; PIN</button>
+          <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
+          <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
+        ` : `
+          <button class="btn btn-ghost edit-employee-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#059669; font-weight:600;" title="Edit Position, Window &amp; Details">✏️ Edit &amp; Assign</button>
+          <button class="btn btn-ghost open-credentials-modal-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" data-email="${escapeHtml(emp.email)}" style="font-size:12px; padding:4px 8px; color:#2563eb; font-weight:600;" title="Manage Login Password &amp; POS PIN">🔑 Login &amp; PIN</button>
+          <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
+          <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
+          <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
+          <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
+          <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account &amp; Revoke Access">🗑️ Delete</button>
+        `}
+      </td>
+    </tr>
+  `;
+  }).join('');
+}
+
+function updateDirectoryTableOnly() {
+  const tbody = document.getElementById("employee-directory-tbody");
+  const countIndicator = document.getElementById("employee-directory-count");
+  if (tbody) {
+    const filtered = getFilteredEmployeesList();
+    tbody.innerHTML = renderDirectoryRows(filtered);
+    if (countIndicator) {
+      countIndicator.textContent = `Showing ${filtered.length} of ${liveEmployees.length || filtered.length} records`;
+    }
+    attachDirectoryRowListeners();
+  }
+}
+
+function renderDirectorySubpanel() {
+  const filtered = getFilteredEmployeesList();
 
   return `
     <div style="background:#fff; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:20px;">
@@ -431,47 +576,19 @@ function renderDirectorySubpanel() {
               <th style="padding:10px 14px;">Primary Café</th>
               <th style="padding:10px 14px;">Type</th>
               <th style="padding:10px 14px;">System Role</th>
+              <th style="padding:10px 14px;">Window Access</th>
               <th style="padding:10px 14px;">Joined</th>
               <th style="padding:10px 14px;">Status</th>
               <th style="padding:10px 14px; text-align:right;">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            ${filtered.map((emp, idx) => `
-              <tr style="border-bottom:1px solid rgba(0,0,0,0.04); transition:background 0.15s ease;" onmouseover="this.style.background='#fafaf9'" onmouseout="this.style.background='transparent'">
-                <td style="padding:12px 14px; color:var(--muted); font-size:11px; font-weight:600;">${idx + 1}</td>
-                <td style="padding:12px 14px;">
-                  <div style="font-weight:600; color:var(--ink);">${emp.name}</div>
-                  <div style="font-size:11px; color:var(--muted);">${emp.userId} · ${emp.email}</div>
-                </td>
-                <td style="padding:12px 14px; font-weight:500;">${emp.designation || 'Staff'}</td>
-                <td style="padding:12px 14px; color:var(--muted);">${emp.department || 'Operations'}</td>
-                <td style="padding:12px 14px;"><span class="badge-tag badge-neutral" style="font-size:11.5px; font-weight:600;">${emp.primaryCafeId || '—'}</span></td>
-                <td style="padding:12px 14px; font-size:12px;">${emp.workerType || 'PERMANENT'}</td>
-                <td style="padding:12px 14px;">
-                  <span class="badge-tag ${emp.role === 'MASTER' ? 'badge-accent' : emp.role === 'OWNER' ? 'badge-accent' : 'badge-neutral'}" style="font-size:11px; font-weight:700;">
-                    ${emp.role}
-                  </span>
-                </td>
-                <td style="padding:12px 14px; font-size:12px; color:var(--muted);">${emp.joiningDate ? String(emp.joiningDate).split('T')[0] : '—'}</td>
-                <td style="padding:12px 14px;">
-                  <span class="badge-tag ${emp.employmentStatus === 'ACTIVE' ? 'badge-success' : emp.employmentStatus === 'PROBATION' ? 'badge-warning' : 'badge-neutral'}" style="font-size:11.5px; font-weight:700;">
-                    ${emp.employmentStatus || 'ACTIVE'}
-                  </span>
-                </td>
-                <td style="padding:12px 14px; text-align:right; white-space:nowrap;">
-                  <button class="btn btn-ghost open-employee-360-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">View 360</button>
-                  <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
-                  <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
-                  <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
-                </td>
-              </tr>
-            `).join('')}
+          <tbody id="employee-directory-tbody">
+            ${renderDirectoryRows(filtered)}
           </tbody>
         </table>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; font-size:12px; color:var(--muted);">
-        <div>Showing ${filtered.length} of ${liveEmployees.length || filtered.length} records</div>
+        <div id="employee-directory-count">Showing ${filtered.length} of ${liveEmployees.length || filtered.length} records</div>
         <div>Authoritative Real-Time Data</div>
       </div>
     </div>
@@ -744,7 +861,7 @@ async function fetchWorkforceData() {
   try {
     const [ov, emp, pos, stf, itg, cf] = await Promise.allSettled([
       apiGet("/employees/overview"),
-      apiGet("/employees"),
+      apiGet("/employees?limit=200"),
       apiGet("/employees/positions"),
       apiGet("/employees/staffing-requests"),
       apiGet("/employees/integrity"),
@@ -752,6 +869,18 @@ async function fetchWorkforceData() {
     ]);
     liveOverview = ov.status === "fulfilled" ? ov.value?.data : null;
     liveEmployees = emp.status === "fulfilled" ? (emp.value?.data?.employees || []) : [];
+    liveEmployees.forEach((e) => {
+      if (
+        e.userId === "MU-0001" ||
+        String(e.email || "").toLowerCase() === "pradeeshk331@gmail.com" ||
+        e.isPrimaryMaster === true
+      ) {
+        e.designation = "Primary Master";
+        e.position = "Primary Master";
+        e.role = "MASTER";
+        e.isPrimaryMaster = true;
+      }
+    });
     livePositions = pos.status === "fulfilled" ? (pos.value?.data?.positions || []) : [];
     liveStaffingRequests = stf.status === "fulfilled" ? (stf.value?.data?.staffingRequests || []) : [];
     liveIntegrity = itg.status === "fulfilled" ? itg.value?.data : null;
@@ -799,6 +928,19 @@ export async function wireEmployees(container = document, subroute) {
         document.getElementById("employees-back-to-hub-btn")?.addEventListener("click", backToHub);
         document.getElementById("workforce-back-to-hub-btn")?.addEventListener("click", backToHub);
         attachDirectoryRowListeners();
+        // Re-bind child action buttons that live inside the dynamically re-rendered subpanel header
+        document.querySelectorAll("#btn-child-onboard-emp, #open-onboard-wizard-btn, #onboard-emp-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openOnboardingWizard());
+        });
+        document.querySelectorAll("#btn-child-add-position, #add-position-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openCreatePositionModal());
+        });
+        document.querySelectorAll("#btn-child-new-staffing-req, #new-requisition-btn, #open-staffing-request-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openStaffingRequestModal());
+        });
+        document.querySelectorAll("#btn-child-verify-skill, #verify-skill-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openVerifySkillModal());
+        });
       }
     });
   }
@@ -830,42 +972,43 @@ export async function wireEmployees(container = document, subroute) {
     }
   });
 
-  // Search input filter
-  document.getElementById("employee-search-input")?.addEventListener("input", (e) => {
-    searchQuery = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
+  const updateDirectoryViewSmooth = () => {
+    const tbody = document.getElementById("employee-directory-tbody");
+    if (tbody) {
+      updateDirectoryTableOnly();
+    } else {
+      const host = document.getElementById("workforce-content-area");
+      if (host && activeSubpanel === "directory") {
+        host.innerHTML = renderDirectorySubpanel();
+        attachDirectoryRowListeners();
+      }
     }
+  };
+
+  const debouncedDirectorySearch = debounce((val) => {
+    searchQuery = val;
+    updateDirectoryViewSmooth();
+  }, 150);
+
+  // Search input filter (debounced with non-destructive DOM update)
+  document.getElementById("employee-search-input")?.addEventListener("input", (e) => {
+    debouncedDirectorySearch(e.target.value);
   });
 
   // Filter selects
   document.getElementById("cafe-filter-select")?.addEventListener("change", (e) => {
     selectedCafe = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
-    }
+    updateDirectoryViewSmooth();
   });
 
   document.getElementById("dept-filter-select")?.addEventListener("change", (e) => {
     selectedDept = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
-    }
+    updateDirectoryViewSmooth();
   });
 
   document.getElementById("status-filter-select")?.addEventListener("change", (e) => {
     selectedStatus = e.target.value;
-    const host = document.getElementById("workforce-content-area");
-    if (host && activeSubpanel === "directory") {
-      host.innerHTML = renderDirectorySubpanel();
-      attachDirectoryRowListeners();
-    }
+    updateDirectoryViewSmooth();
   });
 
   // Export CSV
@@ -934,6 +1077,47 @@ export async function wireEmployees(container = document, subroute) {
 }
 
 function attachDirectoryRowListeners() {
+  // ── FROZEN ROW CLICK GUARD ────────────────────────────────────────────────
+  // Intercept ALL button clicks inside any row marked data-frozen-row="MU-0001".
+  // Allowed for non-Primary-Master: ONLY open-employee-360-btn and view-emp-attendance-btn
+  // Blocked for non-Primary-Master viewers: credentials, edit, transfer, offboard, delete
+  document.querySelectorAll('[data-frozen-row="MU-0001"] button').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const isActualPM = isCurrentViewerPrimaryMaster();
+      if (!isActualPM) {
+        const isReadOnly =
+          btn.classList.contains('open-employee-360-btn') ||
+          btn.classList.contains('view-emp-attendance-btn');
+        if (!isReadOnly) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          showToast('🔒 Access Denied — The Primary Master account is frozen and protected. Only Pradeesh K can modify this profile.', 'coral');
+          return false;
+        }
+      }
+    }, true); // capture phase so it fires before any other handlers
+  });
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Open Edit Employee & Window Assignment Modal
+  document.querySelectorAll(".edit-employee-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const userId = btn.getAttribute("data-user-id");
+      openEditEmployeeModal(userId);
+    });
+  });
+
+
+  // Open Manage Credentials Modal (Password & PIN)
+  document.querySelectorAll(".open-credentials-modal-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const userId = btn.getAttribute("data-user-id");
+      const name = btn.getAttribute("data-name");
+      const email = btn.getAttribute("data-email");
+      openManageCredentialsModal(userId, name, email);
+    });
+  });
+
   // Open Employee 360
   document.querySelectorAll(".open-employee-360-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -965,12 +1149,88 @@ function attachDirectoryRowListeners() {
     });
   });
 
+  // Permanent Account Deletion & Immediate Revocation
+  document.querySelectorAll(".delete-employee-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const userId = btn.getAttribute("data-user-id");
+      const name = btn.getAttribute("data-name") || userId;
+      confirmAndDeleteEmployee(userId, name);
+    });
+  });
+
   // Open Probation Modal
   document.querySelectorAll(".open-probation-modal-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const userId = btn.getAttribute("data-user-id");
       openProbationModal(userId);
     });
+  });
+}
+
+function confirmAndDeleteEmployee(userId, name) {
+  openModal(`
+    <div style="padding:24px; max-width:480px; width:100%; color:var(--ink);">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+        <div style="width:40px; height:40px; border-radius:50%; background:rgba(220,38,38,0.12); display:flex; align-items:center; justify-content:center; font-size:20px; color:#dc2626;">
+          ⚠️
+        </div>
+        <div>
+          <h2 style="font-size:18px; font-weight:700; margin:0; color:#dc2626;">Permanently Delete Account</h2>
+          <div style="font-size:12px; color:var(--muted);">${escapeHtml(name)} (${escapeHtml(userId)})</div>
+        </div>
+      </div>
+      <p style="font-size:13.5px; line-height:1.5; color:var(--ink); margin:0 0 16px;">
+        Are you sure you want to permanently delete the account for <strong>${escapeHtml(name)}</strong> (<code>${escapeHtml(userId)}</code>)?
+      </p>
+      <div style="background:rgba(220,38,38,0.06); border:1px solid rgba(220,38,38,0.2); border-radius:8px; padding:12px; font-size:12px; color:#991b1b; margin-bottom:20px;">
+        <strong>Warning:</strong> This will permanently delete the employee record from the database, instantly terminate all active sessions, and revoke all login credentials. The employee will not be able to log in or access the ERP again.
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+        <button class="btn btn-primary" id="confirm-delete-emp-btn" type="button" style="background:#dc2626; border-color:#dc2626; color:#fff; font-weight:600;">
+          🗑️ Permanently Delete
+        </button>
+      </div>
+    </div>
+  `);
+
+  document.getElementById("confirm-delete-emp-btn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("confirm-delete-emp-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Deleting...";
+    }
+    try {
+      try {
+        await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+      } catch (postErr) {
+        if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+          try {
+            await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+          } catch (delErr) {
+            if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
+              console.warn("Backend deletion endpoint unavailable or record already purged from database:", delErr);
+            } else {
+              throw delErr;
+            }
+          }
+        } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+          console.warn("Employee record already purged from database.");
+        } else {
+          throw postErr;
+        }
+      }
+      liveEmployees = liveEmployees.filter(e => e.userId !== userId);
+      document.getElementById("modal-root").innerHTML = "";
+      showToast(`Account for ${name} (${userId}) has been permanently deleted and access revoked.`, "success");
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🗑️ Permanently Delete";
+      }
+      showToast(err?.userMessage || err?.message || "Failed to delete employee account", "coral");
+    }
   });
 }
 
@@ -1055,8 +1315,36 @@ function openOnboardingWizard() {
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div>
-            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Designation *</label>
-            <input type="text" id="ob-title" required placeholder="e.g. Junior Barista" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;" />
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Position *</label>
+            <select id="ob-title" required style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
+              <option value="">— Select Job Title / Position —</option>
+              <optgroup label="👑 Management &amp; Administrative Roles">
+                <option value="Operations Manager" data-role="CAFE_ADMIN">Operations Manager</option>
+                <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
+              </optgroup>
+              <optgroup label="🎯 Store Operations (Admin Access)">
+                <option value="Café Administrator / Store Manager" data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
+                <option value="Assistant Store Manager" data-role="CAFE_ADMIN">Assistant Store Manager</option>
+              </optgroup>
+              <optgroup label="☕ Café Team (Staff Window)">
+                <option value="Head Barista" data-role="STAFF">Head Barista</option>
+                <option value="Senior Barista" data-role="STAFF">Senior Barista</option>
+                <option value="Junior Barista" data-role="STAFF">Junior Barista</option>
+                <option value="Executive Chef / Head Cook" data-role="STAFF">Executive Chef / Head Cook</option>
+                <option value="Sous Chef / Assistant Cook" data-role="STAFF">Sous Chef / Assistant Cook</option>
+                <option value="Kitchen Staff" data-role="STAFF">Kitchen Staff</option>
+                <option value="Cashier / Counter Sales" data-role="STAFF">Cashier / Counter Sales</option>
+                <option value="Service Staff / Waiter" data-role="STAFF">Service Staff / Waiter</option>
+                <option value="Delivery Staff" data-role="STAFF">Delivery Staff</option>
+                <option value="Cleaning Staff" data-role="STAFF">Cleaning Staff</option>
+                <option value="Security Guard" data-role="STAFF">Security Guard</option>
+                <option value="Trainee / Apprentice" data-role="STAFF">Trainee / Apprentice</option>
+              </optgroup>
+              <option value="__CUSTOM__">+ Custom Job Title...</option>
+            </select>
+            <div id="ob-custom-title-box" style="margin-top:6px; display:none;">
+              <input type="text" id="ob-custom-title-input" placeholder="Enter custom position title..." style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;" />
+            </div>
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Worker Type</label>
@@ -1069,52 +1357,225 @@ function openOnboardingWizard() {
           </div>
         </div>
 
+        <!-- Dedicated Window & Access Level Assignment -->
+        <div style="background:#f0fdf4; padding:12px 14px; border-radius:8px; border:1px solid #bbf7d0;">
+          <div style="font-size:11.5px; font-weight:700; color:#166534; text-transform:uppercase; margin-bottom:4px;">
+            Assigned ERP Window &amp; System Access Level *
+          </div>
+          <div style="font-size:11.5px; color:#15803d; margin-bottom:8px;">
+            Determines the exact UI window this employee enters upon logging into Zamorin ERP.
+          </div>
+          <select id="ob-window-select" required style="width:100%; padding:8px 12px; border:1px solid #86efac; border-radius:6px; font-size:13px; font-weight:600; background:#fff;">
+            <option value="STAFF">👤 Employee / Staff Window (Cashier POS Till, Staff Portal &amp; Timesheets)</option>
+            <option value="CAFE_ADMIN">🎯 Café Operations Window (Store Operations, Daily Roster, Cafe Inventory)</option>
+            <option value="OWNER">👑 Owner Portal (Financial Reports, Owner Governance, P&amp;L Overview)</option>
+          </select>
+          <div id="ob-role-badge" style="margin-top:6px; font-size:11px; font-weight:600;"></div>
+        </div>
+
+        <!-- Account Access & Credentials -->
+        <div style="background:#f8fafc; padding:12px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:11.5px; font-weight:700; color:#475569; text-transform:uppercase;">Account Access &amp; Credentials</div>
+            <div style="font-size:11px; color:#64748b;">(Enables ERP &amp; POS Login)</div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">Web ERP Password</label>
+                <button type="button" class="btn btn-ghost" id="ob-gen-pwd-btn" style="font-size:10.5px; padding:1px 5px; color:#b45309; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="ob-password" placeholder="Leave blank to auto-generate" minlength="8" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="ob-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10px; color:#64748b; margin-top:2px;">Min 8 chars. Auto-generated if left blank.</div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">6-Digit Operator PIN</label>
+                <button type="button" class="btn btn-ghost" id="ob-gen-pin-btn" style="font-size:10.5px; padding:1px 5px; color:#059669; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="ob-pin" placeholder="e.g. 748192" maxlength="6" pattern="\\d{6}" inputmode="numeric" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; letter-spacing:2px; font-family:var(--font-mono, monospace);" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="ob-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10px; color:#64748b; margin-top:2px;">Optional. For POS terminal operator sign-in.</div>
+            </div>
+          </div>
+        </div>
+
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
           <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
-          <button class="btn btn-primary" type="submit" style="background:var(--gold,#b45309); border-color:var(--gold,#b45309); color:#fff; font-weight:600;">Complete Onboarding</button>
+          <button class="btn btn-primary" type="submit" id="ob-submit-btn" style="background:var(--gold,#b45309); border-color:var(--gold,#b45309); color:#fff; font-weight:600;">Complete Onboarding</button>
         </div>
       </form>
     </div>
   `);
 
+  const modalRoot = document.getElementById("modal-root");
+  if (modalRoot) {
+    wireVisibilityToggles(modalRoot);
+
+    // Live role badge: shows what window the employee will get access to
+    const obTitleSelect = modalRoot.querySelector("#ob-title");
+    const obCustomTitleBox = modalRoot.querySelector("#ob-custom-title-box");
+    const obWindowSelect = modalRoot.querySelector("#ob-window-select");
+    const obRoleBadge = modalRoot.querySelector("#ob-role-badge");
+
+    const ROLE_BADGE_MAP = {
+      OWNER:      { text: "🏛️ Will access: Owner Portal",             color: "#1e40af", bg: "#dbeafe", border: "#3b82f6" },
+      CAFE_ADMIN: { text: "🎯 Will access: Café Operations Window",   color: "#065f46", bg: "#d1fae5", border: "#34d399" },
+      STAFF:      { text: "👤 Will access: Employee / Staff Window",  color: "#334155", bg: "#f1f5f9", border: "#94a3b8" },
+    };
+
+    function updateObRoleBadge() {
+      if (!obRoleBadge) return;
+      const r = obWindowSelect?.value || "STAFF";
+      const b = ROLE_BADGE_MAP[r] || ROLE_BADGE_MAP.STAFF;
+      obRoleBadge.textContent = b.text;
+      obRoleBadge.style.cssText = `margin-top:5px; font-size:11px; font-weight:700; padding:3px 8px; border-radius:4px; display:inline-block; color:${b.color}; background:${b.bg}; border:1px solid ${b.border};`;
+    }
+
+    obTitleSelect?.addEventListener("change", () => {
+      const selectedVal = obTitleSelect.value;
+      if (selectedVal === "__CUSTOM__") {
+        if (obCustomTitleBox) obCustomTitleBox.style.display = "block";
+      } else {
+        if (obCustomTitleBox) obCustomTitleBox.style.display = "none";
+        const opt = obTitleSelect.options[obTitleSelect.selectedIndex];
+        const recommendedRole = opt?.dataset?.role;
+        if (recommendedRole && obWindowSelect) {
+          obWindowSelect.value = recommendedRole;
+        }
+      }
+      updateObRoleBadge();
+    });
+
+    obWindowSelect?.addEventListener("change", updateObRoleBadge);
+    updateObRoleBadge();
+
+    modalRoot.querySelector("#ob-gen-pwd-btn")?.addEventListener("click", () => {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+      let rand = "";
+      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+      const pwd = `Zamorin@${rand}!`;
+      const pwdInput = modalRoot.querySelector("#ob-password");
+      if (pwdInput) {
+        pwdInput.value = pwd;
+        pwdInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='ob-password']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+
+    modalRoot.querySelector("#ob-gen-pin-btn")?.addEventListener("click", () => {
+      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      const pinInput = modalRoot.querySelector("#ob-pin");
+      if (pinInput) {
+        pinInput.value = randomPin;
+        pinInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='ob-pin']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+  }
+
   document.getElementById("onboard-employee-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const submitBtn = document.getElementById("ob-submit-btn");
+    const pwdVal = document.getElementById("ob-password")?.value?.trim() || "";
+    const pinVal = document.getElementById("ob-pin")?.value?.trim() || "";
+
+    if (pwdVal && pwdVal.length < 8) {
+      showToast("Password must be at least 8 characters long.", "coral");
+      return;
+    }
+    if (pinVal && !/^\\d{6}$/.test(pinVal)) {
+      showToast("Operator PIN must be exactly 6 digits.", "coral");
+      return;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Onboarding...";
+    }
+
+    // Derive position and window role
+    const obTitleEl = document.getElementById("ob-title");
+    const obCustomTitleEl = document.getElementById("ob-custom-title-input");
+    const obWindowEl = document.getElementById("ob-window-select");
+
+    let effectiveDesignation = obTitleEl?.value?.trim() || "Staff";
+    if (effectiveDesignation === "__CUSTOM__") {
+      effectiveDesignation = obCustomTitleEl?.value?.trim() || "Staff Member";
+    }
+
+    const assignedRole = obWindowEl?.value?.trim() || "STAFF";
+
     const payload = {
-      name: document.getElementById("ob-name").value,
-      preferredName: document.getElementById("ob-preferred").value,
-      email: document.getElementById("ob-email").value,
-      phone: document.getElementById("ob-phone").value,
+      name: document.getElementById("ob-name").value.trim(),
+      preferredName: document.getElementById("ob-preferred").value.trim(),
+      email: document.getElementById("ob-email").value.trim().toLowerCase(),
+      phone: document.getElementById("ob-phone").value.trim(),
       primaryCafeId: document.getElementById("ob-cafe").value,
       department: document.getElementById("ob-dept").value,
-      designation: document.getElementById("ob-title").value,
+      designation: effectiveDesignation,
       workerType: document.getElementById("ob-worker-type").value,
-      role: "STAFF",
+      role: assignedRole,
     };
-
-    const newEmpId = `EMP-${String(liveEmployees.length + 1).padStart(4, "0")}`;
-    const newEmp = {
-      userId: newEmpId,
-      name: payload.name,
-      preferredName: payload.preferredName || payload.name,
-      email: payload.email,
-      role: "STAFF",
-      designation: payload.designation,
-      department: payload.department,
-      primaryCafeId: payload.primaryCafeId,
-      employmentType: "Full Time",
-      workerType: payload.workerType,
-      employmentStatus: "ACTIVE",
-      joiningDate: new Date().toISOString().split("T")[0],
-    };
-    liveEmployees.unshift(newEmp);
+    if (pwdVal) payload.password = pwdVal;
+    if (pinVal) payload.operatorPin = pinVal;
 
     try {
-      await apiPost("/employees", payload).catch(() => null);
-    } catch {}
+      const res = await apiPost("/employees", payload);
+      const createdUser = res?.data?.employee || res?.data?.user;
+      const creds = res?.data?.credentials || {};
+      const newEmpId = createdUser?.userId || creds.userId || `EMP-${String(liveEmployees.length + 1).padStart(4, "0")}`;
 
-    showToast(`Employee ${payload.name} (${newEmpId}) onboarded successfully!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const newEmp = {
+        userId: newEmpId,
+        name: payload.name,
+        preferredName: payload.preferredName || payload.name,
+        email: payload.email,
+        role: assignedRole,
+        designation: payload.designation,
+        department: payload.department,
+        primaryCafeId: payload.primaryCafeId,
+        employmentType: "Full Time",
+        workerType: payload.workerType,
+        employmentStatus: "PROBATION",
+        joiningDate: new Date().toISOString().split("T")[0],
+      };
+      liveEmployees.unshift(newEmp);
+
+      showToast(`Employee ${payload.name} (${newEmpId}) onboarded successfully!`, "success");
+      rerenderCurrentSubpanel();
+
+      openCredentialsCardModal({
+        name: payload.name,
+        userId: newEmpId,
+        email: payload.email,
+        temporaryPassword: creds.temporaryPassword || pwdVal,
+        operatorPin: creds.operatorPin || pinVal,
+      });
+    } catch (err) {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Complete Onboarding";
+      }
+      showToast(err?.userMessage || err?.message || "Failed to onboard employee", "coral");
+    }
   });
 }
 
@@ -1643,16 +2104,41 @@ function openOffboardModal(targetUserId) {
       accessRevoked: document.getElementById("ob-access").checked,
     };
 
-    const emp = liveEmployees.find(e => e.userId === userId);
-    if (emp) {
-      emp.employmentStatus = "NOTICE_PERIOD";
+    try {
+      if (payload.accessRevoked || payload.exitType === "TERMINATION") {
+        try {
+          await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
+        } catch (postErr) {
+          if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+            try {
+              await apiDelete(`/employees/${encodeURIComponent(userId)}`);
+            } catch (delErr) {
+              if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
+                console.warn("Backend deletion endpoint unavailable or record already purged:", delErr);
+              } else {
+                throw delErr;
+              }
+            }
+          } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
+            console.warn("Employee record already purged from database.");
+          } else {
+            throw postErr;
+          }
+        }
+        liveEmployees = liveEmployees.filter(e => e.userId !== userId);
+        showToast(`Account for ${userId} has been permanently deleted and access revoked.`, "success");
+      } else {
+        await apiPost(`/employees/${encodeURIComponent(userId)}/offboard`, payload);
+        const emp = liveEmployees.find(e => e.userId === userId);
+        if (emp) {
+          emp.employmentStatus = "NOTICE_PERIOD";
+        }
+        showToast(`Offboarding clearance initiated for ${userId} (${payload.exitType}).`, "success");
+      }
+    } catch (err) {
+      showToast(err?.message || "Failed to process offboarding", "coral");
     }
 
-    try {
-      await apiPost(`/employees/${userId}/offboard`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`Offboarding clearance initiated for ${userId} (${payload.exitType}).`, "success");
     document.getElementById("modal-root").innerHTML = "";
     rerenderCurrentSubpanel();
   });
@@ -1850,15 +2336,35 @@ export function openOnboardEmployeeModal() {
               </select>
             </div>
             <div>
-              <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">Designation</label>
-              <input type="text" id="oe-desig" value="Junior Barista" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;" />
-            </div>
-            <div>
-              <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">System Role</label>
-              <select id="oe-role" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
-                <option value="STAFF">STAFF (Employee)</option>
-                <option value="CAFE_ADMIN">CAFE_ADMIN (Store Lead)</option>
+              <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Position *</label>
+              <select id="oe-desig" required style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
+                <option value="">— Select Position —</option>
+                <optgroup label="👑 Management (Elevated Windows)">
+                  <option value="Operations Manager" data-role="CAFE_ADMIN">Operations Manager</option>
+                  <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
+                  <option value="Café Administrator / Store Manager" data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
+                  <option value="Assistant Store Manager" data-role="CAFE_ADMIN">Assistant Store Manager</option>
+                </optgroup>
+                <optgroup label="☕ Staff (Employee Window)">
+                  <option value="Head Barista" data-role="STAFF">Head Barista</option>
+                  <option value="Senior Barista" data-role="STAFF">Senior Barista</option>
+                  <option value="Junior Barista" data-role="STAFF" selected>Junior Barista</option>
+                  <option value="Chef" data-role="STAFF">Chef</option>
+                  <option value="Sous Chef" data-role="STAFF">Sous Chef</option>
+                  <option value="Kitchen Staff" data-role="STAFF">Kitchen Staff</option>
+                  <option value="Service Staff / Waiter" data-role="STAFF">Service Staff / Waiter</option>
+                  <option value="Cashier" data-role="STAFF">Cashier</option>
+                  <option value="Delivery Staff" data-role="STAFF">Delivery Staff</option>
+                  <option value="Cleaning Staff" data-role="STAFF">Cleaning Staff</option>
+                  <option value="Security Guard" data-role="STAFF">Security Guard</option>
+                  <option value="Trainee / Apprentice" data-role="STAFF">Trainee / Apprentice</option>
+                  <option value="Other" data-role="STAFF">Other</option>
+                </optgroup>
               </select>
+            </div>
+            <div style="display:none;">
+              <!-- Role is auto-derived from Job Title; kept hidden but read by submit handler -->
+              <input type="hidden" id="oe-role" value="STAFF" />
             </div>
           </div>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px;">
@@ -1894,10 +2400,46 @@ export function openOnboardEmployeeModal() {
           </label>
         </div>
 
-        <!-- 4. Readiness Checklist -->
+        <!-- 4. Account Access & Credentials -->
+        <div style="background:#f8fafc; padding:14px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:700; color:#475569; text-transform:uppercase;">4. Account Access &amp; Credentials</div>
+            <div style="font-size:11px; color:#64748b;">(Enables ERP &amp; POS Login)</div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">Web ERP Password</label>
+                <button type="button" class="btn btn-ghost" id="oe-gen-pwd-btn" style="font-size:10.5px; padding:1px 5px; color:#b45309; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="oe-password" placeholder="Leave blank to auto-generate" minlength="8" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="oe-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10.5px; color:#64748b; margin-top:3px;">Min 8 chars. Auto-generated if left blank.</div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="font-size:11.5px; font-weight:600; margin:0;">6-Digit Operator PIN</label>
+                <button type="button" class="btn btn-ghost" id="oe-gen-pin-btn" style="font-size:10.5px; padding:1px 5px; color:#059669; font-weight:600;">🎲 Generate</button>
+              </div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="oe-pin" placeholder="e.g. 748192" maxlength="6" pattern="\\d{6}" inputmode="numeric" style="width:100%; padding:8px 36px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; letter-spacing:2px; font-family:var(--font-mono, monospace);" />
+                <button type="button" class="pin-visibility-toggle" data-toggle-visibility="oe-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+                  ${icon("eye", 15)}
+                </button>
+              </div>
+              <div style="font-size:10.5px; color:#64748b; margin-top:3px;">Optional. For POS terminal operator sign-in.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. Readiness Checklist -->
         <div style="background:#f1f5f9; padding:12px; border-radius:8px; font-size:11.5px; color:#475569;">
           <div style="font-weight:700; margin-bottom:4px; color:#0f172a;">Onboarding Checklist:</div>
-          <div>✓ Identity &amp; Contact Verified &nbsp;•&nbsp; ✓ Role &amp; Shift Assigned &nbsp;•&nbsp; ✓ Initial Training Queued &nbsp;•&nbsp; ✓ DPDP Consent Logged</div>
+          <div>✓ Identity &amp; Contact Verified &nbsp;•&nbsp; ✓ Role &amp; Shift Assigned &nbsp;•&nbsp; ✓ Initial Training Queued &nbsp;•&nbsp; ✓ DPDP Consent Logged &nbsp;•&nbsp; ✓ Credentials Ready</div>
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
@@ -1908,9 +2450,57 @@ export function openOnboardEmployeeModal() {
     </div>
   `);
 
+  const modalRoot = document.getElementById("modal-root");
+  if (modalRoot) {
+    wireVisibilityToggles(modalRoot);
+
+    modalRoot.querySelector("#oe-gen-pwd-btn")?.addEventListener("click", () => {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+      let rand = "";
+      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+      const pwd = `Zamorin@${rand}!`;
+      const pwdInput = modalRoot.querySelector("#oe-password");
+      if (pwdInput) {
+        pwdInput.value = pwd;
+        pwdInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='oe-password']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+
+    modalRoot.querySelector("#oe-gen-pin-btn")?.addEventListener("click", () => {
+      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      const pinInput = modalRoot.querySelector("#oe-pin");
+      if (pinInput) {
+        pinInput.value = randomPin;
+        pinInput.type = "text";
+        const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='oe-pin']");
+        if (toggleBtn) {
+          toggleBtn.innerHTML = icon("eyeOff", 15);
+          toggleBtn.style.color = "var(--primary, #c9933b)";
+        }
+      }
+    });
+  }
+
   document.getElementById("onboard-emp-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const submitBtn = document.getElementById("oe-submit-btn");
+    const pwdVal = document.getElementById("oe-password")?.value?.trim() || "";
+    const pinVal = document.getElementById("oe-pin")?.value?.trim() || "";
+
+    if (pwdVal && pwdVal.length < 8) {
+      showToast("Password must be at least 8 characters long.", "coral");
+      return;
+    }
+    if (pinVal && !/^\\d{6}$/.test(pinVal)) {
+      showToast("Operator PIN must be exactly 6 digits.", "coral");
+      return;
+    }
+
     if (submitBtn) {
       submitBtn.disabled = true;
       submitBtn.textContent = "Provisioning Employee...";
@@ -1922,25 +2512,45 @@ export function openOnboardEmployeeModal() {
       email: document.getElementById("oe-email").value.trim().toLowerCase(),
       phone: document.getElementById("oe-phone").value.trim(),
       department: document.getElementById("oe-dept").value,
-      designation: document.getElementById("oe-desig").value.trim(),
-      role: document.getElementById("oe-role").value,
+      designation: (() => {
+        const el = document.getElementById("oe-desig");
+        return el?.value?.trim() || "";
+      })(),
+      role: (() => {
+        const el = document.getElementById("oe-desig");
+        const opt = el?.options?.[el.selectedIndex];
+        return opt?.dataset?.role || "STAFF";
+      })(),
       primaryCafeId: document.getElementById("oe-cafe").value,
       assignedCafeIds: [document.getElementById("oe-cafe").value],
       joiningDate: document.getElementById("oe-joining").value,
     };
+    if (pwdVal) payload.password = pwdVal;
+    if (pinVal) payload.operatorPin = pinVal;
 
     try {
       const res = await apiPost("/employees", payload);
-      const newEmp = res?.data?.user || {
-        userId: res?.data?.userId || `ST-${String(liveEmployees.length + 1).padStart(4, "0")}`,
+      const createdUser = res?.data?.employee || res?.data?.user;
+      const creds = res?.data?.credentials || {};
+      const newEmpId = createdUser?.userId || creds.userId || `ST-${String(liveEmployees.length + 1).padStart(4, "0")}`;
+
+      const newEmp = createdUser || {
+        userId: newEmpId,
         ...payload,
         employmentStatus: "PROBATION"
       };
 
       liveEmployees.unshift(newEmp);
       showToast(`Employee "${payload.name}" successfully onboarded (${newEmp.userId})!`, "success");
-      document.getElementById("modal-root").innerHTML = "";
       rerenderCurrentSubpanel();
+
+      openCredentialsCardModal({
+        name: payload.name,
+        userId: newEmp.userId,
+        email: payload.email,
+        temporaryPassword: creds.temporaryPassword || pwdVal,
+        operatorPin: creds.operatorPin || pinVal,
+      });
     } catch (err) {
       if (submitBtn) {
         submitBtn.disabled = false;
@@ -1950,4 +2560,638 @@ export function openOnboardEmployeeModal() {
     }
   });
 }
+
+/**
+ * Universal toggle visibility handler for password & PIN input eye toggles
+ */
+function wireVisibilityToggles(root = document) {
+  root.querySelectorAll("[data-toggle-visibility]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetId = btn.getAttribute("data-toggle-visibility");
+      const input = root.querySelector(`#${targetId}`) || document.getElementById(targetId);
+      if (!input) return;
+      const isPwd = input.type === "password";
+      input.type = isPwd ? "text" : "password";
+      btn.innerHTML = isPwd ? icon("eyeOff", 15) : icon("eye", 15);
+      btn.setAttribute("title", isPwd ? "Hide" : "Show");
+      btn.setAttribute("aria-label", isPwd ? "Hide" : "Show");
+      btn.style.color = isPwd ? "var(--primary, #c9933b)" : "var(--muted, #64748b)";
+    });
+  });
+}
+
+/**
+ * Modal to display copyable credentials summary card to administrator
+ */
+export function openCredentialsCardModal({ name, userId, email, temporaryPassword, operatorPin, isUpdated = false }) {
+  const credentialsSummary = `
+Zamorin Café ERP — Employee Access Credentials
+Employee Name: ${name}
+User ID: ${userId}
+Login Email: ${email}
+${temporaryPassword ? `Account Password: ${temporaryPassword}` : ''}
+${operatorPin ? `Café Operations POS PIN: ${operatorPin}` : ''}
+Login URL: ${window.location.origin}/#login
+  `.trim();
+
+  openModal(`
+    <div style="padding:26px; max-width:540px; width:100%; color:var(--ink); text-align:left;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+        <div style="width:44px; height:44px; border-radius:50%; background:#ecfdf5; color:#059669; display:flex; align-items:center; justify-content:center; font-size:22px;">
+          ✓
+        </div>
+        <div>
+          <span style="font-size:11px; font-weight:700; color:#059669; text-transform:uppercase; letter-spacing:0.5px;">
+            ${isUpdated ? 'Credentials Updated' : 'Account Provisioned & Ready'}
+          </span>
+          <h2 style="font-size:18px; font-weight:700; margin:2px 0 0;">${escapeHtml(name)} (${escapeHtml(userId)})</h2>
+        </div>
+      </div>
+
+      <p style="font-size:13px; color:#475569; margin:0 0 16px; line-height:1.5;">
+        ${isUpdated
+          ? 'The login credentials for this employee have been updated. Share these details securely with the employee.'
+          : 'Employee account has been registered. Share the credentials below so the employee can sign in.'}
+      </p>
+
+      <!-- Credentials Card -->
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:16px; margin-bottom:18px; display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid #e2e8f0;">
+          <span style="font-size:11.5px; font-weight:600; color:#64748b;">Login Email</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:13px; font-weight:600; color:#0f172a; background:#e2e8f0; padding:2px 6px; border-radius:4px;">${escapeHtml(email)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(email)}" style="padding:2px 6px; font-size:11px;" title="Copy email">📋 Copy</button>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid #e2e8f0;">
+          <span style="font-size:11.5px; font-weight:600; color:#64748b;">User ID (Alternate Login)</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:13px; font-weight:600; color:#0f172a; background:#e2e8f0; padding:2px 6px; border-radius:4px;">${escapeHtml(userId)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(userId)}" style="padding:2px 6px; font-size:11px;" title="Copy User ID">📋 Copy</button>
+          </div>
+        </div>
+
+        ${temporaryPassword ? `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid #e2e8f0;">
+          <div>
+            <span style="font-size:11.5px; font-weight:600; color:#64748b; display:block;">Web ERP Password</span>
+            <span style="font-size:10px; color:#b45309;">(Must change upon first login)</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:14px; font-weight:700; color:#b45309; background:#fef3c7; padding:4px 8px; border-radius:4px; letter-spacing:0.5px;">${escapeHtml(temporaryPassword)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(temporaryPassword)}" style="padding:4px 8px; font-size:11px; color:#b45309; font-weight:600;" title="Copy Password">📋 Copy Password</button>
+          </div>
+        </div>
+        ` : ''}
+
+        ${operatorPin ? `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-size:11.5px; font-weight:600; color:#64748b; display:block;">Café Operations POS PIN</span>
+            <span style="font-size:10px; color:#059669;">(For touch terminal operator login)</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <code style="font-size:16px; font-weight:700; color:#059669; background:#d1fae5; padding:4px 8px; border-radius:4px; letter-spacing:3px;">${escapeHtml(operatorPin)}</code>
+            <button class="btn btn-ghost copy-cred-btn" data-copy="${escapeHtml(operatorPin)}" style="padding:4px 8px; font-size:11px; color:#059669; font-weight:600;" title="Copy PIN">📋 Copy PIN</button>
+          </div>
+        </div>
+        ` : ''}
+      </div>
+
+      <!-- How to login notice -->
+      <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:12px; font-size:12px; color:#1e40af; line-height:1.5; margin-bottom:18px;">
+        <strong>How the employee logs in:</strong><br/>
+        1. <strong>Web ERP:</strong> Open <a href="#login" target="_blank" style="color:#2563eb; text-decoration:underline;">/#login</a> and enter email <code>${escapeHtml(email)}</code> and password.<br/>
+        ${operatorPin ? `2. <strong>Café Operations:</strong> Go to /cafe-operations and sign in with the 6-digit operator PIN.` : ''}
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <button class="btn btn-secondary copy-cred-btn" data-copy="${escapeHtml(credentialsSummary)}" style="font-size:12px; font-weight:600;">
+          📋 Copy All Details
+        </button>
+        <button class="btn btn-primary" onclick="document.getElementById('modal-root').innerHTML=''" style="font-size:12px; font-weight:600; padding:8px 16px;">
+          Done
+        </button>
+      </div>
+    </div>
+  `);
+
+  const modalRoot = document.getElementById("modal-root");
+  modalRoot?.querySelectorAll(".copy-cred-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const text = btn.getAttribute("data-copy");
+      if (text && navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+        const originalText = btn.textContent;
+        btn.textContent = "✓ Copied!";
+        btn.style.color = "#059669";
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.color = "";
+        }, 2000);
+      }
+    });
+  });
+}
+
+/**
+ * Modal to manage/reset password & 6-digit operator PIN for an existing employee
+ */
+export function openManageCredentialsModal(userId, empName, empEmail) {
+  const isPMTarget =
+    userId === "MU-0001" ||
+    String(empEmail || "").toLowerCase() === "pradeeshk331@gmail.com";
+
+  if (isPMTarget && !isCurrentViewerPrimaryMaster()) {
+    showToast(
+      "🔒 Access Denied: The Primary Master credentials cannot be modified by other users.",
+      "coral"
+    );
+    return;
+  }
+
+  openModal(`
+    <div style="padding:24px; max-width:520px; width:100%; color:var(--ink);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; border-bottom:1px solid rgba(0,0,0,0.08); padding-bottom:12px;">
+        <div>
+          <span style="font-size:11px; font-weight:700; color:#2563eb; text-transform:uppercase; letter-spacing:0.5px;">Security &amp; Identity Administration</span>
+          <h2 style="font-size:18px; font-weight:700; margin:2px 0 0;">Manage Login &amp; PIN</h2>
+          <div style="font-size:12px; color:#64748b; margin-top:2px;">${escapeHtml(empName)} · <code>${escapeHtml(userId)}</code></div>
+        </div>
+        <button class="btn btn-ghost" onclick="document.getElementById('modal-root').innerHTML=''" style="padding:4px 8px;">✕</button>
+      </div>
+
+      <form id="manage-cred-form" style="display:flex; flex-direction:column; gap:16px;">
+        <!-- Employee Account Info -->
+        <div style="background:#f8fafc; padding:12px 14px; border-radius:8px; border:1px solid #e2e8f0; font-size:12.5px;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span style="color:#64748b;">Login Email:</span>
+            <strong style="color:#0f172a;">${escapeHtml(empEmail || userId)}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:#64748b;">Alternate Login:</span>
+            <strong style="color:#0f172a;">User ID (${escapeHtml(userId)})</strong>
+          </div>
+        </div>
+
+        <!-- 1. Password Reset Section -->
+        <div style="background:#f8fafc; padding:14px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:700; color:#0f172a; text-transform:uppercase;">1. Web ERP Password</div>
+            <button type="button" class="btn btn-ghost" id="btn-gen-manage-pwd" style="font-size:11px; padding:2px 6px; color:#b45309; font-weight:600;">
+              🎲 Generate Password
+            </button>
+          </div>
+          <div style="position:relative; display:flex; align-items:center;">
+            <input type="password" id="mcred-password" placeholder="Enter new password (min 8 characters)" minlength="8" style="width:100%; padding:8px 38px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;" />
+            <button type="button" class="pin-visibility-toggle" data-toggle-visibility="mcred-password" title="Show password" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+              ${icon("eye", 16)}
+            </button>
+          </div>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">
+            Setting a new password will unlock the account and mark password change required on next login.
+          </div>
+        </div>
+
+        <!-- 2. Operator PIN Section -->
+        <div style="background:#f8fafc; padding:14px; border-radius:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:700; color:#0f172a; text-transform:uppercase;">2. 6-Digit POS Operator PIN</div>
+            <button type="button" class="btn btn-ghost" id="btn-gen-manage-pin" style="font-size:11px; padding:2px 6px; color:#059669; font-weight:600;">
+              🎲 Generate PIN
+            </button>
+          </div>
+          <div style="position:relative; display:flex; align-items:center;">
+            <input type="password" id="mcred-pin" placeholder="e.g. 582910" maxlength="6" pattern="\\d{6}" inputmode="numeric" style="width:100%; padding:8px 38px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; letter-spacing:2px; font-family:var(--font-mono, monospace);" />
+            <button type="button" class="pin-visibility-toggle" data-toggle-visibility="mcred-pin" title="Show PIN" aria-label="Show PIN" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#64748b; padding:4px;">
+              ${icon("eye", 16)}
+            </button>
+          </div>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">
+            Used on Café Operations POS terminals for quick operator shift sign-in.
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:6px;">
+          <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="mcred-submit-btn" style="background:#2563eb; border-color:#2563eb; color:#fff; font-weight:600;">
+            💾 Save Credentials
+          </button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  const modalRoot = document.getElementById("modal-root");
+  if (!modalRoot) return;
+
+  wireVisibilityToggles(modalRoot);
+
+  modalRoot.querySelector("#btn-gen-manage-pwd")?.addEventListener("click", () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let rand = "";
+    for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+    const pwd = `Zamorin@${rand}!`;
+    const pwdInput = modalRoot.querySelector("#mcred-password");
+    if (pwdInput) {
+      pwdInput.value = pwd;
+      pwdInput.type = "text";
+      const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='mcred-password']");
+      if (toggleBtn) {
+        toggleBtn.innerHTML = icon("eyeOff", 16);
+        toggleBtn.style.color = "var(--primary, #c9933b)";
+      }
+    }
+  });
+
+  modalRoot.querySelector("#btn-gen-manage-pin")?.addEventListener("click", () => {
+    const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+    const pinInput = modalRoot.querySelector("#mcred-pin");
+    if (pinInput) {
+      pinInput.value = randomPin;
+      pinInput.type = "text";
+      const toggleBtn = modalRoot.querySelector("[data-toggle-visibility='mcred-pin']");
+      if (toggleBtn) {
+        toggleBtn.innerHTML = icon("eyeOff", 16);
+        toggleBtn.style.color = "var(--primary, #c9933b)";
+      }
+    }
+  });
+
+  modalRoot.querySelector("#manage-cred-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const submitBtn = modalRoot.querySelector("#mcred-submit-btn");
+    const pwdVal = modalRoot.querySelector("#mcred-password")?.value?.trim() || "";
+    const pinVal = modalRoot.querySelector("#mcred-pin")?.value?.trim() || "";
+
+    if (!pwdVal && !pinVal) {
+      showToast("Please enter a new password or a 6-digit PIN to save.", "coral");
+      return;
+    }
+
+    if (pwdVal && pwdVal.length < 8) {
+      showToast("Password must be at least 8 characters long.", "coral");
+      return;
+    }
+
+    if (pinVal && !/^\\d{6}$/.test(pinVal)) {
+      showToast("Operator PIN must be exactly 6 numeric digits.", "coral");
+      return;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Updating...";
+    }
+
+    try {
+      const payload = {};
+      if (pwdVal) payload.password = pwdVal;
+      if (pinVal) payload.operatorPin = pinVal;
+
+      const res = await apiPost(`/employees/${encodeURIComponent(userId)}/credentials`, payload);
+      showToast(res?.message || "Credentials updated successfully!", "success");
+
+      openCredentialsCardModal({
+        name: empName,
+        userId: userId,
+        email: empEmail || res?.data?.email || userId,
+        temporaryPassword: pwdVal || res?.data?.temporaryPassword || null,
+        operatorPin: pinVal || res?.data?.operatorPin || null,
+        isUpdated: true,
+      });
+    } catch (err) {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "💾 Save Credentials";
+      }
+      showToast(err?.message || "Failed to update credentials", "coral");
+    }
+  });
+}
+
+/**
+ * Modal to edit an existing employee profile, assign Window & Job Title / Position
+ */
+export function openEditEmployeeModal(userId) {
+  const emp = liveEmployees.find((e) => e.userId === userId);
+  if (!emp) {
+    showToast("Employee record not found.", "coral");
+    return;
+  }
+
+  const isPMTarget =
+    emp.isPrimaryMaster === true ||
+    emp.userId === "MU-0001" ||
+    String(emp.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+
+  if (isPMTarget && !isCurrentViewerPrimaryMaster()) {
+    showToast(
+      "🔒 Access Denied — The Primary Master account is frozen and protected. Only Pradeesh K can modify this profile.",
+      "coral"
+    );
+    return;
+  }
+
+  const standardTitles = [
+    { group: "👑 Management & Administrative Roles", roles: ["Operations Manager", "Café Owner / Franchise Partner"] },
+    { group: "🎯 Store Operations (Admin Access)", roles: ["Café Administrator / Store Manager", "Assistant Store Manager"] },
+    {
+      group: "☕ Café Team (Staff Window)",
+      roles: [
+        "Head Barista",
+        "Senior Barista",
+        "Junior Barista",
+        "Executive Chef / Head Cook",
+        "Sous Chef / Assistant Cook",
+        "Kitchen Staff",
+        "Cashier / Counter Sales",
+        "Service Staff / Waiter",
+        "Delivery Staff",
+        "Cleaning Staff",
+        "Security Guard",
+        "Trainee / Apprentice",
+      ],
+    },
+  ];
+
+  const currentTitle = emp.designation || emp.position || "";
+  const allKnownTitles = standardTitles.flatMap((g) => g.roles);
+  const isCustomTitle = !isPMTarget && currentTitle && !allKnownTitles.includes(currentTitle);
+
+  const currentRole = emp.role || "STAFF";
+  const currentDept = emp.department || "Barista";
+  const currentWorkerType = emp.workerType || "PERMANENT";
+  const currentStatus = emp.employmentStatus || "ACTIVE";
+  const currentPrimaryCafe = emp.primaryCafeId || (liveCafes[0]?.cafeId || "");
+
+  openModal(`
+    <div style="padding:24px; max-width:640px; width:100%; color:var(--ink);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; border-bottom:1px solid rgba(0,0,0,0.08); padding-bottom:12px;">
+        <div>
+          <span style="font-size:11px; font-weight:700; color:${isPMTarget ? '#b45309' : '#2563eb'}; text-transform:uppercase; letter-spacing:0.5px;">
+            ${isPMTarget ? '🛡️ Primary Master Identity' : 'Workforce Identity &amp; Window Allocation'}
+          </span>
+          <h2 style="font-size:18px; font-weight:700; margin:2px 0 0;">
+            ${isPMTarget ? 'Edit Primary Master Profile' : 'Edit Employee &amp; System Access'}
+          </h2>
+          <div style="font-size:12px; color:#64748b; margin-top:2px;">
+            ${escapeHtml(emp.name)} · <code>${escapeHtml(emp.userId)}</code> · ${escapeHtml(emp.email || 'No email')}
+          </div>
+        </div>
+        <button class="btn btn-ghost" onclick="document.getElementById('modal-root').innerHTML=''" style="padding:4px 8px;">✕</button>
+      </div>
+
+      ${isPMTarget ? `
+        <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 14px; margin-bottom:16px; font-size:12px; color:#92400e; display:flex; align-items:center; gap:8px;">
+          <span>🛡️</span>
+          <span><strong>Master Governance Protection:</strong> Access Level and Job Position are permanently locked to <strong>Primary Master</strong>. Personal contact and profile details can be updated below.</span>
+        </div>
+      ` : ''}
+
+      <form id="edit-employee-form" style="display:flex; flex-direction:column; gap:14px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Legal Full Name *</label>
+            <input type="text" id="edit-emp-name" required value="${escapeHtml(emp.name || '')}" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;" />
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Preferred / Calling Name</label>
+            <input type="text" id="edit-emp-preferred" value="${escapeHtml(emp.preferredName || '')}" placeholder="e.g. First Name" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;" />
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Work Email Address</label>
+            <input type="email" value="${escapeHtml(emp.email || '')}" disabled style="width:100%; padding:8px 12px; border:1px solid #e2e8f0; background:#f8fafc; color:#64748b; border-radius:6px; font-size:13px; cursor:not-allowed;" title="Email address is immutable for security" />
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Mobile Phone</label>
+            <input type="text" id="edit-emp-phone" value="${escapeHtml(emp.phone || '')}" placeholder="+91 98450 12345" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;" />
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Primary Café Location *</label>
+            <select id="edit-emp-cafe" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
+              ${liveCafes.length > 0 ? liveCafes.map(c => `<option value="${escapeHtml(c.cafeId)}" ${c.cafeId === currentPrimaryCafe ? 'selected' : ''}>${escapeHtml(c.name || c.cafeId)}</option>`).join('') : `<option value="${escapeHtml(currentPrimaryCafe)}" selected>${escapeHtml(currentPrimaryCafe || 'ALL')}</option>`}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Department *</label>
+            ${isPMTarget ? `
+              <input type="text" value="Executive &amp; Governance" disabled style="width:100%; padding:8px 12px; border:1px solid #e2e8f0; background:#f8fafc; color:#64748b; border-radius:6px; font-size:13px; cursor:not-allowed;" />
+            ` : `
+              <select id="edit-emp-dept" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
+                <option value="Barista" ${currentDept === 'Barista' ? 'selected' : ''}>Barista Operations</option>
+                <option value="Kitchen" ${currentDept === 'Kitchen' ? 'selected' : ''}>Kitchen &amp; Culinary</option>
+                <option value="Service" ${currentDept === 'Service' ? 'selected' : ''}>Front of House / Service</option>
+                <option value="Management" ${currentDept === 'Management' ? 'selected' : ''}>Management &amp; Supervision</option>
+              </select>
+            `}
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Position *</label>
+            ${isPMTarget ? `
+              <input type="text" value="🛡️ Primary Master" disabled style="width:100%; padding:8px 12px; border:1px solid #fde68a; background:#fffbeb; color:#92400e; font-weight:700; border-radius:6px; font-size:13px; cursor:not-allowed;" />
+            ` : `
+              <select id="edit-emp-title" required style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
+                <option value="">— Select Job Title / Position —</option>
+                <optgroup label="👑 Management &amp; Administrative Roles">
+                  <option value="Operations Manager" ${currentTitle === 'Operations Manager' ? 'selected' : ''} data-role="CAFE_ADMIN">Operations Manager</option>
+                  <option value="Café Owner / Franchise Partner" ${currentTitle === 'Café Owner / Franchise Partner' ? 'selected' : ''} data-role="OWNER">Café Owner / Franchise Partner</option>
+                </optgroup>
+                <optgroup label="🎯 Store Operations (Admin Access)">
+                  <option value="Café Administrator / Store Manager" ${currentTitle === 'Café Administrator / Store Manager' ? 'selected' : ''} data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
+                  <option value="Assistant Store Manager" ${currentTitle === 'Assistant Store Manager' ? 'selected' : ''} data-role="CAFE_ADMIN">Assistant Store Manager</option>
+                </optgroup>
+                <optgroup label="☕ Café Team (Staff Window)">
+                  <option value="Head Barista" ${currentTitle === 'Head Barista' ? 'selected' : ''} data-role="STAFF">Head Barista</option>
+                  <option value="Senior Barista" ${currentTitle === 'Senior Barista' ? 'selected' : ''} data-role="STAFF">Senior Barista</option>
+                  <option value="Junior Barista" ${currentTitle === 'Junior Barista' ? 'selected' : ''} data-role="STAFF">Junior Barista</option>
+                  <option value="Executive Chef / Head Cook" ${currentTitle === 'Executive Chef / Head Cook' ? 'selected' : ''} data-role="STAFF">Executive Chef / Head Cook</option>
+                  <option value="Sous Chef / Assistant Cook" ${currentTitle === 'Sous Chef / Assistant Cook' ? 'selected' : ''} data-role="STAFF">Sous Chef / Assistant Cook</option>
+                  <option value="Kitchen Staff" ${currentTitle === 'Kitchen Staff' ? 'selected' : ''} data-role="STAFF">Kitchen Staff</option>
+                  <option value="Cashier / Counter Sales" ${currentTitle === 'Cashier / Counter Sales' ? 'selected' : ''} data-role="STAFF">Cashier / Counter Sales</option>
+                  <option value="Service Staff / Waiter" ${currentTitle === 'Service Staff / Waiter' ? 'selected' : ''} data-role="STAFF">Service Staff / Waiter</option>
+                  <option value="Delivery Staff" ${currentTitle === 'Delivery Staff' ? 'selected' : ''} data-role="STAFF">Delivery Staff</option>
+                  <option value="Cleaning Staff" ${currentTitle === 'Cleaning Staff' ? 'selected' : ''} data-role="STAFF">Cleaning Staff</option>
+                  <option value="Security Guard" ${currentTitle === 'Security Guard' ? 'selected' : ''} data-role="STAFF">Security Guard</option>
+                  <option value="Trainee / Apprentice" ${currentTitle === 'Trainee / Apprentice' ? 'selected' : ''} data-role="STAFF">Trainee / Apprentice</option>
+                </optgroup>
+                <option value="__CUSTOM__" ${isCustomTitle ? 'selected' : ''}>+ Custom Job Title...</option>
+              </select>
+              <div id="edit-custom-title-box" style="margin-top:6px; display:${isCustomTitle ? 'block' : 'none'};">
+                <input type="text" id="edit-custom-title-input" value="${isCustomTitle ? escapeHtml(currentTitle) : ''}" placeholder="Enter custom position title..." style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;" />
+              </div>
+            `}
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Worker Type</label>
+            <select id="edit-emp-worker-type" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
+              <option value="PERMANENT" ${currentWorkerType === 'PERMANENT' ? 'selected' : ''}>Permanent (Full-Time)</option>
+              <option value="FIXED_TERM" ${currentWorkerType === 'FIXED_TERM' ? 'selected' : ''}>Fixed-Term Contract</option>
+              <option value="TRAINEE" ${currentWorkerType === 'TRAINEE' ? 'selected' : ''}>Trainee / Apprentice</option>
+              <option value="CONTINGENT" ${currentWorkerType === 'CONTINGENT' ? 'selected' : ''}>Contingent Worker</option>
+            </select>
+          </div>
+        </div>
+
+        ${!isPMTarget ? `
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div>
+              <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Employment Status</label>
+              <select id="edit-emp-status" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
+                <option value="ACTIVE" ${currentStatus === 'ACTIVE' ? 'selected' : ''}>Active</option>
+                <option value="PROBATION" ${currentStatus === 'PROBATION' ? 'selected' : ''}>Probation</option>
+                <option value="NOTICE_PERIOD" ${currentStatus === 'NOTICE_PERIOD' ? 'selected' : ''}>Notice Period</option>
+                <option value="ON_LEAVE" ${currentStatus === 'ON_LEAVE' ? 'selected' : ''}>On Leave</option>
+                <option value="SUSPENDED" ${currentStatus === 'SUSPENDED' ? 'selected' : ''}>Suspended</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+        ` : ''}
+
+        <!-- Dedicated Window & Access Level Assignment -->
+        <div style="background:${isPMTarget ? '#fffbeb' : '#f0fdf4'}; padding:12px 14px; border-radius:8px; border:1px solid ${isPMTarget ? '#fde68a' : '#bbf7d0'};">
+          <div style="font-size:11.5px; font-weight:700; color:${isPMTarget ? '#92400e' : '#166534'}; text-transform:uppercase; margin-bottom:4px;">
+            Assigned ERP Window &amp; System Access Level *
+          </div>
+          <div style="font-size:11.5px; color:${isPMTarget ? '#b45309' : '#15803d'}; margin-bottom:8px;">
+            Determines the exact UI window this employee enters upon logging into Zamorin ERP.
+          </div>
+          ${isPMTarget ? `
+            <div style="padding:10px 12px; background:#fff; border:1px solid #fde68a; border-radius:6px; font-size:13px; font-weight:700; color:#92400e;">
+              🛡️ Primary Master Window (Full Unrestricted Multi-store Authority)
+            </div>
+          ` : `
+            <select id="edit-emp-window-select" required style="width:100%; padding:8px 12px; border:1px solid #86efac; border-radius:6px; font-size:13px; font-weight:600; background:#fff;">
+              <option value="STAFF" ${currentRole === 'STAFF' ? 'selected' : ''}>👤 Employee / Staff Window (Cashier POS Till, Staff Portal &amp; Timesheets)</option>
+              <option value="CAFE_ADMIN" ${currentRole === 'CAFE_ADMIN' ? 'selected' : ''}>🎯 Café Operations Window (Store Operations, Daily Roster, Cafe Inventory)</option>
+              <option value="OWNER" ${currentRole === 'OWNER' ? 'selected' : ''}>👑 Owner Portal (Financial Reports, Owner Governance, P&amp;L Overview)</option>
+            </select>
+          `}
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
+          <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="edit-emp-submit-btn" style="background:#2563eb; border-color:#2563eb; color:#fff; font-weight:600;">
+            💾 Save Changes
+          </button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  const modalRoot = document.getElementById("modal-root");
+  if (!modalRoot) return;
+
+  if (!isPMTarget) {
+    const titleSelect = modalRoot.querySelector("#edit-emp-title");
+    const customBox = modalRoot.querySelector("#edit-custom-title-box");
+    const customInput = modalRoot.querySelector("#edit-custom-title-input");
+    const windowSelect = modalRoot.querySelector("#edit-emp-window-select");
+
+    titleSelect?.addEventListener("change", (e) => {
+      const val = e.target.value;
+      if (val === "__CUSTOM__") {
+        if (customBox) customBox.style.display = "block";
+        customInput?.focus();
+      } else {
+        if (customBox) customBox.style.display = "none";
+        const selectedOpt = titleSelect.options[titleSelect.selectedIndex];
+        const suggestedRole = selectedOpt?.dataset?.role;
+        if (suggestedRole && windowSelect) {
+          windowSelect.value = suggestedRole;
+        }
+      }
+    });
+  }
+
+  modalRoot.querySelector("#edit-employee-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const submitBtn = modalRoot.querySelector("#edit-emp-submit-btn");
+
+    const name = modalRoot.querySelector("#edit-emp-name")?.value?.trim() || "";
+    const preferredName = modalRoot.querySelector("#edit-emp-preferred")?.value?.trim() || "";
+    const phone = modalRoot.querySelector("#edit-emp-phone")?.value?.trim() || "";
+    const primaryCafeId = modalRoot.querySelector("#edit-emp-cafe")?.value || "";
+
+    if (!name) {
+      showToast("Employee name is required.", "coral");
+      return;
+    }
+
+    const payload = {
+      name,
+      preferredName,
+      phone,
+      primaryCafeId,
+    };
+
+    if (!isPMTarget) {
+      const dept = modalRoot.querySelector("#edit-emp-dept")?.value || "";
+      const titleSelect = modalRoot.querySelector("#edit-emp-title");
+      let designation = titleSelect?.value || "";
+      if (designation === "__CUSTOM__") {
+        designation = modalRoot.querySelector("#edit-custom-title-input")?.value?.trim() || "";
+        if (!designation) {
+          showToast("Please enter a custom position title.", "coral");
+          return;
+        }
+      }
+      const workerType = modalRoot.querySelector("#edit-emp-worker-type")?.value || "PERMANENT";
+      const employmentStatus = modalRoot.querySelector("#edit-emp-status")?.value || "ACTIVE";
+      const role = modalRoot.querySelector("#edit-emp-window-select")?.value || "STAFF";
+
+      payload.department = dept;
+      payload.designation = designation;
+      payload.workerType = workerType;
+      payload.employmentStatus = employmentStatus;
+      payload.role = role;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Saving...";
+    }
+
+    try {
+      const res = await apiPatch(`/employees/${encodeURIComponent(userId)}`, payload);
+      showToast(res?.message || "Employee profile updated successfully!", "success");
+
+      // Update in-memory record in liveEmployees
+      Object.assign(emp, payload);
+      if (payload.designation) {
+        emp.position = payload.designation;
+      }
+      if (isPMTarget) {
+        emp.designation = "Primary Master";
+        emp.position = "Primary Master";
+        emp.role = "MASTER";
+        emp.isPrimaryMaster = true;
+      }
+
+      modalRoot.innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "💾 Save Changes";
+      }
+      showToast(err?.message || "Failed to update employee profile", "coral");
+    }
+  });
+}
+
+
 

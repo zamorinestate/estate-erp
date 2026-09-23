@@ -2,6 +2,7 @@
 
 const deviceTrustService = require('../services/deviceTrustService');
 const attendanceQrService = require('../services/attendanceQrService');
+const { resolveEffectiveCafeScope } = require('../utils/cafeScope');
 
 class DeviceController {
   async startEnrollment(req, res, next) {
@@ -129,11 +130,12 @@ class DeviceController {
   async listDevices(req, res, next) {
     try {
       const organisationId = req.auth?.organisationId || 'ZAMORIN';
-      const { cafeId, status, search, page, limit } = req.query;
+      const effectiveCafe = req.auth ? resolveEffectiveCafeScope(req) : null;
+      const { status, search, page, limit } = req.query;
 
       const devices = await deviceTrustService.listDevices({
         organisationId,
-        cafeId,
+        cafeId: effectiveCafe || req.query.cafeId,
         status,
         search,
         page,

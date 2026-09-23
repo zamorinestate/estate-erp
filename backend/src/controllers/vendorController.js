@@ -56,6 +56,22 @@ const {
 } = require('../models/SequenceCounter');
 
 const {
+  BusinessContract,
+} = require('../models/BusinessContract');
+
+const {
+  SupplierActionPlan,
+} = require('../models/SupplierActionPlan');
+
+const {
+  MasterDuplicateCandidate,
+} = require('../models/MasterDuplicateCandidate');
+
+const {
+  MasterChangeRequest,
+} = require('../models/MasterChangeRequest');
+
+const {
   asyncHandler,
 } = require('../utils/asyncHandler');
 
@@ -240,10 +256,28 @@ const getVendor360 = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_ID', 'A valid vendor ID is required.');
   }
 
-  const [vendor, orders, apInvoices] = await Promise.all([
+  const [vendor, orders, apInvoices, contracts, actionPlans, dupCandidate, changeRequests] = await Promise.all([
     Vendor.findOne({ vendorId, organisationId: request.auth.organisationId }).lean(),
     PurchaseOrder.find({ vendorId, organisationId: request.auth.organisationId }).sort({ createdAt: -1 }).limit(20).lean(),
     APInvoice.find({ vendorId, organisationId: request.auth.organisationId }).sort({ createdAt: -1 }).limit(20).lean(),
+    BusinessContract.find({
+      organisationId: request.auth.organisationId,
+      $or: [{ counterpartyId: vendorId }, { counterpartyName: new RegExp(vendorId, 'i') }],
+    }).lean().catch(() => []),
+    SupplierActionPlan.find({
+      organisationId: request.auth.organisationId,
+      vendorId,
+    }).lean().catch(() => []),
+    MasterDuplicateCandidate.findOne({
+      organisationId: request.auth.organisationId,
+      domainCode: 'VENDOR',
+      $or: [{ masterRecordIdA: vendorId }, { masterRecordIdB: vendorId }],
+    }).lean().catch(() => null),
+    MasterChangeRequest.find({
+      organisationId: request.auth.organisationId,
+      domainCode: 'VENDOR',
+      entityId: vendorId,
+    }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
   ]);
 
   if (!vendor) {
@@ -276,6 +310,14 @@ const getVendor360 = asyncHandler(async (request, response) => {
       },
       orders: accessibleOrders,
       invoices: apInvoices || [],
+      contracts: contracts || [],
+      actionPlans: actionPlans || [],
+      duplicateCandidate: dupCandidate || null,
+      changeRequests: changeRequests || [],
+      dependencyIndicator: {
+        isSingleSource: Boolean(vendor.isSingleSource),
+        criticality: vendor.criticality || 'STANDARD',
+      },
       qualifications: vendor.qualifications || [],
       sites: vendor.sites || [],
       contacts: vendor.contactPersons || [],

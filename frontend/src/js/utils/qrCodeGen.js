@@ -387,46 +387,106 @@ export function downloadQrSvg(text, { filename = 'zamorin_qr.svg', size = 400 } 
   URL.revokeObjectURL(url);
 }
 
-export function printQrCard({ cafeName, cafeId, qrUrl, qrVersion = 1 }) {
+export function downloadQrPng(text, { filename = 'zamorin_qr.png', size = 500 } = {}) {
+  const svg = generateQrSvg(text, { size });
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    const pngUrl = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = pngUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    // Fallback: download SVG if PNG canvas rasterization is unavailable
+    downloadQrSvg(text, { filename: filename.replace(/\.png$/i, '.svg'), size });
+  };
+  img.src = url;
+}
+
+export function printQrCard({ cafeName, cafeId, qrUrl, qrVersion = 1, city = '' }) {
   const svg = generateQrSvg(qrUrl, { size: 300 });
-  const printWindow = window.open('', '_blank', 'width=600,height=700');
+  const printWindow = window.open('', '_blank', 'width=680,height=820');
   if (!printWindow) {
     alert('Please allow pop-ups to print the Café Access QR card.');
     return;
   }
 
+  const generatedDate = new Date().toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+
   printWindow.document.write(`
     <!DOCTYPE html>
     <html>
       <head>
-        <title>Zamorin Café Access — ${cafeName} (${cafeId})</title>
+        <title>Zamorin Café Access Pack — ${cafeName} (${cafeId})</title>
         <style>
-          @page { size: A5 portrait; margin: 15mm; }
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; color: #1a1a1a; margin: 0; padding: 20px; }
-          .card { border: 2px solid #b17d38; border-radius: 12px; padding: 24px; max-width: 440px; margin: 0 auto; }
-          .brand { font-size: 20px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: #b17d38; margin-bottom: 4px; }
-          .title { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin-bottom: 20px; }
-          .cafe-name { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
-          .cafe-id { font-size: 14px; color: #666; font-family: monospace; font-weight: 600; margin-bottom: 24px; }
-          .qr-wrapper { margin: 0 auto 20px auto; display: inline-block; padding: 12px; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; }
-          .version { font-size: 11px; color: #888; margin-bottom: 20px; }
-          .warning { font-size: 11px; color: #a22; font-weight: 600; text-transform: uppercase; border-top: 1px dashed #ccc; padding-top: 12px; }
+          @page { size: A5 portrait; margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; color: #1a1a1a; margin: 0; padding: 24px; background: #fdfdfd; }
+          .pack-card { border: 2.5px solid #b17d38; border-radius: 14px; padding: 28px 24px; max-width: 460px; margin: 0 auto; background: #ffffff; box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+          .brand-header { margin-bottom: 8px; }
+          .brand-logo { font-size: 22px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #b17d38; }
+          .pack-subtitle { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #666; margin-top: 2px; }
+          .divider { height: 2px; background: linear-gradient(90deg, transparent, #b17d38, transparent); margin: 14px 0 18px; }
+          .cafe-name { font-size: 24px; font-weight: 800; color: #181715; margin: 0 0 4px; }
+          .cafe-meta { font-size: 13px; color: #555; margin-bottom: 18px; font-weight: 600; }
+          .cafe-id { font-family: monospace; font-size: 14px; font-weight: 700; color: #b17d38; }
+          .qr-container { margin: 0 auto 16px auto; display: inline-block; padding: 14px; background: #ffffff; border: 1.5px solid #ddd; border-radius: 10px; }
+          .scan-instructions { font-size: 14px; font-weight: 700; color: #181715; margin-bottom: 6px; }
+          .scan-subtext { font-size: 11.5px; color: #666; margin-bottom: 16px; line-height: 1.4; }
+          .details-table { width: 100%; border-top: 1px dashed #ccc; padding-top: 12px; margin-bottom: 14px; font-size: 11px; color: #777; display: flex; justify-content: space-between; }
+          .security-notice { font-size: 10px; color: #888; border-top: 1px solid #eee; padding-top: 10px; line-height: 1.4; text-transform: uppercase; letter-spacing: 0.02em; }
         </style>
       </head>
       <body>
-        <div class="card">
-          <div class="brand">ZAMORIN CAFÉ ERP</div>
-          <div class="title">Official Café Operations Access Card</div>
-          <div class="cafe-name">${cafeName}</div>
-          <div class="cafe-id">Branch ID: ${cafeId}</div>
-          <div class="qr-wrapper">${svg}</div>
-          <div class="version">Access QR Version: v${qrVersion}</div>
-          <div class="warning">Notice: Scan only using authorised Zamorin mobile or tablet devices. Do not share or display publicly.</div>
+        <div class="pack-card">
+          <div class="brand-header">
+            <div class="brand-logo">ZAMORIN CAFÉ ERP</div>
+            <div class="pack-subtitle">Official Branch Operations Access Pack</div>
+          </div>
+          <div class="divider"></div>
+          <h1 class="cafe-name">${cafeName}</h1>
+          <div class="cafe-meta">
+            Branch ID: <span class="cafe-id">${cafeId}</span>
+            ${city ? ` · Location: ${city}` : ''}
+          </div>
+          <div class="qr-container">
+            ${svg}
+          </div>
+          <div class="scan-instructions">Scan to Sign In</div>
+          <div class="scan-subtext">
+            Use your authorized mobile or tablet device to scan and sign into this branch location.<br>
+            Standard enterprise credentials (Organisation ID + Email + Password) are required.
+          </div>
+          <div class="details-table">
+            <span>Credential Version: <strong>v${qrVersion}</strong></span>
+            <span>Issued Date: <strong>${generatedDate}</strong></span>
+          </div>
+          <div class="security-notice">
+            🔒 Safe Context Locator · Possession of this document grants zero access without verified employee credentials. Do not duplicate or alter.
+          </div>
         </div>
         <script>
           window.onload = function() {
             window.print();
-            setTimeout(function() { window.close(); }, 1000);
+            setTimeout(function() { window.close(); }, 1200);
           };
         </script>
       </body>
@@ -515,15 +575,18 @@ export function openQrViewerModal({ cafeName = 'Zamorin Café', cafeId = 'ZC-000
         </div>
 
         <!-- Action Controls -->
-        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:14px;">
           <button class="btn btn-sm btn-secondary" id="zamorin-qr-btn-fs" type="button" style="display:flex;align-items:center;justify-content:center;gap:6px;">
             <span>⛶</span> Full Screen
           </button>
           <button class="btn btn-sm btn-secondary" id="zamorin-qr-btn-dl" type="button" style="display:flex;align-items:center;justify-content:center;gap:6px;">
-            <span>⬇</span> Download
+            <span>⬇</span> SVG
+          </button>
+          <button class="btn btn-sm btn-secondary" id="zamorin-qr-btn-dl-png" type="button" style="display:flex;align-items:center;justify-content:center;gap:6px;">
+            <span>🖼️</span> PNG
           </button>
           <button class="btn btn-sm btn-secondary" id="zamorin-qr-btn-print" type="button" style="display:flex;align-items:center;justify-content:center;gap:6px;">
-            <span>🖨</span> Print Card
+            <span>🖨</span> Print Pack
           </button>
         </div>
 
@@ -554,6 +617,10 @@ export function openQrViewerModal({ cafeName = 'Zamorin Café', cafeId = 'ZC-000
 
   modalMount.querySelector('#zamorin-qr-btn-dl')?.addEventListener('click', () => {
     downloadQrSvg(qrUrl, { filename: safeFilename, size: 500 });
+  });
+
+  modalMount.querySelector('#zamorin-qr-btn-dl-png')?.addEventListener('click', () => {
+    downloadQrPng(qrUrl, { filename: safeFilename.replace(/\.svg$/i, '.png'), size: 600 });
   });
 
   modalMount.querySelector('#zamorin-qr-btn-print')?.addEventListener('click', () => {

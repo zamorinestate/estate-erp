@@ -6,12 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const mainJs = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/main.js'), 'utf8');
-const loginJs = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/pages/login.js'), 'utf8');
+const loginJs = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/pages/login2.js'), 'utf8');
 
 test('Production Auth: login module is implemented and routed', () => {
   assert.ok(
-    loginJs.includes('renderLogin') || loginJs.includes('login'),
-    'login.js must export the login interface'
+    loginJs.includes('renderLoginPage2') || loginJs.includes('login'),
+    'login2.js must export the login interface'
   );
 });
 

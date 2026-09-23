@@ -11,7 +11,7 @@
 // - Safe error handling with no secret leakage
 // =============================================================================
 
-import { apiPost } from "../apiClient.js";
+import { apiPost, clearAllAuthTokens, clearAccessToken, clearApiCacheAndInFlight } from "../apiClient.js";
 import { openModal, closeModal, showToast } from "../components.js";
 
 /**
@@ -191,21 +191,36 @@ export function openChangePasswordModal() {
       const revokeOtherSessions = Boolean(revokeCheckbox?.checked);
 
       if (!currentPassword) {
-        showToast("Please enter your current password.", "warning");
+        const msg = "Please enter your current password.";
+        if (errorBox) {
+          errorBox.textContent = msg;
+          errorBox.style.display = "block";
+        }
+        showToast(msg, "warning");
         currentInput?.focus();
-        return;
+        return false;
       }
 
       if (!newPassword || newPassword.length < 15) {
-        showToast("New password must be at least 15 characters long for single-factor authentication.", "warning");
+        const msg = "New password must be at least 15 characters long for security compliance.";
+        if (errorBox) {
+          errorBox.textContent = msg;
+          errorBox.style.display = "block";
+        }
+        showToast(msg, "warning");
         newInput?.focus();
-        return;
+        return false;
       }
 
       if (newPassword !== confirmPassword) {
-        showToast("New passwords do not match.", "danger");
+        const msg = "New passwords do not match.";
+        if (errorBox) {
+          errorBox.textContent = msg;
+          errorBox.style.display = "block";
+        }
+        showToast(msg, "danger");
         confirmInput?.focus();
-        return;
+        return false;
       }
 
       try {
@@ -216,8 +231,16 @@ export function openChangePasswordModal() {
         });
 
         if (res && res.success !== false) {
-          showToast("Password changed successfully!", "mint");
+          showToast("Password changed successfully! Signing out to activate new password...", "mint");
           closeModal();
+          clearAllAuthTokens();
+          clearAccessToken();
+          clearApiCacheAndInFlight();
+          setTimeout(() => {
+            window.location.hash = "#login";
+            window.location.reload();
+          }, 1000);
+          return true;
         } else {
           const msg = res?.error?.message || res?.message || "Failed to change password.";
           if (errorBox) {
@@ -225,6 +248,7 @@ export function openChangePasswordModal() {
             errorBox.style.display = "block";
           }
           showToast(msg, "error");
+          return false;
         }
       } catch (err) {
         const msg = err.message || "Failed to update password. Check your current password.";
@@ -233,6 +257,7 @@ export function openChangePasswordModal() {
           errorBox.style.display = "block";
         }
         showToast(msg, "error");
+        return false;
       }
     },
   });

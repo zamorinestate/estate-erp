@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { PasswordResetChallenge } = require('../models/PasswordResetChallenge');
 const { SequenceCounter } = require('../models/SequenceCounter');
 
-const CODE_TTL_MINUTES = 10;
+const CODE_TTL_MINUTES = 5;
 const RESET_TOKEN_TTL_MINUTES = 15;
 const ABSOLUTE_TTL_MINUTES = 30;
 const MAX_VERIFICATION_ATTEMPTS = 5;
