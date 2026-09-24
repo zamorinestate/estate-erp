@@ -16,6 +16,10 @@ const {
 const { LoanTransaction } = require('../models/LoanTransaction');
 const { LoanRepaymentSchedule } = require('../models/LoanRepaymentSchedule');
 const { LoanPolicy } = require('../models/LoanPolicy');
+const { Approval } = require('../models/Approval');
+const { Notification } = require('../models/Notification');
+const { NotificationOutbox } = require('../models/NotificationOutbox');
+const { User } = require('../models/User');
 const { LoanAdvanceService } = require('../services/loanAdvanceService');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
@@ -182,6 +186,49 @@ const requestLoan = asyncHandler(async (request, response) => {
     createdByUserId: userId,
   });
 
+  try {
+    const approvalCount = await Approval.countDocuments({ organisationId });
+    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId,
+      entityType: 'LOAN_ADVANCE',
+      entityId: loan.loanAdvanceId,
+      requestingUserId: userId,
+      actionRequired: `Loan Request: ₹${(amountPaise / 100).toFixed(2)} (${loanCategory}, ${tenureMonths} mos)`,
+      amountPaisa: amountPaise,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const m of masterUsers) {
+      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        cafeId,
+        eventType: 'LOAN_REQUESTED',
+        category: 'FINANCE',
+        recipientUserId: m.userId,
+        recipientRole: 'MASTER',
+        recipientEmail: m.email || 'master@zamorincafe.com',
+        title: `💰 Loan Request: ${userId}`,
+        message: `${fullName || userId} requested a loan of ₹${(amountPaise / 100).toFixed(2)} (${loanCategory}). Reason: ${reason || 'N/A'}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'LOANS_ADVANCES',
+        sourceEntityType: 'LOAN_ADVANCE',
+        sourceEntityId: loan.loanAdvanceId,
+        createdBy: userId,
+      });
+    }
+  } catch (err) {
+    console.warn(`[LOAN_APPROVAL_HOOK_WARN] ${err.message}`);
+  }
+
   return response.status(201).json({
     success: true,
     message: 'Loan application submitted successfully.',
@@ -224,6 +271,49 @@ const requestSalaryAdvance = asyncHandler(async (request, response) => {
     createdByUserId: userId,
   });
 
+  try {
+    const approvalCount = await Approval.countDocuments({ organisationId });
+    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId,
+      entityType: 'SALARY_ADVANCE',
+      entityId: advance.loanAdvanceId,
+      requestingUserId: userId,
+      actionRequired: `Salary Advance: ₹${(amountPaise / 100).toFixed(2)}`,
+      amountPaisa: amountPaise,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const m of masterUsers) {
+      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        cafeId,
+        eventType: 'SALARY_ADVANCE_REQUESTED',
+        category: 'FINANCE',
+        recipientUserId: m.userId,
+        recipientRole: 'MASTER',
+        recipientEmail: m.email || 'master@zamorincafe.com',
+        title: `💵 Salary Advance Request: ${userId}`,
+        message: `${fullName || userId} requested a salary advance of ₹${(amountPaise / 100).toFixed(2)}. Reason: ${reason || 'N/A'}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'LOANS_ADVANCES',
+        sourceEntityType: 'SALARY_ADVANCE',
+        sourceEntityId: advance.loanAdvanceId,
+        createdBy: userId,
+      });
+    }
+  } catch (err) {
+    console.warn(`[ADVANCE_APPROVAL_HOOK_WARN] ${err.message}`);
+  }
+
   return response.status(201).json({
     success: true,
     message: 'Salary advance request submitted successfully.',
@@ -246,6 +336,13 @@ const withdrawMyRequest = asyncHandler(async (request, response) => {
   loan.status = 'WITHDRAWN';
   loan.updatedByUserId = userId;
   await loan.save();
+
+  try {
+    await Approval.updateOne(
+      { organisationId, entityId: loanAdvanceId, status: 'PENDING' },
+      { $set: { status: 'REJECTED', decisionReason: 'Withdrawn by employee', decidedAt: new Date() } }
+    );
+  } catch (_) {}
 
   return response.status(200).json({ success: true, message: 'Request withdrawn successfully.' });
 });
@@ -433,7 +530,111 @@ const approveLoan = asyncHandler(async (request, response) => {
   loan.approvedByUserId = userId;
   await loan.save();
 
+  // Sync Approval record
+  try {
+    await Approval.updateOne(
+      { organisationId, entityId: loanAdvanceId, status: 'PENDING' },
+      {
+        $set: {
+          status: 'APPROVED',
+          decidedByUserId: userId,
+          decisionReason: `Approved for ₹${(approvedPaise / 100).toFixed(2)} (${tenure} mos)`,
+          decidedAt: new Date(),
+        },
+      }
+    );
+  } catch (_) {}
+
+  // Emit Notification to employee
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    await Notification.create({
+      notificationId: notifId,
+      organisationId,
+      eventType: 'LOAN_APPROVED',
+      category: 'FINANCE',
+      recipientUserId: loan.employeeUserId,
+      recipientRole: 'STAFF',
+      recipientEmail: `${String(loan.employeeUserId).toLowerCase()}@zamorincafe.com`,
+      title: `Loan/Advance Approved!`,
+      message: `Your ${loan.requestType || 'loan'} ${loanAdvanceId} has been approved for ₹${(approvedPaise / 100).toFixed(2)}. Pending disbursement.`,
+      priority: 'NORMAL',
+      channels: ['IN_APP'],
+      deepLink: `#staff-loans-advances`,
+      sourceModule: 'LOANS_ADVANCES',
+      sourceEntityType: 'LOAN_ADVANCE',
+      sourceEntityId: loanAdvanceId,
+      createdBy: userId,
+    });
+  } catch (_) {}
+
   return response.status(200).json({ success: true, message: 'Loan approved for disbursement.', data: { loan } });
+});
+
+const rejectLoan = asyncHandler(async (request, response) => {
+  requirePrimaryMaster(request);
+  const { organisationId, userId } = request.auth;
+  const { loanAdvanceId } = request.params;
+  const { reason = '' } = request.body;
+
+  const loan = await StaffLoanAdvance.findOne({ organisationId, loanAdvanceId });
+  if (!loan) throw new ApiError(404, 'LOAN_NOT_FOUND', `Loan ${loanAdvanceId} not found.`);
+
+  if (loan.status === 'REJECTED') {
+    throw new ApiError(409, 'ALREADY_REJECTED', `Loan ${loanAdvanceId} is already rejected.`);
+  }
+
+  loan.status = 'REJECTED';
+  loan.rejectionReason = typeof reason === 'string' ? reason.trim() : '';
+  loan.rejectedAt = new Date();
+  loan.rejectedByUserId = userId;
+  await loan.save();
+
+  // Sync Approval record
+  try {
+    await Approval.updateOne(
+      { organisationId, entityId: loanAdvanceId, status: 'PENDING' },
+      {
+        $set: {
+          status: 'REJECTED',
+          decidedByUserId: userId,
+          decisionReason: loan.rejectionReason,
+          decidedAt: new Date(),
+        },
+      }
+    );
+  } catch (_) {}
+
+  // Emit Notification to employee
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    await Notification.create({
+      notificationId: notifId,
+      organisationId,
+      eventType: 'LOAN_REJECTED',
+      category: 'FINANCE',
+      recipientUserId: loan.employeeUserId,
+      recipientRole: 'STAFF',
+      recipientEmail: `${String(loan.employeeUserId).toLowerCase()}@zamorincafe.com`,
+      title: `Loan/Advance Request Rejected`,
+      message: `Your ${loan.requestType || 'Loan'} request ${loanAdvanceId} was rejected.${reason ? ' Reason: ' + reason : ''}`,
+      priority: 'NORMAL',
+      channels: ['IN_APP'],
+      deepLink: `#staff-loans-advances`,
+      sourceModule: 'LOANS_ADVANCES',
+      sourceEntityType: 'LOAN_ADVANCE',
+      sourceEntityId: loanAdvanceId,
+      createdBy: userId,
+    });
+  } catch (_) {}
+
+  return response.status(200).json({
+    success: true,
+    message: 'Loan application rejected.',
+    data: { loan },
+  });
 });
 
 const disburseLoan = asyncHandler(async (request, response) => {
@@ -483,6 +684,30 @@ const disburseLoan = asyncHandler(async (request, response) => {
   for (const s of schedules) {
     await LoanRepaymentSchedule.create({ ...s, organisationId, loanAdvanceId });
   }
+
+  // Emit Notification to employee
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    await Notification.create({
+      notificationId: notifId,
+      organisationId,
+      eventType: 'LOAN_DISBURSED',
+      category: 'FINANCE',
+      recipientUserId: loan.employeeUserId,
+      recipientRole: 'STAFF',
+      recipientEmail: `${String(loan.employeeUserId).toLowerCase()}@zamorincafe.com`,
+      title: `Loan/Advance Disbursed`,
+      message: `₹${((loan.disbursedAmountPaise || 0) / 100).toFixed(2)} for ${loanAdvanceId} has been disbursed via ${paymentMethod}.`,
+      priority: 'NORMAL',
+      channels: ['IN_APP'],
+      deepLink: `#staff-loans-advances`,
+      sourceModule: 'LOANS_ADVANCES',
+      sourceEntityType: 'LOAN_ADVANCE',
+      sourceEntityId: loanAdvanceId,
+      createdBy: userId,
+    });
+  } catch (_) {}
 
   return response.status(200).json({ success: true, message: 'Loan disbursed and active.', data: { loan } });
 });
@@ -696,6 +921,7 @@ module.exports = {
   requestEarlySettlement,
   listOrgLoans,
   approveLoan,
+  rejectLoan,
   disburseLoan,
   verifyManualRepayment,
   postLoanSettlement,

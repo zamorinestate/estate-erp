@@ -6,7 +6,7 @@ import { NAVIGATION, ROLES, getGroupedNavItems } from "./navigation.js";
 import { icon } from "./icons.js";
 import { state, setState } from "./state.js";
 import { navigate } from "./router.js";
-import { forRole, unreadCount, markRead, markAllRead } from "./notifications.js";
+import { forRole, unreadCount, markRead, markAllRead, syncNotificationsFromServer } from "./notifications.js";
 import { apiGet, apiPost, clearAllAuthTokens, clearApiCacheAndInFlight } from "./apiClient.js";
 import { setSettingsActiveSection } from "./pages/settingsShared.js";
 
@@ -437,14 +437,24 @@ export function renderTopbar({ scopeChip } = {}) {
   `;
 }
 
-export function updateBellBadge() {
+export function updateBellBadge(overrideCount = null) {
   const badge = document.getElementById("notif-bell-badge");
   if (!badge) return;
+  if (typeof overrideCount === "number") {
+    badge.style.display = overrideCount > 0 ? "block" : "none";
+    return;
+  }
   const count = unreadCount(state.role);
-  if (count > 0) {
-    badge.style.display = "block";
-  } else {
-    badge.style.display = "none";
+  badge.style.display = count > 0 ? "block" : "none";
+
+  if (state.token || (state.auth && state.auth.user) || (state.user && state.user.userId)) {
+    syncNotificationsFromServer().then(() => {
+      const liveBadge = document.getElementById("notif-bell-badge");
+      if (liveBadge) {
+        const freshCount = unreadCount(state.role);
+        liveBadge.style.display = freshCount > 0 ? "block" : "none";
+      }
+    }).catch(() => {});
   }
 }
 
@@ -710,7 +720,7 @@ export function wireBell(root) {
   let activeNotifTab = "all";
 
   if (notifBtn && notifPop) {
-    notifBtn.addEventListener("click", (e) => {
+    notifBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const isVisible = notifPop.classList.contains("open") || notifPop.style.display === "block";
       closeAllPopovers();
@@ -718,6 +728,13 @@ export function wireBell(root) {
         renderNotifList(notifPop, activeNotifTab);
         notifPop.style.display = "block";
         notifPop.classList.add("open");
+        try {
+          await syncNotificationsFromServer();
+          renderNotifList(notifPop, activeNotifTab);
+          const liveCount = unreadCount(state.role);
+          const badge = document.getElementById("notif-bell-badge");
+          if (badge) badge.style.display = liveCount > 0 ? "block" : "none";
+        } catch {}
       }
     });
 

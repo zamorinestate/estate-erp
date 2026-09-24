@@ -2162,7 +2162,8 @@
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  background: radial-gradient(120% 120% at 50% 0%, var(--paper-start, #faf9f6) 0%, var(--paper-end, #efeae0) 100%);
+  background-color: #0b1120 !important;
+  background: #0b1120 !important;
   padding: 0 !important;
   margin: 0;
   box-sizing: border-box;

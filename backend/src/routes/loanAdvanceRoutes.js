@@ -22,6 +22,7 @@ const {
   requestEarlySettlement,
   listOrgLoans,
   approveLoan,
+  rejectLoan,
   disburseLoan,
   verifyManualRepayment,
   postLoanSettlement,
@@ -127,6 +128,12 @@ router.post(
   '/admin/loans/:loanAdvanceId/approve',
   authorize('LOAN_ADVANCE_ADMIN', { allowedRoles: ['MASTER'], requirePrimaryMaster: true }),
   approveLoan
+);
+
+router.post(
+  '/admin/loans/:loanAdvanceId/reject',
+  authorize('LOAN_ADVANCE_ADMIN', { allowedRoles: ['MASTER'], requirePrimaryMaster: true }),
+  rejectLoan
 );
 
 router.post(

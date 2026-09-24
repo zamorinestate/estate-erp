@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" style="background-color: #0b1120 !important; background: #0b1120 !important; color-scheme: dark;">
 <head>
   <meta charset="UTF-8" />
+  <meta name="color-scheme" content="dark" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Zamorin Cafe ERP</title>
   <meta name="theme-color" content="#101a30" />
@@ -9,32 +10,1098 @@
   <link rel="icon" type="image/svg+xml" href="/src/assets/zamorin-app-icon-vector.svg" />
   <link rel="apple-touch-icon" href="/src/assets/zamorin-app-icon-1024.png" />
   <link rel="manifest" href="/manifest.json" />
+
+  <!-- Critical zero-latency dark base paint: First element in head to ensure dark canvas on byte 1 -->
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    :root, html, body {
+      background-color: #0b1120 !important;
+      background: #0b1120 !important;
+      color: #f8fafc;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      min-height: 100dvh;
+    }
+    html:has(#app.auth-screen),
+    body:has(#app.auth-screen),
+    body.auth-page {
+      background-color: #0b1120 !important;
+      background: #0b1120 !important;
+      color: #f8fafc;
+      overflow: hidden;
+    }
+    #app.auth-screen {
+      background-color: #0b1120 !important;
+      background: #0b1120 !important;
+    }
+    /* Instant visible login card: ZERO opacity delay or 600ms fade lag on first paint */
+    .light-glass-container,
+    .auth-shell-container {
+      opacity: 1 !important;
+      animation: none !important;
+      transform: none !important;
+    }
+/* =============================================================================
+   ZAMORIN CAFE ERP — LOGIN PAGE 2.0 GLASSMORPHIC STYLES
+   ============================================================================= */
+
+:root {
+  --l2-glass-bg: rgba(255, 255, 255, 0.52);
+  --l2-glass-border: rgba(255, 255, 255, 0.75);
+  --l2-light-border: rgba(255, 255, 255, 0.95);
+  --l2-glass-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.4) inset;
+  --l2-input-bg: rgba(255, 255, 255, 0.45);
+  --l2-input-focus-bg: rgba(255, 255, 255, 0.75);
+  --l2-text-main: #0f172a;
+  --l2-text-muted: #334155;
+  --l2-border-radius: 28px;
+  --l2-transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Background Layers */
+.l2-bg-layer {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: #0b1120;
+  background-image: url("/src/assets/estate-landscape-bg.jpg");
+  transition: opacity 0.4s ease-in-out;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.l2-bg-overlay {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.05) 0%, rgba(0, 0, 0, 0.08) 100%);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Shield Overlay */
+.shield-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 15, 28, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+.shield-overlay.hidden {
+  display: none !important;
+}
+
+.shield-content {
+  text-align: center;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.shield-content p {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.shield-content span {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Guarantee ZERO page scrolling and universal clean sans-serif typography ONLY when login screen is active */
+html:has(#app.auth-screen),
+body:has(#app.auth-screen) {
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
+  height: 100vh;
+  height: 100dvh;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+#app.auth-screen,
+#app.auth-screen * {
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
+}
+
+#app.auth-screen {
+  min-height: 100vh !important;
+  min-height: 100dvh !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* Glass Wrapper */
+.l2-glass-wrapper {
+  position: relative;
+  z-index: 10;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 16px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Glass Card & Unified Canonical Auth Shell */
+.light-glass-container,
+.auth-shell-container {
+  background: var(--l2-glass-bg);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--l2-glass-border);
+  border-radius: var(--l2-border-radius, 28px);
+  box-shadow: var(--l2-glass-shadow);
+  padding: 24px 28px 18px 28px;
+  width: min(calc(100vw - 32px), var(--auth-shell-max-width, 448px));
+  max-width: var(--auth-shell-max-width, 448px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  color: var(--l2-text-main);
+  animation: l2FadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  /* Content-driven height — ZERO fixed height */
+  height: auto;
+}
+
+@keyframes l2FadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Header & Logo */
+.l2-brand-header {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.l2-brand-logo-horizontal {
+  display: block;
+  width: 195px;
+  max-width: 220px;
+  height: auto;
+  margin: 0 auto 4px auto;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.12));
+}
+
+.l2-brand-logo {
+  width: 96px;
+  max-width: 96px;
+  height: auto;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.15));
+}
+
+.login-header h2 {
+  font-size: 24px;
+  font-weight: 800;
+  color: #0f172a;
+  text-align: center;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.login-subtitle {
+  font-size: 13px;
+  color: var(--l2-text-muted);
+  text-align: center;
+  margin: 2px 0 0 0;
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+/* Inputs & Form Controls — Touch Target Height: 52px */
+.light-input-group {
+  position: relative;
+  width: 100%;
+  margin-bottom: 9px;
+}
+
+.light-input-group input {
+  width: 100%;
+  height: var(--auth-control-height, 52px);
+  min-height: var(--auth-control-height, 52px);
+  padding: 0 44px;
+  background: var(--l2-input-bg);
+  border: 1px solid var(--l2-glass-border);
+  border-radius: 14px;
+  color: #0f172a;
+  font-size: 14.5px;
+  font-weight: 600;
+  font-family: inherit;
+  outline: none;
+  transition: var(--l2-transition);
+  box-sizing: border-box;
+}
+
+.light-input-group input::placeholder {
+  color: rgba(51, 65, 85, 0.6);
+  font-weight: 500;
+}
+
+.light-input-group input:focus {
+  background: var(--l2-input-focus-bg);
+  border-color: #b17d38;
+  box-shadow: 0 0 0 3px rgba(177, 125, 56, 0.25);
+}
+
+.light-input-icon {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #334155;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.light-input-icon.left {
+  left: 14px;
+}
+
+.light-input-icon.right {
+  right: 14px;
+  pointer-events: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  color: #475569;
+}
+
+.light-input-icon.right:hover {
+  color: #0f172a;
+}
+
+/* 6-Digit PIN Grid & Timer Display */
+.l2-pin-grid {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  margin: 16px 0 12px 0;
+  width: 100%;
+}
+
+.l2-pin-box {
+  width: 48px;
+  height: 54px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  color: #0f172a;
+  font-size: 22px;
+  font-weight: 800;
+  text-align: center;
+  outline: none;
+  transition: var(--l2-transition);
+  box-sizing: border-box;
+}
+
+.l2-pin-box:focus {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #b17d38;
+  box-shadow: 0 0 0 3px rgba(177, 125, 56, 0.25);
+  transform: translateY(-1px);
+}
+
+.l2-pin-timer {
+  font-size: 19px;
+  font-weight: 800;
+  color: #b17d38;
+  text-align: center;
+  margin: 6px 0 10px 0;
+  letter-spacing: 1px;
+}
+
+/* Caps Lock Indicator */
+.l2-caps-lock-warning {
+  font-size: 11.5px;
+  color: #d97706;
+  margin-top: 4px;
+  margin-left: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.l2-caps-lock-warning.hidden {
+  display: none !important;
+}
+
+/* Options Row */
+.options-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--l2-text-muted);
+  margin-bottom: 6px;
+  margin-top: 2px;
+}
+
+.toggle-switch-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 34px;
+  height: 18px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.light-slider {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.15);
+  border-radius: 20px;
+  transition: 0.3s;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.light-slider:before {
+  position: absolute;
+  content: "";
+  height: 12px;
+  width: 12px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  border-radius: 50%;
+  transition: 0.3s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.toggle-switch input:checked + .light-slider {
+  background-color: #b17d38;
+  border-color: #9a6a2c;
+  box-shadow: 0 0 8px rgba(177, 125, 56, 0.4);
+}
+
+.toggle-switch input:checked + .light-slider:before {
+  transform: translateX(16px);
+}
+
+.light-toggle-label {
+  font-size: 12px;
+  color: var(--l2-text-muted);
+  font-weight: 500;
+}
+
+/* Pill Buttons */
+.btn-pill-white {
+  background: #ffffff !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-radius: 9999px !important;
+  color: #0f172a !important;
+  padding: 8px 22px;
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  transition: var(--l2-transition);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+  font-family: inherit;
+}
+
+.btn-pill-white:hover {
+  background: #f8fafc !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12) !important;
+}
+
+.btn-pill-translucent {
+  background: rgba(255, 255, 255, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.7) !important;
+  border-radius: 9999px !important;
+  color: #0f172a !important;
+  padding: 10px 20px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  transition: var(--l2-transition);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 8px;
+  box-sizing: border-box;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-family: inherit;
+}
+
+.btn-pill-translucent:hover {
+  background: rgba(255, 255, 255, 0.68) !important;
+  transform: translateY(-1px);
+}
+
+/* Terms & Conditions Trigger */
+.tc-trigger-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.tc-trigger-btn {
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 20px;
+  color: #1e293b;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  text-decoration: none;
+  transition: var(--l2-transition);
+}
+
+.tc-trigger-btn:hover {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: #fff;
+  transform: translateY(-1px);
+}
+
+.tc-agreed-badge {
+  background: rgba(34, 197, 94, 0.25);
+  border: 1px solid rgba(34, 197, 94, 0.6);
+  color: #15803d;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+/* Main Action Button (Zamorin Brand Ink Pill) — Touch Target Height: 52px */
+.light-btn,
+.btn-pill-lime {
+  width: 100%;
+  height: var(--auth-control-height, 52px);
+  min-height: var(--auth-control-height, 52px);
+  padding: 0 20px;
+  background: #101a30 !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-radius: 9999px !important;
+  color: #ffffff !important;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: var(--l2-transition);
+  box-shadow: 0 4px 14px rgba(16, 26, 48, 0.32), 0 2px 6px rgba(0, 0, 0, 0.12) !important;
+  font-family: inherit;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.light-btn:hover:not(:disabled),
+.btn-pill-lime:hover:not(:disabled) {
+  background: #1a2740 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(16, 26, 48, 0.45) !important;
+}
+
+.light-btn:active:not(:disabled),
+.btn-pill-lime:active:not(:disabled) {
+  background: #0b1424 !important;
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(16, 26, 48, 0.2) !important;
+}
+
+.light-btn:disabled,
+.btn-pill-lime:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none !important;
+}
+
+/* Auth Divider */
+.l2-auth-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 6px 0 5px 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.l2-auth-divider::before,
+.l2-auth-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+.l2-auth-divider span {
+  padding: 0 10px;
+}
+
+/* Social SSO Row */
+.social-login-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin: 2px 0 4px 0;
+}
+
+.social-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #0f172a;
+  transition: var(--l2-transition);
+}
+
+.social-btn:hover {
+  background: rgba(255, 255, 255, 0.95);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.social-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Auth Footer */
+.auth-footer {
+  text-align: center;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #334155;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Reset Password Confirmation Modal (Image 3 in Set 1) */
+.l2-confirm-modal-box {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 28px;
+  padding: 34px 30px;
+  max-width: 380px;
+  width: min(calc(100vw - 36px), 380px);
+  text-align: center;
+  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.3);
+  animation: l2FadeUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.l2-confirm-modal-box h3 {
+  font-size: 22px;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 10px 0;
+}
+
+.l2-confirm-modal-box p {
+  font-size: 14px;
+  color: #334155;
+  margin: 0 0 26px 0;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.l2-confirm-modal-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  align-items: center !important;
+  width: 100%;
+}
+
+.l2-confirm-modal-actions button {
+  flex: 1;
+  height: 46px !important;
+  min-height: 46px !important;
+  max-height: 46px !important;
+  margin: 0 !important;
+  padding: 0 16px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  vertical-align: middle !important;
+  box-sizing: border-box !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+
+/* Notice & Error Banners */
+.l2-notice-banner {
+  background: rgba(239, 246, 255, 0.85);
+  border: 1px solid #93c5fd;
+  color: #1e40af;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  font-weight: 500;
+}
+
+.l2-error-banner {
+  background: rgba(254, 242, 242, 0.9);
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* Modals */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 15, 28, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.modal-overlay.hidden {
+  display: none !important;
+}
+
+.light-modal-content {
+  background: rgba(20, 28, 48, 0.85);
+  border: 1px solid var(--l2-glass-border);
+  border-radius: 20px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  padding: 28px;
+  width: 100%;
+  max-width: 420px;
+  color: #fff;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.light-close-btn {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  transition: var(--l2-transition);
+}
+
+.light-close-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Terms & Conditions Modal */
+.tc-modal-content {
+  background: rgba(20, 28, 48, 0.92);
+  border: 1px solid var(--l2-glass-border);
+  border-radius: 20px;
+  padding: 28px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: #fff;
+}
+
+.tc-scroll-body {
+  overflow-y: auto;
+  max-height: 48vh;
+  padding-right: 10px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+
+.tc-scroll-body h4 {
+  color: #ffffff;
+  margin: 14px 0 4px;
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.tc-scroll-body p {
+  margin: 0 0 10px 0;
+}
+
+.tc-footer {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.tc-footer button {
+  flex: 1;
+  height: 46px !important;
+  min-height: 46px !important;
+  max-height: 46px !important;
+  margin: 0 !important;
+  padding: 0 16px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  vertical-align: middle !important;
+  box-sizing: border-box !important;
+  font-size: 14.5px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+}
+
+#l2-tc-agree-btn {
+  background: linear-gradient(135deg, #d4a359, #b17d38) !important;
+  color: #0b1120 !important;
+  font-weight: 800 !important;
+  border: none !important;
+  box-shadow: 0 4px 14px rgba(177, 125, 56, 0.35) !important;
+}
+
+#l2-tc-agree-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #e4b56e, #c08b44) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(177, 125, 56, 0.45) !important;
+}
+
+/* Terms & Conditions Trigger Row & Button Form */
+.tc-trigger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tc-button-trigger {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08) !important;
+  transition: all 0.2s ease;
+}
+
+.tc-button-trigger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12) !important;
+}
+
+.tc-agreed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  animation: l2FadeIn 0.25s ease-out;
+}
+
+.tc-scroll-hint {
+  display: none !important;
+}
+
+/* Biometrics Modal */
+.biometric-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.l2-pin-input-box {
+  width: 44px;
+  height: 50px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.l2-pin-input-box:focus {
+  border-color: #d4a359;
+  box-shadow: 0 0 0 2px rgba(212, 163, 89, 0.25);
+  outline: none;
+}
+
+.light-bio-option {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 14px;
+  padding: 20px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  cursor: pointer;
+  transition: var(--l2-transition);
+  font-family: inherit;
+}
+
+.light-bio-option:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: #d4a359;
+  transform: translateY(-2px);
+}
+
+.bio-icon {
+  width: 36px;
+  height: 36px;
+  color: #d4a359;
+}
+
+/* Glass Alert */
+.glass-alert-content {
+  text-align: center;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  padding: 32px 28px;
+  background: rgba(22, 28, 40, 0.95);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(212, 163, 89, 0.28);
+  border-radius: 20px;
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.65), 0 0 35px rgba(212, 163, 89, 0.08);
+}
+
+.glass-alert-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(212, 163, 89, 0.12);
+  border: 1px solid rgba(212, 163, 89, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #d4a359;
+  margin-bottom: 2px;
+}
+
+.glass-alert-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+  letter-spacing: -0.2px;
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
+}
+
+.glass-alert-text {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #c0c6d0;
+  margin: 0;
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
+}
+
+.glass-alert-ok {
+  min-width: 140px;
+  margin-top: 6px;
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
+}
+
+/* Modal and Alert Typography Enforcement (ACP-05E-02) */
+.modal-overlay,
+.modal-overlay *,
+.light-modal-content,
+.light-modal-content *,
+.glass-alert-box,
+.glass-alert-box *,
+.l2-confirm-modal-box,
+.l2-confirm-modal-box *,
+#l2-biometrics-modal,
+#l2-biometrics-modal *,
+#l2-glass-alert-modal,
+#l2-glass-alert-modal *,
+#l2-terms-modal,
+#l2-terms-modal *,
+#l2-app-pin-section,
+#l2-app-pin-section *,
+.l2-error-banner,
+.l2-pin-input-box {
+  font-family: var(--font-ui, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif) !important;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* =============================================================================
+   Responsive Viewports (Mobile & Tablet)
+   ============================================================================= */
+@media (max-width: 640px) {
+  .light-glass-container,
+  .auth-shell-container {
+    padding: 24px 20px;
+    border-radius: var(--radius-card, 16px);
+    gap: 14px;
+    width: min(calc(100vw - 24px), var(--auth-shell-max-width, 448px));
+  }
+  .l2-brand-logo {
+    width: 82px;
+  }
+  .login-header h2 {
+    font-size: 20px;
+  }
+  .options-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 380px) {
+  .light-glass-container,
+  .auth-shell-container {
+    padding: 20px 16px;
+    gap: 12px;
+    width: calc(100vw - 16px);
+  }
+  .light-input-group input {
+    height: 48px;
+    min-height: 48px;
+    font-size: 13.5px;
+  }
+  .light-btn {
+    height: 48px;
+    min-height: 48px;
+    font-size: 14px;
+  }
+  .l2-brand-logo {
+    width: 72px;
+  }
+}
+
+  </style>
+
   <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
   <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
-  <link rel="dns-prefetch" href="https://images.unsplash.com" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
-  <!-- Critical assets preload for immediate first paint -->
-  <link rel="preload" as="image" href="/src/assets/zamorin-logo-stacked.svg" fetchpriority="high" />
-  <!-- Design system: tokens → layout → components → theme overrides → Login 2.0 -->
-  <link rel="stylesheet" href="/src/styles/tokens.css?v=3.5.2" />
-  <link rel="stylesheet" href="/src/styles/layout.css?v=3.5.2" />
-  <link rel="stylesheet" href="/src/styles/components.css?v=3.5.2" />
-  <link rel="stylesheet" href="/src/styles/zamorin.css?v=3.5.2" />
-  <link rel="stylesheet" href="/src/styles/login2.css?v=3.5.2" />
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'" />
+  <noscript>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+  </noscript>
+
+  <!-- Critical assets preload for immediate zero-latency first paint -->
+  <link rel="preload" as="image" href="/src/assets/zamorin-logo-horizontal.svg" fetchpriority="high" />
+  <link rel="preload" as="image" href="/src/assets/estate-bg-1.jpg" />
+  <link rel="modulepreload" href="/src/js/main.js?v=3.5.4" />
+  <link rel="modulepreload" href="/src/js/pages/login2.js?v=3.5.4" />
+  <link rel="modulepreload" href="/src/js/apiClient.js?v=3.5.4" />
+  <link rel="modulepreload" href="/src/js/state.js?v=3.5.4" />
+  <link rel="modulepreload" href="/src/js/navigation.js?v=3.5.4" />
+
   <script>
     (function() {
       try {
-        if ('serviceWorker' in navigator) {
-          navigator.serviceWorker.getRegistrations().then(function(registrations) {
-            for (var r of registrations) { r.unregister(); }
+        if ('caches' in window) {
+          caches.keys().then(function(keys) {
+            for (var k of keys) {
+              if (k.includes('v2.') || k.includes('v1.') || k.includes('static') || k.includes('shell')) {
+                caches.delete(k);
+              }
+            }
           });
         }
-        if ('caches' in window) {
-          caches.keys().then(function(names) {
-            for (var n of names) caches.delete(n);
-          });
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              for (var r of regs) { r.unregister(); }
+            });
+          }
         }
         var savedTheme = localStorage.getItem('zamorin-theme') || 'paper';
         document.documentElement.dataset.theme = savedTheme;
@@ -43,18 +1110,150 @@
       } catch (e) {}
     })();
     // Dynamic API URL Resolution:
-    // Uses relative /api/v1 when served on Vercel domain, or direct Vercel API endpoint elsewhere.
+    // Uses relative /api/v1 when served on local dev or Vercel, avoiding CORS blocks
     window.ZAMORIN_API_BASE_URL = window.ZAMORIN_API_BASE_URL ||
       localStorage.getItem('zamorin_api_url') ||
-      (window.location.hostname.includes('vercel.app')
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.includes('vercel.app')
         ? '/api/v1'
         : 'https://zamorin-cafe-erp.vercel.app/api/v1');
   </script>
+
+  <!-- Core tokens for typography & theme variables -->
+  <link rel="stylesheet" href="/src/styles/tokens.css?v=3.5.4" media="print" onload="this.media='all'" />
 </head>
-<body style="background-color: #0b1120; margin: 0;">
-  <div id="app" class="auth-screen"></div>
+<body class="auth-page" style="background-color: #0b1120 !important; background: #0b1120 !important; margin: 0;">
+  <div id="app" class="auth-screen">
+    <div class="l2-bg-layer" style="background-image: url('/src/assets/estate-bg-1.jpg'); background-size: cover; background-position: center;"></div>
+    <div class="l2-bg-overlay"></div>
+
+    <div class="l2-glass-wrapper">
+      <div class="light-glass-container auth-shell-container" id="login-view">
+        <div class="l2-brand-header">
+          <img src="/src/assets/zamorin-logo-horizontal.svg" alt="Zamorin Estate" class="l2-brand-logo-horizontal" />
+          <img src="/src/assets/zamorin-logo-stacked.svg" alt="" class="l2-brand-logo" style="display:none;" />
+        </div>
+
+        <div class="login-header">
+          <h2>Login</h2>
+          <p class="login-subtitle">Sign in to your enterprise account</p>
+        </div>
+
+        <div id="l2-login-error" class="l2-error-banner" style="display:none;"></div>
+
+        <form id="l2-login-form">
+          <!-- Organisation ID -->
+          <div class="light-input-group">
+            <div class="light-input-icon left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+                <path d="M9 22v-4h6v4"></path>
+                <path d="M8 6h.01"></path>
+                <path d="M16 6h.01"></path>
+                <path d="M12 6h.01"></path>
+                <path d="M12 10h.01"></path>
+                <path d="M12 14h.01"></path>
+                <path d="M16 10h.01"></path>
+                <path d="M16 14h.01"></path>
+                <path d="M8 10h.01"></path>
+                <path d="M8 14h.01"></path>
+              </svg>
+            </div>
+            <input type="text" id="l2-org-id" placeholder="Organisation ID" value="" autocomplete="organization" />
+          </div>
+
+          <!-- Email -->
+          <div class="light-input-group">
+            <div class="light-input-icon left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
+              </svg>
+            </div>
+            <input type="email" id="l2-email" placeholder="Email ID" value="" required autocomplete="username webauthn" />
+          </div>
+
+          <!-- Password -->
+          <div class="light-input-group">
+            <div class="light-input-icon left">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <input type="password" id="l2-password" placeholder="Password" required autocomplete="current-password" />
+            <button type="button" class="light-input-icon right" id="l2-toggle-pwd" aria-label="Toggle password">
+              <svg id="l2-eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+          <div id="l2-caps-lock-warning" class="l2-caps-lock-warning hidden" style="display:none;font-size:12px;color:#f59e0b;margin-top:4px;margin-bottom:8px;text-align:left;">⇪ Caps Lock is on</div>
+
+          <!-- Options Row: Remember Device & Forgot Password -->
+          <div class="options-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0px; margin-bottom: 10px;">
+            <label class="toggle-switch-group" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+              <span class="toggle-switch">
+                <input type="checkbox" id="l2-remember-device" checked />
+                <span class="light-slider"></span>
+              </span>
+              <span class="light-toggle-label" style="font-size: 12.5px; color: #475569; font-weight: 600;">Remember device</span>
+            </label>
+            <button type="button" id="l2-forgot-pwd-btn" class="btn-pill-white" style="font-size: 12.5px; font-weight: 600; padding: 6px 16px;">Forgot Password?</button>
+          </div>
+
+          <!-- Hidden Terms Checkbox for Contract State -->
+          <input type="checkbox" id="l2-terms-checkbox" class="hidden" style="display:none;" />
+
+          <!-- Login Submit Button (Zamorin Theme Pill) -->
+          <button type="submit" id="l2-submit-btn" class="light-btn btn-pill-lime">Login</button>
+        </form>
+
+        <!-- Elegant Auth Divider -->
+        <div class="l2-auth-divider">
+          <span>or continue with</span>
+        </div>
+
+        <!-- Social SSO Row (Google, Apple, Facebook) -->
+        <div class="social-login-row">
+          <button type="button" class="social-btn" id="l2-social-google" aria-label="Sign in with Google" title="Google">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>
+          </button>
+          <button type="button" class="social-btn" id="l2-social-apple" aria-label="Sign in with Apple" title="Apple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.126 3.822 3.08 1.535-.046 2.11-.969 3.97-.969 1.848 0 2.378.969 3.972.936 1.62-.046 2.65-1.554 3.66-3.003 1.159-1.687 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.671 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.56-1.702z"/></svg>
+          </button>
+          <button type="button" class="social-btn" id="l2-social-facebook" aria-label="Sign in with Facebook" title="Facebook">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+          </button>
+        </div>
+
+        <!-- Footer: Don't have an account? Register -->
+        <div class="auth-footer" style="margin-top: 0px;">
+          <span>Don't have an account?</span>
+          <button type="button" id="l2-to-register-btn" class="btn-pill-white">Register</button>
+        </div>
+
+        <!-- Utility Actions: Terms & Conditions + Passkey / Biometrics -->
+        <div class="tc-trigger-row" style="margin-top: 4px; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: nowrap;">
+          <button type="button" id="l2-open-terms-btn" class="btn-pill-translucent tc-button-trigger" style="font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 9999px; width: auto; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap;">
+            📜 <span>Terms &amp; Conditions</span>
+            <span id="l2-tc-agreed-badge" class="tc-agreed-badge hidden" style="font-size: 10.5px; font-weight: 800; color: #15803d; background: rgba(34, 197, 94, 0.18); border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 999px; padding: 1px 6px; margin-left: 2px;">✓</span>
+          </button>
+          <button type="button" class="btn-pill-translucent" id="l2-passkey-btn" style="font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 9999px; width: auto; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;">
+            <img src="/src/assets/fingerprint-icon.svg" width="13" height="13" alt="" aria-hidden="true" style="vertical-align: middle;">
+            <span>Passkey / Biometrics</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="toast-root"></div>
 
-  <script type="module" src="/src/js/main.js?v=3.5.2"></script>
+  <!-- Non-blocking deferred internal dashboard styles -->
+  <link rel="stylesheet" href="/src/styles/layout.css?v=3.5.4" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="/src/styles/components.css?v=3.5.4" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="/src/styles/zamorin.css?v=3.5.4" media="print" onload="this.media='all'" />
+
+  <script type="module" src="/src/js/main.js?v=3.5.4"></script>
 </body>
 </html>

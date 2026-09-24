@@ -3,10 +3,10 @@
 // =============================================================================
 
 import { state, setState } from "./state.js";
-import { navigate } from "./router.js";
 import { NAVIGATION, ROLES } from "./navigation.js";
 
 export async function runZamorinResponsiveAudit() {
+  const { navigate } = await import("./router.js");
   console.log("=== STARTING ZAMORIN ADVERSARIAL RESPONSIVE AUDIT ===");
 
   const results = {

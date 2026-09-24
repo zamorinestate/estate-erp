@@ -173,7 +173,17 @@ if (typeof window !== "undefined") {
 export function renderShell() {
   const app = document.getElementById("app");
   if (!app) return;
+
+  // Unauthenticated safety: Never leave app shell empty if unauthenticated
+  if (!state.auth?.authenticated || !state.user) {
+    if (typeof window !== "undefined" && typeof window.zamorinMountAuthScreen === "function") {
+      window.zamorinMountAuthScreen("login");
+      return;
+    }
+  }
+
   app.classList.remove("auth-screen");
+  document.body?.classList.remove("auth-page");
 
   const existingSidebar = document.getElementById("sidebar");
   const existingTopbar = document.getElementById("topbar");
@@ -195,21 +205,27 @@ export function renderShell() {
       <div id="modal-root" role="region" aria-label="Modals"></div>
       <div id="toast-root" class="toast-stack" aria-live="polite" aria-atomic="true" role="status"></div>
     `;
-    const sb = document.getElementById("sidebar");
-    const tb = document.getElementById("topbar");
-    if (sb) {
-      sb.innerHTML = renderSidebar();
-      wireSidebar(sb);
-    }
-    if (tb) {
-      tb.innerHTML = renderTopbar();
-      wireBell(tb);
-      updateBellBadge();
+    try {
+      const sb = document.getElementById("sidebar");
+      const tb = document.getElementById("topbar");
+      if (sb) {
+        sb.innerHTML = renderSidebar();
+        wireSidebar(sb);
+      }
+      if (tb) {
+        tb.innerHTML = renderTopbar();
+        wireBell(tb);
+        updateBellBadge();
+      }
+    } catch (shellMountErr) {
+      console.error("[Router] Shell sidebar/topbar mount error:", shellMountErr);
     }
   } else {
     // STAGE 1 PERSISTENT APP SHELL:
     // Retain mounted sidebar DOM & preserve scrollTop; update active route indicators in place.
-    updateSidebarActive(state.route);
+    try {
+      updateSidebarActive(state.route);
+    } catch {}
   }
 
   renderPage().catch((err) => {

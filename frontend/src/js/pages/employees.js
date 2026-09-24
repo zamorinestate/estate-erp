@@ -406,7 +406,6 @@ function getFilteredEmployeesList() {
   const cleanEmployees = liveEmployees.filter(e =>
     !e.email?.toLowerCase().includes('perftest') &&
     !e.email?.toLowerCase().includes('@zamorin.test') &&
-    !e.userId?.match(/^ST-\d{4,}$/) &&
     !e.name?.match(/^Perf Staff/i)
   );
   let filtered = [...cleanEmployees];
@@ -868,7 +867,9 @@ async function fetchWorkforceData() {
       apiGet("/cafes"),
     ]);
     liveOverview = ov.status === "fulfilled" ? ov.value?.data : null;
-    liveEmployees = emp.status === "fulfilled" ? (emp.value?.data?.employees || []) : [];
+    if (emp.status === "fulfilled" && Array.isArray(emp.value?.data?.employees)) {
+      liveEmployees = emp.value.data.employees;
+    }
     liveEmployees.forEach((e) => {
       if (
         e.userId === "MU-0001" ||
@@ -913,11 +914,12 @@ export async function wireEmployees(container = document, subroute) {
 
   attachDirectoryRowListeners();
 
-  // If not yet loaded, fetch once in background and rerender
-  if (!liveOverview) {
+  // If not yet loaded or empty, fetch in background and rerender
+  if (!liveOverview || !liveEmployees || liveEmployees.length === 0) {
     fetchWorkforceData().then(() => {
       const host = document.getElementById("workforce-content-area");
-      if (host && state.route?.startsWith("employees")) {
+      const currentRoute = state.route || (typeof window !== "undefined" ? window.location.hash.replace(/^#/, '') : '');
+      if (host && (currentRoute.startsWith("employees") || currentRoute.includes("employees"))) {
         host.innerHTML = renderActiveSubpanel();
         document.querySelectorAll("[data-workforce-hub-tile]").forEach((btn) => {
           btn.addEventListener("click", () => {

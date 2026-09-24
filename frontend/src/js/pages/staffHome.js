@@ -674,6 +674,17 @@ export function wireStaffHome(root) {
     }
   }
 
+  // Direct click delegation on root for Change Shift Request buttons
+  root.addEventListener("click", (e) => {
+    const schedBtn = e.target.closest("#btn-inline-schedule-request, #btn-open-schedule-request");
+    if (schedBtn) {
+      e.preventDefault();
+      const currentData = (activeStaffEmployeeId && STAFF_DIRECTORY.find((s) => s.employee.id === activeStaffEmployeeId)) || getInitialStaffData();
+      const emp = currentData?.employee || state.user || {};
+      openScheduleRequestModal(emp);
+    }
+  });
+
   loadDashboard();
 }
 

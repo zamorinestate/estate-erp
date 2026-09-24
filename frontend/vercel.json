@@ -9,6 +9,8 @@
     { "source": "/.well-known/(.*)", "destination": "/.well-known/$1" },
     { "source": "/privacy", "destination": "/privacy.html" },
     { "source": "/cafe-operations", "destination": "/cafe-operations/cafe-operations.html" },
+    { "source": "/login", "destination": "/index.html" },
+    { "source": "/login2", "destination": "/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
@@ -37,16 +39,6 @@
       ]
     },
     {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=(self)" },
-        { "key": "Clear-Site-Data", "value": "\"cache\"" }
-      ]
-    },
-    {
       "source": "/sw.js",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
@@ -54,9 +46,24 @@
       ]
     },
     {
-      "source": "/(assets|src|cafe-operations)/(.*)",
+      "source": "/(src/assets|assets)/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+      ]
+    },
+    {
+      "source": "/(src/styles|src/js|cafe-operations|dist)/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, stale-while-revalidate=86400" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=(self)" }
       ]
     }
   ]

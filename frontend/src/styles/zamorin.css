@@ -360,7 +360,7 @@
    ============================================================ */
 *, *::before, *::after { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body {
+body:not(.auth-page) {
   margin: 0;
   min-width: 320px;
   background: var(--paper);
@@ -370,6 +370,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
+}
+
+body.auth-page {
+  background: #0b1120 !important;
+  background-color: #0b1120 !important;
+  color: #f8fafc;
 }
 
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -390,7 +396,7 @@ h1, h2, h3, .font-display { font-family: var(--font-display); }
 /* ============================================================
    APP SHELL
    ============================================================ */
-#app {
+#app:not(.auth-screen) {
   min-height: 100vh;
   width: 100%;
   margin: 0;
@@ -399,7 +405,12 @@ h1, h2, h3, .font-display { font-family: var(--font-display); }
   background: var(--paper);
   color: var(--ink);
 }
-#app.auth-screen { display: block; padding: 0; }
+#app.auth-screen {
+  display: block;
+  padding: 0;
+  background: #0b1120 !important;
+  background-color: #0b1120 !important;
+}
 
 .app-shell {
   min-height: 100vh;

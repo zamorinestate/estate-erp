@@ -9,6 +9,16 @@
 
 import { apiPost, setAccessToken } from "../apiClient.js";
 
+function escHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 export const BACKGROUND_IMAGES = [
   "navy-gradient-standard",
   "/src/assets/estate-bg-1.jpg",
@@ -1218,7 +1228,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
       const email = container.querySelector("#l2-email")?.value?.trim() || "";
       const password = container.querySelector("#l2-password")?.value || "";
       const rememberDevice = Boolean(container.querySelector("#l2-remember-device")?.checked);
-      const organisationId = orgVal || email || "ZAMORIN";
+      const organisationId = orgVal || "ZAMORIN";
 
       if (!email || !password) {
         if (errorEl) {

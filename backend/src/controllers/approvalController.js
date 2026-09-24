@@ -26,10 +26,77 @@ const {
 } = require('../services/auditService');
 
 const { LeaveRequest } = require('../models/LeaveRequest');
+const { Expense } = require('../models/Expense');
+const { PurchaseOrder } = require('../models/PurchaseOrder');
+const { StaffLoanAdvance } = require('../models/StaffLoanAdvance');
+const { ShiftChangeRequest } = require('../models/ShiftChangeRequest');
+const { ProfileChangeRequest } = require('../models/ProfileChangeRequest');
+const { AttendanceCorrectionRequest } = require('../models/AttendanceCorrectionRequest');
+const { Attendance } = require('../modules/attendance/Attendance');
 const { Notification } = require('../models/Notification');
 const { NotificationOutbox } = require('../models/NotificationOutbox');
 const { User } = require('../models/User');
 const { reconcileLeaveToAttendance } = require('../services/leaveReconciliationService');
+
+async function sendNotificationAndOutbox({
+  organisationId,
+  recipientUserId,
+  recipientRole = 'STAFF',
+  eventType,
+  category = 'OPERATIONS',
+  title,
+  message,
+  deepLink = '',
+  correlationId = null,
+  actorUserId = 'SYSTEM',
+}) {
+  try {
+    const user = await User.findOne({ organisationId, userId: recipientUserId }).select('email name role').lean();
+    const recipientEmail = user?.email || `${String(recipientUserId).toLowerCase()}@zamorincafe.com`;
+    const recipientName = user?.name || recipientUserId;
+    const finalRole = user?.role || recipientRole;
+
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    await Notification.create({
+      notificationId: notifId,
+      organisationId,
+      eventType,
+      category,
+      recipientUserId,
+      recipientRole: finalRole,
+      recipientEmail,
+      title,
+      message,
+      priority: 'NORMAL',
+      channels: ['IN_APP'],
+      deepLink,
+      sourceModule: 'APPROVALS',
+      correlationId: correlationId || notifId,
+      createdBy: actorUserId,
+    });
+
+    const outboxId = `OUT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    await NotificationOutbox.create({
+      outboxId,
+      organisationId,
+      eventType,
+      recipientUserId,
+      recipientEmail,
+      recipientName,
+      recipientRole: finalRole,
+      templateId: 'GENERAL_APPROVAL_DECISION',
+      subject: title,
+      renderedSubject: title,
+      renderedBody: message,
+      status: 'SENT',
+      sentAt: new Date(),
+    });
+  } catch (err) {
+    console.warn(`[APPROVAL_NOTIF_WARN] Could not emit notification to ${recipientUserId}:`, err.message);
+  }
+}
 
 function normalizeId(value) {
   return typeof value === 'string'
@@ -256,6 +323,282 @@ const decideApproval = asyncHandler(async (request, response) => {
         });
       }
     } catch (_) {}
+  }
+
+  // 2. EXPENSE APPROVAL DISPATCHER
+  if (approval.entityType === 'EXPENSE') {
+    try {
+      const expense = await Expense.findOne({
+        organisationId: request.auth.organisationId,
+        $or: [{ expenseId: approval.entityId }, { _id: approval.entityId }],
+      });
+      if (expense) {
+        expense.status = targetDecision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+        expense.decisionAt = new Date();
+        expense.decisionBy = request.auth.userId;
+        expense.decisionReason = typeof reason === 'string' ? reason.trim() : '';
+        if (targetDecision === 'APPROVED') {
+          expense.approvalSnapshot = {
+            version: (expense.approvalSnapshot?.version || 0) + 1,
+            approvedAt: new Date(),
+            approvedBy: request.auth.userId,
+            approvedAmountPaisa: expense.totalPaisa,
+            reason: expense.decisionReason,
+          };
+          expense.financeHandoff = {
+            status: 'AWAITING_FINANCE',
+            sentAt: new Date(),
+            postingStatus: 'PENDING',
+            paymentStatus: 'UNPAID',
+          };
+        }
+        await expense.save();
+
+        const recipientId = expense.preparerUserId || expense.ownerUserId || approval.requestingUserId;
+        await sendNotificationAndOutbox({
+          organisationId: request.auth.organisationId,
+          recipientUserId: recipientId,
+          recipientRole: 'CAFE_ADMIN',
+          eventType: targetDecision === 'APPROVED' ? 'EXPENSE_APPROVED' : 'EXPENSE_REJECTED',
+          category: 'FINANCE',
+          title: `Expense ${expense.expenseId} ${targetDecision}`,
+          message: `Your expense claim for ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category}) was ${targetDecision.toLowerCase()}.${expense.decisionReason ? ' Reason: ' + expense.decisionReason : ''}`,
+          deepLink: `#expenses?expenseId=${expense.expenseId}`,
+          correlationId: request.correlationId,
+          actorUserId: request.auth.userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[EXPENSE_SYNC_WARN] ${err.message}`);
+    }
+  }
+
+  // 3. PURCHASE ORDER / PROCUREMENT APPROVAL DISPATCHER
+  if (approval.entityType === 'PURCHASE_ORDER' || approval.entityType === 'PROCUREMENT') {
+    try {
+      const order = await PurchaseOrder.findOne({
+        organisationId: request.auth.organisationId,
+        purchaseOrderId: approval.entityId,
+      });
+      if (order) {
+        if (targetDecision === 'APPROVED') {
+          order.status = 'APPROVED';
+          order.needsReapproval = false;
+          order.masterApproval = {
+            approvedAt: new Date(),
+            approvedByUserId: request.auth.userId,
+            approvalNotes: typeof reason === 'string' ? reason.trim() : 'Approved by Master via Approvals Workbench',
+          };
+          const allLinesFulfilled = (order.lineItems || []).every(
+            (l) => (Number(l.acceptedReceivedQty) || 0) >= (Number(l.orderedQuantityBase) || 0)
+          );
+          if (allLinesFulfilled && order.grnReceipts?.length > 0) {
+            order.receivingStatus = 'POSTED_TO_INVENTORY';
+            order.status = 'CLOSED';
+          } else if (order.grnReceipts?.length > 0) {
+            order.receivingStatus = 'PARTIALLY_RECEIVED';
+          }
+        } else {
+          order.status = 'CANCELLED';
+          order.rejectionReason = typeof reason === 'string' ? reason.trim() : '';
+        }
+        order.lastModifiedByUserId = request.auth.userId;
+        await order.save();
+
+        const recipientId = order.createdByUserId || order.lastModifiedByUserId || approval.requestingUserId;
+        await sendNotificationAndOutbox({
+          organisationId: request.auth.organisationId,
+          recipientUserId: recipientId,
+          recipientRole: 'CAFE_ADMIN',
+          eventType: targetDecision === 'APPROVED' ? 'PURCHASE_ORDER_APPROVED' : 'PURCHASE_ORDER_REJECTED',
+          category: 'OPERATIONS',
+          title: `Purchase Order ${order.purchaseOrderId} ${targetDecision}`,
+          message: `Purchase Order ${order.purchaseOrderId} (${order.cafeId}) was ${targetDecision.toLowerCase()} by Master.${reason ? ' Note: ' + reason : ''}`,
+          deepLink: `#procurement?orderId=${order.purchaseOrderId}`,
+          correlationId: request.correlationId,
+          actorUserId: request.auth.userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[PO_SYNC_WARN] ${err.message}`);
+    }
+  }
+
+  // 4. LOAN & SALARY ADVANCE APPROVAL DISPATCHER
+  if (approval.entityType === 'LOAN_ADVANCE' || approval.entityType === 'LOAN' || approval.entityType === 'SALARY_ADVANCE') {
+    try {
+      const loan = await StaffLoanAdvance.findOne({
+        organisationId: request.auth.organisationId,
+        loanAdvanceId: approval.entityId,
+      });
+      if (loan) {
+        if (targetDecision === 'APPROVED') {
+          loan.status = 'DISBURSEMENT_PENDING';
+          loan.approvedAt = new Date();
+          loan.approvedByUserId = request.auth.userId;
+          loan.approvedAmountPaise = loan.requestedAmountPaise;
+        } else {
+          loan.status = 'REJECTED';
+          loan.rejectionReason = typeof reason === 'string' ? reason.trim() : '';
+          loan.rejectedAt = new Date();
+          loan.rejectedByUserId = request.auth.userId;
+        }
+        await loan.save();
+
+        await sendNotificationAndOutbox({
+          organisationId: request.auth.organisationId,
+          recipientUserId: loan.employeeUserId || approval.requestingUserId,
+          recipientRole: 'STAFF',
+          eventType: targetDecision === 'APPROVED' ? 'LOAN_APPROVED' : 'LOAN_REJECTED',
+          category: 'PAYROLL',
+          title: `Loan/Advance Request ${loan.loanAdvanceId} ${targetDecision}`,
+          message: `Your ${loan.requestType || 'Loan'} request for ₹${(((loan.requestedAmountPaise || loan.principalPaise) || 0) / 100).toFixed(2)} was ${targetDecision.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
+          deepLink: `#staff-loans-advances?id=${loan.loanAdvanceId}`,
+          correlationId: request.correlationId,
+          actorUserId: request.auth.userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[LOAN_SYNC_WARN] ${err.message}`);
+    }
+  }
+
+  // 5. SHIFT CHANGE APPROVAL DISPATCHER
+  if (approval.entityType === 'SHIFT_CHANGE' || approval.entityType === 'SHIFT_CHANGE_REQUEST') {
+    try {
+      const shiftRequest = await ShiftChangeRequest.findOne({
+        organisationId: request.auth.organisationId,
+        requestId: approval.entityId,
+      });
+      if (shiftRequest) {
+        shiftRequest.status = targetDecision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+        shiftRequest.reviewedByUserId = request.auth.userId;
+        shiftRequest.reviewedAt = new Date();
+        shiftRequest.reviewNotes = typeof reason === 'string' ? reason.trim() : '';
+        await shiftRequest.save();
+
+        await sendNotificationAndOutbox({
+          organisationId: request.auth.organisationId,
+          recipientUserId: shiftRequest.employeeUserId || approval.requestingUserId,
+          recipientRole: 'STAFF',
+          eventType: targetDecision === 'APPROVED' ? 'SHIFT_CHANGE_APPROVED' : 'SHIFT_CHANGE_REJECTED',
+          category: 'OPERATIONS',
+          title: `Shift Change Request ${shiftRequest.requestId} ${targetDecision}`,
+          message: `Your shift change request for ${shiftRequest.requestedDate} was ${targetDecision.toLowerCase()}.${reason ? ' Notes: ' + reason : ''}`,
+          deepLink: `#staff-attendance`,
+          correlationId: request.correlationId,
+          actorUserId: request.auth.userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[SHIFT_SYNC_WARN] ${err.message}`);
+    }
+  }
+
+  // 6. PROFILE CHANGE APPROVAL DISPATCHER
+  if (approval.entityType === 'PROFILE_CHANGE') {
+    try {
+      const pcr = await ProfileChangeRequest.findOne({
+        organisationId: request.auth.organisationId,
+        requestId: approval.entityId,
+      });
+      if (pcr) {
+        pcr.status = targetDecision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+        pcr.reviewedByUserId = request.auth.userId;
+        pcr.reviewedAt = new Date();
+        pcr.reviewNotes = typeof reason === 'string' ? reason.trim() : '';
+        await pcr.save();
+
+        if (targetDecision === 'APPROVED' && pcr.proposedValues && typeof pcr.proposedValues === 'object') {
+          const user = await User.findOne({ organisationId: request.auth.organisationId, userId: pcr.userId });
+          if (user) {
+            Object.assign(user, pcr.proposedValues);
+            user.updatedAt = new Date();
+            await user.save();
+          }
+        }
+
+        await sendNotificationAndOutbox({
+          organisationId: request.auth.organisationId,
+          recipientUserId: pcr.userId || approval.requestingUserId,
+          recipientRole: 'STAFF',
+          eventType: targetDecision === 'APPROVED' ? 'PROFILE_CHANGE_APPROVED' : 'PROFILE_CHANGE_REJECTED',
+          category: 'OPERATIONS',
+          title: `Profile Change Request ${pcr.requestId} ${targetDecision}`,
+          message: `Your profile change request (${pcr.requestType}) was ${targetDecision.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
+          deepLink: `#employee-profile`,
+          correlationId: request.correlationId,
+          actorUserId: request.auth.userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[PROFILE_SYNC_WARN] ${err.message}`);
+    }
+  }
+
+  // 7. ATTENDANCE CORRECTION APPROVAL DISPATCHER
+  if (approval.entityType === 'ATTENDANCE_CORRECTION') {
+    try {
+      const correctionRequest = await AttendanceCorrectionRequest.findOne({
+        organisationId: request.auth.organisationId,
+        $or: [{ correctionRequestId: approval.entityId }, { requestId: approval.entityId }],
+      });
+      if (correctionRequest) {
+        correctionRequest.status = targetDecision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+        correctionRequest.reviewedBy = request.auth.userId;
+        correctionRequest.reviewedByUserId = request.auth.userId;
+        correctionRequest.reviewedAt = new Date();
+        correctionRequest.reviewReason = typeof reason === 'string' ? reason.trim() : '';
+        correctionRequest.reviewRemarks = typeof reason === 'string' ? reason.trim() : '';
+        await correctionRequest.save();
+
+        if (targetDecision === 'APPROVED') {
+          let attendance = null;
+          if (correctionRequest.attendanceId) {
+            attendance = await Attendance.findOne({
+              attendanceId: correctionRequest.attendanceId,
+              organisationId: request.auth.organisationId,
+            });
+          }
+
+          if (!attendance && correctionRequest.userId && correctionRequest.businessDate) {
+            attendance = await Attendance.findOne({
+              organisationId: request.auth.organisationId,
+              userId: correctionRequest.userId,
+              businessDate: correctionRequest.businessDate,
+            });
+          }
+
+          if (attendance) {
+            if (correctionRequest.requestedCheckInAt) attendance.checkInAt = correctionRequest.requestedCheckInAt;
+            if (correctionRequest.requestedCheckOutAt) attendance.checkOutAt = correctionRequest.requestedCheckOutAt;
+            if (correctionRequest.requestedBreakMinutes !== undefined) attendance.breakMinutes = correctionRequest.requestedBreakMinutes;
+            attendance.status = attendance.checkOutAt ? 'CHECKED_OUT' : 'CHECKED_IN';
+            attendance.isManualEntry = true;
+            attendance.isCorrection = true;
+            attendance.correctionRequired = false;
+            attendance.correctionReason = `Approved by Master via Approvals: ${correctionRequest.reason || ''}`;
+            attendance.updatedBy = request.auth.userId;
+            await attendance.save();
+          }
+        }
+
+        await sendNotificationAndOutbox({
+          organisationId: request.auth.organisationId,
+          recipientUserId: correctionRequest.userId || approval.requestingUserId,
+          recipientRole: 'STAFF',
+          eventType: targetDecision === 'APPROVED' ? 'ATTENDANCE_CORRECTION_APPROVED' : 'ATTENDANCE_CORRECTION_REJECTED',
+          category: 'OPERATIONS',
+          title: `Attendance Correction ${correctionRequest.requestId} ${targetDecision}`,
+          message: `Your attendance correction request for ${correctionRequest.businessDate} was ${targetDecision.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
+          deepLink: `#staff-attendance`,
+          correlationId: request.correlationId,
+          actorUserId: request.auth.userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[ATTENDANCE_CORRECTION_SYNC_WARN] ${err.message}`);
+    }
   }
 
   await recordRequestAudit({

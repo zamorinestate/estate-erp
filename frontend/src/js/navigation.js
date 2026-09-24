@@ -282,14 +282,12 @@ export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
   const navConfig = NAVIGATION[role];
   if (!navConfig) return false;
 
-  // For MASTER: use the appropriate item set
+  // For MASTER: Primary Master is the sole system master
   let items;
   if (role === ROLES.MASTER) {
-    items = isPrimaryMaster
-      ? navConfig.primaryItems
-      : navConfig.normalItems;
+    items = navConfig.primaryItems || navConfig.items || [];
   } else {
-    items = navConfig.items;
+    items = navConfig.items || [];
   }
 
   const pathOnly = route ? route.split("?")[0] : "";
@@ -306,6 +304,7 @@ export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
     'performance': 'dashboard',
     'settings': 'staff-settings',
     'staff-settings': 'settings',
+    'trash': 'admin',
   };
 
 

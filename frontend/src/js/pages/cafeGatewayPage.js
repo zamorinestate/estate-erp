@@ -8,7 +8,6 @@
 import { apiPost, setCafeOpsSessionToken, setCafeOpsDeviceToken, setSessionId, getCanonicalDeviceId } from '../apiClient.js';
 import { startCafeOpsInactivityTimer } from '../cafeOpsInactivity.js';
 import { setState } from '../state.js';
-import { renderShell, navigate } from '../router.js';
 
 function escHtml(str) {
   if (str === null || str === undefined) return '';
@@ -390,6 +389,7 @@ export function wireCafeGatewayPage(container, { onSignInSuccess } = {}) {
         if (typeof onSignInSuccess === 'function') {
           onSignInSuccess(data);
         } else {
+          const { renderShell, navigate } = await import('../router.js');
           renderShell();
           navigate('dashboard');
         }

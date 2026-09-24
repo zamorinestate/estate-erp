@@ -25,6 +25,23 @@ let currentPage = 1;
 const PAGE_SIZE = 15;
 
 let availableCafes = [];
+let liveApprovals = [];
+let hasInitialFetchedTasks = false;
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formatCategory(cat) {
+  if (!cat) return 'General';
+  return String(cat).replace(/_/g, ' ');
+}
 
 function getCafeName(cafeId) {
   if (!cafeId) return "General";
@@ -105,6 +122,87 @@ function getUpcomingCriticalObligations(tasks) {
     const isCrit = t.isCriticalControl || t.risk === "CRITICAL" || t.priority === "URGENT" || t.priority === "HIGH";
     return isCrit && t.dueDate && t.dueDate >= today && t.dueDate <= next7;
   }).slice(0, 5);
+}
+
+function renderGovernanceApprovals(approvals) {
+  if (!approvals || approvals.length === 0) {
+    return `
+      <tr>
+        <td colspan="6" style="text-align:center;padding:48px 16px;">
+          <div style="color:var(--success);font-size:32px;margin-bottom:8px;">✓</div>
+          <div style="font-size:15px;font-weight:700;color:var(--ink);">All Caught Up — Zero Pending Approvals</div>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:4px;">
+            All operational, leave, loan, expense, procurement, and profile change requests have been decided.
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  return approvals.map((app) => {
+    const typeLabel = (app.entityType || '').replace(/_/g, ' ');
+    let typeBadgeStyle = 'background:rgba(59,130,246,0.12);color:#2563eb;border:1px solid rgba(59,130,246,0.25);';
+    if (app.entityType?.includes('EXPENSE')) {
+      typeBadgeStyle = 'background:rgba(239,68,68,0.12);color:#dc2626;border:1px solid rgba(239,68,68,0.25);';
+    } else if (app.entityType?.includes('PURCHASE') || app.entityType?.includes('PROCUREMENT')) {
+      typeBadgeStyle = 'background:rgba(245,158,11,0.12);color:#d97706;border:1px solid rgba(245,158,11,0.25);';
+    } else if (app.entityType?.includes('LOAN') || app.entityType?.includes('ADVANCE')) {
+      typeBadgeStyle = 'background:rgba(16,185,129,0.12);color:#059669;border:1px solid rgba(16,185,129,0.25);';
+    } else if (app.entityType?.includes('SHIFT')) {
+      typeBadgeStyle = 'background:rgba(139,92,246,0.12);color:#7c3aed;border:1px solid rgba(139,92,246,0.25);';
+    } else if (app.entityType?.includes('ATTENDANCE')) {
+      typeBadgeStyle = 'background:rgba(236,72,153,0.12);color:#db2777;border:1px solid rgba(236,72,153,0.25);';
+    }
+
+    const amountFormatted = app.amountPaisa > 0 ? ` · <strong style="color:var(--ink);">₹${(app.amountPaisa / 100).toFixed(2)}</strong>` : '';
+    const dateFormatted = app.createdAt ? new Date(app.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Recent';
+
+    let deepLinkHash = '#approvals';
+    if (app.entityType === 'EXPENSE') deepLinkHash = `#expenses?expenseId=${app.entityId}`;
+    if (app.entityType === 'PURCHASE_ORDER' || app.entityType === 'PROCUREMENT') deepLinkHash = `#procurement?orderId=${app.entityId}`;
+    if (app.entityType?.includes('LEAVE')) deepLinkHash = `#staff-leave`;
+    if (app.entityType?.includes('LOAN') || app.entityType?.includes('ADVANCE')) deepLinkHash = `#staff-loans-advances`;
+    if (app.entityType?.includes('SHIFT') || app.entityType?.includes('ATTENDANCE')) deepLinkHash = `#attendance`;
+
+    return `
+      <tr style="border-bottom:1px solid var(--line);font-size:13px;" data-approval-row="${app.approvalId}">
+        <td style="padding:12px;">
+          <div style="font-weight:700;color:var(--ink);">${escapeHtml(app.actionRequired || typeLabel)}</div>
+          <div style="font-size:11px;color:var(--muted);font-family:monospace;">${app.approvalId} · Ref: ${app.entityId || 'N/A'}${amountFormatted}</div>
+        </td>
+        <td style="padding:12px;">
+          <span style="display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700;letter-spacing:0.5px;${typeBadgeStyle}">
+            ${typeLabel}
+          </span>
+        </td>
+        <td style="padding:12px;">
+          <div style="font-weight:600;color:var(--ink);">${escapeHtml(app.requestingUserId || 'Staff')}</div>
+          <div style="font-size:11px;color:var(--muted);">Outlet: ${escapeHtml(app.cafeId || 'General')}</div>
+        </td>
+        <td style="padding:12px;color:var(--muted);font-size:12px;">
+          ${dateFormatted}
+        </td>
+        <td style="padding:12px;">
+          <span class="badge" style="background:rgba(245,158,11,0.15);color:#d97706;font-weight:700;font-size:11px;padding:3px 8px;border-radius:10px;">
+            ⏳ ${app.status}
+          </span>
+        </td>
+        <td style="padding:12px;text-align:right;">
+          <div style="display:flex;gap:6px;justify-content:flex-end;align-items:center;">
+            <a href="${deepLinkHash}" class="btn btn-xs btn-ghost" title="View Source Module" style="font-size:11px;text-decoration:none;">
+              👁️ View
+            </a>
+            <button class="btn btn-xs btn-primary" data-gov-approve="${app.approvalId}" type="button" style="font-weight:700;background:#10b981;border:none;color:#fff;">
+              ✓ Quick Approve
+            </button>
+            <button class="btn btn-xs btn-secondary" data-gov-reject="${app.approvalId}" type="button" style="font-weight:700;color:#ef4444;border-color:#ef4444;">
+              ✕ Reject
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 
 export function renderTasks({ title } = {}) {
@@ -294,6 +392,9 @@ export function renderTasks({ title } = {}) {
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
           <!-- Primary Tabs Strip -->
           <div class="oto-tabs-strip" role="tablist" aria-label="Task Queues">
+            <button class="oto-tab-btn ${activeTaskTab === "GOVERNANCE" ? "active" : ""}" data-task-tab="GOVERNANCE" type="button" role="tab" aria-selected="${activeTaskTab === "GOVERNANCE"}">
+              <span>⚖️</span> Approvals (${liveApprovals.length})
+            </button>
             <button class="oto-tab-btn ${activeTaskTab === "EXCEPTIONS" ? "active" : ""}" data-task-tab="EXCEPTIONS" type="button" role="tab" aria-selected="${activeTaskTab === "EXCEPTIONS"}">
               <span>⚠️</span> Needs Attention (${overdueCount + verificationPendingCount + (allTasks.filter(t => t.status === "RETURNED_FOR_CORRECTION" || t.status === "BLOCKED").length)})
             </button>
@@ -370,10 +471,10 @@ export function renderTasks({ title } = {}) {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
           <div>
             <h2 style="font-size:16px;font-weight:700;margin:0 0 2px;color:var(--ink);">
-              ${activeTaskTab === "EXCEPTIONS" ? "Operational Exceptions & Governance Queue" : "Operational Task Queue"} (${filteredTasks.length})
+              ${activeTaskTab === "GOVERNANCE" ? "Governance & Authorization Approvals" : (activeTaskTab === "EXCEPTIONS" ? "Operational Exceptions & Governance Queue" : "Operational Task Queue")} (${activeTaskTab === "GOVERNANCE" ? liveApprovals.length : filteredTasks.length})
             </h2>
             <p style="font-size:12.5px;color:var(--muted);margin:0;">
-              ${activeTaskTab === "EXCEPTIONS" ? "Tasks requiring owner oversight, corrective action, or authorized verification." : "Governed operational tasks across authorized locations."}
+              ${activeTaskTab === "GOVERNANCE" ? "Cross-module requests (Leave, Loans, Expenses, Procurement, Shift & Profile changes) requiring Master approval." : (activeTaskTab === "EXCEPTIONS" ? "Tasks requiring owner oversight, corrective action, or authorized verification." : "Governed operational tasks across authorized locations.")}
             </p>
           </div>
           ${(filteredTasks.length !== allTasks.length || searchQuery || criticalOnlyFilter || blockedOnlyFilter || recurringOnlyFilter || selectedCafeFilter !== "ALL" || selectedCategoryFilter !== "ALL") ? `
@@ -384,19 +485,32 @@ export function renderTasks({ title } = {}) {
         <div class="table-wrap" style="overflow-x:auto;">
           <table class="table" style="width:100%;border-collapse:collapse;">
             <thead>
-              <tr style="border-bottom:1px solid var(--line);text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;background:var(--surface-sunken);">
-                <th style="padding:10px 12px;">Task Details</th>
-                <th style="padding:10px 12px;">Café Location</th>
-                <th style="padding:10px 12px;">Assignee / Responsible</th>
-                <th style="padding:10px 12px;">Category &amp; Risk</th>
-                <th style="padding:10px 12px;">Due Target</th>
-                <th style="padding:10px 12px;">Lifecycle Status</th>
-                <th style="padding:10px 12px;text-align:right;">Actions</th>
-              </tr>
+              ${activeTaskTab === "GOVERNANCE" ? `
+                <tr style="border-bottom:1px solid var(--line);text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;background:var(--surface-sunken);">
+                  <th style="padding:10px 12px;">Request Details</th>
+                  <th style="padding:10px 12px;">Category</th>
+                  <th style="padding:10px 12px;">Requester / Outlet</th>
+                  <th style="padding:10px 12px;">Requested Date</th>
+                  <th style="padding:10px 12px;">Status</th>
+                  <th style="padding:10px 12px;text-align:right;">Actions</th>
+                </tr>
+              ` : `
+                <tr style="border-bottom:1px solid var(--line);text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;background:var(--surface-sunken);">
+                  <th style="padding:10px 12px;">Task Details</th>
+                  <th style="padding:10px 12px;">Café Location</th>
+                  <th style="padding:10px 12px;">Assignee / Responsible</th>
+                  <th style="padding:10px 12px;">Category &amp; Risk</th>
+                  <th style="padding:10px 12px;">Due Target</th>
+                  <th style="padding:10px 12px;">Lifecycle Status</th>
+                  <th style="padding:10px 12px;text-align:right;">Actions</th>
+                </tr>
+              `}
             </thead>
             <tbody>
               ${
-                pagedTasks.length === 0
+                activeTaskTab === "GOVERNANCE"
+                  ? renderGovernanceApprovals(liveApprovals)
+                  : (pagedTasks.length === 0
                   ? `
                   <tr>
                     <td colspan="7" style="text-align:center;padding:48px 16px;">
@@ -479,6 +593,7 @@ export function renderTasks({ title } = {}) {
                         `;
                       })
                       .join("")
+                  )
               }
             </tbody>
           </table>
@@ -486,7 +601,7 @@ export function renderTasks({ title } = {}) {
 
         <!-- Pagination Controls -->
         ${
-          filteredTasks.length > 0
+          activeTaskTab !== "GOVERNANCE" && filteredTasks.length > 0
             ? `
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:12px;border-top:1px solid var(--line);flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--muted);">
             <div>
@@ -565,23 +680,6 @@ export function renderTasks({ title } = {}) {
     </div>
   `;
 }
-
-function formatCategory(cat) {
-  if (!cat) return "General Operations";
-  return cat.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
-}
-
-function escapeHtml(str) {
-  if (!str) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-let hasInitialFetchedTasks = false;
 
 function wireTaskEventListeners(root) {
   if (!root) return;
@@ -746,14 +844,68 @@ function wireTaskEventListeners(root) {
       openAssignTaskModal(root);
     });
   }
+
+  // Governance Quick Approve
+  root.querySelectorAll("[data-gov-approve]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const approvalId = btn.dataset.govApprove;
+      btn.disabled = true;
+      btn.textContent = "Approving...";
+      try {
+        await apiPost(`/approvals/${approvalId}/decide`, { decision: "APPROVED", remarks: "Approved via Governance Oversight" });
+        showToast(`Request ${approvalId} approved successfully!`, "mint");
+        await fetchTasksFromServer();
+        refreshTasksView(root);
+      } catch (err) {
+        showToast(err.message || `Failed to approve ${approvalId}`, "coral");
+        btn.disabled = false;
+        btn.textContent = "✓ Quick Approve";
+      }
+    });
+  });
+
+  // Governance Reject with mandatory reason modal
+  root.querySelectorAll("[data-gov-reject]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const approvalId = btn.dataset.govReject;
+      openModal({
+        title: `Reject Request ${approvalId}`,
+        maxWidth: "460px",
+        body: `
+          <div>
+            <label class="label" style="color:var(--ink, #18181b);font-weight:700;font-size:12px;margin-bottom:6px;display:block;">Reason for Rejection *</label>
+            <textarea id="gov-reject-reason" class="input" rows="3" placeholder="Specify why this request is rejected..." required style="width:100%;box-sizing:border-box;"></textarea>
+          </div>
+        `,
+        saveLabel: "Reject Request",
+        onSave: async (modalEl) => {
+          const reason = modalEl.querySelector("#gov-reject-reason")?.value?.trim();
+          if (!reason) {
+            showToast("Rejection reason is required.", "coral");
+            return false;
+          }
+          try {
+            await apiPost(`/approvals/${approvalId}/decide`, { decision: "REJECTED", remarks: reason });
+            showToast(`Request ${approvalId} rejected.`, "amber");
+            await fetchTasksFromServer();
+            refreshTasksView(root);
+            return true;
+          } catch (err) {
+            showToast(err.message || `Failed to reject ${approvalId}`, "coral");
+            return false;
+          }
+        },
+      });
+    });
+  });
 }
 
 export function wireTasks(root) {
   if (!root) return;
 
-  // Check route context (approvals route prioritizes verification tab)
-  if (state.route === "approvals" && activeTaskTab === "ALL") {
-    activeTaskTab = "EXCEPTIONS";
+  // Check route context (approvals route defaults to governance approvals tab)
+  if (state.route === "approvals") {
+    activeTaskTab = "GOVERNANCE";
   }
 
   wireTaskEventListeners(root);
@@ -771,9 +923,10 @@ export function wireTasks(root) {
 
 async function fetchTasksFromServer() {
   try {
-    const [res, cafeRes] = await Promise.allSettled([
+    const [res, cafeRes, appRes] = await Promise.allSettled([
       apiGet("/tasks?limit=100"),
       apiGet("/cafes"),
+      apiGet("/approvals?status=PENDING&limit=100"),
     ]);
     if (res.status === "fulfilled" && res.value?.data?.tasks && Array.isArray(res.value.data.tasks)) {
       liveTasks = res.value.data.tasks;
@@ -783,6 +936,12 @@ async function fetchTasksFromServer() {
     }
     if (cafeRes.status === "fulfilled" && cafeRes.value?.data?.cafes) {
       availableCafes = cafeRes.value.data.cafes;
+    }
+    if (appRes.status === "fulfilled") {
+      const apps = appRes.value?.data?.approvals || appRes.value?.data || (Array.isArray(appRes.value) ? appRes.value : []);
+      if (Array.isArray(apps)) {
+        liveApprovals = apps;
+      }
     }
   } catch (err) {
     console.warn("Could not fetch tasks from server:", err);

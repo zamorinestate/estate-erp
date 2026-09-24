@@ -2,7 +2,7 @@
   "version": 2,
   "cleanUrls": true,
   "trailingSlash": false,
-   "routes": [
+  "routes": [
     {
       "src": "/api/(.*)",
       "dest": "https://zamorin-cafe-erp-staging.onrender.com/api/$1"
@@ -23,10 +23,10 @@
       }
     },
     {
-      "src": "/(assets|src|cafe-operations|dist)/(.*)",
+      "src": "/(src/styles|src/js|cafe-operations|dist)/(.*)",
       "dest": "/frontend/$1/$2",
       "headers": {
-        "Cache-Control": "public, max-age=0, must-revalidate"
+        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"
       }
     },
     {
@@ -66,14 +66,33 @@
       "dest": "/frontend/sitemap.xml"
     },
     {
+      "src": "/login",
+      "dest": "/frontend/index.html",
+      "headers": {
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(self), microphone=(), geolocation=(self)"
+      }
+    },
+    {
+      "src": "/login2",
+      "dest": "/frontend/index.html",
+      "headers": {
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(self), microphone=(), geolocation=(self)"
+      }
+    },
+    {
       "src": "/(.*)",
       "dest": "/frontend/index.html",
       "headers": {
         "X-Frame-Options": "SAMEORIGIN",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Permissions-Policy": "camera=(self), microphone=(), geolocation=(self)",
-        "Clear-Site-Data": "\"cache\""
+        "Permissions-Policy": "camera=(self), microphone=(), geolocation=(self)"
       }
     }
   ]
