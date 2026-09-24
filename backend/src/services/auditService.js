@@ -355,7 +355,16 @@ async function recordAuditEvent({
 
   if (session) {
     const doc = new AuditEvent(eventPayload);
-    await doc.save({ session });
+    try {
+      await doc.save({ session });
+    } catch (saveErr) {
+      if (saveErr?.code === 112) {
+        await new Promise((r) => setTimeout(r, 60));
+        await doc.save({ session });
+      } else {
+        throw saveErr;
+      }
+    }
     return doc;
   }
 
