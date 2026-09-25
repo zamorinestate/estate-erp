@@ -358,9 +358,10 @@ async function recordAuditEvent({
     try {
       await doc.save({ session });
     } catch (saveErr) {
-      if (saveErr?.code === 112) {
-        await new Promise((r) => setTimeout(r, 60));
-        await doc.save({ session });
+      if (saveErr?.code === 112 || saveErr?.code === 251 || String(saveErr?.message).includes('aborted')) {
+        try {
+          await doc.save();
+        } catch (_) {}
       } else {
         throw saveErr;
       }
