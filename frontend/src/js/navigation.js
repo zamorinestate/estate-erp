@@ -66,6 +66,7 @@ const PRIMARY_MASTER_ITEMS = [
 
   // ── SYSTEM & GOVERNANCE ──────────────────────────────────────────────────────
   { id: 'admin',            label: 'Administration',         icon: 'admin',        route: 'admin',             group: 'SYSTEM' },
+  { id: 'design-system',    label: 'UI Components & Suite',   icon: 'integrations', route: 'design-system',     group: 'SYSTEM' },
   { id: 'cafe-ops-devices', label: 'Devices & Sessions',     icon: 'devices',      route: 'cafe-ops-devices',  group: 'SYSTEM' },
   { id: 'system-health',    label: 'System Health & Ops',    icon: 'settings',     route: 'system-health',     group: 'SYSTEM' },
   { id: 'settings',         label: 'Settings',               icon: 'settings',     route: 'settings',          group: 'SYSTEM' },

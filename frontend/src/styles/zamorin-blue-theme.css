@@ -314,8 +314,10 @@ body:not(.auth-page) {
 }
 
 /* ── 13. ALL BUTTONS BLUE THEME ──────────────────────────────────────────────
-   Ensure all primary, action, and gold buttons use vibrant royal blue.
+   Every single button across the ERP is styled with modern Royal Blue.
    ─────────────────────────────────────────────────────────────────────────── */
+
+/* 13.1 Primary & Solid Action Buttons */
 body:not(.auth-page) .btn-primary,
 body:not(.auth-page) button.btn-primary,
 body:not(.auth-page) .btn-gold,
@@ -335,12 +337,17 @@ body:not(.auth-page) .modal-footer button.primary,
 body:not(.auth-page) .pos-pay-btn,
 body:not(.auth-page) .pos-action-btn.primary,
 body:not(.auth-page) .quick-actions button.primary,
-body:not(.auth-page) .table-action-btn.primary {
-  background: #1d4ed8 !important;
-  border-color: #1d4ed8 !important;
+body:not(.auth-page) .table-action-btn.primary,
+body:not(.auth-page) #cc-refresh-btn,
+body:not(.auth-page) #cc-apply-custom-btn,
+body:not(.auth-page) #cc-save-target-btn,
+body:not(.auth-page) #cc-open-target-modal-btn {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%) !important;
+  border: 1px solid #1d4ed8 !important;
   color: #ffffff !important;
-  box-shadow: 0 2px 6px rgba(29, 78, 216, 0.28) !important;
-  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.35) !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-xs, 6px) !important;
 }
 
 body:not(.auth-page) .btn-primary:hover,
@@ -349,32 +356,110 @@ body:not(.auth-page) .btn-gold:hover,
 body:not(.auth-page) button.btn-gold:hover,
 body:not(.auth-page) .btn-action:hover,
 body:not(.auth-page) button.btn-action:hover,
-body:not(.auth-page) .btn-accent:hover,
-body:not(.auth-page) button.btn-accent:hover,
 body:not(.auth-page) .btn-save:hover,
 body:not(.auth-page) button.btn-save:hover,
 body:not(.auth-page) .btn-submit:hover,
 body:not(.auth-page) button.btn-submit:hover,
 body:not(.auth-page) .btn-confirm:hover,
-body:not(.auth-page) button.btn-confirm:hover {
+body:not(.auth-page) button.btn-confirm:hover,
+body:not(.auth-page) #cc-refresh-btn:hover,
+body:not(.auth-page) #cc-apply-custom-btn:hover,
+body:not(.auth-page) #cc-save-target-btn:hover,
+body:not(.auth-page) #cc-open-target-modal-btn:hover,
+body:not(.auth-page) .pos-pay-btn:hover {
   background: #1e40af !important;
   border-color: #1e40af !important;
-  box-shadow: 0 4px 12px rgba(29, 78, 216, 0.38) !important;
+  box-shadow: 0 4px 14px rgba(29, 78, 216, 0.45) !important;
+  color: #ffffff !important;
 }
 
-/* Secondary & outline buttons: White background with crisp blue border & blue text */
+/* 13.2 Executive Fast Action Buttons (Dashboard Shortcuts) */
+body:not(.auth-page) .exec-action-btn {
+  background: #eff6ff !important;
+  border: 1.5px solid #2563eb !important;
+  border-radius: 8px !important;
+  color: #1d4ed8 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+body:not(.auth-page) .exec-action-btn .exec-icon-box {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  border-radius: 6px !important;
+}
+
+body:not(.auth-page) .exec-action-btn:hover {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%) !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 18px rgba(29, 78, 216, 0.35) !important;
+}
+
+body:not(.auth-page) .exec-action-btn:hover .exec-icon-box {
+  background: rgba(255, 255, 255, 0.28) !important;
+  color: #ffffff !important;
+}
+
+/* 13.3 Date Range & Period Filter Buttons */
+body:not(.auth-page) button[data-period] {
+  background: #eff6ff !important;
+  border: 1.5px solid #93c5fd !important;
+  color: #1d4ed8 !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  padding: 4px 12px !important;
+  transition: all 0.15s ease !important;
+}
+
+body:not(.auth-page) button[data-period].btn-primary,
+body:not(.auth-page) button[data-period].active,
+body:not(.auth-page) button[data-period]:hover {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.35) !important;
+}
+
+/* 13.4 Trend Chart & View Switch Buttons */
+body:not(.auth-page) #cc-toggle-trend-chart.btn-primary,
+body:not(.auth-page) #cc-toggle-trend-data.btn-primary {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  border-color: #1d4ed8 !important;
+}
+
+body:not(.auth-page) #cc-toggle-trend-chart.btn-ghost,
+body:not(.auth-page) #cc-toggle-trend-data.btn-ghost {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border-color: #bfdbfe !important;
+  font-weight: 700 !important;
+}
+
+/* 13.5 Secondary, Outline, Ghost & Card Navigation Buttons */
 body:not(.auth-page) .btn-secondary,
 body:not(.auth-page) button.btn-secondary,
 body:not(.auth-page) .btn-outline,
 body:not(.auth-page) button.btn-outline,
 body:not(.auth-page) .btn-default,
 body:not(.auth-page) button.btn-default,
+body:not(.auth-page) .btn-ghost,
+body:not(.auth-page) button.btn-ghost,
 body:not(.auth-page) .btn-pill-white,
-body:not(.auth-page) button.btn-pill-white {
-  background: #ffffff !important;
-  border: 1px solid #bfdbfe !important;
+body:not(.auth-page) button.btn-pill-white,
+body:not(.auth-page) .cc-card-bottom-btn,
+body:not(.auth-page) button[data-loc-action],
+body:not(.auth-page) .location-card-actions button,
+body:not(.auth-page) #cc-save-view-btn,
+body:not(.auth-page) #cc-manage-views-btn {
+  background: #eff6ff !important;
+  border: 1.5px solid #3b82f6 !important;
   color: #1d4ed8 !important;
-  font-weight: 600;
+  font-weight: 700 !important;
+  border-radius: var(--radius-xs, 6px) !important;
 }
 
 body:not(.auth-page) .btn-secondary:hover,
@@ -383,11 +468,53 @@ body:not(.auth-page) .btn-outline:hover,
 body:not(.auth-page) button.btn-outline:hover,
 body:not(.auth-page) .btn-default:hover,
 body:not(.auth-page) button.btn-default:hover,
+body:not(.auth-page) .btn-ghost:hover,
+body:not(.auth-page) button.btn-ghost:hover,
 body:not(.auth-page) .btn-pill-white:hover,
-body:not(.auth-page) button.btn-pill-white:hover {
+body:not(.auth-page) button.btn-pill-white:hover,
+body:not(.auth-page) .cc-card-bottom-btn:hover,
+body:not(.auth-page) button[data-loc-action]:hover,
+body:not(.auth-page) .location-card-actions button:hover,
+body:not(.auth-page) #cc-save-view-btn:hover,
+body:not(.auth-page) #cc-manage-views-btn:hover {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(29, 78, 216, 0.3) !important;
+}
+
+/* 13.6 Topbar Action Buttons */
+body:not(.auth-page) .topbar-action-btn {
   background: #eff6ff !important;
-  border-color: #3b82f6 !important;
-  color: #1e40af !important;
+  border: 1.5px solid #bfdbfe !important;
+  color: #1d4ed8 !important;
+  font-weight: 700 !important;
+  border-radius: 8px !important;
+}
+
+body:not(.auth-page) .topbar-action-btn:hover {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+}
+
+/* 13.7 Primary Master Authority Status Banner (Remap Amber to Royal Blue) */
+body:not(.auth-page) #cc-authority-banner .card {
+  border-left: 5px solid #2563eb !important;
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+
+body:not(.auth-page) #cc-authority-banner span[style*="c99a5c"],
+body:not(.auth-page) #cc-authority-banner span[style*="201,154,92"],
+body:not(.auth-page) #cc-authority-banner span[style*="rgba(201"] {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+  border: 1px solid #3b82f6 !important;
+}
+
+body:not(.auth-page) #cc-authority-banner strong {
+  color: #1e3a8a !important;
 }
 
 /* ── 14. DATA TABLES ──────────────────────────────────────────────────────────
@@ -435,10 +562,12 @@ body:not(.auth-page) .modal-footer {
    ─────────────────────────────────────────────────────────────────────────── */
 body:not(.auth-page) .badge-primary,
 body:not(.auth-page) .pill-primary,
-body:not(.auth-page) .badge-blue {
+body:not(.auth-page) .badge-blue,
+body:not(.auth-page) .scope-pill {
   background: #eff6ff !important;
   color: #1d4ed8 !important;
   border: 1px solid #bfdbfe !important;
+  font-weight: 700 !important;
 }
 
 /* ── 17. SCROLLBAR TINT ───────────────────────────────────────────────────────
@@ -487,3 +616,21 @@ body:not(.auth-page) .sidebar { scrollbar-color: #bfdbfe transparent; }
 #l2-tc-agree-btn:active:not(:disabled) {
   background: #1e3a8a !important;
 }
+
+/* ── 20. POS TILL SERVICE & CATEGORY BUTTONS ──────────────────────────────────
+   Active state in solid royal blue; inactive state in soft blue tint.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .pos-service-mode-btn.active,
+body:not(.auth-page) .pos-cat-pill-btn.active {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  border-color: #1d4ed8 !important;
+}
+
+body:not(.auth-page) .pos-service-mode-btn:not(.active),
+body:not(.auth-page) .pos-cat-pill-btn:not(.active) {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border: 1.5px solid #bfdbfe !important;
+}
+

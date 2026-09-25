@@ -896,6 +896,13 @@ async function renderPage() {
       });
       break;
 
+    case "design-system":
+    case "components":
+    case "flowbite":
+      content.innerHTML = renderDesignSystem();
+      wireDesignSystem(content);
+      break;
+
     case "not-built":
       content.innerHTML = renderNotBuiltYet();
       break;

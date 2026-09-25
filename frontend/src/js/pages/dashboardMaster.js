@@ -753,6 +753,10 @@ export function renderMasterDashboard({ roleLabel = "Master Administrator" } = {
             <span class="exec-icon-box">${icon('tasks', 14)}</span>
             <span>Task Centre</span>
           </button>
+          <button class="exec-action-btn" data-quick-action="design-system" type="button" title="View Flowbite UI Component Suite">
+            <span class="exec-icon-box">${icon('integrations', 14) || '⚡'}</span>
+            <span>UI Components Suite</span>
+          </button>
         </div>
       </div>
 
@@ -926,6 +930,7 @@ export async function hydrateMasterDashboard(root) {
       else if (act === "personal-ledger") navigate("ledger");
       else if (act === "reports") navigate("reports");
       else if (act === "tasks") navigate("tasks");
+      else if (act === "design-system") navigate("design-system");
       else if (act === "menu") navigate("menu");
       else if (act === "attendance") navigate("attendance");
       else if (act === "quality") navigate("quality");
