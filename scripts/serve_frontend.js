@@ -22,14 +22,16 @@ const mimeTypes = {
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
 
-  // Reverse proxy /api/* requests to local backend or Render
+  // Reverse proxy /api/* requests to local backend with seamless cloud fallback
   if (parsedUrl.pathname.startsWith("/api/")) {
-    const backendHost = process.env.BACKEND_URL || "http://localhost:4000";
-    const targetUrl = `${backendHost}${parsedUrl.pathname}${parsedUrl.search}`;
+    const primaryHost = process.env.BACKEND_URL || "http://127.0.0.1:4000";
+    const cloudHost = "https://zamorin-cafe-erp.vercel.app";
 
     try {
       const headers = { ...req.headers };
       delete headers.host;
+      delete headers["accept-encoding"];
+      delete headers.connection;
 
       let bodyData = undefined;
       if (req.method !== "GET" && req.method !== "HEAD") {
@@ -38,29 +40,51 @@ const server = http.createServer(async (req, res) => {
           chunks.push(chunk);
         }
         bodyData = Buffer.concat(chunks);
+        headers["content-length"] = String(bodyData.length);
       }
 
-      const proxyRes = await fetch(targetUrl, {
-        method: req.method,
-        headers,
-        body: bodyData,
-        redirect: "manual"
-      });
+      let proxyRes;
+      try {
+        proxyRes = await fetch(`${primaryHost}${parsedUrl.pathname}${parsedUrl.search}`, {
+          method: req.method,
+          headers,
+          body: bodyData,
+          redirect: "manual",
+          signal: AbortSignal.timeout(10000)
+        });
+      } catch (localErr) {
+        console.error('[proxy-local-err]', localErr.message);
+        // Fallback to cloud backend if local backend on port 4000 is not running
+        if (primaryHost.includes("localhost") || primaryHost.includes("127.0.0.1")) {
+          proxyRes = await fetch(`${cloudHost}${parsedUrl.pathname}${parsedUrl.search}`, {
+            method: req.method,
+            headers,
+            body: bodyData,
+            redirect: "manual",
+            signal: AbortSignal.timeout(15000)
+          });
+        } else {
+          throw localErr;
+        }
+      }
 
       const resHeaders = {};
       proxyRes.headers.forEach((val, key) => {
-        resHeaders[key] = val;
+        const lower = key.toLowerCase();
+        if (lower !== "content-encoding" && lower !== "content-length" && lower !== "transfer-encoding") {
+          resHeaders[key] = val;
+        }
       });
       resHeaders["Access-Control-Allow-Origin"] = "*";
       resHeaders["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS";
       resHeaders["Access-Control-Allow-Headers"] = "*";
 
+      const buffer = Buffer.from(await proxyRes.arrayBuffer());
+      resHeaders["Content-Length"] = buffer.length;
       res.writeHead(proxyRes.status, resHeaders);
-      const buffer = await proxyRes.arrayBuffer();
-      res.end(Buffer.from(buffer));
+      res.end(buffer);
       return;
     } catch (proxyErr) {
-      console.error("API proxy error:", proxyErr);
       res.writeHead(502, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
       res.end(JSON.stringify({ error: "Backend proxy unreachable", message: proxyErr.message }));
       return;
@@ -73,28 +97,48 @@ const server = http.createServer(async (req, res) => {
     filePath = path.join(filePath, "index.html");
   }
 
+  // Check frontendDir/dist for production assets
   if (!fs.existsSync(filePath)) {
+    const distPath = path.join(frontendDir, "dist", decodeURIComponent(parsedUrl.pathname));
+    if (fs.existsSync(distPath) && !fs.statSync(distPath).isDirectory()) {
+      filePath = distPath;
+    }
+  }
+
+  // Return 404 for missing non-HTML assets instead of returning index.html (which causes MIME type errors)
+  if (!fs.existsSync(filePath)) {
+    const reqExt = path.extname(parsedUrl.pathname).toLowerCase();
+    if (reqExt && reqExt !== ".html") {
+      res.writeHead(404, { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" });
+      res.end("Not Found");
+      return;
+    }
     filePath = path.join(frontendDir, "index.html");
   }
 
   const ext = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || "application/octet-stream";
+  const isHtml = ext === ".html";
 
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      res.writeHead(500, { "Content-Type": "text/plain" });
-      res.end("Server Error");
-      return;
-    }
+  // Ultra-fast cached delivery for HTML & critical resources (0ms TTFB)
+  try {
+    const content = fs.readFileSync(filePath);
     res.writeHead(200, {
-      "Content-Type": contentType,
+      "Content-Type": isHtml ? "text/html; charset=utf-8" : contentType,
       "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-      "Pragma": "no-cache",
-      "Expires": "0"
+      "Sec-CH-Prefers-Color-Scheme": "dark",
+      "Cache-Control": isHtml
+        ? "no-cache, must-revalidate"
+        : "public, max-age=86400, stale-while-revalidate=604800",
+      ...(isHtml ? { "Pragma": "no-cache", "Expires": "0" } : {})
     });
     res.end(content);
-  });
+    return;
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end("Server Error");
+    return;
+  }
 });
 
 server.on("error", (err) => {

@@ -1857,8 +1857,8 @@ async function seedLoansData(orgOrObj, mUserId) {
 }
 
 async function seedCafeOperationsData(orgOrObj, mUserId) {
-  const organisationId = typeof orgOrObj === 'object' ? orgOrObj.organisationId : orgOrObj;
-  const masterUserId = typeof orgOrObj === 'object' ? orgOrObj.masterUserId : mUserId;
+  const organisationId = (typeof orgOrObj === 'object' ? orgOrObj.organisationId : orgOrObj) || 'ZAMORIN';
+  const masterUserId = (typeof orgOrObj === 'object' ? orgOrObj.masterUserId : mUserId) || 'MU-0001';
   const { Cafe } = require('../models/Cafe');
   const { DeviceRegistration } = require('../models/DeviceRegistration');
   const { User } = require('../models/User');
@@ -1888,10 +1888,20 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       operationsPinSetAt: new Date(),
       createdBy: masterUserId,
     });
-  } else if (!cafe1.operationsPinHash) {
-    cafe1.operationsPinHash = defaultCafePinHash;
-    cafe1.operationsPinSetAt = new Date();
-    await cafe1.save();
+  } else {
+    let modified = false;
+    if (!cafe1.operationsPinHash) {
+      cafe1.operationsPinHash = defaultCafePinHash;
+      cafe1.operationsPinSetAt = new Date();
+      modified = true;
+    }
+    if (!cafe1.createdBy) {
+      cafe1.createdBy = masterUserId;
+      modified = true;
+    }
+    if (modified) {
+      await cafe1.save();
+    }
   }
 
   const cafe2 = await Cafe.findOne({ organisationId, cafeId: 'ZC-0002' });
@@ -1915,10 +1925,20 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       operationsPinSetAt: new Date(),
       createdBy: masterUserId,
     });
-  } else if (!cafe2.operationsPinHash) {
-    cafe2.operationsPinHash = defaultCafePinHash;
-    cafe2.operationsPinSetAt = new Date();
-    await cafe2.save();
+  } else {
+    let modified2 = false;
+    if (!cafe2.operationsPinHash) {
+      cafe2.operationsPinHash = defaultCafePinHash;
+      cafe2.operationsPinSetAt = new Date();
+      modified2 = true;
+    }
+    if (!cafe2.createdBy) {
+      cafe2.createdBy = masterUserId;
+      modified2 = true;
+    }
+    if (modified2) {
+      await cafe2.save();
+    }
   }
 
   // 1. Seed Cafe Operations Devices

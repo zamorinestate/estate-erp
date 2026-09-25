@@ -868,6 +868,66 @@ const getDashboardData = asyncHandler(async (request, response) => {
   // ── Needs Your Attention Queue ──────────────────────────────────────────────
   const attentionItems = [];
 
+  // Pending Approvals & Requests (Governance Queue for Master / Owner)
+  try {
+    const pendingApprovalsByType = await Approval.aggregate([
+      {
+        $match: {
+          organisationId: orgId,
+          status: 'PENDING',
+          ...(activeCafeScope ? { $or: [{ cafeId: activeCafeScope }, { cafeId: null }] } : {}),
+        },
+      },
+      { $group: { _id: '$entityType', count: { $sum: 1 } } },
+    ]);
+
+    for (const group of pendingApprovalsByType) {
+      const type = group._id;
+      const count = group.count;
+      let title = `${count} pending ${type.toLowerCase().replace(/_/g, ' ')} request(s)`;
+      let route = 'approvals';
+      let category = 'GOVERNANCE';
+      let severity = 'HIGH';
+
+      if (type === 'PURCHASE_ORDER' || type === 'PROCUREMENT') {
+        title = `${count} verified procurement order(s) awaiting Master approval`;
+        route = 'procurement';
+        category = 'PROCUREMENT';
+        severity = 'CRITICAL';
+      } else if (type === 'EXPENSE') {
+        title = `${count} expense claim(s) awaiting approval`;
+        route = 'expenses';
+        category = 'FINANCE';
+        severity = 'HIGH';
+      } else if (type === 'LOAN_ADVANCE' || type === 'SALARY_ADVANCE' || type === 'LOAN') {
+        title = `${count} staff loan / salary advance request(s) awaiting decision`;
+        route = 'approvals';
+        category = 'PAYROLL';
+        severity = 'HIGH';
+      } else if (type === 'LEAVE_REQUEST' || type === 'LEAVE' || type === 'LEAVE_CANCELLATION') {
+        title = `${count} staff leave request(s) awaiting decision`;
+        route = 'approvals';
+        category = 'OPERATIONS';
+        severity = 'MEDIUM';
+      } else if (type === 'SHIFT_CHANGE') {
+        title = `${count} staff shift change request(s) awaiting review`;
+        route = 'approvals';
+        category = 'OPERATIONS';
+        severity = 'MEDIUM';
+      }
+
+      attentionItems.push({
+        severity,
+        category,
+        title,
+        description: 'Requires Master governance action in Approvals Workbench.',
+        count,
+        route,
+        cafeId: null,
+      });
+    }
+  } catch (_) {}
+
   // Critical inventory
   if (inventoryAlerts.critical > 0) {
     attentionItems.push({

@@ -113,7 +113,9 @@ async function executeTransactionWithRetry(operationFn, options = {}) {
         (typeof err.hasErrorLabel === 'function' && err.hasErrorLabel('TransientTransactionError')) ||
         (Array.isArray(err.errorLabels) && err.errorLabels.includes('TransientTransactionError')) ||
         err.code === 112 ||
-        String(err.message).includes('WriteConflict');
+        err.code === 251 ||
+        String(err.message).includes('WriteConflict') ||
+        String(err.message).includes('has been aborted');
 
       if (isTransient && transientAttempts < maxTransientRetries) {
         lastTransientError = err;

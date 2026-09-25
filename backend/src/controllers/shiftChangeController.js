@@ -5,6 +5,8 @@ const { ShiftRoster } = require('../models/ShiftRoster');
 const { NotificationOutbox } = require('../models/NotificationOutbox');
 const { Notification } = require('../models/Notification');
 const { User } = require('../models/User');
+const { Approval } = require('../models/Approval');
+const { SequenceCounter } = require('../models/SequenceCounter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { recordRequestAudit } = require('../services/auditService');
@@ -41,8 +43,8 @@ const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
   // Resolve cafeId if not passed in body
   let effectiveCafeId = cafeId;
   if (!effectiveCafeId) {
-    const userDoc = await User.findOne({ userId, organisationId }).select('cafeId').lean();
-    effectiveCafeId = userDoc?.cafeId || null;
+    const userDoc = await User.findOne({ userId, organisationId }).select('cafeId primaryCafeId assignedCafeIds').lean();
+    effectiveCafeId = userDoc?.primaryCafeId || userDoc?.cafeId || userDoc?.assignedCafeIds?.[0] || 'ZC-0001';
   }
 
   const dateStr = new Date().getFullYear();
@@ -65,6 +67,68 @@ const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
   });
 
   try {
+    let approvalId;
+    try {
+      approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+      });
+    } catch {
+      const approvalCount = await Approval.countDocuments({ organisationId });
+      approvalId = `APP-${String(approvalCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
+    }
+
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId: effectiveCafeId,
+      entityType: 'SHIFT_CHANGE',
+      entityId: shiftRequest.requestId,
+      requestingUserId: userId,
+      actionRequired: `Shift Change: ${shiftRequest.requestedDate} (${shiftRequest.currentShift || 'Current'} -> ${shiftRequest.requestedShift})`,
+      amountPaisa: 0,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const recipientIds = new Set(masterUsers.map((m) => m.userId));
+    recipientIds.add('MU-0001');
+
+    const notifDateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const masterId of recipientIds) {
+      const mUser = masterUsers.find((m) => m.userId === masterId);
+      const notifId = `NT-${notifDateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        cafeId: effectiveCafeId || 'ALL',
+        eventType: 'SHIFT_CHANGE_REQUESTED',
+        category: 'OPERATIONS',
+        recipientUserId: masterId,
+        recipientRole: 'MASTER',
+        recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
+        title: `🔄 Shift Change Request: ${userId}`,
+        message: `${name || userId} requested shift change for ${requestedDate} (${currentShift || 'Current'} -> ${requestedShift}). Reason: ${reason}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'ATTENDANCE',
+        sourceEntityType: 'SHIFT_CHANGE',
+        sourceEntityId: shiftRequest.requestId,
+        deduplicationKey: `SCR_${shiftRequest.requestId}_${Date.now()}_${masterId}`,
+        correlationId: request.correlationId || `CORR-SCR-${shiftRequest.requestId}-${Math.floor(1000 + Math.random() * 9000)}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
+        createdBy: userId,
+      });
+    }
+  } catch (err) {
+    console.warn(`[SHIFT_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
+  }
+
+  try {
     await recordRequestAudit({
       request,
       module: 'ATTENDANCE',
@@ -79,7 +143,7 @@ const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
   return response.status(201).json({
     success: true,
     message: 'Shift change request submitted successfully.',
-    data: { request: shiftRequest },
+    data: { request: shiftRequest, shiftRequest },
     correlationId: request.correlationId || null,
   });
 });
@@ -210,17 +274,50 @@ const reviewShiftChangeRequest = asyncHandler(async (request, response) => {
   shiftRequest.reviewedAt = new Date();
   await shiftRequest.save();
 
-  // Create notification to employee
+  // Sync Approval record
   try {
+    const approvalStatus = status === 'APPROVED' ? 'APPROVED' : (status === 'REJECTED' ? 'REJECTED' : 'PENDING');
+    await Approval.updateOne(
+      { organisationId, entityId: requestId, status: 'PENDING' },
+      {
+        $set: {
+          status: approvalStatus,
+          decidedByUserId: userId,
+          decisionReason: String(reviewNotes || '').trim(),
+          decidedAt: new Date(),
+        },
+      }
+    );
+  } catch (_) {}
+
+  // Create canonical notification to employee
+  try {
+    const recipientUser = await User.findOne({ organisationId, userId: shiftRequest.employeeUserId }).select('email role').lean();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const eventType = status === 'APPROVED' ? 'SHIFT_CHANGE_APPROVED' : 'SHIFT_CHANGE_REJECTED';
     await Notification.create({
+      notificationId: notifId,
       organisationId,
-      userId: shiftRequest.employeeUserId,
-      type: 'SHIFT_CHANGE_UPDATE',
+      cafeId: shiftRequest.cafeId,
+      eventType,
+      category: 'OPERATIONS',
+      recipientUserId: shiftRequest.employeeUserId,
+      recipientRole: recipientUser?.role || 'STAFF',
+      recipientEmail: recipientUser?.email || `${String(shiftRequest.employeeUserId).toLowerCase()}@zamorincafe.com`,
       title: `Shift Change Request ${status}`,
-      body: `Your shift change request for ${shiftRequest.requestedDate} has been updated to ${status}.`,
-      data: { requestId: shiftRequest.requestId, status },
+      message: `Your shift change request for ${shiftRequest.requestedDate} was ${status.toLowerCase()}.${reviewNotes ? ' Notes: ' + reviewNotes : ''}`,
+      priority: 'NORMAL',
+      channels: ['IN_APP'],
+      deepLink: `#staff-attendance`,
+      sourceModule: 'ATTENDANCE',
+      sourceEntityType: 'SHIFT_CHANGE',
+      sourceEntityId: shiftRequest.requestId,
+      createdBy: userId,
     });
-  } catch (e) {}
+  } catch (e) {
+    console.warn(`[SHIFT_CHANGE_NOTIF_WARN] ${e.message}`);
+  }
 
   try {
     await recordRequestAudit({

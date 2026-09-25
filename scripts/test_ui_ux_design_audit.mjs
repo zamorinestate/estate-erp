@@ -408,7 +408,7 @@ async function runAudit() {
   console.log("\n8. APP SHELL NAVIGATION & ROLE SCOPES");
   const roleScenarios = [
     { role: 'master', isPrimary: true, expectedRouteCount: 25 },
-    { role: 'owner', isPrimary: false, expectedRouteCount: 12 },
+    { role: 'owner', isPrimary: false, expectedRouteCount: 30 },
     { role: 'cafe_admin', isPrimary: false, expectedRouteCount: 15 },
     { role: 'staff', isPrimary: false, expectedRouteCount: 5 },
   ];

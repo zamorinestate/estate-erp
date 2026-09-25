@@ -40,6 +40,7 @@
   "author": "Zamorin Cafe Operations Engineering",
   "license": "UNLICENSED",
   "devDependencies": {
+    "happy-dom": "^20.14.5",
     "puppeteer-core": "^25.9.0"
   }
 }

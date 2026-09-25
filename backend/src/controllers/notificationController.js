@@ -44,8 +44,17 @@ function parsePositiveInteger(
 function buildNotificationFilter(request) {
   const filter = {
     organisationId: request.auth.organisationId,
-    recipientUserId: request.auth.userId,
   };
+
+  if (request.auth.role === 'MASTER') {
+    filter.$or = [
+      { recipientUserId: request.auth.userId },
+      { recipientUserId: 'MU-0001' },
+      { recipientRole: 'MASTER' },
+    ];
+  } else {
+    filter.recipientUserId = request.auth.userId;
+  }
 
   const filterTab = String(request.query.filterTab || request.query.tab || '').trim().toUpperCase();
 

@@ -10,7 +10,9 @@ const VERCEL_API_BASE_URL = "https://zamorin-cafe-erp.vercel.app/api/v1";
 
 const DEFAULT_API_BASE_URL =
   typeof globalThis.location !== "undefined" &&
-  globalThis.location.hostname.includes("vercel.app")
+  (globalThis.location.hostname === "localhost" ||
+   globalThis.location.hostname === "127.0.0.1" ||
+   globalThis.location.hostname.includes("vercel.app"))
     ? "/api/v1"
     : VERCEL_API_BASE_URL;
 
@@ -410,7 +412,7 @@ export const SessionState = Object.freeze({
   DEV_PREVIEW: "DEV_PREVIEW",
 });
 
-let currentSessionState = SessionState.AUTHENTICATED;
+let currentSessionState = SessionState.INITIALISING;
 const sessionExpirationListeners = new Set();
 let hasDispatchedSessionExpiryAlert = false;
 
@@ -441,11 +443,14 @@ export function resetSessionExpiryAlert() {
 
 export function setSessionState(newState) {
   if (Object.values(SessionState).includes(newState)) {
+    const prevState = currentSessionState;
     currentSessionState = newState;
     if (newState === SessionState.AUTHENTICATED) {
       resetSessionExpiryAlert();
     } else if (newState === SessionState.EXPIRED || newState === SessionState.SIGNED_OUT) {
-      notifySessionExpired();
+      if (prevState === SessionState.AUTHENTICATED) {
+        notifySessionExpired();
+      }
     }
   }
 }
@@ -571,6 +576,9 @@ export class ApiClientError extends Error {
 export function mapErrorToUserMessage(code, status, fallbackMessage) {
   const sanitizeFallback = (msg) => {
     if (!msg || typeof msg !== "string") return null;
+    if (/jwt|TokenExpiredError|JsonWebTokenError|Bearer\s+(undefined|null)|signature/i.test(msg)) {
+      return "Your authenticated session could not be validated. Please sign in again.";
+    }
     if (/MongoServerError|MongooseError|CastError|at\s+[\w\.]+\s+\(|\\Users\\|\/home\/|localhost|\.js:\d+/i.test(msg)) {
       return "The request could not be completed.";
     }
@@ -588,8 +596,10 @@ export function mapErrorToUserMessage(code, status, fallbackMessage) {
     case "INVALID_OR_EXPIRED_SESSION":
     case "AUTHENTICATION_REQUIRED":
     case "AUTH_SESSION_INVALID":
-    case "INVALID_CREDENTIALS":
       return "Your authenticated session could not be validated. Please sign in again.";
+    case "INVALID_CREDENTIALS":
+    case "INVALID_LOGIN":
+      return safeFallback || "Invalid email or password. Please verify your credentials and try again.";
     case "ROLE_CHANGED":
       return "Your access role has changed. Please sign in again.";
     case "SECURITY_VERSION_CHANGED":
@@ -636,7 +646,7 @@ export function mapErrorToUserMessage(code, status, fallbackMessage) {
       return "Too many requests. Please wait a moment before trying again.";
     default:
       if (status === 400) return safeFallback || "Please check your input values and try again.";
-      if (status === 401) return "Your authenticated session could not be validated. Please sign in again.";
+      if (status === 401) return safeFallback || "Your authenticated session could not be validated. Please sign in again.";
       if (status === 403) return "You do not have permission to perform this action.";
       if (status === 404) return "The requested record could not be found.";
       if (status === 408) return "The request timed out. Please check your connection and try again.";

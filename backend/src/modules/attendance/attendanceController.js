@@ -58,6 +58,14 @@ const {
 } = require('../../models/SequenceCounter');
 
 const {
+  Approval,
+} = require('../../models/Approval');
+
+const {
+  Notification,
+} = require('../../models/Notification');
+
+const {
   asyncHandler,
 } = require('../../utils/asyncHandler');
 
@@ -1905,6 +1913,69 @@ const requestStaffCorrection = asyncHandler(async (request, response) => {
     metadata: { userId, cafeId, businessDate, reason: reason.trim() },
   });
 
+  // Create Master Approval and in-app Notification for Primary Master
+  try {
+    let approvalId;
+    try {
+      approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+      });
+    } catch {
+      const apprCount = await Approval.countDocuments({ organisationId });
+      approvalId = `APP-${String(apprCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
+    }
+
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId,
+      entityType: 'ATTENDANCE_CORRECTION',
+      entityId: requestId,
+      requestingUserId: userId,
+      actionRequired: `Attendance Correction: ${businessDate} (${userId})`,
+      amountPaisa: 0,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const recipientUserIds = new Set(masterUsers.map((m) => m.userId));
+    recipientUserIds.add('MU-0001');
+
+    const notifDateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const masterId of recipientUserIds) {
+      const mUser = masterUsers.find((m) => m.userId === masterId);
+      const notifId = `NT-${notifDateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        cafeId: cafeId || 'ALL',
+        eventType: 'ATTENDANCE_CORRECTION_REQUESTED',
+        category: 'OPERATIONS',
+        recipientUserId: masterId,
+        recipientRole: 'MASTER',
+        recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
+        title: `⏱️ Attendance Correction: ${userId}`,
+        message: `${userId} requested attendance correction for ${businessDate}. Reason: ${reason.trim()}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: '#approvals',
+        sourceModule: 'ATTENDANCE',
+        sourceEntityType: 'ATTENDANCE_CORRECTION',
+        sourceEntityId: requestId,
+        deduplicationKey: `ACR_${requestId}_${Date.now()}_${masterId}`,
+        correlationId: request.correlationId || `CORR-ACR-${requestId}-${Math.floor(1000 + Math.random() * 9000)}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
+        createdBy: userId,
+      });
+    }
+  } catch (apprErr) {
+    console.warn(`[ATTENDANCE_APPROVAL_WARN] ${apprErr.message}`);
+  }
+
   return response.status(201).json({
     success: true,
     message: 'Correction request submitted for review.',
@@ -2035,6 +2106,53 @@ const reviewStaffCorrection = asyncHandler(async (request, response) => {
 
   if (typeof correctionRequest.save === 'function') {
     await correctionRequest.save();
+  }
+
+  // Sync Master Approval status
+  try {
+    await Approval.findOneAndUpdate(
+      {
+        organisationId: request.auth.organisationId,
+        entityType: 'ATTENDANCE_CORRECTION',
+        entityId: requestId,
+        status: 'PENDING',
+      },
+      {
+        status: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+        decidedByUserId: request.auth.userId,
+        decidedAt: new Date(),
+        decisionReason: String(remarks).trim(),
+      }
+    );
+  } catch (syncErr) {
+    console.warn(`[ATTENDANCE_APPROVAL_SYNC_WARN] ${syncErr.message}`);
+  }
+
+  // Notify Staff User of Decision
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    await Notification.create({
+      notificationId: notifId,
+      organisationId: request.auth.organisationId,
+      cafeId: correctionRequest.cafeId,
+      eventType: decision === 'APPROVE' ? 'ATTENDANCE_CORRECTION_APPROVED' : 'ATTENDANCE_CORRECTION_REJECTED',
+      category: 'OPERATIONS',
+      recipientUserId: correctionRequest.userId,
+      recipientRole: 'STAFF',
+      recipientEmail: `${String(correctionRequest.userId).toLowerCase()}@zamorincafe.com`,
+      title: `Attendance Correction ${decision === 'APPROVE' ? 'Approved' : 'Rejected'}`,
+      message: `Your attendance correction request for ${correctionRequest.businessDate} was ${decision === 'APPROVE' ? 'approved' : 'rejected'}.${remarks ? ' Reason: ' + remarks : ''}`,
+      priority: 'NORMAL',
+      channels: ['IN_APP'],
+      deepLink: '#staff-attendance',
+      sourceModule: 'ATTENDANCE',
+      sourceEntityType: 'ATTENDANCE_CORRECTION',
+      sourceEntityId: requestId,
+      createdBy: request.auth.userId,
+    });
+  } catch (notifErr) {
+    console.warn(`[ATTENDANCE_NOTIF_WARN] ${notifErr.message}`);
   }
 
   await recordRequestAudit({

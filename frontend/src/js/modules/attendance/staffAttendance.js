@@ -1129,6 +1129,32 @@ export function wireStaffAttendance(root) {
     updateNavTabs();
   }
 
+  // 6. Direct click delegation on root container for reliable button handling
+  root.addEventListener("click", (e) => {
+    // Button 1: Request Attendance Correction
+    const corrBtn = e.target.closest("#btn-request-correction-today, #btn-new-correction, #btn-fix-missing-punch, .btn-trigger-correction");
+    if (corrBtn) {
+      e.preventDefault();
+      openCorrectionModal(() => {
+        refreshTabContent();
+        loadInitialData();
+      });
+      return;
+    }
+
+    // Button 5: Shift Change / Availability Request
+    const scBtn = e.target.closest("#btn-open-shift-change, .btn-trigger-shift-change");
+    if (scBtn) {
+      e.preventDefault();
+      const date = scBtn.dataset.shiftDate;
+      const shiftName = scBtn.dataset.shiftName;
+      openShiftChangeModal(() => {
+        loadInitialData();
+      }, { requestedDate: date, currentShift: shiftName });
+      return;
+    }
+  });
+
   loadInitialData();
 }
 

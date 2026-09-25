@@ -2,7 +2,7 @@
 // ZAMORIN CAFÉ ERP — SERVICE WORKER (PWA & OFFLINE KIOSK ENGINE)
 // =============================================================================
 
-const CACHE_VERSION = 'zamorin-pwa-v2.8.0';
+const CACHE_VERSION = 'zamorin-pwa-v3.5.4';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 
@@ -11,6 +11,8 @@ const PRECACHE_SHELL = [
   './index.html',
   './manifest.json',
   './src/styles/tokens.css',
+  './src/styles/tailwind.css',
+  './src/styles/flowbite-integration.css',
   './src/styles/layout.css',
   './src/styles/components.css',
   './src/styles/zamorin.css',

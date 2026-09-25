@@ -2,8 +2,7 @@
    ZAMORIN CAFE ERP — DESIGN SYSTEM v3 TOKENS
    "Ledger & Roastery" — premium multi-café ERP aesthetic
    ========================================================================= */
-
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+/* Fonts loaded asynchronously via HTML link preload */
 
 :root {
   /* ---- Brand Ink (sampled from Zamorin Estate mark) ---- */

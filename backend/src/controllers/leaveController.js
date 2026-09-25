@@ -10,6 +10,9 @@
  */
 
 const { LeaveRequest, LEAVE_STATUSES, LEAVE_TYPES } = require('../models/LeaveRequest');
+const { Approval } = require('../models/Approval');
+const { Notification } = require('../models/Notification');
+const { User } = require('../models/User');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
@@ -449,6 +452,68 @@ const applyLeave = asyncHandler(async (request, response) => {
 
   await leave.save();
 
+  try {
+    let approvalId;
+    try {
+      approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+      });
+    } catch {
+      const approvalCount = await Approval.countDocuments({ organisationId });
+      approvalId = `APP-${String(approvalCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
+    }
+
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId,
+      entityType: 'LEAVE_REQUEST',
+      entityId: leave.leaveId,
+      requestingUserId: userId,
+      actionRequired: `Leave Request: ${diffDays} day(s) (${leaveType})`,
+      amountPaisa: 0,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const recipientIds = new Set(masterUsers.map((m) => m.userId));
+    recipientIds.add('MU-0001');
+
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const masterId of recipientIds) {
+      const mUser = masterUsers.find((m) => m.userId === masterId);
+      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        cafeId: cafeId || 'ALL',
+        eventType: 'LEAVE_REQUESTED',
+        category: 'OPERATIONS',
+        recipientUserId: masterId,
+        recipientRole: 'MASTER',
+        recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
+        title: `🌴 Leave Request: ${userId}`,
+        message: `${userId} applied for ${diffDays} day(s) of ${leaveType} leave (${startDate} to ${endDate}). Reason: ${reason.trim()}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'LEAVE',
+        sourceEntityType: 'LEAVE_REQUEST',
+        sourceEntityId: leave.leaveId,
+        deduplicationKey: `LR_${leave.leaveId}_${Date.now()}_${masterId}`,
+        correlationId: request.correlationId || `CORR-LR-${leave.leaveId}-${Math.floor(1000 + Math.random() * 9000)}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
+        createdBy: userId,
+      });
+    }
+  } catch (notifErr) {
+    console.warn(`[LEAVE_APPROVAL_HOOK_WARN] ${notifErr.message}`);
+  }
+
   await recordRequestAudit({
     request,
     module: 'LEAVE',
@@ -538,6 +603,13 @@ const withdrawLeave = asyncHandler(async (request, response) => {
   leave.status = 'WITHDRAWN';
   await leave.save();
 
+  try {
+    await Approval.updateOne(
+      { organisationId, entityId: leave.leaveId, status: 'PENDING' },
+      { $set: { status: 'REJECTED', decisionReason: 'Withdrawn by requester', decidedAt: new Date(), decidedByUserId: userId } }
+    );
+  } catch (_) {}
+
   await recordRequestAudit({
     request,
     module: 'LEAVE',
@@ -580,6 +652,49 @@ const cancelLeave = asyncHandler(async (request, response) => {
   leave.cancellationReason = reason.trim();
   leave.cancellationRequestedAt = new Date();
   await leave.save();
+
+  try {
+    const approvalCount = await Approval.countDocuments({ organisationId });
+    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId: leave.cafeId,
+      entityType: 'LEAVE_CANCELLATION',
+      entityId: leave.leaveId,
+      requestingUserId: userId,
+      actionRequired: `Leave Cancellation: ${leave.requestedDays} day(s) (${leave.leaveType})`,
+      amountPaisa: 0,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const m of masterUsers) {
+      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        cafeId: leave.cafeId,
+        eventType: 'LEAVE_CANCELLATION_REQUESTED',
+        category: 'OPERATIONS',
+        recipientUserId: m.userId,
+        recipientRole: 'MASTER',
+        recipientEmail: m.email || 'master@zamorincafe.com',
+        title: `🚫 Leave Cancellation: ${userId}`,
+        message: `${userId} requested cancellation of leave ${leave.leaveId} (${leave.startDate} to ${leave.endDate}). Reason: ${reason.trim()}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'LEAVE',
+        sourceEntityType: 'LEAVE_CANCELLATION',
+        sourceEntityId: leave.leaveId,
+        createdBy: userId,
+      });
+    }
+  } catch (notifErr) {
+    console.warn(`[LEAVE_CANCEL_HOOK_WARN] ${notifErr.message}`);
+  }
 
   await recordRequestAudit({
     request,

@@ -16,6 +16,10 @@ const { ExpensePolicy } = require('../models/ExpensePolicy');
 const { CorporateCardTransaction } = require('../models/CorporateCardTransaction');
 const { OperationalAdvance } = require('../models/OperationalAdvance');
 const { SequenceCounter } = require('../models/SequenceCounter');
+const { Approval } = require('../models/Approval');
+const { Notification } = require('../models/Notification');
+const { NotificationOutbox } = require('../models/NotificationOutbox');
+const { User } = require('../models/User');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
@@ -341,6 +345,51 @@ const createExpense = asyncHandler(async (request, response) => {
     createdBy: userId,
   });
 
+  if (!isDraft) {
+    try {
+      const approvalCount = await Approval.countDocuments({ organisationId });
+      const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+      await Approval.create({
+        approvalId,
+        organisationId,
+        cafeId,
+        entityType: 'EXPENSE',
+        entityId: expense.expenseId,
+        requestingUserId: userId,
+        actionRequired: `Expense Claim: ₹${(totalPaisa / 100).toFixed(2)} (${expense.purpose || expense.category})`,
+        amountPaisa: totalPaisa,
+        status: 'PENDING',
+      });
+
+      const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+      const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      for (const m of masterUsers) {
+        const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+        await Notification.create({
+          notificationId: notifId,
+          organisationId,
+          cafeId,
+          eventType: 'EXPENSE_SUBMITTED',
+          category: 'FINANCE',
+          recipientUserId: m.userId,
+          recipientRole: 'MASTER',
+          recipientEmail: m.email || 'master@zamorincafe.com',
+          title: `🧾 Expense Claim: ${expense.expenseId}`,
+          message: `${userId} submitted an expense claim of ₹${(totalPaisa / 100).toFixed(2)} (${expense.purpose || expense.category}) for ${cafeId}.`,
+          priority: 'NORMAL',
+          channels: ['IN_APP'],
+          deepLink: `#approvals`,
+          sourceModule: 'EXPENSES',
+          sourceEntityType: 'EXPENSE',
+          sourceEntityId: expense.expenseId,
+          createdBy: userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[EXPENSE_APPROVAL_HOOK_WARN] ${err.message}`);
+    }
+  }
+
   return response.status(201).json({
     message: isDraft ? 'Expense draft saved.' : 'Expense recorded and submitted for approval.',
     expense,
@@ -422,6 +471,57 @@ const submitExpense = asyncHandler(async (request, response) => {
   expense.updatedBy = userId;
   await expense.save();
 
+  try {
+    const existing = await Approval.findOne({ organisationId, entityId: expense.expenseId });
+    if (existing) {
+      existing.status = 'PENDING';
+      existing.actionRequired = `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`;
+      existing.amountPaisa = expense.totalPaisa || 0;
+      await existing.save();
+    } else {
+      const approvalCount = await Approval.countDocuments({ organisationId });
+      const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+      await Approval.create({
+        approvalId,
+        organisationId,
+        cafeId: expense.cafeId,
+        entityType: 'EXPENSE',
+        entityId: expense.expenseId,
+        requestingUserId: userId,
+        actionRequired: `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`,
+        amountPaisa: expense.totalPaisa || 0,
+        status: 'PENDING',
+      });
+    }
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const m of masterUsers) {
+      const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        cafeId: expense.cafeId,
+        eventType: 'EXPENSE_SUBMITTED',
+        category: 'FINANCE',
+        recipientUserId: m.userId,
+        recipientRole: 'MASTER',
+        recipientEmail: m.email || 'master@zamorincafe.com',
+        title: `🧾 Expense Claim: ${expense.expenseId}`,
+        message: `${userId} submitted an expense claim of ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category}) for ${expense.cafeId}.`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'EXPENSES',
+        sourceEntityType: 'EXPENSE',
+        sourceEntityId: expense.expenseId,
+        createdBy: userId,
+      });
+    }
+  } catch (err) {
+    console.warn(`[EXPENSE_APPROVAL_HOOK_WARN] ${err.message}`);
+  }
+
   return response.status(200).json({
     message: 'Expense submitted for approval.',
     expense,
@@ -482,6 +582,52 @@ const decideExpense = asyncHandler(async (request, response) => {
   expense.decisionReason = reason;
   expense.updatedBy = userId;
   await expense.save();
+
+  // Sync Approval
+  try {
+    const approvalStatus = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    await Approval.updateOne(
+      { organisationId, entityId: expenseId, status: 'PENDING' },
+      {
+        $set: {
+          status: approvalStatus,
+          decidedByUserId: userId,
+          decisionReason: reason || (decision === 'RETURN' ? 'Returned for rework' : ''),
+          decidedAt: new Date(),
+        },
+      }
+    );
+  } catch (_) {}
+
+  // Notify preparer / owner
+  try {
+    const recipientId = expense.preparerUserId || expense.ownerUserId || expense.createdBy;
+    const recipientUser = await User.findOne({ organisationId, userId: recipientId }).select('email role').lean();
+    const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const eventType = decision === 'APPROVE' ? 'EXPENSE_APPROVED' : (decision === 'RETURN' ? 'EXPENSE_RETURNED' : 'EXPENSE_REJECTED');
+    const decisionText = decision === 'APPROVE' ? 'Approved' : (decision === 'RETURN' ? 'Returned' : 'Rejected');
+
+    await Notification.create({
+      notificationId: notifId,
+      organisationId,
+      cafeId: expense.cafeId,
+      eventType,
+      category: 'FINANCE',
+      recipientUserId: recipientId,
+      recipientRole: recipientUser?.role || 'CAFE_ADMIN',
+      recipientEmail: recipientUser?.email || `${String(recipientId).toLowerCase()}@zamorincafe.com`,
+      title: `Expense ${expense.expenseId} ${decisionText}`,
+      message: `Your expense claim ${expense.expenseId} (₹${((expense.totalPaisa || 0) / 100).toFixed(2)}) has been ${decisionText.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
+      priority: 'NORMAL',
+      channels: ['IN_APP'],
+      deepLink: `#expenses?expenseId=${expense.expenseId}`,
+      sourceModule: 'EXPENSES',
+      sourceEntityType: 'EXPENSE',
+      sourceEntityId: expense.expenseId,
+      createdBy: userId,
+    });
+  } catch (_) {}
 
   return response.status(200).json({
     message: `Expense ${decision.toLowerCase()}d successfully.`,

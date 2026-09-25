@@ -247,7 +247,7 @@ function renderOverviewTab() {
               </div>
 
               <!-- Submit Button -->
-              <button class="btn btn-primary btn-block" id="btn-submit-leave" style="padding:12px; font-weight:800; font-size:14px; margin-top:4px;">
+              <button class="btn btn-primary btn-block" id="btn-submit-leave" type="button" style="padding:12px; font-weight:800; font-size:14px; margin-top:4px;">
                 Submit Leave Request
               </button>
             </div>
@@ -629,10 +629,10 @@ function renderStatementTab() {
         </div>
 
         <div class="flex justify-end gap-sm" style="margin-top:20px;">
-          <button class="btn btn-secondary" id="btn-export-leave-csv">
+          <button class="btn btn-secondary" id="btn-export-leave-csv" type="button">
             Export CSV
           </button>
-          <button class="btn btn-primary" onclick="window.print()">
+          <button class="btn btn-primary" id="btn-print-leave-statement" type="button">
             ${icon("printer", 14)} Print Full Statement
           </button>
         </div>
@@ -896,9 +896,12 @@ export function wireStaffLeave(root) {
       refreshTabContent();
     });
 
-    // Export CSV
+    // Export CSV & Print Statement
     container.querySelector("#btn-export-leave-csv")?.addEventListener("click", () => {
       exportLeaveCsv();
+    });
+    container.querySelector("#btn-print-leave-statement")?.addEventListener("click", () => {
+      printLeaveStatement();
     });
   }
 
@@ -916,6 +919,22 @@ export function wireStaffLeave(root) {
       updateNavTabs();
       refreshTabContent();
     });
+  });
+
+  // Direct click delegation on root for reliable button clicks
+  root.addEventListener("click", (e) => {
+    const csvBtn = e.target.closest("#btn-export-leave-csv");
+    if (csvBtn) {
+      e.preventDefault();
+      exportLeaveCsv();
+      return;
+    }
+    const printBtn = e.target.closest("#btn-print-leave-statement");
+    if (printBtn) {
+      e.preventDefault();
+      printLeaveStatement();
+      return;
+    }
   });
 
   loadInitialData();
@@ -1125,3 +1144,123 @@ function exportLeaveCsv() {
   document.body.removeChild(link);
   showToast("Leave statement CSV downloaded ✓", "mint");
 }
+
+function printLeaveStatement() {
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    showToast("Allow pop-ups to print or save the leave statement.", "amber");
+    return;
+  }
+
+  const u = state.user || {};
+  const todayStr = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+  const balanceRows = (cachedBalances || []).map((b) => `
+    <tr>
+      <td style="font-weight:600;">${b.name || b.type || 'Leave'}</td>
+      <td style="text-align:right;">${Number(b.totalAnnualQuota || b.quota || 0).toFixed(1)}</td>
+      <td style="text-align:right;color:#dc2626;">${Number(b.usedYtd || b.used || 0).toFixed(1)}</td>
+      <td style="text-align:right;font-weight:700;color:#16a34a;">${Number(b.balance || 0).toFixed(1)}</td>
+    </tr>
+  `).join("");
+
+  const requestRows = (cachedRequests && cachedRequests.length > 0)
+    ? cachedRequests.map((r) => `
+      <tr>
+        <td style="font-family:monospace;font-size:11px;">${r.id || '—'}</td>
+        <td style="font-weight:600;">${r.type || '—'}</td>
+        <td>${r.dates || (r.startDate + (r.endDate && r.endDate !== r.startDate ? ' to ' + r.endDate : ''))}</td>
+        <td style="text-align:right;">${r.days ?? 1}</td>
+        <td><span style="font-weight:600;font-size:11px;">${r.status || 'PENDING'}</span></td>
+        <td style="font-size:11px;color:#475569;">${r.reason || '—'}</td>
+      </tr>
+    `).join("")
+    : '<tr><td colspan="6" style="text-align:center;padding:16px;color:#64748b;">No leave history records found.</td></tr>';
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Leave Statement — ${u.name || u.userId || 'Staff'} — Zamorin Cafe ERP</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 24px; color: #0f172a; font-size: 13px; line-height: 1.4; }
+    .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px; }
+    .company { font-size: 18px; font-weight: bold; text-transform: uppercase; color: #1e293b; letter-spacing: 0.5px; }
+    .title { font-size: 14px; font-weight: 600; color: #475569; margin-top: 4px; }
+    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; font-size: 12px; }
+    .meta-item { display: flex; justify-content: space-between; padding: 4px 8px; background: #f8fafc; border-radius: 4px; border: 1px solid #e2e8f0; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 12px; }
+    th { background: #f1f5f9; color: #334155; text-align: left; font-weight: 600; }
+    .section-title { font-size: 13px; font-weight: 700; color: #1e293b; margin: 14px 0 6px 0; text-transform: uppercase; letter-spacing: 0.5px; }
+    .footer { margin-top: 24px; font-size: 10.5px; color: #64748b; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+    @media print { body { margin: 12mm; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="company">Zamorin Speciality Coffee &amp; Kitchens Pvt. Ltd.</div>
+    <div class="title">Official Employee Leave Statement &amp; Entitlement Record</div>
+    <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Generated on: ${todayStr} · Zamorin Cafe ERP System</div>
+  </div>
+
+  <div class="meta-grid">
+    <div class="meta-item"><span>Employee ID:</span><strong>${u.userId || 'STAFF'}</strong></div>
+    <div class="meta-item"><span>Employee Name:</span><strong>${u.name || 'Staff Member'}</strong></div>
+    <div class="meta-item"><span>Designation:</span><strong>${u.designation || 'Team Member'}</strong></div>
+    <div class="meta-item"><span>Assigned Outlet:</span><strong>${u.primaryCafeName || u.primaryCafeId || 'ZC-0001'}</strong></div>
+  </div>
+
+  <div class="section-title">Leave Entitlements &amp; Balances</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Leave Category</th>
+        <th style="text-align:right;">Annual Quota</th>
+        <th style="text-align:right;">Days Consumed</th>
+        <th style="text-align:right;">Available Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${balanceRows}
+    </tbody>
+  </table>
+
+  <div class="section-title">Leave Request History &amp; Status</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Request ID</th>
+        <th>Type</th>
+        <th>Dates</th>
+        <th style="text-align:right;">Days</th>
+        <th>Status</th>
+        <th>Reason / Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${requestRows}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    This is an authoritative computer-generated leave statement issued by Zamorin Cafe ERP. All approvals are recorded in the central audit ledger.
+  </div>
+</body>
+</html>`;
+
+  printWindow.opener = null;
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+
+  printWindow.addEventListener(
+    "load",
+    () => {
+      printWindow.focus();
+      printWindow.print();
+    },
+    { once: true }
+  );
+}
+

@@ -28,6 +28,8 @@ const { PrivacyRequest } = require('../models/PrivacyRequest');
 const { RolePermission } = require('../models/RolePermission');
 const { Delegation } = require('../models/Delegation');
 const { SequenceCounter } = require('../models/SequenceCounter');
+const { Approval } = require('../models/Approval');
+const { Notification } = require('../models/Notification');
 const auditService = require('../services/auditService');
 const ApiError = require('../utils/ApiError');
 
@@ -274,6 +276,48 @@ async function submitProfileChangeRequest(req, res) {
   });
 
   await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: req.user.role, module: 'SETTINGS', action: 'PROFILE_CHANGE_REQUEST_SUBMITTED', entityType: 'PROFILE_CHANGE_REQUEST', entityId: pcr.requestId, metadata: { requestType, title } });
+
+  try {
+    const approvalCount = await Approval.countDocuments({ organisationId });
+    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId: null,
+      entityType: 'PROFILE_CHANGE',
+      entityId: pcr.requestId,
+      requestingUserId: userId,
+      actionRequired: `Profile Change: ${requestType}`,
+      amountPaisa: 0,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const m of masterUsers) {
+      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        eventType: 'PROFILE_CHANGE_REQUESTED',
+        category: 'OPERATIONS',
+        recipientUserId: m.userId,
+        recipientRole: 'MASTER',
+        recipientEmail: m.email || 'master@zamorincafe.com',
+        title: `👤 Profile Change Request: ${userId}`,
+        message: `${userId} requested a profile update (${requestType}). Reason: ${reason}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'EMPLOYEES',
+        sourceEntityType: 'PROFILE_CHANGE',
+        sourceEntityId: pcr.requestId,
+        createdBy: userId,
+      });
+    }
+  } catch (err) {
+    console.warn(`[SETTINGS_PROFILE_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
+  }
 
   res.status(201).json({
     success: true,

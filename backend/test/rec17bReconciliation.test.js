@@ -81,6 +81,12 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
   before(async () => {
     mongoReplSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoReplSet.getUri());
+    await Promise.all([
+      PurchaseOrder.init().catch(() => {}),
+      Vendor.init().catch(() => {}),
+      APInvoice.init().catch(() => {}),
+      AuditEvent.init().catch(() => {}),
+    ]);
   });
 
   after(async () => {

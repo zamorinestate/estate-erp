@@ -102,10 +102,11 @@ async function main() {
     masterEmail,
   });
 
-  console.log('[dev] Seeding cafes, operational inventory, and active suppliers...');
-  await seedCafeOperationsData(organisationId, masterUser.userId);
-  await seedInventoryData({ organisationId, masterUserId: masterUser.userId });
-  await seedVendorsData({ organisationId, masterUserId: masterUser.userId });
+  const masterId = masterUser?.userId || 'MU-0001';
+  console.log('[dev] Seeding cafes, operational inventory, and active suppliers with masterId:', masterId);
+  await seedCafeOperationsData(organisationId, masterId);
+  await seedInventoryData({ organisationId, masterUserId: masterId });
+  await seedVendorsData({ organisationId, masterUserId: masterId });
 
   console.log(
     `[dev] Seed complete — login: ${masterEmail} / ${masterPassword}`

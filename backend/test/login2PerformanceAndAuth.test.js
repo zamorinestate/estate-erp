@@ -87,7 +87,7 @@ describe('LOGIN-PAGE-2.0 Background & Auth Lifecycle Suite', () => {
     const swPath = path.resolve(__dirname, '../../frontend/sw.js');
     const content = fs.readFileSync(swPath, 'utf8');
 
-    assert.ok(/zamorin-pwa-v2\.[3-9]\.[0-9]/.test(content), 'sw.js must be bumped to current version');
+    assert.ok(/zamorin-pwa-v[234]\.[0-9]+\.[0-9]+/.test(content), 'sw.js must be bumped to current version');
     assert.ok(content.includes('login2.css'), 'sw.js PRECACHE_SHELL must include login2.css');
   });
 

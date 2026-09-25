@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -71,5 +71,28 @@
   <script src="js/screens/cafeOperationsShell.js" defer></script>
   <script src="js/screens/deviceStatusHelp.js" defer></script>
   <script src="js/cafeOpsApp.js" defer></script>
+
+  <!-- PHASE 1 — Flowbite Ecosystem for Cafe Operations Window -->
+  <!-- Flowbite JS: dropdowns, modals, tooltips, clipboard -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.js"
+    defer
+  ></script>
+  <!-- QR Code: Staff attendance QR kiosk + operator QR verification -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"
+    defer
+  ></script>
+  <script>
+    window.addEventListener('load', function() {
+      if (typeof window.initFlowbite === 'function') {
+        try { window.initFlowbite(); } catch(e) {}
+      }
+      if (typeof window.QRCode !== 'undefined') {
+        window.__zamorinQRReady = true;
+      }
+    });
+  </script>
 </body>
 </html>
+

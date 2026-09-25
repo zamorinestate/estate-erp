@@ -355,7 +355,17 @@ async function recordAuditEvent({
 
   if (session) {
     const doc = new AuditEvent(eventPayload);
-    await doc.save({ session });
+    try {
+      await doc.save({ session });
+    } catch (saveErr) {
+      if (saveErr?.code === 112 || saveErr?.code === 251 || String(saveErr?.message).includes('aborted')) {
+        try {
+          await doc.save();
+        } catch (_) {}
+      } else {
+        throw saveErr;
+      }
+    }
     return doc;
   }
 

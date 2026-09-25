@@ -9,8 +9,11 @@
     "serve": "node ../scripts/serve_frontend.js",
     "verify:imports": "node verifyRouterImports.mjs",
     "verify:all": "node ../scripts/verify_all_master.mjs",
-    "audit": "node ../scripts/verify_all_master.mjs",
-    "build": "echo \"Zero-build Vanilla ES Modules — Ready for direct static serving.\""
+    "build:css": "npx @tailwindcss/cli -i src/styles/tailwind-input.css -o src/styles/tailwind.css",
+    "build:css:prod": "npx @tailwindcss/cli -i src/styles/tailwind-input.css -o src/styles/tailwind.css --minify",
+    "build:css:input": "npx @tailwindcss/cli -i input.css -o src/styles/tailwind.css --minify",
+    "build:prod": "npm run build:css:prod",
+    "build": "npm run build:css:prod"
   },
   "keywords": [
     "zamorin-cafe-erp",
@@ -20,5 +23,11 @@
     "pwa"
   ],
   "author": "Zamorin Cafe Operations Engineering",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "main": "sw.js",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "flowbite": "^4.0.2",
+    "tailwindcss": "^4.3.3"
+  }
 }

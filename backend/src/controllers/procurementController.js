@@ -81,6 +81,7 @@ const {
 
 const { Notification } = require('../models/Notification');
 const { User } = require('../models/User');
+const { Approval } = require('../models/Approval');
 
 const fs = require('fs');
 
@@ -260,7 +261,9 @@ async function executeTransactionWithRetry(operationFn, options = {}) {
         (typeof err.hasErrorLabel === 'function' && err.hasErrorLabel('TransientTransactionError')) ||
         (Array.isArray(err.errorLabels) && err.errorLabels.includes('TransientTransactionError')) ||
         err.code === 112 ||
-        String(err.message).includes('WriteConflict');
+        err.code === 251 ||
+        String(err.message).includes('WriteConflict') ||
+        String(err.message).includes('has been aborted');
 
       if (isTransient && transientAttempts < maxTransientRetries) {
         lastTransientError = err;
@@ -1731,6 +1734,32 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
     actorUserId: request.auth.userId,
   });
 
+  try {
+    const existing = await Approval.findOne({ organisationId: request.auth.organisationId, entityId: purchaseOrderId });
+    if (existing) {
+      existing.status = 'PENDING';
+      existing.actionRequired = `Delivery & Bill Approval: ${purchaseOrderId} (${order.cafeId})`;
+      existing.amountPaisa = order.totalPaisa || 0;
+      await existing.save();
+    } else {
+      const approvalCount = await Approval.countDocuments({ organisationId: request.auth.organisationId });
+      const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+      await Approval.create({
+        approvalId,
+        organisationId: request.auth.organisationId,
+        cafeId: order.cafeId,
+        entityType: 'PURCHASE_ORDER',
+        entityId: purchaseOrderId,
+        requestingUserId: request.auth.userId,
+        actionRequired: `Delivery & Bill Approval: ${purchaseOrderId} (${order.cafeId})`,
+        amountPaisa: order.totalPaisa || 0,
+        status: 'PENDING',
+      });
+    }
+  } catch (err) {
+    console.warn(`[PO_APPROVAL_HOOK_WARN] ${err.message}`);
+  }
+
   await recordRequestAudit({
     request,
     module: 'PROCUREMENT',
@@ -1820,6 +1849,50 @@ const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
     category: 'OPERATIONS',
     actorUserId: request.auth.userId,
   });
+
+  // Sync Approval record
+  try {
+    await Approval.updateOne(
+      { organisationId: request.auth.organisationId, entityId: purchaseOrderId, status: 'PENDING' },
+      {
+        $set: {
+          status: 'APPROVED',
+          decidedByUserId: request.auth.userId,
+          decisionReason: String(notes || 'Approved by Master with verified vendor bill').trim(),
+          decidedAt: new Date(),
+        },
+      }
+    );
+  } catch (_) {}
+
+  // Also notify the order creator / café staff
+  try {
+    const creatorUserId = order.createdByUserId || order.lastModifiedByUserId;
+    if (creatorUserId && creatorUserId !== request.auth.userId) {
+      const creatorUser = await User.findOne({ organisationId: request.auth.organisationId, userId: creatorUserId }).select('email role').lean();
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randId = Math.floor(1000 + Math.random() * 9000);
+      await Notification.create({
+        notificationId: `NT-${dateStr}-${randId}`,
+        organisationId: request.auth.organisationId,
+        cafeId: order.cafeId,
+        eventType: 'PURCHASE_ORDER_APPROVED',
+        category: 'OPERATIONS',
+        recipientUserId: creatorUserId,
+        recipientRole: creatorUser?.role || 'CAFE_ADMIN',
+        recipientEmail: creatorUser?.email || `${String(creatorUserId).toLowerCase()}@zamorincafe.com`,
+        title: `✅ Purchase Order Approved: ${purchaseOrderId}`,
+        message: `Master ${request.auth.userId} approved order ${purchaseOrderId} and bills for ${order.cafeId}. Order status is now ${order.status}.`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#procurement?orderId=${purchaseOrderId}`,
+        sourceModule: 'PROCUREMENT',
+        sourceEntityType: 'PURCHASE_ORDER',
+        sourceEntityId: purchaseOrderId,
+        createdBy: request.auth.userId,
+      });
+    }
+  } catch (_) {}
 
   await recordRequestAudit({
     request,

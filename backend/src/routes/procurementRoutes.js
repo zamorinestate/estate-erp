@@ -325,6 +325,18 @@ router.get(
 );
 
 router.get(
+  '/orders/:purchaseOrderId/download-receipt-bill',
+  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
+  downloadOrderReceiptBill
+);
+
+router.get(
+  '/orders/:purchaseOrderId/receipt-bill/download',
+  authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
+  downloadOrderReceiptBill
+);
+
+router.get(
   '/orders/:purchaseOrderId/receipt-bill/:attachmentId',
   authorize('PROCUREMENT_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
   downloadOrderReceiptBill

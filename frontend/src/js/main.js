@@ -18,7 +18,6 @@
 
 import { state, setState } from "./state.js";
 import { NAVIGATION, ROLES, isRouteAllowed } from "./navigation.js";
-import { renderShell, navigate } from "./router.js";
 import {
   apiGet,
   apiPost,
@@ -48,9 +47,38 @@ import {
   wireRegisterPage2,
   showGlassAlert,
   abortActivePasskeyRequests,
-} from "./pages/login2.js?v=3.5.0";
-import { mountPublicCafeGateway } from "./pages/cafeGatewayPage.js";
-import "./responsiveAuditor.js";
+} from "./pages/login2.js?v=3.5.3";
+
+// Lazy-loaded Router Module: Prevents 75+ admin pages (4.5 MB) from loading during initial login screen display
+let routerModulePromise = null;
+export function getRouter() {
+  if (!routerModulePromise) {
+    routerModulePromise = import("./router.js");
+  }
+  return routerModulePromise;
+}
+
+export async function renderShell() {
+  const router = await getRouter();
+  return router.renderShell();
+}
+
+export async function navigate(route, replace = false) {
+  const router = await getRouter();
+  return router.navigate(route, replace);
+}
+
+let cafeGatewayModulePromise = null;
+async function getCafeGateway() {
+  if (!cafeGatewayModulePromise) {
+    cafeGatewayModulePromise = import("./pages/cafeGatewayPage.js");
+  }
+  return cafeGatewayModulePromise;
+}
+
+if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+  import("./responsiveAuditor.js").catch(() => {});
+}
 
 // =============================================================================
 // DEVELOPMENT PREVIEW USERS
@@ -418,6 +446,7 @@ export function mountAuthScreen(screen = "login", params = {}) {
   document.getElementById("zamorin-dev-preview-banner")?.remove();
 
   appEl.className = "auth-screen";
+  document.body?.classList.add("auth-page");
   delete appEl.dataset.shellRole;
 
   if (screen === "login") {
@@ -425,7 +454,22 @@ export function mountAuthScreen(screen = "login", params = {}) {
     triggerBackendWarmup();
 
     const activeCafe = params.cafeContext || null;
-    appEl.innerHTML = renderLoginPage2({ ...params, cafeContext: activeCafe });
+    const existingOrgId = appEl.querySelector("#l2-org-id")?.value;
+    const existingEmail = appEl.querySelector("#l2-email")?.value;
+    const existingPassword = appEl.querySelector("#l2-password")?.value;
+    const hasPreRenderedDom = Boolean(appEl.querySelector("#l2-login-form"));
+
+    if (!hasPreRenderedDom || params.notice || params.error || activeCafe) {
+      appEl.innerHTML = renderLoginPage2({
+        ...params,
+        organisationId: params.organisationId ?? existingOrgId ?? "",
+        email: params.email ?? existingEmail ?? "",
+        cafeContext: activeCafe,
+      });
+      if (existingPassword && appEl.querySelector("#l2-password")) {
+        appEl.querySelector("#l2-password").value = existingPassword;
+      }
+    }
     wireLoginPage2(appEl, {
       onSubmit: async ({ organisationId, email, password, rememberDevice, targetCafeId }) => {
         await handleCompleteLoginFlow({ organisationId, email, password, rememberDevice, targetCafeId });
@@ -912,110 +956,68 @@ function applyAuthenticatedUser(
 // =============================================================================
 
 async function boot() {
-  initLanguage();
+  try {
+    initLanguage();
 
-  document.documentElement.setAttribute(
-    "data-theme",
-    state.settings.theme || "paper"
-  );
+    document.documentElement.setAttribute(
+      "data-theme",
+      state.settings.theme || "paper"
+    );
 
-  document.documentElement.setAttribute(
-    "data-font-size",
-    state.settings.fontSize || "normal"
-  );
+    document.documentElement.setAttribute(
+      "data-font-size",
+      state.settings.fontSize || "normal"
+    );
 
-  // Permanently ensure no dev preview banner exists
-  document.getElementById("zamorin-dev-preview-banner")?.remove();
+    // Permanently ensure no dev preview banner exists
+    document.getElementById("zamorin-dev-preview-banner")?.remove();
 
-  const urlHash =
-    typeof window !== "undefined" && window.location.hash
-      ? window.location.hash.replace(/^#/, "")
-      : "";
+    const urlHash =
+      typeof window !== "undefined" && window.location.hash
+        ? window.location.hash.replace(/^#/, "")
+        : "";
 
-  const params =
-    typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search)
-      : null;
+    const params =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : null;
 
-  // Direct Café Access QR / Link / PIN Gateway Routing (P0-02, P0-02B, REC-03)
-  const pathname = typeof window !== "undefined" ? window.location.pathname : "";
-  const isCShortPath = pathname.startsWith("/c/") || urlHash.startsWith("c/");
-  const isQrPath = isCShortPath || pathname.startsWith("/cafe-access/qr/") || urlHash.startsWith("cafe-access/qr/");
-  const isLinkPath = pathname.startsWith("/cafe-access/link/") || urlHash.startsWith("cafe-access/link/");
-  const isGatewayPath = pathname === "/cafe-gateway" || urlHash === "cafe-gateway";
+    // Direct Café Access QR / Link / PIN Gateway Routing (P0-02, P0-02B, REC-03)
+    const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+    const isCShortPath = pathname.startsWith("/c/") || urlHash.startsWith("c/");
+    const isQrPath = isCShortPath || pathname.startsWith("/cafe-access/qr/") || urlHash.startsWith("cafe-access/qr/");
+    const isLinkPath = pathname.startsWith("/cafe-access/link/") || urlHash.startsWith("cafe-access/link/");
+    const isGatewayPath = pathname === "/cafe-gateway" || urlHash === "cafe-gateway";
 
-  if (isQrPath || isLinkPath || isGatewayPath) {
-    let token = null;
-    if (pathname.startsWith("/c/")) token = pathname.slice("/c/".length);
-    else if (urlHash.startsWith("c/")) token = urlHash.slice("c/".length);
-    else if (pathname.startsWith("/cafe-access/qr/")) token = pathname.slice("/cafe-access/qr/".length);
-    else if (urlHash.startsWith("cafe-access/qr/")) token = urlHash.slice("cafe-access/qr/".length);
-    else if (pathname.startsWith("/cafe-access/link/")) token = pathname.slice("/cafe-access/link/".length);
-    else if (urlHash.startsWith("cafe-access/link/")) token = urlHash.slice("cafe-access/link/".length);
+    if (isQrPath || isLinkPath || isGatewayPath) {
+      let token = null;
+      if (pathname.startsWith("/c/")) token = pathname.slice("/c/".length);
+      else if (urlHash.startsWith("c/")) token = urlHash.slice("c/".length);
+      else if (pathname.startsWith("/cafe-access/qr/")) token = pathname.slice("/cafe-access/qr/".length);
+      else if (urlHash.startsWith("cafe-access/qr/")) token = urlHash.slice("cafe-access/qr/".length);
+      else if (pathname.startsWith("/cafe-access/link/")) token = pathname.slice("/cafe-access/link/".length);
+      else if (urlHash.startsWith("cafe-access/link/")) token = urlHash.slice("cafe-access/link/".length);
 
-    const method = isQrPath ? "QR" : isLinkPath ? "LINK" : null;
+      const method = isQrPath ? "QR" : isLinkPath ? "LINK" : null;
 
-    mountPublicCafeGateway(document.getElementById("app"), { method, token });
-    return;
-  }
-
-  // Direct Auth Screen Routing (0ms instant mount)
-  // Handle /login2 alias -> redirect to canonical /login
-  if (pathname === "/login2" || urlHash === "login2") {
-    if (typeof window !== "undefined" && window.history && window.history.replaceState) {
-      window.history.replaceState(null, "", "/login");
+      const { mountPublicCafeGateway } = await getCafeGateway();
+      mountPublicCafeGateway(document.getElementById("app"), { method, token });
+      return;
     }
-  }
 
-  // If already authenticated in memory, mount the app shell immediately
-  if (state.auth?.authenticated && state.user) {
-    if (pathname === "/login" || pathname === "/login2") {
+    // Direct Auth Screen Routing (0ms instant mount)
+    // Handle /login2 alias -> redirect to canonical /login
+    if (pathname === "/login2" || urlHash === "login2") {
       if (typeof window !== "undefined" && window.history && window.history.replaceState) {
-        window.history.replaceState(null, "", `/#${state.route || "dashboard"}`);
+        window.history.replaceState(null, "", "/login");
       }
     }
-    renderShell();
-    loadAvailableCafes().catch(() => {});
-    registerServiceWorker().catch(() => {});
-    return;
-  }
 
-  const isExplicitAppHash = Boolean(
-    urlHash &&
-    !["login", "login2", "forgot", "mfa", "register", "cafe-gateway"].includes(urlHash) &&
-    !urlHash.startsWith("cafe-access/") &&
-    !urlHash.startsWith("c/")
-  );
-
-  const isLoginRoute = !isExplicitAppHash && (
-    urlHash === "login" ||
-    urlHash === "login2" ||
-    pathname === "/login" ||
-    pathname === "/login2" ||
-    params?.get("auth") === "login"
-  );
-
-  if (isLoginRoute) {
-    mountAuthScreen("login");
-    return;
-  }
-  if (urlHash === "forgot") {
-    mountAuthScreen("forgot");
-    return;
-  }
-  if (urlHash === "mfa") {
-    mountAuthScreen("mfa");
-    return;
-  }
-
-  // Active Authenticated Session Check (Authoritative Backend Session Validation via HttpOnly Cookies & In-Memory Bearer)
-  try {
-    const payload = await apiGet("/auth/me");
-    if (payload?.data?.user) {
-      applyAuthenticatedUser(payload.data.user, urlHash);
+    // If already authenticated in memory, mount the app shell immediately
+    if (state.auth?.authenticated && state.user) {
       if (pathname === "/login" || pathname === "/login2") {
         if (typeof window !== "undefined" && window.history && window.history.replaceState) {
-          window.history.replaceState(null, "", `/#${urlHash || state.route || "dashboard"}`);
+          window.history.replaceState(null, "", `/#${state.route || "dashboard"}`);
         }
       }
       renderShell();
@@ -1023,64 +1025,149 @@ async function boot() {
       registerServiceWorker().catch(() => {});
       return;
     }
-  } catch (_err) {
+
+    // Local development / automated testing persona resolution
+    if (isDirectDashboardAllowed() && (params?.get("role") || params?.get("devRole") || (typeof localStorage !== "undefined" && localStorage.getItem("zamorin-dev-role")))) {
+      const devKey = getRequestedDevRole();
+      const devUser = DEV_PREVIEW_USERS[devKey] || DEV_PREVIEW_USERS.master;
+      const canonicalRole = devKey === "master_normal" ? "master" : devKey;
+      const isPrimary = Boolean(devUser?.isPrimaryMaster);
+      const roleNavigation = NAVIGATION[canonicalRole] || NAVIGATION.master;
+      const defaultRoute = roleNavigation?.items?.[0]?.route || (canonicalRole === "staff" ? "staff-home" : "dashboard");
+      const initialRoute = urlHash ? (isRouteAllowed(canonicalRole, urlHash, isPrimary) ? urlHash : defaultRoute) : defaultRoute;
+
+      setState({
+        auth: {
+          authenticated: true,
+          loading: false,
+          user: devUser,
+          authentication: null,
+          error: null,
+        },
+        user: devUser,
+        isPrimaryMaster: isPrimary,
+        role: canonicalRole,
+        route: initialRoute,
+      });
+
+      renderShell();
+      loadAvailableCafes().catch(() => {});
+      registerServiceWorker().catch(() => {});
+      return;
+    }
+
+    if (urlHash === "forgot") {
+      mountAuthScreen("forgot");
+      return;
+    }
+    if (urlHash === "mfa") {
+      mountAuthScreen("mfa");
+      return;
+    }
+
+    const isExplicitAppHash = Boolean(
+      urlHash &&
+      !["login", "login2", "forgot", "mfa", "register", "cafe-gateway"].includes(urlHash) &&
+      !urlHash.startsWith("cafe-access/") &&
+      !urlHash.startsWith("c/")
+    );
+
+    const isLoginRoute = !isExplicitAppHash && (
+      !urlHash ||
+      urlHash === "login" ||
+      urlHash === "login2" ||
+      pathname === "/" ||
+      pathname === "/login" ||
+      pathname === "/login2" ||
+      params?.get("auth") === "login"
+    );
+
+    if (isLoginRoute) {
+      // Mount login screen synchronously with ZERO latency (0ms perceived load)
+      mountAuthScreen("login");
+
+      // Non-blocking background session probe (HttpOnly cookies or active session)
+      apiGet("/auth/me", { allowRefreshRetry: false }).then((payload) => {
+        if (payload?.data?.user) {
+          applyAuthenticatedUser(payload.data.user, urlHash);
+          if (pathname === "/login" || pathname === "/login2") {
+            if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+              window.history.replaceState(null, "", `/#${urlHash || state.route || "dashboard"}`);
+            }
+          }
+          renderShell();
+          loadAvailableCafes().catch(() => {});
+          registerServiceWorker().catch(() => {});
+        }
+      }).catch(() => {
+        // Unauthenticated session - user remains on already-mounted instant login screen
+      });
+
+      // Idle pre-warming of router in background for instant post-login dashboard transition
+      if (typeof window !== "undefined") {
+        setTimeout(() => { getRouter().catch(() => {}); }, 1500);
+      }
+      return;
+    }
+
+    // Explicit app route requested while unauthenticated in memory:
+    // Validate active backend session before rendering requested route
+    try {
+      const payload = await apiGet("/auth/me", { allowRefreshRetry: false });
+      if (payload?.data?.user) {
+        applyAuthenticatedUser(payload.data.user, urlHash);
+        if (pathname === "/login" || pathname === "/login2") {
+          if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+            window.history.replaceState(null, "", `/#${urlHash || state.route || "dashboard"}`);
+          }
+        }
+        renderShell();
+        loadAvailableCafes().catch(() => {});
+        registerServiceWorker().catch(() => {});
+        return;
+      }
+    } catch (_err) {
+      clearAllAuthTokens();
+    }
+
+    // Unauthenticated fallback: Mount login screen immediately with ZERO latency!
     clearAllAuthTokens();
-  }
-
-  // Local development / automated testing persona resolution
-  if (isDirectDashboardAllowed() && (params?.get("role") || params?.get("devRole") || localStorage.getItem("zamorin-dev-role"))) {
-    const devKey = getRequestedDevRole();
-    const devUser = DEV_PREVIEW_USERS[devKey] || DEV_PREVIEW_USERS.master;
-    const canonicalRole = devKey === "master_normal" ? "master" : devKey;
-    const isPrimary = Boolean(devUser?.isPrimaryMaster);
-    const roleNavigation = NAVIGATION[canonicalRole] || NAVIGATION.master;
-    const defaultRoute = roleNavigation?.items?.[0]?.route || (canonicalRole === "staff" ? "staff-home" : "dashboard");
-    const initialRoute = urlHash ? (isRouteAllowed(canonicalRole, urlHash, isPrimary) ? urlHash : defaultRoute) : defaultRoute;
-
     setState({
       auth: {
-        authenticated: true,
+        authenticated: false,
         loading: false,
-        user: devUser,
+        user: null,
         authentication: null,
         error: null,
       },
-      user: devUser,
-      isPrimaryMaster: isPrimary,
-      role: canonicalRole,
-      route: initialRoute,
+      user: null,
+      role: null,
+      isPrimaryMaster: false,
     });
 
-    renderShell();
-    loadAvailableCafes().catch(() => {});
+    mountAuthScreen("login");
     registerServiceWorker().catch(() => {});
-    return;
+  } catch (bootErr) {
+    console.error("[Zamorin Boot Error]", bootErr);
+    mountAuthScreen("login");
   }
-
-  // Unauthenticated: Mount login screen immediately with ZERO latency!
-  clearAllAuthTokens();
-  setState({
-    auth: {
-      authenticated: false,
-      loading: false,
-      user: null,
-      authentication: null,
-      error: null,
-    },
-    user: null,
-    isPrimaryMaster: false,
-  });
-
-  mountAuthScreen("login");
-  registerServiceWorker().catch(() => {});
 }
 
 // =============================================================================
-// HASH ROUTING
+// HASH ROUTING & SAFETY NETS
 // =============================================================================
 
 if (typeof window !== "undefined") {
-  window.addEventListener("hashchange", () => {
+  window.zamorinMountAuthScreen = mountAuthScreen;
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    if (reason && (reason.name === "ApiClientError" || reason.status === 401 || reason.status === 403)) {
+      event.preventDefault();
+    }
+  });
+
+  window.addEventListener("hashchange", async () => {
     abortActivePasskeyRequests();
     const rawHash = window.location.hash.replace(/^#/, "");
     if (rawHash === "login" || rawHash === "login2") {
@@ -1098,6 +1185,7 @@ if (typeof window !== "undefined") {
       const isLink = rawHash.startsWith("cafe-access/link/");
       const token = isCShort ? rawHash.slice("c/".length) : isQr ? rawHash.slice("cafe-access/qr/".length) : isLink ? rawHash.slice("cafe-access/link/".length) : null;
       const method = isQr ? "QR" : isLink ? "LINK" : null;
+      const { mountPublicCafeGateway } = await getCafeGateway();
       mountPublicCafeGateway(document.getElementById("app"), { method, token });
     } else if (rawHash && state.route !== rawHash) {
       navigate(rawHash);
@@ -1112,6 +1200,13 @@ if (typeof window !== "undefined") {
 // Session expiry automatic routing to canonical Login 2.0
 if (typeof window !== "undefined") {
   addSessionExpirationListener(() => {
+    const rawHash = (window.location.hash || "").replace(/^#/, "");
+    const pathname = window.location.pathname;
+    const isLogin = rawHash === "login" || rawHash === "login2" || pathname === "/login" || pathname === "/login2";
+    if (isLogin && state.auth?.authenticated === false) {
+      return;
+    }
+
     clearAllAuthTokens();
     setState({
       auth: { authenticated: false, loading: false, user: null, authentication: null, error: null },
@@ -1123,11 +1218,70 @@ if (typeof window !== "undefined") {
   });
 }
 
-if (typeof document !== "undefined") {
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
-  } else {
-    boot();
+// =============================================================================
+// FLOWBITE DARK MODE SWITCHER
+// =============================================================================
+export function initDarkModeSwitcher() {
+  var themeToggleDarkIcon = document.getElementById('theme-toggle-dark-icon');
+  var themeToggleLightIcon = document.getElementById('theme-toggle-light-icon');
+
+  // Change the icons inside the button based on previous settings
+  if (themeToggleDarkIcon && themeToggleLightIcon) {
+    if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      themeToggleLightIcon.classList.remove('hidden');
+      themeToggleDarkIcon.classList.add('hidden');
+    } else {
+      themeToggleDarkIcon.classList.remove('hidden');
+      themeToggleLightIcon.classList.add('hidden');
+    }
+  }
+
+  var themeToggleBtn = document.getElementById('theme-toggle');
+  if (themeToggleBtn && !themeToggleBtn.dataset.flowbiteWired) {
+    themeToggleBtn.dataset.flowbiteWired = "true";
+    themeToggleBtn.addEventListener('click', function() {
+      // toggle icons inside button
+      if (themeToggleDarkIcon) themeToggleDarkIcon.classList.toggle('hidden');
+      if (themeToggleLightIcon) themeToggleLightIcon.classList.toggle('hidden');
+
+      // if set via local storage previously
+      if (localStorage.getItem('color-theme')) {
+        if (localStorage.getItem('color-theme') === 'light') {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('color-theme', 'dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('color-theme', 'light');
+        }
+      // if NOT set via local storage previously
+      } else {
+        if (document.documentElement.classList.contains('dark')) {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('color-theme', 'light');
+        } else {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('color-theme', 'dark');
+        }
+      }
+    });
   }
 }
+
+if (typeof window !== "undefined") {
+  window.initDarkModeSwitcher = initDarkModeSwitcher;
+}
+
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      boot();
+      initDarkModeSwitcher();
+    }, { once: true });
+  } else {
+    boot();
+    initDarkModeSwitcher();
+  }
+}
+
+
 

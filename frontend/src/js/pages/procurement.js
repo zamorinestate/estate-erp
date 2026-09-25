@@ -282,6 +282,50 @@ async function renderActiveTab(root) {
 
   const cur = submodules[activeTab] || { title: 'Submodule', icon: '📁', desc: '', actionsHtml: '' };
 
+  const getLifecycleStepperHtml = (tab) => {
+    const isOrders = tab === 'orders' || tab === 'requisitions';
+    const isDeliveries = tab === 'deliveries';
+    const isReceiving = tab === 'receiving';
+    const isMatching = tab === 'matching';
+
+    const step1Class = isOrders ? 'active' : 'completed';
+    const step2Class = isDeliveries ? 'active' : (isOrders ? '' : 'completed');
+    const step3Class = isReceiving ? 'active' : (isOrders || isDeliveries ? '' : 'completed');
+    const step4Class = isMatching ? 'active' : (isOrders || isDeliveries || isReceiving ? '' : 'completed');
+    const step5Class = tab === 'reports' ? 'completed' : '';
+
+    return `
+      <div class="stepper-container" style="background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md, 10px);padding:14px 20px;box-shadow:var(--shadow-xs);">
+        <div class="stepper-step ${step1Class}">
+          <div class="stepper-icon">${step1Class === 'completed' ? '✓' : '1'}</div>
+          <div class="stepper-label">1. Order Request</div>
+          <div class="stepper-connector"></div>
+        </div>
+        <div class="stepper-step ${step2Class}">
+          <div class="stepper-icon">${step2Class === 'completed' ? '✓' : '2'}</div>
+          <div class="stepper-label">2. Vendor Dispatch</div>
+          <div class="stepper-connector"></div>
+        </div>
+        <div class="stepper-step ${step3Class}">
+          <div class="stepper-icon">${step3Class === 'completed' ? '✓' : '3'}</div>
+          <div class="stepper-label">3. Physical GRN Count</div>
+          <div class="stepper-connector"></div>
+        </div>
+        <div class="stepper-step ${step4Class}">
+          <div class="stepper-icon">${step4Class === 'completed' ? '✓' : '4'}</div>
+          <div class="stepper-label">4. Auto-Stock & Dual Action</div>
+          <div class="stepper-connector"></div>
+        </div>
+        <div class="stepper-step ${step5Class}">
+          <div class="stepper-icon">${step5Class === 'completed' ? '✓' : '5'}</div>
+          <div class="stepper-label">5. Master Approval & AP</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const showLifecycleStepper = ['orders', 'requisitions', 'deliveries', 'receiving', 'matching'].includes(activeTab);
+
   content.innerHTML = `
     <div style="display:flex; flex-direction:column; gap:16px;">
       <div class="card" style="padding:14px 18px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md, 10px);">
@@ -303,6 +347,7 @@ async function renderActiveTab(root) {
           ${cur.actionsHtml ? `<div style="display:flex; gap:8px; align-items:center;">${cur.actionsHtml}</div>` : ''}
         </div>
       </div>
+      ${showLifecycleStepper ? getLifecycleStepperHtml(activeTab) : ''}
       <div id="proc-submodule-inner-content"></div>
     </div>
   `;

@@ -20,6 +20,8 @@ const { Session } = require('../models/Session');
 const { PasskeyCredential } = require('../models/PasskeyCredential');
 const { OperatorSession } = require('../models/OperatorSession');
 const { UserPreference } = require('../models/UserPreference');
+const { Approval } = require('../models/Approval');
+const { Notification } = require('../models/Notification');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const auditService = require('../services/auditService');
@@ -475,12 +477,14 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     : 'ST';
   try {
     if (typeof SequenceCounter.generateId === 'function') {
-      newUserId = await SequenceCounter.generateId({
-        organisationId,
-        sequenceKey: `USER_${userIdPrefix}`,
-        prefix: userIdPrefix,
-        minimumDigits: 4,
-      });
+      do {
+        newUserId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: `USER_${userIdPrefix}`,
+          prefix: userIdPrefix,
+          minimumDigits: 4,
+        });
+      } while (await User.exists({ organisationId, userId: newUserId }));
     }
     if (!newUserId) {
       throw new Error('Fallback to highest user index calculation');
@@ -498,7 +502,10 @@ const onboardEmployee = asyncHandler(async (req, res) => {
       const count = await User.countDocuments({ organisationId });
       nextNum = count + 1;
     }
-    newUserId = `${userIdPrefix}-${String(nextNum).padStart(4, '0')}`;
+    do {
+      newUserId = `${userIdPrefix}-${String(nextNum).padStart(4, '0')}`;
+      nextNum++;
+    } while (await User.exists({ organisationId, userId: newUserId }));
   }
 
   // Compute password hash
@@ -2044,6 +2051,48 @@ const createSelfChangeRequest = asyncHandler(async (req, res) => {
       await ProfileChangeRequest.deleteOne({ _id: changeRequest._id }).catch(() => {});
     }
     throw new ApiError(500, 'AUDIT_RECORD_FAILED', `Failed to audit profile change request: ${auditErr.message}`);
+  }
+
+  try {
+    const approvalCount = await Approval.countDocuments({ organisationId });
+    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+    await Approval.create({
+      approvalId,
+      organisationId,
+      cafeId: null,
+      entityType: 'PROFILE_CHANGE',
+      entityId: requestId,
+      requestingUserId: userId,
+      actionRequired: `Profile Change: ${requestType} (${section || 'PERSONAL'})`,
+      amountPaisa: 0,
+      status: 'PENDING',
+    });
+
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const m of masterUsers) {
+      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      await Notification.create({
+        notificationId: notifId,
+        organisationId,
+        eventType: 'PROFILE_CHANGE_REQUESTED',
+        category: 'OPERATIONS',
+        recipientUserId: m.userId,
+        recipientRole: 'MASTER',
+        recipientEmail: m.email || 'master@zamorincafe.com',
+        title: `👤 Profile Change Request: ${userId}`,
+        message: `${userId} requested a profile update (${requestType}). Reason: ${reason}`,
+        priority: 'NORMAL',
+        channels: ['IN_APP'],
+        deepLink: `#approvals`,
+        sourceModule: 'EMPLOYEES',
+        sourceEntityType: 'PROFILE_CHANGE',
+        sourceEntityId: requestId,
+        createdBy: userId,
+      });
+    }
+  } catch (err) {
+    console.warn(`[PROFILE_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
   }
 
   return res.status(201).json({ success: true, data: { request: changeRequest }, message: 'Profile change request submitted for review.' });
