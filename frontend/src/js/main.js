@@ -666,7 +666,8 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
       err?.data?.mfaChallengeToken ||
       err?.data?.mfaSetupToken ||
       err?.data?.requiresMfa ||
-      err?.data?.mfaRequired
+      err?.data?.mfaRequired ||
+      (err?.status === 403 && (err?.message?.includes("Multi-factor") || err?.message?.includes("MFA")))
     ) {
       const mfaChallengeToken = err?.data?.mfaChallengeToken || err?.data?.mfaSetupToken || err?.data?.tempToken || "";
       const isSetup = err?.code === "MFA_SETUP_REQUIRED" || Boolean(err?.data?.mfaSetupRequired);

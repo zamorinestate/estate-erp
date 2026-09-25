@@ -1134,7 +1134,7 @@ body:has(#app.auth-screen) {
   </script>
 
   <!-- Core tokens for typography & theme variables -->
-  <link rel="stylesheet" href="/src/styles/tokens.css?v=3.5.4" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="/src/styles/tokens.css?v=3.5.5" media="print" onload="this.media='all'" />
 </head>
 <body class="auth-page" style="background-color: #0b1120 !important; background: #0b1120 !important; margin: 0;">
   <div id="app" class="auth-screen">
@@ -1264,12 +1264,13 @@ body:has(#app.auth-screen) {
   </div>
   <div id="toast-root"></div>
 
-  <!-- Core Tailwind CSS v4, Flowbite Component System & Application Styles -->
-  <link rel="stylesheet" href="/src/styles/tailwind.css?v=4.0.0" />
-  <link rel="stylesheet" href="/src/styles/flowbite-integration.css?v=4.0.0" />
-  <link rel="stylesheet" href="/src/styles/layout.css?v=4.0.0" />
-  <link rel="stylesheet" href="/src/styles/components.css?v=4.0.0" />
-  <link rel="stylesheet" href="/src/styles/zamorin.css?v=4.0.0" />
+  <!-- Core Application Styles (Stable Canonical Suite) -->
+  <link rel="stylesheet" href="/src/styles/tokens.css?v=3.5.5" />
+  <link rel="stylesheet" href="/src/styles/layout.css?v=3.5.5" />
+  <link rel="stylesheet" href="/src/styles/components.css?v=3.5.5" />
+  <link rel="stylesheet" href="/src/styles/zamorin.css?v=3.5.5" />
+  <link rel="stylesheet" href="/src/styles/login2.css?v=3.5.5" />
+  <link rel="stylesheet" href="/src/styles/zamorin-blue-theme.css?v=3.5.5" />
 
   <!-- ============================================================
        PHASE 1 — FLOWBITE ECOSYSTEM CDN INTEGRATION
@@ -1338,6 +1339,6 @@ body:has(#app.auth-screen) {
     });
   </script>
 
-  <script type="module" src="/src/js/main.js?v=3.5.4"></script>
+  <script type="module" src="/src/js/main.js?v=3.5.5"></script>
 </body>
 </html>

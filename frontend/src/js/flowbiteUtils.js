@@ -128,7 +128,7 @@ export function initDrawer({ drawerId, backdropId, openBtnId, closeBtnId } = {})
  * @param {Object} [opts]
  * @param {boolean} [opts.allowMultiple=false] - Allow multiple open items simultaneously
  */
-export function initAccordion(containerOrId, { allowMultiple = false } = {}) {
+export function initLegacyAccordion(containerOrId, { allowMultiple = false } = {}) {
   const container = typeof containerOrId === 'string'
     ? document.getElementById(containerOrId)
     : containerOrId;
@@ -900,8 +900,13 @@ export function renderFlowbiteRtlNav({
 // ─── Flowbite Accordion & Nesting Accordions ──────────────────────────────────
 
 /**
- * Flowbite Accordion object per official JavaScript specification.
- * Supports nested accordions without cross-level item collision.
+ * Flowbite Accordion class implementing the official Flowbite JS Accordion API.
+ * Supports:
+ * - data-accordion="collapse" (single panel open)
+ * - data-accordion="open" (multiple panels open)
+ * - data-active-classes and data-inactive-classes data attributes
+ * - Nested accordions with isolated scope (no cross-level item interference)
+ * - Methods: getItem, open, close, toggle, updateOnOpen, updateOnClose, updateOnToggle, destroy
  */
 export class Accordion {
   /**
@@ -911,105 +916,121 @@ export class Accordion {
    * @param {Object} [instanceOptions={}] - Instance options ({ id, override })
    */
   constructor(accordionEl, items = [], options = {}, instanceOptions = {}) {
-    this._accordionEl = typeof accordionEl === 'string' ? document.querySelector(accordionEl) : accordionEl;
-    this._items = items || [];
-    this._options = {
-      alwaysOpen: false,
-      activeClasses: 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white',
-      inactiveClasses: 'text-body',
+    this.accordionEl = typeof accordionEl === 'string' ? document.querySelector(accordionEl) : accordionEl;
+    this._accordionEl = this.accordionEl;
+    this.instanceOptions = instanceOptions;
+
+    // Detect options from DOM data-attributes
+    const mode = this.accordionEl?.getAttribute('data-accordion');
+    const alwaysOpenAttr = mode === 'open';
+
+    const dataActiveClasses = this.accordionEl?.getAttribute('data-active-classes');
+    const dataInactiveClasses = this.accordionEl?.getAttribute('data-inactive-classes');
+
+    this.options = {
+      alwaysOpen: alwaysOpenAttr,
+      activeClasses: dataActiveClasses || options.activeClasses || '',
+      inactiveClasses: dataInactiveClasses || options.inactiveClasses || '',
       onOpen: () => {},
       onClose: () => {},
       onToggle: () => {},
       ...options,
     };
-    this._instanceOptions = {
-      id: this._accordionEl?.id || `accordion-${Date.now()}`,
-      override: true,
-      ...instanceOptions,
-    };
+    this._options = this.options;
+
+    this.items = items || [];
+    this._items = this.items;
     this._clickHandlerMap = new Map();
     this._isInitialized = false;
 
-    if (this._accordionEl) {
+    if (this.accordionEl) {
       this.init();
     }
   }
 
   init() {
-    if (!this._accordionEl) return;
+    if (!this.accordionEl) return;
+    const mode = this.accordionEl.getAttribute('data-accordion');
+    if (mode === 'open') {
+      this.options.alwaysOpen = true;
+    }
 
-    // If items were not provided, auto-discover scoped strictly to THIS accordion
-    // IMPORTANT: Exclude elements that belong to nested [data-accordion] instances
-    if (!this._items.length) {
-      const allTriggers = Array.from(this._accordionEl.querySelectorAll('[data-accordion-target]'));
+    // Auto-discover items if not explicitly provided
+    // Flowbite nested accordion requirement: strictly scope triggers to this accordion container
+    if (!this.items.length) {
+      const allTriggers = Array.from(this.accordionEl.querySelectorAll('[data-accordion-target]'));
       const scopedTriggers = allTriggers.filter(
-        (trigger) => trigger.closest('[data-accordion]') === this._accordionEl
+        (trigger) => trigger.closest('[data-accordion]') === this.accordionEl
       );
 
-      this._items = scopedTriggers.map((trigger, idx) => {
+      this.items = scopedTriggers.map((trigger, idx) => {
         const targetSelector = trigger.getAttribute('data-accordion-target');
-        const targetEl = targetSelector ? (this._accordionEl.querySelector(targetSelector) || document.querySelector(targetSelector)) : null;
+        let targetEl = null;
+        try {
+          targetEl = targetSelector ? (this.accordionEl.querySelector(targetSelector) || document.querySelector(targetSelector)) : null;
+        } catch {
+          targetEl = document.querySelector(targetSelector);
+        }
         const iconEl = trigger.querySelector('[data-accordion-icon]');
         const isExpanded = trigger.getAttribute('aria-expanded') === 'true';
 
         return {
-          id: trigger.id || `${this._instanceOptions.id}-heading-${idx + 1}`,
+          id: trigger.id || `${this.accordionEl.id || 'accordion'}-heading-${idx + 1}`,
           triggerEl: trigger,
           targetEl,
           iconEl,
           active: isExpanded,
         };
       });
+      this._items = this.items;
     }
 
-    // Attach listeners and sync initial visual classes
-    this._items.forEach((item) => {
-      if (!item.triggerEl || !item.targetEl) return;
+    // Bind triggers and apply initial styling
+    this.items.forEach((item) => {
+      if (!item.triggerEl) return;
 
-      const clickHandler = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.toggle(item.id);
-      };
-
-      this._clickHandlerMap.set(item.triggerEl, clickHandler);
-      item.triggerEl.addEventListener('click', clickHandler);
-
-      // Apply initial styling
-      if (item.active) {
-        this._applyOpenStyles(item, false);
-      } else {
-        this._applyCloseStyles(item, false);
+      if (!this._clickHandlerMap.has(item.triggerEl)) {
+        const handler = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.toggle(item.id);
+        };
+        this._clickHandlerMap.set(item.triggerEl, handler);
+        item.triggerEl.addEventListener('click', handler);
       }
+
+      this._updateItemDom(item, item.active, false);
     });
 
     this._isInitialized = true;
   }
 
   getItem(id) {
-    return this._items.find((item) => item.id === id);
+    return this.items.find((item) => item.id === id);
   }
 
   open(id) {
     const item = this.getItem(id);
     if (!item) return;
 
-    // If alwaysOpen is false, close all other items in THIS accordion
-    if (!this._options.alwaysOpen) {
-      this._items.forEach((other) => {
-        if (other.id !== id && other.active) {
-          this._applyCloseStyles(other, true);
+    if (!this.options.alwaysOpen) {
+      this.items.forEach((sibling) => {
+        if (sibling.id !== id && sibling.active) {
+          sibling.active = false;
+          this._updateItemDom(sibling, false, true);
         }
       });
     }
 
-    this._applyOpenStyles(item, true);
+    item.active = true;
+    this._updateItemDom(item, true, true);
   }
 
   close(id) {
     const item = this.getItem(id);
     if (!item || !item.active) return;
-    this._applyCloseStyles(item, true);
+    item.active = false;
+    this._updateItemDom(item, false, true);
   }
 
   toggle(id) {
@@ -1022,71 +1043,76 @@ export class Accordion {
       this.open(id);
     }
 
-    if (typeof this._options.onToggle === 'function') {
-      this._options.onToggle(item);
+    if (typeof this.options.onToggle === 'function') {
+      this.options.onToggle(item);
     }
-  }
-
-  _applyOpenStyles(item, fireCallback = true) {
-    item.active = true;
-    item.triggerEl.setAttribute('aria-expanded', 'true');
-    item.targetEl.classList.remove('hidden');
-
-    this._removeClass(item.triggerEl, this._options.inactiveClasses);
-    this._addClass(item.triggerEl, this._options.activeClasses);
-
-    if (item.iconEl) {
-      item.iconEl.classList.add('rotate-180');
-    }
-
-    if (fireCallback && typeof this._options.onOpen === 'function') {
-      this._options.onOpen(item);
-    }
-  }
-
-  _applyCloseStyles(item, fireCallback = true) {
-    item.active = false;
-    item.triggerEl.setAttribute('aria-expanded', 'false');
-    item.targetEl.classList.add('hidden');
-
-    this._removeClass(item.triggerEl, this._options.activeClasses);
-    this._addClass(item.triggerEl, this._options.inactiveClasses);
-
-    if (item.iconEl) {
-      item.iconEl.classList.remove('rotate-180');
-    }
-
-    if (fireCallback && typeof this._options.onClose === 'function') {
-      this._options.onClose(item);
-    }
-  }
-
-  _addClass(el, classes) {
-    if (!el || !classes) return;
-    const tokens = Array.isArray(classes) ? classes : classes.split(/\s+/).filter(Boolean);
-    tokens.forEach((t) => el.classList.add(t));
-  }
-
-  _removeClass(el, classes) {
-    if (!el || !classes) return;
-    const tokens = Array.isArray(classes) ? classes : classes.split(/\s+/).filter(Boolean);
-    tokens.forEach((t) => el.classList.remove(t));
   }
 
   updateOnOpen(callback) {
-    this._options.onOpen = callback;
+    this.options.onOpen = callback;
   }
 
   updateOnClose(callback) {
-    this._options.onClose = callback;
+    this.options.onClose = callback;
   }
 
   updateOnToggle(callback) {
-    this._options.onToggle = callback;
+    this.options.onToggle = callback;
+  }
+
+  _parseClasses(classes) {
+    if (!classes) return [];
+    if (Array.isArray(classes)) return classes.flatMap((c) => String(c).split(/\s+/).filter(Boolean));
+    return String(classes).split(/\s+/).filter(Boolean);
+  }
+
+  _updateItemDom(item, isActive, fireCallbacks = true) {
+    if (!item.triggerEl) return;
+    item.triggerEl.setAttribute('aria-expanded', String(isActive));
+
+    // Toggle target content visibility
+    if (item.targetEl) {
+      if (isActive) {
+        item.targetEl.classList.remove('hidden');
+      } else {
+        item.targetEl.classList.add('hidden');
+      }
+    }
+
+    // Toggle active / inactive classes
+    const activeList = this._parseClasses(this.options.activeClasses);
+    const inactiveList = this._parseClasses(this.options.inactiveClasses);
+
+    if (isActive) {
+      if (inactiveList.length) item.triggerEl.classList.remove(...inactiveList);
+      if (activeList.length) item.triggerEl.classList.add(...activeList);
+    } else {
+      if (activeList.length) item.triggerEl.classList.remove(...activeList);
+      if (inactiveList.length) item.triggerEl.classList.add(...inactiveList);
+    }
+
+    // Rotate chevron icon
+    const icon = item.iconEl || item.triggerEl.querySelector('[data-accordion-icon]');
+    if (icon) {
+      if (isActive) {
+        icon.classList.add('rotate-180');
+      } else {
+        icon.classList.remove('rotate-180');
+      }
+    }
+
+    // Fire callback
+    if (fireCallbacks) {
+      if (isActive && typeof this.options.onOpen === 'function') {
+        this.options.onOpen(item);
+      } else if (!isActive && typeof this.options.onClose === 'function') {
+        this.options.onClose(item);
+      }
+    }
   }
 
   destroy() {
-    this._items.forEach((item) => {
+    this.items.forEach((item) => {
       if (item.triggerEl && this._clickHandlerMap.has(item.triggerEl)) {
         item.triggerEl.removeEventListener('click', this._clickHandlerMap.get(item.triggerEl));
         this._clickHandlerMap.delete(item.triggerEl);
@@ -1097,11 +1123,19 @@ export class Accordion {
 }
 
 /**
+ * Initializes a Flowbite Accordion on a given container or element.
+ */
+export function initAccordion(containerIdOrElement, options = {}, instanceOptions = {}) {
+  const el = typeof containerIdOrElement === 'string'
+    ? document.querySelector(containerIdOrElement.startsWith('#') ? containerIdOrElement : `#${containerIdOrElement}`)
+    : containerIdOrElement;
+  if (!el) return null;
+  return new Accordion(el, [], options, instanceOptions);
+}
+
+/**
  * Initializes all Flowbite accordions (including nested ones) within a container.
  * Safely partitions nested [data-accordion] containers without cross-querying children.
- *
- * @param {HTMLElement|Document} [root=document]
- * @returns {Array<Accordion>} Array of initialized Accordion instances
  */
 export function initAccordions(root = document) {
   const accordionEls = Array.from(root.querySelectorAll('[data-accordion]'));
@@ -1110,130 +1144,272 @@ export function initAccordions(root = document) {
   accordionEls.forEach((accordionEl) => {
     if (accordionEl.dataset.fbAccordionBound) return;
     accordionEl.dataset.fbAccordionBound = 'true';
-
-    const behavior = accordionEl.getAttribute('data-accordion') || 'collapse';
-    const alwaysOpen = behavior === 'open';
-    const activeClasses = accordionEl.getAttribute('data-active-classes') || 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white';
-    const inactiveClasses = accordionEl.getAttribute('data-inactive-classes') || 'text-body';
-
-    // Strictly scope triggers to this accordion only
-    const allTriggers = Array.from(accordionEl.querySelectorAll('[data-accordion-target]'));
-    const scopedTriggers = allTriggers.filter(
-      (btn) => btn.closest('[data-accordion]') === accordionEl
-    );
-
-    const items = scopedTriggers.map((btn, idx) => {
-      const targetSelector = btn.getAttribute('data-accordion-target');
-      const targetEl = targetSelector ? (accordionEl.querySelector(targetSelector) || document.querySelector(targetSelector)) : null;
-      const iconEl = btn.querySelector('[data-accordion-icon]');
-      const active = btn.getAttribute('aria-expanded') === 'true';
-
-      return {
-        id: btn.id || `${accordionEl.id || 'accordion'}-heading-${idx + 1}`,
-        triggerEl: btn,
-        targetEl,
-        iconEl,
-        active,
-      };
-    });
-
-    const acc = new Accordion(accordionEl, items, {
-      alwaysOpen,
-      activeClasses,
-      inactiveClasses,
-    });
-
-    instances.push(acc);
+    instances.push(new Accordion(accordionEl));
   });
 
   return instances;
 }
 
 /**
- * Renders the official Flowbite nested accordion HTML markup.
- * Compatible with LTR, RTL, dark mode, and Tailwind v4.
- *
- * @param {Object} [opts]
- * @param {string} [opts.id="accordion-collapse-2"]
- * @returns {string} HTML string
+ * Auto-discovers and initializes all elements with data-accordion attribute in a root DOM tree.
  */
-export function renderNestedAccordionSample({ id = "accordion-collapse-2" } = {}) {
+export function autoInitAllAccordions(root = document) {
+  return initAccordions(root);
+}
+
+/**
+ * Renders the Separated Cards Accordion component (Flowbite v4).
+ */
+export function renderAccordionCard({ id = 'accordion-card', items = [] } = {}) {
+  const defaultItems = items.length > 0 ? items : [
+    {
+      title: 'What is Flowbite?',
+      content: '<p class="mb-2 text-body">Flowbite is an open-source library of interactive components built on top of Tailwind CSS including buttons, dropdowns, modals, navbars, and more.</p><p class="text-body">Check out this guide to learn how to <a href="#settings" class="text-fg-brand hover:underline">get started</a> and start developing websites even faster with components on top of Tailwind CSS.</p>',
+      active: true,
+    },
+    {
+      title: 'Is there a Figma file available?',
+      content: '<p class="mb-2 text-body">Flowbite is first conceptualized and designed using the Figma software so everything you see in the library has a design equivalent in our Figma file.</p><p class="text-body">Check out the <a href="https://flowbite.com/figma/" class="text-fg-brand hover:underline" target="_blank">Figma design system</a> based on the utility classes from Tailwind CSS and components from Flowbite.</p>',
+      active: false,
+    },
+    {
+      title: 'What are the differences between Flowbite and Tailwind UI?',
+      content: '<p class="mb-2 text-body">The main difference is that the core components from Flowbite are open source under the MIT license, whereas Tailwind UI is a paid product. Another difference is that Flowbite relies on smaller and standalone components, whereas Tailwind UI offers sections of pages.</p><p class="mb-2 text-body">However, we actually recommend using both Flowbite, Flowbite Pro, and even Tailwind UI as there is no technical reason stopping you from using the best of two worlds.</p><p class="mb-2 text-body">Learn more about these technologies:</p><ul class="ps-5 text-body list-disc"><li><a href="https://flowbite.com/pro/" class="text-fg-brand hover:underline">Flowbite Pro</a></li><li><a href="https://tailwindui.com/" rel="nofollow" class="text-fg-brand hover:underline">Tailwind UI</a></li></ul>',
+      active: false,
+    },
+  ];
+
   return `
-<div id="${id}" data-accordion="collapse" class="rounded-base border border-default overflow-hidden shadow-xs mb-6">
-  <h2 id="${id}-heading-6">
-    <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body rounded-t-base border border-t-0 border-x-0 border-b-default hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${id}-body-6" aria-expanded="true" aria-controls="${id}-body-6">
+<div id="${id}" data-accordion="collapse" class="w-full">
+  ${defaultItems.map((item, index) => {
+    const headingId = `${id}-heading-${index + 1}`;
+    const bodyId = `${id}-body-${index + 1}`;
+    const isFirst = index === 0;
+    const marginTop = !isFirst ? 'mt-4' : '';
+    const isActive = Boolean(item.active);
+
+    return `
+  <h2 id="${headingId}" class="${marginTop}">
+    <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body rounded-base shadow-xs border border-default hover:text-heading hover:bg-neutral-secondary-medium gap-3 [&[aria-expanded='true']]:rounded-b-none [&[aria-expanded='true']]:shadow-none" data-accordion-target="#${bodyId}" aria-expanded="${isActive}" aria-controls="${bodyId}">
+      <span>${item.title}</span>
+      <svg data-accordion-icon class="w-5 h-5 ${isActive ? 'rotate-180' : ''} shrink-0" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 15 7-7 7 7"/></svg>
+    </button>
+  </h2>
+  <div id="${bodyId}" class="${isActive ? '' : 'hidden'} border border-t-0 border-default rounded-b-base shadow-xs" aria-labelledby="${headingId}">
+    <div class="p-4 md:p-5">
+      ${item.content}
+    </div>
+  </div>
+    `.trim();
+  }).join('\n')}
+</div>
+  `.trim();
+}
+
+/**
+ * Renders the Color Options Accordion component (Flowbite v4 Brand / White & Blue).
+ */
+export function renderAccordionColor({ id = 'accordion-color', items = [] } = {}) {
+  const defaultItems = items.length > 0 ? items : [
+    {
+      title: 'What is Flowbite?',
+      content: '<p class="mb-2 text-body">Flowbite is an open-source library of interactive components built on top of Tailwind CSS including buttons, dropdowns, modals, navbars, and more.</p><p class="text-body">Check out this guide to learn how to <a href="#settings" class="text-fg-brand hover:underline">get started</a> and start developing websites even faster with components on top of Tailwind CSS.</p>',
+      active: true,
+    },
+    {
+      title: 'Is there a Figma file available?',
+      content: '<p class="mb-2 text-body">Flowbite is first conceptualized and designed using the Figma software so everything you see in the library has a design equivalent in our Figma file.</p><p class="text-body">Check out the <a href="https://flowbite.com/figma/" class="text-fg-brand hover:underline" target="_blank">Figma design system</a> based on the utility classes from Tailwind CSS and components from Flowbite.</p>',
+      active: false,
+    },
+    {
+      title: 'What are the differences between Flowbite and Tailwind UI?',
+      content: '<p class="mb-2 text-body">The main difference is that the core components from Flowbite are open source under the MIT license, whereas Tailwind UI is a paid product. Another difference is that Flowbite relies on smaller and standalone components, whereas Tailwind UI offers sections of pages.</p><p class="mb-2 text-body">However, we actually recommend using both Flowbite, Flowbite Pro, and even Tailwind UI as there is no technical reason stopping you from using the best of two worlds.</p><p class="mb-2 text-body">Learn more about these technologies:</p><ul class="ps-5 text-body list-disc"><li><a href="https://flowbite.com/pro/" class="text-fg-brand hover:underline">Flowbite Pro</a></li><li><a href="https://tailwindui.com/" rel="nofollow" class="text-fg-brand hover:underline">Tailwind UI</a></li></ul>',
+      active: false,
+    },
+  ];
+
+  return `
+<div id="${id}" data-accordion="collapse" class="rounded-base border border-default overflow-hidden shadow-xs w-full">
+  ${defaultItems.map((item, index) => {
+    const headingId = `${id}-heading-${index + 1}`;
+    const bodyId = `${id}-body-${index + 1}`;
+    const isFirst = index === 0;
+    const isLast = index === defaultItems.length - 1;
+    const isActive = Boolean(item.active);
+
+    const btnClasses = isFirst
+      ? 'flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body rounded-t-base border border-t-0 border-x-0 border-b-default hover:text-fg-brand hover:bg-brand-softer gap-3'
+      : isLast
+      ? 'flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body hover:text-fg-brand hover:bg-brand-softer gap-3'
+      : 'flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body border border-x-0 border-b-default border-t-0 hover:text-fg-brand hover:bg-brand-softer gap-3';
+
+    const bodyBorder = isLast
+      ? 'border border-t-default border-b-0 border-x-0'
+      : 'border border-s-0 border-e-0 border-t-0 border-b-default';
+
+    return `
+  <h2 id="${headingId}">
+    <button type="button" class="${btnClasses}" data-accordion-target="#${bodyId}" aria-expanded="${isActive}" aria-controls="${bodyId}">
+      <span>${item.title}</span>
+      <svg data-accordion-icon class="w-5 h-5 ${isActive ? 'rotate-180' : ''} shrink-0" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 15 7-7 7 7"/></svg>
+    </button>
+  </h2>
+  <div id="${bodyId}" class="${isActive ? '' : 'hidden'} ${bodyBorder}" aria-labelledby="${headingId}">
+    <div class="p-4 md:p-5">
+      ${item.content}
+    </div>
+  </div>
+    `.trim();
+  }).join('\n')}
+</div>
+  `.trim();
+}
+
+/**
+ * Renders the Nested Accordion component (Flowbite v4).
+ */
+export function renderAccordionNested({ id = 'accordion-collapse-2', nestedId = 'accordion-nested' } = {}) {
+  return `
+<div id="${id}" data-accordion="collapse" class="rounded-base border border-default overflow-hidden shadow-xs w-full">
+  <h2 id="${id}-heading-1">
+    <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body rounded-t-base border border-t-0 border-x-0 border-b-default hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${id}-body-1" aria-expanded="true" aria-controls="${id}-body-1">
       <span>What is Flowbite?</span>
       <svg data-accordion-icon class="w-5 h-5 rotate-180 shrink-0" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 15 7-7 7 7"/></svg>
     </button>
   </h2>
-  <div id="${id}-body-6" class="border border-s-0 border-e-0 border-t-0 border-b-default p-4 md:p-5" aria-labelledby="${id}-heading-6">
-      <p class="mb-2 text-body">Flowbite is an open-source library of interactive components built on top of Tailwind CSS including buttons, dropdowns, modals, navbars, and more.</p>
-      <p class="text-body mb-4">Check out this guide to learn how to <a href="https://flowbite.com/docs/getting-started/introduction/" target="_blank" rel="noopener noreferrer" class="text-fg-brand hover:underline">get started</a> and start developing websites even faster with components on top of Tailwind CSS.</p>
+  <div id="${id}-body-1" class="border border-s-0 border-e-0 border-t-0 border-b-default p-4 md:p-5" aria-labelledby="${id}-heading-1">
+    <p class="mb-2 text-body">Flowbite is an open-source library of interactive components built on top of Tailwind CSS including buttons, dropdowns, modals, navbars, and more.</p>
+    <p class="text-body mb-4">Check out this guide to learn how to <a href="#settings" class="text-fg-brand hover:underline">get started</a> and start developing websites even faster with components on top of Tailwind CSS.</p>
+    
     <!-- Nested accordion -->
-    <div id="${id}-nested" data-accordion="collapse" class="rounded-base border border-default overflow-hidden shadow-xs">
-      <h2 id="${id}-nested-heading-1">
-        <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body rounded-t-base border border-t-0 border-x-0 border-b-default hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${id}-nested-body-1" aria-expanded="true" aria-controls="${id}-nested-body-1">
+    <div id="${nestedId}" data-accordion="collapse" class="rounded-base border border-default overflow-hidden shadow-xs">
+      <h2 id="${nestedId}-heading-1">
+        <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body rounded-t-base border border-t-0 border-x-0 border-b-default hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${nestedId}-body-1" aria-expanded="true" aria-controls="${nestedId}-body-1">
           <span>What is Flowbite?</span>
           <svg data-accordion-icon class="w-5 h-5 rotate-180 shrink-0" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 15 7-7 7 7"/></svg>
         </button>
       </h2>
-      <div id="${id}-nested-body-1" class="border border-s-0 border-e-0 border-t-0 border-b-default" aria-labelledby="${id}-nested-heading-1">
+      <div id="${nestedId}-body-1" class="border border-s-0 border-e-0 border-t-0 border-b-default" aria-labelledby="${nestedId}-heading-1">
         <div class="p-4 md:p-5">
           <p class="mb-2 text-body">Flowbite is an open-source library of interactive components built on top of Tailwind CSS including buttons, dropdowns, modals, navbars, and more.</p>
-          <p class="text-body">Check out this guide to learn how to <a href="https://flowbite.com/docs/getting-started/introduction/" target="_blank" rel="noopener noreferrer" class="text-fg-brand hover:underline">get started</a> and start developing websites even faster with components on top of Tailwind CSS.</p>
+          <p class="text-body">Check out this guide to learn how to <a href="#settings" class="text-fg-brand hover:underline">get started</a> and start developing websites even faster with components on top of Tailwind CSS.</p>
         </div>
       </div>
-      <h2 id="${id}-nested-heading-2">
-        <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body border border-x-0 border-b-default border-t-0 bg-neutral-primary-soft hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${id}-nested-body-2" aria-expanded="false" aria-controls="${id}-nested-body-2">
+      <h2 id="${nestedId}-heading-2">
+        <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body border border-x-0 border-b-default border-t-0 bg-neutral-primary-soft hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${nestedId}-body-2" aria-expanded="false" aria-controls="${nestedId}-body-2">
           <span>Is there a Figma file available?</span>
           <svg data-accordion-icon class="w-5 h-5 shrink-0" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 15 7-7 7 7"/></svg>
         </button>
       </h2>
-      <div id="${id}-nested-body-2" class="hidden border border-s-0 border-e-0 border-t-0 border-b-default" aria-labelledby="${id}-nested-heading-2">
+      <div id="${nestedId}-body-2" class="hidden border border-s-0 border-e-0 border-t-0 border-b-default" aria-labelledby="${nestedId}-heading-2">
         <div class="p-4 md:p-5">
           <p class="mb-2 text-body">Flowbite is first conceptualized and designed using the Figma software so everything you see in the library has a design equivalent in our Figma file.</p>
-          <p class="text-body">Check out the <a href="https://flowbite.com/figma/" target="_blank" rel="noopener noreferrer" class="text-fg-brand hover:underline">Figma design system</a> based on the utility classes from Tailwind CSS and components from Flowbite.</p>
+          <p class="text-body">Check out the <a href="https://flowbite.com/figma/" class="text-fg-brand hover:underline" target="_blank">Figma design system</a> based on the utility classes from Tailwind CSS and components from Flowbite.</p>
         </div>
       </div>
-      <h2 id="${id}-nested-heading-3">
-        <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body bg-neutral-primary-soft hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${id}-nested-body-3" aria-expanded="false" aria-controls="${id}-nested-body-3">
+      <h2 id="${nestedId}-heading-3">
+        <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body bg-neutral-primary-soft hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${nestedId}-body-3" aria-expanded="false" aria-controls="${nestedId}-body-3">
           <span>What are the differences between Flowbite and Tailwind UI?</span>
           <svg data-accordion-icon class="w-5 h-5 shrink-0" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 15 7-7 7 7"/></svg>
         </button>
       </h2>
-      <div id="${id}-nested-body-3" class="hidden" aria-labelledby="${id}-nested-heading-3">
+      <div id="${nestedId}-body-3" class="hidden" aria-labelledby="${nestedId}-heading-3">
         <div class="p-4 md:p-5 border border-t-default border-b-0 border-x-0">
-          <p class="mb-2 text-body">The main difference is that the core components from Flowbite are open source under the MIT license, whereas Tailwind UI is a paid product. Another difference is that Flowbite relies on smaller and standalone components, whereas Tailwind UI offers sections of pages.</p>
-          <p class="mb-2 text-body">However, we actually recommend using both Flowbite, Flowbite Pro, and even Tailwind UI as there is no technical reason stopping you from using the best of two worlds.</p>
+          <p class="mb-2 text-body">The main difference is that the core components from Flowbite are open source under the MIT license, whereas Tailwind UI is a paid product.</p>
           <p class="mb-2 text-body">Learn more about these technologies:</p>
           <ul class="text-body ps-5 list-disc">
-            <li><a href="https://flowbite.com/pro/" target="_blank" rel="noopener noreferrer" class="text-fg-brand hover:underline">Flowbite Pro</a></li>
-            <li><a href="https://tailwindui.com/" target="_blank" rel="nofollow noopener noreferrer" class="text-fg-brand hover:underline">Tailwind UI</a></li>
+            <li><a href="https://flowbite.com/pro/" class="text-fg-brand hover:underline">Flowbite Pro</a></li>
+            <li><a href="https://tailwindui.com/" rel="nofollow" class="text-fg-brand hover:underline">Tailwind UI</a></li>
           </ul>
         </div>
       </div>
     </div>
     <!-- End of Nested accordion -->
   </div>
-  <h2 id="${id}-heading-7">
-    <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body bg-neutral-primary-soft hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${id}-body-7" aria-expanded="false" aria-controls="${id}-body-7">
+  <h2 id="${id}-heading-2">
+    <button type="button" class="flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body bg-neutral-primary-soft hover:text-heading hover:bg-neutral-secondary-medium gap-3" data-accordion-target="#${id}-body-2" aria-expanded="false" aria-controls="${id}-body-2">
       <span>What are the differences between Flowbite and Tailwind UI?</span>
       <svg data-accordion-icon class="w-5 h-5 shrink-0" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 15 7-7 7 7"/></svg>
     </button>
   </h2>
-  <div id="${id}-body-7" class="hidden" aria-labelledby="${id}-heading-7">
+  <div id="${id}-body-2" class="hidden" aria-labelledby="${id}-heading-2">
     <div class="p-4 md:p-5 border border-t-default border-b-0 border-x-0">
-      <p class="mb-2 text-body">The main difference is that the core components from Flowbite are open source under the MIT license, whereas Tailwind UI is a paid product. Another difference is that Flowbite relies on smaller and standalone components, whereas Tailwind UI offers sections of pages.</p>
-      <p class="mb-2 text-body">However, we actually recommend using both Flowbite, Flowbite Pro, and even Tailwind UI as there is no technical reason stopping you from using the best of two worlds.</p>
+      <p class="mb-2 text-body">The main difference is that the core components from Flowbite are open source under the MIT license, whereas Tailwind UI is a paid product.</p>
       <p class="mb-2 text-body">Learn more about these technologies:</p>
       <ul class="text-body list-disc ps-5">
-        <li><a href="https://flowbite.com/pro/" target="_blank" rel="noopener noreferrer" class="text-fg-brand hover:underline">Flowbite Pro</a></li>
-        <li><a href="https://tailwindui.com/" target="_blank" rel="nofollow noopener noreferrer" class="text-fg-brand hover:underline">Tailwind UI</a></li>
+        <li><a href="https://flowbite.com/pro/" class="text-fg-brand hover:underline">Flowbite Pro</a></li>
+        <li><a href="https://tailwindui.com/" rel="nofollow" class="text-fg-brand hover:underline">Tailwind UI</a></li>
       </ul>
     </div>
   </div>
 </div>
-  `;
+  `.trim();
+}
+
+/**
+ * Backward compatibility alias for renderAccordionNested
+ */
+export const renderNestedAccordionSample = renderAccordionNested;
+
+/**
+ * Renders the Standard Default Accordion component (Flowbite v4 example with dark mode).
+ */
+export function renderAccordionExample({ id = 'accordion-example', items = [] } = {}) {
+  const defaultItems = items.length > 0 ? items : [
+    {
+      title: 'What is Flowbite?',
+      content: '<p class="mb-2 text-body">Flowbite is an open-source library of interactive components built on top of Tailwind CSS including buttons, dropdowns, modals, navbars, and more.</p><p class="text-body">Check out this guide to learn how to <a href="#settings" class="text-fg-brand hover:underline">get started</a> and start developing websites even faster with components on top of Tailwind CSS.</p>',
+      active: true,
+    },
+    {
+      title: 'Is there a Figma file available?',
+      content: '<p class="mb-2 text-body">Flowbite is first conceptualized and designed using the Figma software so everything you see in the library has a design equivalent in our Figma file.</p><p class="text-body">Check out the <a href="https://flowbite.com/figma/" class="text-fg-brand hover:underline" target="_blank">Figma design system</a> based on the utility classes from Tailwind CSS and components from Flowbite.</p>',
+      active: false,
+    },
+    {
+      title: 'What are the differences between Flowbite and Tailwind UI?',
+      content: '<p class="mb-2 text-body">The main difference is that the core components from Flowbite are open source under the MIT license, whereas Tailwind UI is a paid product. Another difference is that Flowbite relies on smaller and standalone components, whereas Tailwind UI offers sections of pages.</p><p class="mb-2 text-body">However, we actually recommend using both Flowbite, Flowbite Pro, and even Tailwind UI as there is no technical reason stopping you from using the best of two worlds.</p><p class="mb-2 text-body">Learn more about these technologies:</p><ul class="ps-5 text-body list-disc dark:text-gray-400"><li><a href="https://flowbite.com/pro/" class="text-fg-brand hover:underline">Flowbite Pro</a></li><li><a href="https://tailwindui.com/" rel="nofollow" class="text-fg-brand hover:underline">Tailwind UI</a></li></ul>',
+      active: false,
+    },
+  ];
+
+  return `
+<div id="${id}" data-accordion="collapse" class="w-full">
+  ${defaultItems.map((item, index) => {
+    const headingId = `${id}-heading-${index + 1}`;
+    const bodyId = `${id}-body-${index + 1}`;
+    const isFirst = index === 0;
+    const isLast = index === defaultItems.length - 1;
+    const isActive = Boolean(item.active);
+
+    const btnClasses = isFirst
+      ? 'flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body border border-b-0 border-default rounded-t-xl focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-800 dark:border-gray-700 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+      : isLast
+      ? 'flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body border border-default focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-800 dark:border-gray-700 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+      : 'flex items-center justify-between w-full p-5 font-medium rtl:text-right text-body border border-b-0 border-default focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-800 dark:border-gray-700 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800';
+
+    const bodyBorder = isLast
+      ? 'p-5 border border-t-0 border-default dark:border-gray-700'
+      : isFirst
+      ? 'p-5 border border-b-0 border-default dark:border-gray-700 dark:bg-gray-900'
+      : 'p-5 border border-b-0 border-default dark:border-gray-700';
+
+    return `
+  <h2 id="${headingId}">
+    <button type="button" class="${btnClasses}" data-accordion-target="#${bodyId}" aria-expanded="${isActive}" aria-controls="${bodyId}">
+      <span>${item.title}</span>
+      <svg data-accordion-icon class="w-6 h-6 ${isActive ? 'rotate-180' : ''} shrink-0" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+    </button>
+  </h2>
+  <div id="${bodyId}" class="${isActive ? '' : 'hidden'}" aria-labelledby="${headingId}">
+    <div class="${bodyBorder}">
+      ${item.content}
+    </div>
+  </div>
+    `.trim();
+  }).join('\n')}
+</div>
+  `.trim();
 }
 
 // ─── Flowbite Alerts & Dismiss Class ─────────────────────────────────────────
@@ -1243,6 +1419,12 @@ export function renderNestedAccordionSample({ id = "accordion-collapse-2" } = {}
  * Hides target elements with Tailwind transitions and fires onHide callback.
  */
 export class Dismiss {
+  static _instances = new Map();
+
+  static getInstance(id) {
+    return Dismiss._instances.get(id) || null;
+  }
+
   /**
    * @param {HTMLElement|string} targetEl - Element to be dismissed
    * @param {HTMLElement|string} [triggerEl=null] - Trigger element that initiates dismiss on click
@@ -1252,6 +1434,8 @@ export class Dismiss {
   constructor(targetEl, triggerEl = null, options = {}, instanceOptions = {}) {
     this._targetEl = typeof targetEl === 'string' ? document.querySelector(targetEl) : targetEl;
     this._triggerEl = typeof triggerEl === 'string' ? document.querySelector(triggerEl) : triggerEl;
+    this.targetEl = this._targetEl;
+    this.triggerEl = this._triggerEl;
     this._options = {
       transition: 'transition-opacity',
       duration: 300,
@@ -1259,13 +1443,24 @@ export class Dismiss {
       onHide: () => {},
       ...options,
     };
+    this.options = this._options;
     this._instanceOptions = {
       id: this._targetEl?.id || `dismiss-${Date.now()}`,
       override: true,
       ...instanceOptions,
     };
+    this.instanceOptions = this._instanceOptions;
     this._clickHandler = null;
     this._isDismissed = false;
+
+    if (this._targetEl) {
+      this._targetEl._fbDismissInstance = this;
+    }
+    if (this._triggerEl) {
+      this._triggerEl._fbDismissInstance = this;
+    }
+
+    Dismiss._instances.set(this._instanceOptions.id, this);
 
     this.init();
   }
@@ -1305,13 +1500,21 @@ export class Dismiss {
 
   updateOnHide(callback) {
     this._options.onHide = callback;
+    this.options.onHide = callback;
   }
 
   destroy() {
-    if (this._triggerEl && this._clickHandler) {
+    if (this._triggerEl && typeof this._triggerEl.removeEventListener === 'function' && this._clickHandler) {
       this._triggerEl.removeEventListener('click', this._clickHandler);
       this._clickHandler = null;
     }
+    if (this._targetEl && this._targetEl._fbDismissInstance) {
+      delete this._targetEl._fbDismissInstance;
+    }
+    if (this._triggerEl && this._triggerEl._fbDismissInstance) {
+      delete this._triggerEl._fbDismissInstance;
+    }
+    Dismiss._instances.delete(this._instanceOptions.id);
   }
 }
 
@@ -1354,6 +1557,25 @@ export function initDismiss(rootOrBannerId = document, btnId) {
 }
 
 /**
+ * Auto-discovers and initializes all elements with data-dismiss-target attribute in a root DOM tree.
+ */
+export function autoInitAllDismiss(root = document) {
+  return initDismiss(root);
+}
+
+/**
+ * Renders the simple Flowbite dismissible alert example from documentation.
+ */
+export function renderFlowbiteDismissibleAlertExample({ triggerId = 'triggerElement', targetId = 'targetElement' } = {}) {
+  return `
+<button id="${triggerId}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Hide alert</button>
+<div id="${targetId}" class="p-4 mb-4 text-sm text-fg-brand-strong rounded-base bg-brand-softer" role="alert">
+  <span class="font-medium">Info alert!</span> Change a few things up and try submitting again.
+</div>
+  `.trim();
+}
+
+/**
  * Renders the official Flowbite dismissible alerts with additional content.
  * Covers Info, Danger, Success, Warning, and Default variants.
  * @returns {string} HTML string
@@ -1372,7 +1594,7 @@ export function renderFlowbiteAdditionalContentAlerts() {
       <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
     </button>
   </div>
-  <div class="mt-2 mb-4 text-body">
+  <div class="mt-2 mb-4">
     More info about this info alert goes here. This example text is going to run a bit longer so that you can see how spacing within an alert works with this kind of content.
   </div>
   <button type="button" class="inline-flex items-center text-white bg-brand hover:bg-brand-strong box-border border border-transparent focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-xs px-3 py-1.5 focus:outline-none">
@@ -1393,7 +1615,7 @@ export function renderFlowbiteAdditionalContentAlerts() {
       <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
     </button>
   </div>
-  <div class="mt-2 mb-4 text-body">
+  <div class="mt-2 mb-4">
     More info about this info alert goes here. This example text is going to run a bit longer so that you can see how spacing within an alert works with this kind of content.
   </div>
   <button type="button" class="inline-flex items-center text-white bg-danger box-border border border-transparent hover:bg-danger-strong focus:ring-4 focus:ring-danger-medium shadow-xs font-medium leading-5 rounded-base text-xs px-3 py-1.5 focus:outline-none">
@@ -1414,7 +1636,7 @@ export function renderFlowbiteAdditionalContentAlerts() {
       <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
     </button>
   </div>
-  <div class="mt-2 mb-4 text-body">
+  <div class="mt-2 mb-4">
     More info about this info alert goes here. This example text is going to run a bit longer so that you can see how spacing within an alert works with this kind of content.
   </div>
   <button type="button" class="inline-flex items-center text-white bg-success box-border border border-transparent hover:bg-success-strong focus:ring-4 focus:ring-success-medium shadow-xs font-medium leading-5 rounded-base text-xs px-3 py-1.5 focus:outline-none">
@@ -1435,7 +1657,7 @@ export function renderFlowbiteAdditionalContentAlerts() {
       <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
     </button>
   </div>
-  <div class="mt-2 mb-4 text-body">
+  <div class="mt-2 mb-4">
     More info about this info alert goes here. This example text is going to run a bit longer so that you can see how spacing within an alert works with this kind of content.
   </div>
   <button type="button" class="inline-flex items-center text-white bg-warning box-border border border-transparent hover:bg-warning-strong focus:ring-4 focus:ring-warning-medium shadow-xs font-medium leading-5 rounded-base text-xs px-3 py-1.5 focus:outline-none">
@@ -1456,7 +1678,7 @@ export function renderFlowbiteAdditionalContentAlerts() {
       <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
     </button>
   </div>
-  <div class="mt-2 mb-4 text-body">
+  <div class="mt-2 mb-4">
     More info about this info alert goes here. This example text is going to run a bit longer so that you can see how spacing within an alert works with this kind of content.
   </div>
   <button type="button" class="inline-flex items-center text-white bg-dark-soft box-border border border-transparent hover:bg-dark-strong focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-xs px-3 py-1.5 focus:outline-none">
@@ -1464,8 +1686,9 @@ export function renderFlowbiteAdditionalContentAlerts() {
   View more
   </button>
 </div>
-  `;
+  `.trim();
 }
+
 
 // ─── Flowbite Avatar & Dropdown / Tooltip Components ──────────────────────────
 
@@ -1885,6 +2108,83 @@ export function initDropdowns(root = document) {
 }
 
 /**
+ * Renders Flowbite Avatar Text component.
+ * @param {Object} [options]
+ * @param {string} [options.name='Jese Leos']
+ * @param {string} [options.subtitle='Joined in August 2014']
+ * @param {string} [options.imgSrc='/docs/images/people/profile-picture-5.jpg']
+ * @param {string} [options.imgAlt='']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteAvatarText(options = {}) {
+  const {
+    name = 'Jese Leos',
+    subtitle = 'Joined in August 2014',
+    imgSrc = '/docs/images/people/profile-picture-5.jpg',
+    imgAlt = '',
+  } = options;
+
+  return `
+<div class="flex items-center gap-2.5">
+    <img class="w-10 h-10 rounded-full" src="${imgSrc}" alt="${imgAlt}">
+    <div class="font-medium text-heading">
+        <div>${name}</div>
+        <div class="text-sm font-normal text-body">${subtitle}</div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * Renders Flowbite User Dropdown component triggered by an Avatar.
+ * @param {Object} [options]
+ * @param {string} [options.id='avatarButton']
+ * @param {string} [options.dropdownId='userDropdown']
+ * @param {string} [options.placement='bottom-start']
+ * @param {string} [options.name='Bonnie Green']
+ * @param {string} [options.email='name@flowbite.com']
+ * @param {string} [options.imgSrc='/docs/images/people/profile-picture-5.jpg']
+ * @param {string} [options.imgAlt='User dropdown']
+ * @param {Array<{label: string, href?: string, isDanger?: boolean}>} [options.items]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteAvatarUserDropdown(options = {}) {
+  const {
+    id = 'avatarButton',
+    dropdownId = 'userDropdown',
+    placement = 'bottom-start',
+    name = 'Bonnie Green',
+    email = 'name@flowbite.com',
+    imgSrc = '/docs/images/people/profile-picture-5.jpg',
+    imgAlt = 'User dropdown',
+    items = [
+      { label: 'Dashboard', href: '#' },
+      { label: 'Settings', href: '#' },
+      { label: 'Earnings', href: '#' },
+      { label: 'Sign out', href: '#', isDanger: true },
+    ],
+  } = options;
+
+  const itemsHtml = items.map(item => `
+      <li>
+        <a href="${item.href || '#'}" class="block w-full p-2 hover:bg-neutral-tertiary-medium ${item.isDanger ? 'text-fg-danger' : 'hover:text-heading'} rounded-md">${item.label}</a>
+      </li>`).join('');
+
+  return `
+<img id="${id}" type="button" data-dropdown-toggle="${dropdownId}" data-dropdown-placement="${placement}" class="w-10 h-10 rounded-full cursor-pointer" src="${imgSrc}" alt="${imgAlt}">
+
+<!-- Dropdown menu -->
+<div id="${dropdownId}" class="z-10 hidden bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-44">
+    <div class="px-4 py-3 border-b border-default-medium text-sm text-heading">
+      <div class="font-medium">${name}</div>
+      <div class="truncate">${email}</div>
+    </div>
+    <ul class="p-2 text-sm text-body font-medium" aria-labelledby="${id}">
+${itemsHtml}
+    </ul>
+</div>`.trim();
+}
+
+/**
  * Renders the official Flowbite Avatar showcase with multiple styles, sizes, tooltips,
  * profile text, and user dropdown menu.
  * @returns {string} HTML string
@@ -1937,38 +2237,26 @@ export function renderFlowbiteAvatarShowcase() {
   </div>
 
   <!-- Avatar Text -->
-  <div class="flex items-center gap-2.5">
-      <img class="w-10 h-10 rounded-full" src="/src/assets/zamorin-app-icon-1024.png" alt="">
-      <div class="font-medium text-heading">
-          <div>Jese Leos</div>
-          <div class="text-sm font-normal text-body">Joined in August 2014</div>
-      </div>
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-3">Avatar Text</h4>
+    ${renderFlowbiteAvatarText({
+      name: 'Jese Leos',
+      subtitle: 'Joined in August 2014',
+      imgSrc: '/src/assets/zamorin-app-icon-1024.png',
+    })}
   </div>
 
   <!-- User Dropdown -->
-  <div style="position:relative; display:inline-block;">
-    <img id="avatarButton" type="button" data-dropdown-toggle="userDropdown" data-dropdown-placement="bottom-start" class="w-10 h-10 rounded-full cursor-pointer" src="/src/assets/zamorin-app-icon-1024.png" alt="User dropdown">
-
-    <!-- Dropdown menu -->
-    <div id="userDropdown" class="z-10 hidden bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-44" style="position:absolute; top:calc(100% + 6px); left:0;">
-        <div class="px-4 py-3 border-b border-default-medium text-sm text-heading">
-          <div class="font-medium">Bonnie Green</div>
-          <div class="truncate text-xs text-body">name@flowbite.com</div>
-        </div>
-        <ul class="p-2 text-sm text-body font-medium" aria-labelledby="avatarButton">
-          <li>
-            <a href="#dashboard" class="block w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded-md">Dashboard</a>
-          </li>
-          <li>
-            <a href="#settings" class="block w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded-md">Settings</a>
-          </li>
-          <li>
-            <a href="#sales-cash" class="block w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded-md">Earnings</a>
-          </li>
-          <li>
-            <a href="#logout" class="block w-full p-2 hover:bg-neutral-tertiary-medium text-fg-danger rounded-md">Sign out</a>
-          </li>
-        </ul>
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-3">User Dropdown</h4>
+    <div style="position:relative; display:inline-block;">
+      ${renderFlowbiteAvatarUserDropdown({
+        id: 'avatarButton',
+        dropdownId: 'userDropdown',
+        name: 'Bonnie Green',
+        email: 'name@flowbite.com',
+        imgSrc: '/src/assets/zamorin-app-icon-1024.png',
+      })}
     </div>
   </div>
 </div>
@@ -2082,22 +2370,11 @@ export function renderFlowbiteBadge(options = {}) {
   } = options;
 
   if (asButtonNotification) {
-    return `
-<button type="button" class="relative text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm p-3 focus:outline-none">
-  <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m3.5 5.5 7.893 6.036a1 1 0 0 0 1.214 0L20.5 5.5M4 19h16a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1Z"/></svg>
-  <span class="sr-only">${label || 'Notifications'}</span>
-  <div class="absolute inline-flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-danger border-2 border-buffer rounded-full -top-2 -end-2">${count}</div>
-</button>`.trim();
+    return renderFlowbiteNotificationBadge({ count, srText: label || 'Notifications' });
   }
 
   if (asButtonWithBadge) {
-    return `
-<button type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
-${label || 'Messages'}
-<span class="inline-flex items-center justify-center w-4 h-4 ms-2 text-xs font-semibold text-white bg-danger rounded-full">
-${count}
-</span>
-</button>`.trim();
+    return renderFlowbiteButtonWithBadge({ label: label || 'Messages', count });
   }
 
   const v = BADGE_VARIANTS[variant] || BADGE_VARIANTS.brand;
@@ -2169,6 +2446,196 @@ ${label || '2 mins ago'}
 }
 
 /**
+ * Renders Flowbite Notification Badge inside an icon button component.
+ * Exact 1:1 match with Flowbite documentation & enterprise design.
+ *
+ * @param {Object} [options]
+ * @param {string|number} [options.count=20] - Badge count indicator
+ * @param {string} [options.srText='Notifications'] - Screen reader accessibility label
+ * @param {string} [options.iconSvg] - Optional custom SVG icon (defaults to Flowbite envelope icon)
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteNotificationBadge(options = {}) {
+  const {
+    count = 20,
+    srText = 'Notifications',
+    iconSvg = '<svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m3.5 5.5 7.893 6.036a1 1 0 0 0 1.214 0L20.5 5.5M4 19h16a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1Z"/></svg>',
+  } = options;
+
+  return `
+<button type="button" class="relative text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm p-3 focus:outline-none">
+  ${iconSvg}
+  <span class="sr-only">${srText}</span>
+  <div class="absolute inline-flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-danger border-2 border-buffer rounded-full -top-2 -end-2">${count}</div>
+</button>`.trim();
+}
+
+/**
+ * Renders Flowbite Button with Badge for count indicator inside text button component.
+ * Exact 1:1 match with Flowbite documentation & enterprise design.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.label='Messages'] - Button label text
+ * @param {string|number} [options.count=2] - Badge count indicator
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteButtonWithBadge(options = {}) {
+  const {
+    label = 'Messages',
+    count = 2,
+  } = options;
+
+  return `
+<button type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+${label}
+<span class="inline-flex items-center justify-center w-4 h-4 ms-2 text-xs font-semibold text-white bg-danger rounded-full">
+${count}
+</span>
+</button>`.trim();
+}
+
+/**
+ * Renders Flowbite Large Badges with Icon (6 color variants: Brand, Alternative, Gray, Danger, Success, Warning).
+ * @param {Object} [options]
+ * @param {string} [options.time='2 mins ago']
+ * @param {string} [options.warningTime='2 mins agong'] - Exact label from Flowbite docs & screenshot
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteLargeBadgesWithIcon(options = {}) {
+  const {
+    time = '2 mins ago',
+    warningTime = '2 mins agong',
+  } = options;
+
+  return `
+<span class="inline-flex items-center bg-brand-softer border border-brand-subtle text-fg-brand-strong text-sm font-medium leading-none px-2 py-1 rounded">
+<svg class="w-3.5 h-3.5 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+${time}
+</span>
+<span class="inline-flex items-center bg-neutral-primary-soft border border-default text-heading text-sm font-medium leading-none px-2 py-1 rounded">
+<svg class="w-3.5 h-3.5 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+${time}
+</span>
+<span class="inline-flex items-center bg-neutral-secondary-medium border border-default-medium text-heading text-sm font-medium leading-none px-2 py-1 rounded">
+<svg class="w-3.5 h-3.5 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+${time}
+</span>
+<span class="inline-flex items-center bg-danger-soft border border-danger-subtle text-fg-danger-strong text-sm font-medium leading-none px-2 py-1 rounded">
+<svg class="w-3.5 h-3.5 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+${time}
+</span>
+<span class="inline-flex items-center bg-success-soft border border-success-subtle text-fg-success-strong text-sm font-medium leading-none px-2 py-1 rounded">
+<svg class="w-3.5 h-3.5 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+${time}
+</span>
+<span class="inline-flex items-center bg-warning-soft border border-warning-subtle text-fg-warning text-sm font-medium leading-none px-2 py-1 rounded">
+<svg class="w-3.5 h-3.5 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+${warningTime}
+</span>`.trim();
+}
+
+/**
+ * Renders Flowbite Badges with animated SVG loader (6 color variants).
+ * @param {Object} [options]
+ * @param {string} [options.label='2 mins ago']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteBadgesWithSvgLoader(options = {}) {
+  const { label = '2 mins ago' } = options;
+
+  return `
+<span class="flex items-center bg-brand-softer border border-brand-subtle text-fg-brand-strong text-xs font-medium px-1.5 py-0.5 rounded gap-1">
+  <svg aria-hidden="true" role="status" class="w-3 h-3 me-1 animate-spin text-fg-brand" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="#1C64F2"/></svg>
+  <span>${label}</span>
+</span>
+<span class="flex items-center bg-neutral-primary-soft border border-default text-heading text-xs font-medium px-1.5 py-0.5 rounded gap-1">
+  <svg aria-hidden="true" role="status" class="w-3 h-3 me-1 animate-spin text-neutral-tertiary" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="#6A7282"/></svg>
+  <span>${label}</span>
+</span>
+<span class="flex items-center bg-neutral-secondary-medium border border-default-medium text-heading text-xs font-medium px-1.5 py-0.5 rounded gap-1">
+  <svg aria-hidden="true" role="status" class="w-3 h-3 me-1 animate-spin text-neutral-quaternary" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="#6A7282"/></svg>
+  <span>${label}</span>
+</span>
+<span class="flex items-center bg-danger-soft border border-danger-subtle text-fg-danger-strong text-xs font-medium px-1.5 py-0.5 rounded gap-1">
+  <svg aria-hidden="true" role="status" class="w-3 h-3 me-1 animate-spin text-danger-medium" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="#C70036"/></svg>
+  <span>${label}</span>
+</span>
+<span class="flex items-center bg-success-soft border border-success-subtle text-fg-success-strong text-xs font-medium px-1.5 py-0.5 rounded gap-1">
+  <svg aria-hidden="true" role="status" class="w-3 h-3 me-1 animate-spin text-success-medium" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="#009966"/></svg>
+  <span>${label}</span>
+</span>
+<span class="flex items-center bg-warning-soft border border-warning-subtle text-fg-warning text-xs font-medium px-1.5 py-0.5 rounded gap-1">
+  <svg aria-hidden="true" role="status" class="w-3 h-3 me-1 animate-spin text-warning-medium" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="#D03801"/></svg>
+  <span>${label}</span>
+</span>`.trim();
+}
+
+/**
+ * Renders Flowbite Dismissible Chips with Avatar (6 color variants).
+ * @param {Object} [options]
+ * @param {string} [options.avatarSrc='/docs/images/people/profile-picture-5.jpg']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteChipsWithAvatar(options = {}) {
+  const { avatarSrc = '/docs/images/people/profile-picture-5.jpg' } = options;
+
+  return `
+<span id="badge-avatar-dismiss-brand" class="inline-flex items-center bg-brand-softer border border-brand-subtle text-fg-brand-strong text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
+<img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarSrc}" alt="Rounded avatar">
+Brand
+<button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-brand-soft" data-dismiss-target="#badge-avatar-dismiss-brand" aria-label="Remove">
+  <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+  <span class="sr-only">Remove badge</span>
+</button>
+</span>
+
+<span id="badge-avatar-dismiss-alternative" class="inline-flex items-center bg-neutral-primary-soft border border-default text-heading text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
+<img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarSrc}" alt="Rounded avatar">
+Alternative
+<button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-neutral-tertiary" data-dismiss-target="#badge-avatar-dismiss-alternative" aria-label="Remove">
+  <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+  <span class="sr-only">Remove badge</span>
+</button>
+</span>
+
+<span id="badge-avatar-dismiss-gray" class="inline-flex items-center bg-neutral-secondary-medium border border-default-medium text-heading text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
+<img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarSrc}" alt="Rounded avatar">
+Gray
+<button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-neutral-quaternary" data-dismiss-target="#badge-avatar-dismiss-gray" aria-label="Remove">
+  <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+  <span class="sr-only">Remove badge</span>
+</button>
+</span>
+
+<span id="badge-avatar-dismiss-danger" class="inline-flex items-center bg-danger-soft border border-danger-subtle text-fg-danger-strong text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
+<img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarSrc}" alt="Rounded avatar">
+Danger
+<button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-danger-medium" data-dismiss-target="#badge-avatar-dismiss-danger" aria-label="Remove">
+  <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+  <span class="sr-only">Remove badge</span>
+</button>
+</span>
+
+<span id="badge-avatar-dismiss-success" class="inline-flex items-center bg-success-soft border border-success-subtle text-fg-success-strong text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
+<img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarSrc}" alt="Rounded avatar">
+Success
+<button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-success-medium" data-dismiss-target="#badge-avatar-dismiss-success" aria-label="Remove">
+  <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+  <span class="sr-only">Remove badge</span>
+</button>
+</span>
+
+<span id="badge-avatar-dismiss-warning" class="inline-flex items-center bg-warning-soft border border-warning-subtle text-fg-warning text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
+<img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarSrc}" alt="Rounded avatar">
+Warning
+<button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-warning-medium" data-dismiss-target="#badge-avatar-dismiss-warning" aria-label="Remove">
+  <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+  <span class="sr-only">Remove badge</span>
+</button>
+</span>`.trim();
+}
+
+/**
  * Renders the complete Flowbite Badges showcase containing all 8 badge categories:
  * 1. Large bordered badges
  * 2. Badges with icon
@@ -2234,30 +2701,7 @@ export function renderFlowbiteBadgesShowcase() {
   <div>
     <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-3">Large Badges with Icon</h4>
     <div class="flex flex-wrap items-center gap-2">
-      <span class="inline-flex items-center bg-brand-softer border border-brand-subtle text-fg-brand-strong text-sm font-medium leading-none px-2 py-1 rounded">
-        ${BADGE_CLOCK_SVG_LG}
-        2 mins ago
-      </span>
-      <span class="inline-flex items-center bg-neutral-primary-soft border border-default text-heading text-sm font-medium leading-none px-2 py-1 rounded">
-        ${BADGE_CLOCK_SVG_LG}
-        2 mins ago
-      </span>
-      <span class="inline-flex items-center bg-neutral-secondary-medium border border-default-medium text-heading text-sm font-medium leading-none px-2 py-1 rounded">
-        ${BADGE_CLOCK_SVG_LG}
-        2 mins ago
-      </span>
-      <span class="inline-flex items-center bg-danger-soft border border-danger-subtle text-fg-danger-strong text-sm font-medium leading-none px-2 py-1 rounded">
-        ${BADGE_CLOCK_SVG_LG}
-        2 mins ago
-      </span>
-      <span class="inline-flex items-center bg-success-soft border border-success-subtle text-fg-success-strong text-sm font-medium leading-none px-2 py-1 rounded">
-        ${BADGE_CLOCK_SVG_LG}
-        2 mins ago
-      </span>
-      <span class="inline-flex items-center bg-warning-soft border border-warning-subtle text-fg-warning text-sm font-medium leading-none px-2 py-1 rounded">
-        ${BADGE_CLOCK_SVG_LG}
-        2 mins ago
-      </span>
+      ${renderFlowbiteLargeBadgesWithIcon({ time: '2 mins ago', warningTime: '2 mins agong' })}
     </div>
   </div>
 
@@ -2265,30 +2709,7 @@ export function renderFlowbiteBadgesShowcase() {
   <div>
     <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-3">Badges with SVG Loader</h4>
     <div class="flex flex-wrap items-center gap-2">
-      <span class="flex items-center bg-brand-softer border border-brand-subtle text-fg-brand-strong text-xs font-medium px-1.5 py-0.5 rounded gap-1">
-        ${getBadgeLoaderSvg('text-fg-brand', '#1C64F2')}
-        <span>2 mins ago</span>
-      </span>
-      <span class="flex items-center bg-neutral-primary-soft border border-default text-heading text-xs font-medium px-1.5 py-0.5 rounded gap-1">
-        ${getBadgeLoaderSvg('text-neutral-tertiary', '#6A7282')}
-        <span>2 mins ago</span>
-      </span>
-      <span class="flex items-center bg-neutral-secondary-medium border border-default-medium text-heading text-xs font-medium px-1.5 py-0.5 rounded gap-1">
-        ${getBadgeLoaderSvg('text-neutral-quaternary', '#6A7282')}
-        <span>2 mins ago</span>
-      </span>
-      <span class="flex items-center bg-danger-soft border border-danger-subtle text-fg-danger-strong text-xs font-medium px-1.5 py-0.5 rounded gap-1">
-        ${getBadgeLoaderSvg('text-danger-medium', '#C70036')}
-        <span>2 mins ago</span>
-      </span>
-      <span class="flex items-center bg-success-soft border border-success-subtle text-fg-success-strong text-xs font-medium px-1.5 py-0.5 rounded gap-1">
-        ${getBadgeLoaderSvg('text-success-medium', '#009966')}
-        <span>2 mins ago</span>
-      </span>
-      <span class="flex items-center bg-warning-soft border border-warning-subtle text-fg-warning text-xs font-medium px-1.5 py-0.5 rounded gap-1">
-        ${getBadgeLoaderSvg('text-warning-medium', '#D03801')}
-        <span>2 mins ago</span>
-      </span>
+      ${renderFlowbiteBadgesWithSvgLoader({ label: '2 mins ago' })}
     </div>
   </div>
 
@@ -2346,63 +2767,11 @@ export function renderFlowbiteBadgesShowcase() {
     </div>
   </div>
 
-  <!-- 6. Chips with avatar -->
+  <!-- 6. Chips with Avatar -->
   <div>
     <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-3">Chips with Avatar</h4>
     <div class="flex flex-wrap items-center gap-2">
-      <span id="badge-avatar-dismiss-brand" class="inline-flex items-center bg-brand-softer border border-brand-subtle text-fg-brand-strong text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
-        <img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarImg}" alt="Rounded avatar">
-        Brand
-        <button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-brand-soft" data-dismiss-target="#badge-avatar-dismiss-brand" aria-label="Remove">
-          ${BADGE_CLOSE_SVG}
-          <span class="sr-only">Remove badge</span>
-        </button>
-      </span>
-
-      <span id="badge-avatar-dismiss-alternative" class="inline-flex items-center bg-neutral-primary-soft border border-default text-heading text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
-        <img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarImg}" alt="Rounded avatar">
-        Alternative
-        <button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-neutral-tertiary" data-dismiss-target="#badge-avatar-dismiss-alternative" aria-label="Remove">
-          ${BADGE_CLOSE_SVG}
-          <span class="sr-only">Remove badge</span>
-        </button>
-      </span>
-
-      <span id="badge-avatar-dismiss-gray" class="inline-flex items-center bg-neutral-secondary-medium border border-default-medium text-heading text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
-        <img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarImg}" alt="Rounded avatar">
-        Gray
-        <button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-neutral-quaternary" data-dismiss-target="#badge-avatar-dismiss-gray" aria-label="Remove">
-          ${BADGE_CLOSE_SVG}
-          <span class="sr-only">Remove badge</span>
-        </button>
-      </span>
-
-      <span id="badge-avatar-dismiss-danger" class="inline-flex items-center bg-danger-soft border border-danger-subtle text-fg-danger-strong text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
-        <img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarImg}" alt="Rounded avatar">
-        Danger
-        <button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-danger-medium" data-dismiss-target="#badge-avatar-dismiss-danger" aria-label="Remove">
-          ${BADGE_CLOSE_SVG}
-          <span class="sr-only">Remove badge</span>
-        </button>
-      </span>
-
-      <span id="badge-avatar-dismiss-success" class="inline-flex items-center bg-success-soft border border-success-subtle text-fg-success-strong text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
-        <img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarImg}" alt="Rounded avatar">
-        Success
-        <button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-success-medium" data-dismiss-target="#badge-avatar-dismiss-success" aria-label="Remove">
-          ${BADGE_CLOSE_SVG}
-          <span class="sr-only">Remove badge</span>
-        </button>
-      </span>
-
-      <span id="badge-avatar-dismiss-warning" class="inline-flex items-center bg-warning-soft border border-warning-subtle text-fg-warning text-xs font-medium ps-1.5 pe-0.5 py-0.5 rounded gap-1">
-        <img class="w-3.5 h-3.5 rounded-full me-1" src="${avatarImg}" alt="Rounded avatar">
-        Warning
-        <button type="button" class="inline-flex items-center p-0.5 text-sm bg-transparent rounded-xs hover:bg-warning-medium" data-dismiss-target="#badge-avatar-dismiss-warning" aria-label="Remove">
-          ${BADGE_CLOSE_SVG}
-          <span class="sr-only">Remove badge</span>
-        </button>
-      </span>
+      ${renderFlowbiteChipsWithAvatar({ avatarSrc: avatarImg })}
     </div>
   </div>
 
@@ -2411,19 +2780,10 @@ export function renderFlowbiteBadgesShowcase() {
     <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-3">Badges inside Buttons</h4>
     <div class="flex flex-wrap items-center gap-4">
       <!-- Notification badge -->
-      <button type="button" class="relative text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm p-3 focus:outline-none">
-        <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m3.5 5.5 7.893 6.036a1 1 0 0 0 1.214 0L20.5 5.5M4 19h16a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1Z"/></svg>
-        <span class="sr-only">Notifications</span>
-        <div class="absolute inline-flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-danger border-2 border-buffer rounded-full -top-2 -end-2">20</div>
-      </button>
+      ${renderFlowbiteNotificationBadge({ count: 20 })}
 
       <!-- Button with badge -->
-      <button type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
-        Messages
-        <span class="inline-flex items-center justify-center w-4 h-4 ms-2 text-xs font-semibold text-white bg-danger rounded-full">
-          2
-        </span>
-      </button>
+      ${renderFlowbiteButtonWithBadge({ label: 'Messages', count: 2 })}
     </div>
   </div>
 </div>
@@ -2475,6 +2835,43 @@ export function renderFlowbiteMarketingBanner(options = {}) {
             <span class="sr-only">${closeLabel}</span>
         </button>
         <button data-dismiss-target="#${id}" type="button" class="md:hidden text-body bg-neutral-primary-soft border border-default hover:bg-neutral-secondary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary-soft shadow-xs font-medium leading-5 rounded-base text-xs px-3 py-1.5 focus:outline-none">Close</button>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * Generates a Flowbite Informational sticky banner component string.
+ * Exact 1:1 match with Flowbite documentation & enterprise design.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.id='informational-banner']
+ * @param {string} [options.title='Integration is the key']
+ * @param {string} [options.message='You can integrate Flowbite with many tools to make your work even more efficient and lightning fast based on Tailwind.']
+ * @param {string} [options.ctaText='Sign Up']
+ * @param {string} [options.closeLabel='Close banner']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteInformationalBanner(options = {}) {
+  const {
+    id = 'informational-banner',
+    title = 'Integration is the key',
+    message = 'You can integrate Flowbite with many tools to make your work even more efficient and lightning fast based on Tailwind.',
+    ctaText = 'Sign Up',
+    closeLabel = 'Close banner',
+  } = options;
+
+  return `
+<div id="${id}" tabindex="-1" class="fixed top-0 start-0 z-50 flex flex-col justify-between w-full p-4 border-b border-default md:flex-row bg-neutral-secondary-soft">
+    <div class="mb-4 md:mb-0 md:me-4">
+        <h2 class="mb-1 text-base font-semibold text-heading">${title}</h2>
+        <p class="flex items-center text-sm font-normal text-body">${message}</p>
+    </div>
+    <div class="flex items-center shrink-0 space-x-2">
+        <button type="button" class="text-white bg-brand hover:bg-brand-strong box-border border border-transparent focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-xs px-3 py-1.5 focus:outline-none">${ctaText}</button>
+        <button data-dismiss-target="#${id}" type="button" class="shrink-0 inline-flex justify-center text-sm w-7 h-7 items-center text-body hover:bg-neutral-tertiary hover:text-heading rounded-sm">
+            <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+            <span class="sr-only">${closeLabel}</span>
+        </button>
     </div>
 </div>`.trim();
 }
@@ -2608,6 +3005,67 @@ export function renderFlowbiteBannerAndBottomNavShowcase() {
   </div>
 </div>
   `.trim();
+}
+
+/**
+ * Generates a Flowbite Breadcrumb with dropdown button component string.
+ * Exact 1:1 match with Flowbite documentation & enterprise design.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.buttonLabel='Flowbite']
+ * @param {string} [options.dropdownId='dropdown-2']
+ * @param {Array<Object>} [options.dropdownItems]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteBreadcrumbWithButton(options = {}) {
+  const {
+    buttonLabel = 'Flowbite',
+    dropdownId = 'dropdown-2',
+    dropdownItems = [
+      { label: 'Themesberg', href: '#' },
+      { label: 'Flowbite AI', href: '#' },
+      { label: 'Flowbite', href: '#' },
+    ],
+  } = options;
+
+  const dropdownListHtml = dropdownItems.map((item) => `
+        <li>
+          <a href="${item.href || '#'}" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded-md">${item.label}</a>
+        </li>`).join('');
+
+  return `
+<nav class="flex" aria-label="Breadcrumb">
+  <ol class="inline-flex items-center space-x-1 md:space-x-2 rtl:space-x-reverse">
+    <li class="inline-flex items-center">
+      <a href="#" class="inline-flex items-center text-sm font-medium text-body hover:text-fg-brand">
+        <svg class="w-4 h-4 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m4 12 8-8 8 8M6 10.5V19a1 1 0 0 0 1 1h3v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h3a1 1 0 0 0 1-1v-8.5"/></svg>
+        Home
+      </a>
+    </li>
+    <li>
+      <div class="flex items-center space-x-1.5">
+        <svg class="w-3.5 h-3.5 rtl:rotate-180 text-body" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7"/></svg>
+        <a href="#" class="inline-flex items-center text-sm font-medium text-body hover:text-fg-brand">Projects</a>
+      </div>
+    </li>
+    <li aria-current="page">
+      <div class="flex items-center space-x-1.5">
+        <svg class="w-3.5 h-3.5 rtl:rotate-180 text-body" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7"/></svg>
+        <span class="inline-flex items-center text-sm font-medium text-body-subtle">Database</span>
+      </div>
+    </li>
+  </ol>
+    <button id="dropdownWebsite" data-dropdown-toggle="${dropdownId}" type="button" class="ms-2.5 inline-flex items-center text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-3 py-2 focus:outline-none">
+      <svg class="w-3.5 h-3.5 me-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 6c0 1.657-3.134 3-7 3S5 7.657 5 6m14 0c0-1.657-3.134-3-7-3S5 4.343 5 6m14 0v6M5 6v6m0 0c0 1.657 3.134 3 7 3s7-1.343 7-3M5 12v6c0 1.657 3.134 3 7 3s7-1.343 7-3v-6"/></svg>
+      ${buttonLabel}
+      <svg class="w-3.5 h-3.5 ms-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7"/></svg>
+    </button>
+    <div id="${dropdownId}" class="z-10 bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-32 block hidden">
+      <ul class="p-2 text-sm text-body font-medium" aria-labelledby="dropdownWebsite">
+${dropdownListHtml}
+      </ul>
+    </div>
+</nav>`.trim();
 }
 
 // ─── Flowbite Buttons ─────────────────────────────────────────────────────────
@@ -6527,7 +6985,7 @@ export function renderFlowbiteLoadingIndicator(options = {}) {
   } = options;
   return `
 <div class="flex items-center justify-center bg-neutral-secondary-soft ${hClass} ${wClass} border border-default text-fg-brand-strong text-xs font-medium rounded-base">
-  <div class="px-2 py-px ring-brand-subtle text-fg-brand-strong text-xs font-medium rounded-sm bg-brand-softer animate-pulse">${label}</div>
+  <div class="px-2 py-px ring-1 ring-inset ring-brand-subtle text-fg-brand-strong text-xs font-medium rounded-sm bg-brand-softer animate-pulse">${label}</div>
 </div>`.trim();
 }
 
@@ -6597,6 +7055,3341 @@ export function renderFlowbiteFooterIndicatorShowcase() {
   `.trim();
 }
 
+// ─── Flowbite Cards ─────────────────────────────────────────────────────────
+
+/**
+ * Generates a Flowbite Card with Action Button component string.
+ * Exact 1:1 match with Flowbite documentation & enterprise design.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.title='Noteworthy technology acquisitions 2021']
+ * @param {string} [options.description='Here are the biggest technology acquisitions of 2025 so far, in reverse chronological order.']
+ * @param {string} [options.ctaText='Read more']
+ * @param {string} [options.ctaUrl='#']
+ * @param {string} [options.extraClasses='']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteCardWithButton(options = {}) {
+  const {
+    title = 'Noteworthy technology acquisitions 2021',
+    description = 'Here are the biggest technology acquisitions of 2025 so far, in reverse chronological order.',
+    ctaText = 'Read more',
+    ctaUrl = '#',
+    extraClasses = '',
+  } = options;
+
+  const classes = `bg-neutral-primary-soft block max-w-sm p-6 border border-default rounded-base shadow-xs ${extraClasses}`.trim();
+
+  return `
+<div class="${classes}">
+    <h5 class="mb-3 text-2xl font-semibold tracking-tight text-heading leading-8">${title}</h5>
+    <p class="text-body mb-6">${description}</p>
+    <a href="${ctaUrl}" class="inline-flex items-center text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+        ${ctaText}
+        <svg class="w-4 h-4 ms-1.5 rtl:rotate-180 -me-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+    </a>
+</div>`.trim();
+}
+
+/**
+ * Generates a Flowbite User Profile Card component string with dropdown menu & action buttons.
+ * Exact 1:1 match with Flowbite documentation & enterprise design.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.name='Bonnie Green']
+ * @param {string} [options.role='Visual Designer']
+ * @param {string} [options.avatarSrc='/docs/images/people/profile-picture-3.jpg']
+ * @param {string} [options.dropdownId='dropdown']
+ * @param {string} [options.dropdownButtonId='dropdownButton']
+ * @param {string} [options.followText='Follow me']
+ * @param {string} [options.messageText='Message']
+ * @param {string} [options.extraClasses='']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteUserProfileCard(options = {}) {
+  const {
+    name = 'Bonnie Green',
+    role = 'Visual Designer',
+    avatarSrc = '/docs/images/people/profile-picture-3.jpg',
+    dropdownId = 'dropdown',
+    dropdownButtonId = 'dropdownButton',
+    followText = 'Follow me',
+    messageText = 'Message',
+    extraClasses = '',
+  } = options;
+
+  const classes = `relative bg-neutral-primary-soft max-w-xs w-full p-6 border border-default rounded-base shadow-xs ${extraClasses}`.trim();
+
+  return `
+<div class="${classes}">
+        <button id="${dropdownButtonId}" data-dropdown-toggle="${dropdownId}" class="absolute top-2 end-2 text-body hover:text-heading bg-neutral-primary-soft box-border border border-transparent hover:bg-neutral-tertiary focus:ring-4 focus:ring-neutral-tertiary rounded-base p-1.5 focus:outline-none" type="button">
+            <span class="sr-only">Open dropdown</span>
+            <svg class="w-6 h-6" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="3" d="M6 12h.01m6 0h.01m5.99 0h.01"/></svg>
+        </button>
+        <!-- Dropdown menu -->
+        <div id="${dropdownId}" class="z-10 bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-36 block hidden">
+            <ul class="p-2 text-sm text-body font-medium" aria-labelledby="${dropdownButtonId}">
+                <li>
+                    <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded-md">Edit</a>
+                </li>
+                <li>
+                    <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded-md">Export Data</a>
+                </li>
+                <li>
+                    <a href="#" class="inline-flex items-center w-full p-2 text-fg-danger hover:bg-neutral-tertiary-medium rounded-md">Delete</a>
+                </li>
+            </ul>
+        </div>
+    <div class="flex flex-col items-center">
+        <img class="w-24 h-24 mb-6 rounded-full" src="${avatarSrc}" alt="${name} image"/>
+        <h5 class="mb-0.5 text-xl font-semibold tracking-tight text-heading">${name}</h5>
+        <span class="text-sm text-body">${role}</span>
+        <div class="flex mt-4 md:mt-6 gap-4">
+            <button type="button" class="inline-flex items-center text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+                <svg class="w-4 h-4 me-1.5 -ms-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12h4m-2 2v-4M4 18v-1a3 3 0 0 1 3-3h4a3 3 0 0 1 3 3v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Zm8-10a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>
+                ${followText}
+            </button>
+            <button type="button" class="inline-flex self-start w-auto text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+                ${messageText}
+            </button>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * Universal Flowbite Card Component Factory.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.variant='button'] - 'button' | 'user-profile'
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteCard(options = {}) {
+  const { variant = 'button', ...rest } = options;
+  if (variant === 'user-profile' || variant === 'profile') {
+    return renderFlowbiteUserProfileCard(rest);
+  }
+  return renderFlowbiteCardWithButton(rest);
+}
+
+/**
+ * Renders the complete Flowbite Cards showcase.
+ *
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteCardsShowcase() {
+  return `
+<div class="flowbite-cards-showcase space-y-8 p-4">
+  <!-- 1. Card with Button -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">1. Card with Button</h4>
+    ${renderFlowbiteCardWithButton()}
+  </div>
+
+  <!-- 2. User Profile Card -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">2. User Profile Card</h4>
+    ${renderFlowbiteUserProfileCard({ dropdownId: 'dropdown-profile-showcase', dropdownButtonId: 'dropdownButtonProfileShowcase' })}
+  </div>
+</div>
+  `.trim();
+}
+
+/* ============================================================
+   FLOWBITE FORM & INPUT COMPONENT GENERATORS
+   ============================================================ */
+
+/**
+ * Renders Flowbite Form Input Sizes (Small, Base, Large, Extra Large).
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteInputSizes(options = {}) {
+  const { idPrefix = 'form-input' } = options;
+  return `
+<form class="max-w-sm mx-auto space-y-4">
+    <div>
+        <label for="${idPrefix}-sm" class="block mb-2.5 text-sm font-medium text-heading">Small Input</label>
+        <input type="text" id="${idPrefix}-sm" class="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-2.5 py-2 shadow-xs placeholder:text-body" placeholder="Small input..." />
+    </div>
+    <div>
+        <label for="${idPrefix}-base" class="block mb-2.5 text-sm font-medium text-heading">Base Input</label>
+        <input type="text" id="${idPrefix}-base" class="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body" placeholder="Base input..." />
+    </div>
+    <div>
+        <label for="${idPrefix}-lg" class="block mb-2.5 text-sm font-medium text-heading">Large Input</label>
+        <input type="text" id="${idPrefix}-lg" class="bg-neutral-secondary-medium border border-default-medium text-heading text-base rounded-base focus:ring-brand focus:border-brand block w-full px-3.5 py-3 shadow-xs placeholder:text-body" placeholder="Large input..." />
+    </div>
+    <div>
+        <label for="${idPrefix}-xl" class="block mb-2.5 text-sm font-medium text-heading">Extra Large Input</label>
+        <input type="text" id="${idPrefix}-xl" class="bg-neutral-secondary-medium border border-default-medium text-heading text-base rounded-base focus:ring-brand focus:border-brand block w-full px-4 py-3.5 shadow-xs placeholder:text-body" placeholder="Extra large input..." />
+    </div>
+</form>`.trim();
+}
+
+/**
+ * Renders Flowbite Textarea input element.
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteTextarea(options = {}) {
+  const {
+    id = 'message',
+    label = 'Your message',
+    placeholder = 'Write your thoughts here...',
+    rows = 4,
+  } = options;
+  return `
+<form class="max-w-sm mx-auto">
+  <label for="${id}" class="block mb-2.5 text-sm font-medium text-heading">${label}</label>
+  <textarea id="${id}" rows="${rows}" class="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full p-3.5 shadow-xs placeholder:text-body" placeholder="${placeholder}"></textarea>
+</form>`.trim();
+}
+
+/**
+ * Renders Flowbite Checkbox element set.
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteCheckboxes(options = {}) {
+  const { idPrefix = 'checkbox' } = options;
+  return `
+<fieldset class="max-w-md mx-auto">
+  <legend class="sr-only">Checkbox variants</legend>
+
+  <div class="flex items-center mb-4">
+      <input checked id="${idPrefix}-1" type="checkbox" value="" class="w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft">
+      <label for="${idPrefix}-1" class="ms-2 text-sm font-medium text-heading select-none">I agree to the <a href="#" class="text-fg-brand hover:underline">terms and conditions</a>.</label>
+  </div>
+
+  <div class="flex items-center mb-4">
+      <input id="${idPrefix}-2" type="checkbox" value="" class="w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft">
+      <label for="${idPrefix}-2" class="ms-2 text-sm font-medium text-heading select-none">I want to get promotional offers</label>
+  </div>
+
+  <div class="flex items-center mb-4">
+      <input id="${idPrefix}-3" type="checkbox" value="" class="w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft">
+      <label for="${idPrefix}-3" class="ms-2 text-sm font-medium text-heading select-none">I am 18 years or older</label>
+  </div>
+  
+  <div class="flex mb-4">
+      <div class="flex items-center h-5">
+          <input id="${idPrefix}-helper" aria-describedby="${idPrefix}-helper-text" type="checkbox" value="" class="w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft">
+      </div>
+      <div class="ms-2 text-sm select-none">
+          <label for="${idPrefix}-helper" class="text-sm font-medium text-heading">Free shipping via Flowbite</label>
+          <p id="${idPrefix}-helper-text" class="text-xs text-body">For orders shipped from $25 in books or $29 in other categories</p>
+      </div>
+  </div>
+
+  <div class="flex items-center">
+      <input id="${idPrefix}-shipping-disabled" type="checkbox" value="" class="w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft" disabled>
+      <label for="${idPrefix}-shipping-disabled" class="ms-2 text-sm font-medium text-fg-disabled select-none">Eligible for international shipping (disabled)</label>
+  </div>
+</fieldset>`.trim();
+}
+
+/**
+ * Renders Flowbite Radio group options.
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteRadios(options = {}) {
+  const { name = 'countries', idPrefix = 'country-option' } = options;
+  return `
+<fieldset class="max-w-md mx-auto">
+  <legend class="sr-only">Countries</legend>
+
+  <div class="flex items-center mb-4">
+    <input id="${idPrefix}-1" type="radio" name="${name}" value="USA" class="w-4 h-4 text-neutral-primary border-default-medium bg-neutral-secondary-medium rounded-full checked:border-brand focus:ring-2 focus:outline-none focus:ring-brand-subtle border border-default appearance-none" checked>
+    <label for="${idPrefix}-1" class="select-none ms-2 text-sm font-medium text-heading">
+      United States
+    </label>
+  </div>
+
+  <div class="flex items-center mb-4">
+    <input id="${idPrefix}-2" type="radio" name="${name}" value="Germany" class="w-4 h-4 text-neutral-primary border-default-medium bg-neutral-secondary-medium rounded-full checked:border-brand focus:ring-2 focus:outline-none focus:ring-brand-subtle border border-default appearance-none">
+    <label for="${idPrefix}-2" class="select-none ms-2 text-sm font-medium text-heading">
+      Germany
+    </label>
+  </div>
+
+  <div class="flex items-center mb-4">
+    <input id="${idPrefix}-3" type="radio" name="${name}" value="Spain" class="w-4 h-4 text-neutral-primary border-default-medium bg-neutral-secondary-medium rounded-full checked:border-brand focus:ring-2 focus:outline-none focus:ring-brand-subtle border border-default appearance-none">
+    <label for="${idPrefix}-3" class="select-none ms-2 text-sm font-medium text-heading">
+      Spain
+    </label>
+  </div>
+
+  <div class="flex items-center mb-4">
+    <input id="${idPrefix}-4" type="radio" name="${name}" value="United Kingdom" class="w-4 h-4 text-neutral-primary border-default-medium bg-neutral-secondary-medium rounded-full checked:border-brand focus:ring-2 focus:outline-none focus:ring-brand-subtle border border-default appearance-none">
+    <label for="${idPrefix}-4" class="select-none ms-2 text-sm font-medium text-heading">
+      United Kingdom
+    </label>
+  </div>
+
+  <div class="flex items-center">
+    <input id="${idPrefix}-disabled" type="radio" name="${name}" value="China" class="w-4 h-4 text-neutral-primary border-default-medium bg-neutral-secondary-medium rounded-full checked:border-brand focus:ring-2 focus:outline-none focus:ring-brand-subtle border border-default appearance-none" disabled>
+    <label for="${idPrefix}-disabled" class="block ms-2 text-sm font-medium text-fg-disabled select-none">
+      China (disabled)
+    </label>
+  </div>
+</fieldset>`.trim();
+}
+
+/**
+ * Renders Flowbite File Upload form input.
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteFileUpload(options = {}) {
+  const { id = 'file_input', label = 'Upload file' } = options;
+  return `
+<form class="max-w-lg mx-auto">
+  <label class="block mb-2.5 text-sm font-medium text-heading" for="${id}">${label}</label>
+  <input class="cursor-pointer bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full shadow-xs placeholder:text-body file:mr-4 file:py-2 file:px-4 file:rounded-base file:border-0 file:text-sm file:font-medium file:bg-neutral-tertiary-medium file:text-heading hover:file:bg-neutral-tertiary" id="${id}" type="file">
+</form>`.trim();
+}
+
+/**
+ * Renders Flowbite Toggle Switch inputs (default and checked).
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteToggleSwitches(options = {}) {
+  const {
+    id1 = 'toggle-switch-default',
+    id2 = 'toggle-switch-checked',
+    label1 = 'Toggle me',
+    label2 = 'Checked toggle',
+  } = options;
+  return `
+<div class="flex flex-col sm:flex-row items-start sm:items-center gap-6 max-w-sm mx-auto">
+  <label class="inline-flex items-center cursor-pointer">
+    <input id="${id1}" type="checkbox" value="" class="sr-only peer">
+    <div class="relative w-9 h-5 bg-neutral-quaternary peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-soft rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-buffer after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand"></div>
+    <span class="ms-3 text-sm font-medium text-heading select-none">${label1}</span>
+  </label>
+
+  <label class="inline-flex items-center cursor-pointer">
+    <input id="${id2}" type="checkbox" value="" class="sr-only peer" checked>
+    <div class="relative w-9 h-5 bg-neutral-quaternary peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-soft rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-buffer after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand"></div>
+    <span class="ms-3 text-sm font-medium text-heading select-none">${label2}</span>
+  </label>
+</div>`.trim();
+}
+
+/**
+ * Renders Flowbite Default Warranty List (E-commerce component block).
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteWarrantyList(options = {}) {
+  const { title = 'My warranties' } = options;
+
+  const items = [
+    { id: 1, title: 'Apple iMac 27" All-In-One PC', length: '24 months', expires: '08 Feb 2026' },
+    { id: 2, title: 'Apple iPhone 15 Pro Max', length: '12 months', expires: '08 Feb 2025' },
+    { id: 3, title: 'iPad Pro 13-Inch (M4)', length: '48 months', expires: '26 Apr 2027' },
+    { id: 4, title: 'PlayStation®5 Console', length: '12 months', expires: '17 Aug 2024' },
+    { id: 5, title: 'Microsoft Surface Pro, Copilot', length: '36 months', expires: '30 Dec 2027' },
+    { id: 6, title: 'Apple Watch SE [GPS 40mm]', length: '24 months', expires: '28 Oct 2026' },
+    { id: 7, title: 'Microsoft Xbox Series X', length: '12 months', expires: '14 Jul 2025' },
+    { id: 8, title: 'Beats Fit Pro - True Wireless', length: '48 months', expires: '27 Mar 2028' },
+    { id: 9, title: 'Apple iMac 24" All-In-One PC', length: '12 months', expires: '08 Mar 2024', expired: true },
+    { id: 10, title: 'Brother Printer HL-L3220CDW', length: '36 months', expires: '29 May 2024', expired: true },
+  ];
+
+  const itemsMarkup = items
+    .map(
+      (item) => `
+    <div class="grid gap-4 py-4 md:grid-cols-10 md:gap-6 md:py-6 border-b border-default last:border-b-0">
+      <a href="#" class="content-center font-semibold text-heading hover:underline sm:col-span-10 lg:col-span-3">${item.title}</a>
+      <dl class="flex items-center space-x-2 sm:col-span-4 lg:col-span-3">
+        <dt class="font-medium text-heading">Warranty length:</dt>
+        <dd class="text-body">${item.length}</dd>
+      </dl>
+      <dl class="flex items-center space-x-2 sm:col-span-4 lg:col-span-3">
+        <dt class="font-medium text-heading">${item.expired ? 'Expired on:' : 'Expires on:'}</dt>
+        <dd class="text-body">${item.expires}</dd>
+      </dl>
+      <div class="sm:col-span-2 md:justify-self-end lg:col-span-1 relative">
+        <button id="actionsMenuDropdown${item.id}" data-dropdown-toggle="dropdownOrder${item.id}" type="button" class="flex w-full items-center justify-center rounded-base border border-default-medium bg-neutral-primary px-3 py-2 text-sm font-medium text-heading hover:bg-neutral-secondary-medium focus:ring-4 focus:ring-brand-medium sm:w-auto">
+          More
+          <svg class="-me-0.5 ms-1.5 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="dropdownOrder${item.id}" class="z-10 hidden w-52 divide-y divide-default rounded-base bg-neutral-primary-medium shadow-lg border border-default-medium" data-popper-placement="bottom">
+          <ul class="p-2 text-left text-sm font-medium text-body" aria-labelledby="actionsMenuDropdown${item.id}">
+            <li>
+              <a href="#" class="group inline-flex w-full items-center rounded px-3 py-2 text-sm hover:bg-neutral-tertiary-medium hover:text-heading">
+                <svg class="me-1.5 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13V4M7 14H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1h-2m-1-5-4 5-4-5m9 8h.01" />
+                </svg>
+                <span>Download certificate</span>
+              </a>
+            </li>
+            <li>
+              <a href="#" class="group inline-flex w-full items-center rounded px-3 py-2 text-sm hover:bg-neutral-tertiary-medium hover:text-heading">
+                <svg class="me-1.5 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 3v4a1 1 0 0 1-1 1H5m8-2h3m-3 3h3m-4 3v6m4-3H8M19 4v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7.914a1 1 0 0 1 .293-.707l3.914-3.914A1 1 0 0 1 9.914 3H18a1 1 0 0 1 1 1ZM8 12v6h8v-6H8Z" />
+                </svg>
+                <span>Extend warranty</span>
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>`
+    )
+    .join('\n');
+
+  return `
+<section class="bg-neutral-primary py-8 antialiased md:py-16 rounded-base border border-default">
+  <div class="mx-auto max-w-screen-xl px-4 2xl:px-0">
+    <div class="mx-auto max-w-5xl">
+      <div class="gap-4 sm:flex sm:items-center sm:justify-between">
+        <h2 class="text-xl font-semibold text-heading sm:text-2xl">${title}</h2>
+        <div class="mt-6 flex items-center space-x-4 sm:mt-0">
+          <div>
+            <label for="warranty-status" class="sr-only mb-2 block text-sm font-medium text-heading">Warranty status</label>
+            <select id="warranty-status" class="block w-full min-w-[8rem] rounded-base border border-default-medium bg-neutral-secondary-medium p-2.5 text-sm text-heading focus:border-brand focus:ring-brand">
+              <option selected>All</option>
+              <option value="pending">Pending</option>
+              <option value="active">Active</option>
+              <option value="expired">Expired</option>
+            </select>
+          </div>
+          <span class="inline-block text-body"> from </span>
+          <div>
+            <label for="warranty-length" class="sr-only mb-2 block text-sm font-medium text-heading">Select warranty length</label>
+            <select id="warranty-length" class="block w-full min-w-[10rem] rounded-base border border-default-medium bg-neutral-secondary-medium p-2.5 text-sm text-heading focus:border-brand focus:ring-brand">
+              <option selected>Warranty length</option>
+              <option value="12">12 months</option>
+              <option value="24">24 months</option>
+              <option value="48">48 months</option>
+              <option value="60">60 months</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-6 flow-root sm:mt-8">
+        <div class="divide-y divide-default">
+          ${itemsMarkup}
+        </div>
+      </div>
+
+      <nav class="mt-6 flex items-center justify-center sm:mt-8" aria-label="Page navigation">
+        <ul class="flex h-8 items-center -space-x-px text-sm">
+          <li>
+            <a href="#" class="ms-0 flex h-8 items-center justify-center rounded-s-base border border-e-0 border-default-medium bg-neutral-primary px-3 leading-tight text-body hover:bg-neutral-secondary-medium hover:text-heading">
+              <span class="sr-only">Previous</span>
+              <svg class="h-4 w-4 rtl:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 19-7-7 7-7" />
+              </svg>
+            </a>
+          </li>
+          <li>
+            <a href="#" class="flex h-8 items-center justify-center border border-default-medium bg-neutral-primary px-3 leading-tight text-body hover:bg-neutral-secondary-medium hover:text-heading">1</a>
+          </li>
+          <li>
+            <a href="#" class="flex h-8 items-center justify-center border border-default-medium bg-neutral-primary px-3 leading-tight text-body hover:bg-neutral-secondary-medium hover:text-heading">2</a>
+          </li>
+          <li>
+            <a href="#" aria-current="page" class="z-10 flex h-8 items-center justify-center border border-brand bg-brand-softer px-3 leading-tight text-fg-brand-strong font-semibold">3</a>
+          </li>
+          <li>
+            <a href="#" class="flex h-8 items-center justify-center border border-default-medium bg-neutral-primary px-3 leading-tight text-body hover:bg-neutral-secondary-medium hover:text-heading">...</a>
+          </li>
+          <li>
+            <a href="#" class="flex h-8 items-center justify-center border border-default-medium bg-neutral-primary px-3 leading-tight text-body hover:bg-neutral-secondary-medium hover:text-heading">100</a>
+          </li>
+          <li>
+            <a href="#" class="flex h-8 items-center justify-center rounded-e-base border border-default-medium bg-neutral-primary px-3 leading-tight text-body hover:bg-neutral-secondary-medium hover:text-heading">
+              <span class="sr-only">Next</span>
+              <svg class="h-4 w-4 rtl:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" />
+              </svg>
+            </a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</section>`.trim();
+}
+
+/**
+ * Renders the complete Flowbite Forms & Inputs Showcase.
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteFormsShowcase() {
+  return `
+<div class="flowbite-forms-showcase space-y-12 p-4">
+  <!-- 1. Input Sizing Options -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">1. Form Input Sizes (Small, Base, Large, Extra Large)</h4>
+    ${renderFlowbiteInputSizes()}
+  </div>
+
+  <!-- 2. Textarea -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">2. Textarea Form Element</h4>
+    ${renderFlowbiteTextarea()}
+  </div>
+
+  <!-- 3. Checkbox Variants -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">3. Checkbox Fieldset (Terms, Promo, Age 18+, Helper Text, Disabled)</h4>
+    ${renderFlowbiteCheckboxes()}
+  </div>
+
+  <!-- 4. Radio Group -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">4. Radio Buttons Group (Countries, Checked, Disabled)</h4>
+    ${renderFlowbiteRadios()}
+  </div>
+
+  <!-- 5. File Upload -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">5. File Upload Element</h4>
+    ${renderFlowbiteFileUpload()}
+  </div>
+
+  <!-- 6. Toggle Switch -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">6. Toggle Switches (CSS Peer State)</h4>
+    ${renderFlowbiteToggleSwitches()}
+  </div>
+
+  <!-- 7. E-Commerce Block: Default Warranty List -->
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">7. E-Commerce Block: Default Warranty List (Filters + Action Dropdowns + Pagination)</h4>
+    ${renderFlowbiteWarrantyList()}
+  </div>
+</div>
+  `.trim();
+}
+
+/* ============================================================
+   FLOWBITE COLLAPSE CLASS & INITIALIZER
+   ============================================================ */
+
+/**
+ * Flowbite Collapse Class.
+ * Manages collapsing and expanding navigation containers (e.g. mobile menus).
+ */
+export class Collapse {
+  /**
+   * @param {HTMLElement} targetElement
+   * @param {HTMLElement} [triggerElement=null]
+   * @param {Object} [options={}]
+   * @param {Function} [options.onCollapse]
+   * @param {Function} [options.onExpand]
+   * @param {Function} [options.onToggle]
+   * @param {Object} [instanceOptions={}]
+   * @param {string} [instanceOptions.id]
+   * @param {boolean} [instanceOptions.override]
+   */
+  constructor(targetElement, triggerElement = null, options = {}, instanceOptions = {}) {
+    this._targetEl = targetElement;
+    this._triggerEl = triggerElement;
+    this._options = {
+      onCollapse: options.onCollapse || (() => {}),
+      onExpand: options.onExpand || (() => {}),
+      onToggle: options.onToggle || (() => {}),
+      ...options,
+    };
+    this._instanceOptions = instanceOptions;
+    this._visible = this._targetEl ? !this._targetEl.classList.contains('hidden') : false;
+    this._init();
+  }
+
+  _init() {
+    if (!this._triggerEl || !this._targetEl) return;
+    this._clickHandler = (e) => {
+      e.preventDefault();
+      this.toggle();
+    };
+    this._triggerEl.addEventListener('click', this._clickHandler);
+  }
+
+  collapse() {
+    if (this._targetEl) this._targetEl.classList.add('hidden');
+    if (this._triggerEl) this._triggerEl.setAttribute('aria-expanded', 'false');
+    this._visible = false;
+    this._options.onCollapse(this);
+  }
+
+  expand() {
+    if (this._targetEl) this._targetEl.classList.remove('hidden');
+    if (this._triggerEl) this._triggerEl.setAttribute('aria-expanded', 'true');
+    this._visible = true;
+    this._options.onExpand(this);
+  }
+
+  toggle() {
+    if (this._visible) this.collapse();
+    else this.expand();
+    this._options.onToggle(this);
+  }
+
+  isVisible() {
+    return this._visible;
+  }
+
+  updateOnCollapse(callback) {
+    this._options.onCollapse = callback;
+  }
+
+  updateOnExpand(callback) {
+    this._options.onExpand = callback;
+  }
+
+  updateOnToggle(callback) {
+    this._options.onToggle = callback;
+  }
+
+  destroy() {
+    if (this._triggerEl && this._clickHandler) {
+      this._triggerEl.removeEventListener('click', this._clickHandler);
+      this._clickHandler = null;
+    }
+    this._targetEl = null;
+    this._triggerEl = null;
+  }
+}
+
+/**
+ * Initializes all [data-collapse-toggle] elements in the root.
+ * @param {HTMLElement|Document} [root=document]
+ */
+export function initCollapses(root = document) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  const triggers = root.querySelectorAll('[data-collapse-toggle]');
+  triggers.forEach((trigger) => {
+    const targetId = trigger.getAttribute('data-collapse-toggle');
+    if (!targetId) return;
+    const target = root.getElementById
+      ? root.getElementById(targetId)
+      : root.querySelector ? root.querySelector('#' + targetId) : null;
+    if (target && !trigger._fbCollapseBound) {
+      trigger._fbCollapseBound = true;
+      new Collapse(target, trigger);
+    }
+  });
+}
+
+/* ============================================================
+   FLOWBITE MEGA MENU COMPONENT GENERATORS
+   ============================================================ */
+
+/**
+ * Renders the Flowbite Default Mega Menu inside a navigation bar.
+ * @param {Object} [options={}]
+ * @param {string} [options.brand='Flowbite']
+ * @param {string} [options.brandUrl='https://flowbite.com']
+ * @param {string} [options.dropdownId='mega-menu-dropdown']
+ * @param {string} [options.triggerId='mega-menu-dropdown-button']
+ * @param {string} [options.mobileNavId='mega-menu']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteMegaMenu(options = {}) {
+  const {
+    brand = 'Flowbite',
+    brandUrl = 'https://flowbite.com',
+    dropdownId = 'mega-menu-dropdown',
+    triggerId = 'mega-menu-dropdown-button',
+    mobileNavId = 'mega-menu',
+    columns = [
+      {
+        links: [
+          { label: 'About Us', href: '#' },
+          { label: 'Library', href: '#' },
+          { label: 'Resources', href: '#' },
+          { label: 'Pro Version', href: '#' },
+        ],
+      },
+      {
+        links: [
+          { label: 'Blog', href: '#' },
+          { label: 'Newsletter', href: '#' },
+          { label: 'Playground', href: '#' },
+          { label: 'License', href: '#' },
+        ],
+      },
+      {
+        links: [
+          { label: 'Contact Us', href: '#' },
+          { label: 'Support Center', href: '#' },
+          { label: 'Terms', href: '#' },
+        ],
+      },
+    ],
+  } = options;
+
+  const columnsMarkup = columns
+    .map(
+      (col, idx) => `
+      <div class="p-4 ${idx < columns.length - 1 ? 'pb-0 md:pb-4' : ''}">
+        <ul class="space-y-3" ${idx === 0 ? `aria-labelledby="${triggerId}"` : ''}>
+          ${col.links
+            .map(
+              (l) => `
+          <li>
+            <a href="${l.href}" class="text-body hover:text-fg-brand">${l.label}</a>
+          </li>`
+            )
+            .join('')}
+        </ul>
+      </div>`
+    )
+    .join('\n');
+
+  return `
+<nav class="bg-neutral-primary border-default rounded-base border shadow-xs">
+    <div class="flex flex-wrap items-center justify-between max-w-screen-xl mx-auto p-4">
+        <a href="${brandUrl}" class="flex items-center space-x-3 rtl:space-x-reverse">
+            <img src="https://flowbite.com/docs/images/logo.svg" class="h-7" alt="${brand} Logo" />
+            <span class="self-center text-xl font-semibold whitespace-nowrap text-heading">${brand}</span>
+        </a>
+        <div class="flex items-center md:order-2 space-x-1 md:space-x-2 rtl:space-x-reverse">
+            <a href="#" class="text-heading bg-neutral-primary box-border border border-transparent hover:bg-neutral-secondary-medium focus:ring-4 focus:ring-neutral-tertiary-soft font-medium leading-5 rounded-base text-sm px-3 py-2 focus:outline-none">Login</a>
+            <a href="#" class="text-white bg-brand hover:bg-brand-strong box-border border border-transparent focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-3 py-2 focus:outline-none">Sign Up</a>
+            <button data-collapse-toggle="${mobileNavId}" type="button" class="inline-flex items-center p-2 w-10 h-10 justify-center text-sm text-body rounded-lg md:hidden hover:bg-neutral-secondary-soft hover:text-heading focus:outline-none focus:ring-2 focus:ring-default" aria-controls="${mobileNavId}" aria-expanded="false">
+                <span class="sr-only">Open main menu</span>
+                <svg class="w-6 h-6" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M5 7h14M5 12h14M5 17h14"/></svg>
+            </button>
+        </div>
+        <div id="${mobileNavId}" class="items-center justify-between hidden w-full md:flex md:w-auto md:order-1">
+            <ul class="flex flex-col mt-4 font-medium md:flex-row md:mt-0 md:space-x-8 rtl:space-x-reverse">
+                <li>
+                    <a href="#" class="block py-2 px-3 text-fg-brand border-b border-light hover:bg-neutral-secondary-soft md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0" aria-current="page">Home</a>
+                </li>
+                <li>
+                    <button id="${triggerId}" data-dropdown-toggle="${dropdownId}" class="flex items-center justify-between w-full py-2 px-3 font-medium text-heading border-b border-light md:w-auto hover:bg-neutral-secondary-soft md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0">
+                        Company 
+                        <svg class="w-4 h-4 ms-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7"/></svg>
+                    </button>
+                    <div id="${dropdownId}" class="absolute z-10 grid hidden w-auto grid-cols-2 text-sm bg-neutral-primary-soft border border-default rounded-base shadow md:grid-cols-3">
+                        ${columnsMarkup}
+                    </div>
+                </li>
+                <li>
+                    <a href="#" class="block py-2 px-3 text-heading border-b border-light hover:bg-neutral-secondary-soft md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0">Team</a>
+                </li>
+                <li>
+                    <a href="#" class="block py-2 px-3 text-heading border-b border-light hover:bg-neutral-secondary-soft md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0">Contact</a>
+                </li>
+            </ul>
+        </div>
+    </div>
+</nav>`.trim();
+}
+
+/**
+ * Renders the Mega Menu showcase view.
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteMegaMenuShowcase() {
+  return `
+<div class="flowbite-mega-menu-showcase space-y-6 p-4">
+  <div>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider mb-4">1. Default Mega Menu with 3 Columns</h4>
+    ${renderFlowbiteMegaMenu()}
+  </div>
+</div>
+  `.trim();
+}
+
+/* ============================================================
+   FLOWBITE MODAL CLASS & INTERACTION CONTROLLER
+   ============================================================ */
+
+const MODAL_PLACEMENT_CLASSES = {
+  'top-left': ['justify-start', 'items-start'],
+  'top-center': ['justify-center', 'items-start'],
+  'top-right': ['justify-end', 'items-start'],
+  'center-left': ['justify-start', 'items-center'],
+  'center': ['justify-center', 'items-center'],
+  'center-right': ['justify-end', 'items-center'],
+  'bottom-left': ['justify-start', 'items-end'],
+  'bottom-center': ['justify-center', 'items-end'],
+  'bottom-right': ['justify-end', 'items-end'],
+};
+
+const ALL_MODAL_ALIGNMENT_CLASSES = [
+  'justify-start',
+  'justify-center',
+  'justify-end',
+  'items-start',
+  'items-center',
+  'items-end',
+];
+
+/**
+ * Flowbite Modal Class
+ * Manages modal visibility, backdrop injection, scroll lock, outside click, and keyboard ESC handling.
+ */
+export class Modal {
+  /**
+   * @param {HTMLElement} targetEl - Main modal container element
+   * @param {Object} [options={}] - Options configuration
+   * @param {string} [options.placement='center'] - Placement position
+   * @param {string} [options.backdrop='dynamic'] - 'dynamic' | 'static' | 'none'
+   * @param {string} [options.backdropClasses='bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40']
+   * @param {boolean} [options.closable=true] - ESC key and backdrop close enabled
+   * @param {Function} [options.onHide]
+   * @param {Function} [options.onShow]
+   * @param {Function} [options.onToggle]
+   * @param {Object} [instanceOptions={}]
+   * @param {string} [instanceOptions.id]
+   * @param {boolean} [instanceOptions.override]
+   */
+  constructor(targetEl, options = {}, instanceOptions = {}) {
+    this._targetEl = targetEl;
+    this._options = {
+      placement: options.placement || 'center',
+      backdrop:
+        options.backdrop ||
+        (targetEl && targetEl.getAttribute('data-modal-backdrop') === 'static'
+          ? 'static'
+          : 'dynamic'),
+      backdropClasses:
+        options.backdropClasses ||
+        'bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40',
+      closable: options.closable !== undefined ? options.closable : true,
+      onHide: options.onHide || (() => {}),
+      onShow: options.onShow || (() => {}),
+      onToggle: options.onToggle || (() => {}),
+    };
+    this._instanceOptions = instanceOptions;
+    this._backdropEl = null;
+    this._visible = targetEl ? !targetEl.classList.contains('hidden') : false;
+
+    this._keydownHandler = null;
+    this._outsideClickHandler = null;
+
+    this._init();
+  }
+
+  _init() {
+    if (!this._targetEl) return;
+
+    // Click on target container itself (outside of inner dialog box)
+    this._outsideClickHandler = (e) => {
+      if (e.target === this._targetEl) {
+        if (this._options.backdrop === 'static') {
+          // Static backdrop: do not close
+          return;
+        }
+        if (this._options.closable) {
+          this.hide();
+        }
+      }
+    };
+    this._targetEl.addEventListener('click', this._outsideClickHandler);
+
+    // ESC key handler
+    this._keydownHandler = (e) => {
+      if (e.key === 'Escape' && this._visible && this._options.closable) {
+        this.hide();
+      }
+    };
+    document.addEventListener('keydown', this._keydownHandler);
+  }
+
+  _createBackdrop() {
+    if (this._options.backdrop === 'none') return;
+    let backdrop = document.querySelector('[modal-backdrop]');
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.setAttribute('modal-backdrop', '');
+      backdrop.className = this._options.backdropClasses;
+      document.body.appendChild(backdrop);
+    }
+    this._backdropEl = backdrop;
+
+    if (this._options.backdrop === 'dynamic' && this._options.closable) {
+      this._backdropClickHandler = () => this.hide();
+      this._backdropEl.addEventListener('click', this._backdropClickHandler);
+    }
+  }
+
+  _destroyBackdrop() {
+    if (this._backdropEl) {
+      if (this._backdropClickHandler) {
+        this._backdropEl.removeEventListener('click', this._backdropClickHandler);
+        this._backdropClickHandler = null;
+      }
+      if (this._backdropEl.parentNode) {
+        this._backdropEl.parentNode.removeChild(this._backdropEl);
+      }
+      this._backdropEl = null;
+    }
+  }
+
+  show() {
+    if (!this._targetEl || this._visible) return;
+
+    this._visible = true;
+
+    // Update classes and accessibility
+    this._targetEl.classList.remove('hidden');
+    this._targetEl.classList.add('flex');
+    this._targetEl.setAttribute('aria-hidden', 'false');
+    this._targetEl.setAttribute('role', 'dialog');
+    this._targetEl.setAttribute('aria-modal', 'true');
+
+    // Placement
+    const placementClasses =
+      MODAL_PLACEMENT_CLASSES[this._options.placement] ||
+      MODAL_PLACEMENT_CLASSES['center'];
+    ALL_MODAL_ALIGNMENT_CLASSES.forEach((cls) => this._targetEl.classList.remove(cls));
+    placementClasses.forEach((cls) => this._targetEl.classList.add(cls));
+
+    // Backdrop
+    this._createBackdrop();
+
+    // Body scroll lock
+    document.body.classList.add('overflow-hidden');
+
+    // Callback
+    this._options.onShow(this);
+  }
+
+  hide() {
+    if (!this._targetEl || !this._visible) return;
+
+    this._visible = false;
+
+    // Update classes and accessibility
+    this._targetEl.classList.add('hidden');
+    this._targetEl.classList.remove('flex');
+    this._targetEl.setAttribute('aria-hidden', 'true');
+    this._targetEl.removeAttribute('aria-modal');
+
+    // Destroy backdrop
+    this._destroyBackdrop();
+
+    // Remove body scroll lock if no other modals are open
+    const openModals = document.querySelectorAll('[role="dialog"]:not(.hidden)');
+    if (openModals.length === 0) {
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    // Callback
+    this._options.onHide(this);
+  }
+
+  toggle() {
+    if (this._visible) {
+      this.hide();
+    } else {
+      this.show();
+    }
+    this._options.onToggle(this);
+  }
+
+  isHidden() {
+    return !this._visible;
+  }
+
+  isVisible() {
+    return this._visible;
+  }
+
+  updateOnShow(callback) {
+    this._options.onShow = callback;
+  }
+
+  updateOnHide(callback) {
+    this._options.onHide = callback;
+  }
+
+  updateOnToggle(callback) {
+    this._options.onToggle = callback;
+  }
+
+  destroy() {
+    if (this._outsideClickHandler && this._targetEl) {
+      this._targetEl.removeEventListener('click', this._outsideClickHandler);
+    }
+    if (this._keydownHandler) {
+      document.removeEventListener('keydown', this._keydownHandler);
+    }
+    this._destroyBackdrop();
+    this._targetEl = null;
+  }
+}
+
+/**
+ * Initializes all modal toggle, show, and hide triggers within root.
+ * @param {HTMLElement|Document} [root=document]
+ */
+export function initModals(root = document) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+
+  const getModalInstance = (modalId) => {
+    if (!modalId) return null;
+    const modalEl = root.getElementById
+      ? root.getElementById(modalId)
+      : (root.querySelector ? root.querySelector('#' + modalId) : null) ||
+        (document.getElementById ? document.getElementById(modalId) : null);
+    if (!modalEl) return null;
+    if (!modalEl._flowbiteModal) {
+      const isStatic = modalEl.getAttribute('data-modal-backdrop') === 'static';
+      modalEl._flowbiteModal = new Modal(modalEl, {
+        backdrop: isStatic ? 'static' : 'dynamic',
+      });
+    }
+    return modalEl._flowbiteModal;
+  };
+
+  // Wire data-modal-toggle
+  root.querySelectorAll('[data-modal-toggle]').forEach((trigger) => {
+    if (trigger._fbModalToggleBound) return;
+    trigger._fbModalToggleBound = true;
+    const targetId =
+      trigger.getAttribute('data-modal-toggle') ||
+      trigger.getAttribute('data-modal-target');
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      const modal = getModalInstance(targetId);
+      if (modal) modal.toggle();
+    });
+  });
+
+  // Wire data-modal-show
+  root.querySelectorAll('[data-modal-show]').forEach((trigger) => {
+    if (trigger._fbModalShowBound) return;
+    trigger._fbModalShowBound = true;
+    const targetId =
+      trigger.getAttribute('data-modal-show') ||
+      trigger.getAttribute('data-modal-target');
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      const modal = getModalInstance(targetId);
+      if (modal) modal.show();
+    });
+  });
+
+  // Wire data-modal-hide
+  root.querySelectorAll('[data-modal-hide]').forEach((trigger) => {
+    if (trigger._fbModalHideBound) return;
+    trigger._fbModalHideBound = true;
+    const targetId = trigger.getAttribute('data-modal-hide');
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      const modal = getModalInstance(targetId);
+      if (modal) modal.hide();
+    });
+  });
+}
+
+/* ============================================================
+   FLOWBITE MODAL COMPONENT GENERATORS (8 VARIANTS)
+   ============================================================ */
+
+/**
+ * 1. Default Modal
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteDefaultModal(options = {}) {
+  const {
+    id = 'default-modal',
+    title = 'Terms of Service',
+    buttonText = 'Toggle modal',
+    acceptText = 'I accept',
+    declineText = 'Decline',
+  } = options;
+
+  return `
+<!-- Modal toggle -->
+<button data-modal-target="${id}" data-modal-toggle="${id}" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+  ${buttonText}
+</button>
+
+<!-- Main modal -->
+<div id="${id}" tabindex="-1" aria-hidden="true" class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative p-4 w-full max-w-2xl max-h-full">
+        <!-- Modal content -->
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <!-- Modal header -->
+            <div class="flex items-center justify-between border-b border-default pb-4 md:pb-5">
+                <h3 class="text-lg font-medium text-heading">
+                    ${title}
+                </h3>
+                <button type="button" class="text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${id}">
+                    <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    <span class="sr-only">Close modal</span>
+                </button>
+            </div>
+            <!-- Modal body -->
+            <div class="space-y-4 md:space-y-6 py-4 md:py-6">
+                <p class="leading-relaxed text-body">
+                    With less than a month to go before the European Union enacts new consumer privacy laws for its citizens, companies around the world are updating their terms of service agreements to comply.
+                </p>
+                <p class="leading-relaxed text-body">
+                    The European Union’s General Data Protection Regulation (G.D.P.R.) goes into effect on May 25 and is meant to ensure a common set of data rights in the European Union. It requires organizations to notify users as soon as possible of high-risk data breaches that could personally affect them.
+                </p>
+            </div>
+            <!-- Modal footer -->
+            <div class="flex items-center border-t border-default space-x-4 pt-4 md:pt-5">
+                <button data-modal-hide="${id}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${acceptText}</button>
+                <button data-modal-hide="${id}" type="button" class="text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${declineText}</button>
+            </div>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 2. Static Modal (Backdrop Static - does not close on click outside)
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteStaticModal(options = {}) {
+  const {
+    id = 'static-modal',
+    title = 'Static modal',
+    buttonText = 'Toggle modal',
+    acceptText = 'I accept',
+    declineText = 'Decline',
+  } = options;
+
+  return `
+<!-- Modal toggle -->
+<button data-modal-target="${id}" data-modal-toggle="${id}" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+  ${buttonText}
+</button>
+
+<!-- Main modal -->
+<div id="${id}" data-modal-backdrop="static" tabindex="-1" aria-hidden="true" class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative p-4 w-full max-w-2xl max-h-full">
+        <!-- Modal content -->
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <!-- Modal header -->
+            <div class="flex items-center justify-between border-b border-default pb-4 md:pb-5">
+                <h3 class="text-lg font-medium text-heading">
+                    ${title}
+                </h3>
+                <button type="button" class="text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${id}">
+                    <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    <span class="sr-only">Close modal</span>
+                </button>
+            </div>
+            <!-- Modal body -->
+            <div class="space-y-4 md:space-y-6 py-4 md:py-6">
+                <p class="leading-relaxed text-body">
+                    With less than a month to go before the European Union enacts new consumer privacy laws for its citizens, companies around the world are updating their terms of service agreements to comply.
+                </p>
+                <p class="leading-relaxed text-body">
+                    The European Union’s General Data Protection Regulation (G.D.P.R.) goes into effect on May 25 and is meant to ensure a common set of data rights in the European Union. It requires organizations to notify users as soon as possible of high-risk data breaches that could personally affect them.
+                </p>
+            </div>
+            <!-- Modal footer -->
+            <div class="flex items-center border-t border-default space-x-4 pt-4 md:pt-5">
+                <button data-modal-hide="${id}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${acceptText}</button>
+                <button data-modal-hide="${id}" type="button" class="text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${declineText}</button>
+            </div>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 3. Pop-up Modal (Delete / Confirmation Dialog)
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePopupModal(options = {}) {
+  const {
+    id = 'popup-modal',
+    buttonText = 'Toggle modal',
+    message = 'Are you sure you want to delete this product from your account?',
+    confirmText = "Yes, I'm sure",
+    cancelText = 'No, cancel',
+  } = options;
+
+  return `
+<!-- Modal toggle -->
+<button data-modal-target="${id}" data-modal-toggle="${id}" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+  ${buttonText}
+</button>
+
+<div id="${id}" tabindex="-1" class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative p-4 w-full max-w-md max-h-full">
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <button type="button" class="absolute top-3 end-2.5 text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${id}">
+                <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                <span class="sr-only">Close modal</span>
+            </button>
+            <div class="p-4 md:p-5 text-center">
+                <svg class="mx-auto mb-4 text-fg-disabled w-12 h-12" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13V8m0 8h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+                <h3 class="mb-6 text-body">${message}</h3>
+                <div class="flex items-center space-x-4 justify-center">
+                    <button data-modal-hide="${id}" type="button" class="text-white bg-danger box-border border border-transparent hover:bg-danger-strong focus:ring-4 focus:ring-danger-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+                    ${confirmText}
+                    </button>
+                    <button data-modal-hide="${id}" type="button" class="text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${cancelText}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 4. Modal with CRUD Form
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteCrudModal(options = {}) {
+  const {
+    id = 'crud-modal',
+    title = 'Create new product',
+    buttonText = 'Toggle modal',
+  } = options;
+
+  return `
+<!-- Modal toggle -->
+<button data-modal-target="${id}" data-modal-toggle="${id}" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+  ${buttonText}
+</button>
+
+<!-- Main modal -->
+<div id="${id}" tabindex="-1" aria-hidden="true" class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative p-4 w-full max-w-md max-h-full">
+        <!-- Modal content -->
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <!-- Modal header -->
+            <div class="flex items-center justify-between border-b border-default pb-4 md:pb-5">
+                <h3 class="text-lg font-medium text-heading">
+                    ${title}
+                </h3>
+                <button type="button" class="text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${id}">
+                    <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    <span class="sr-only">Close modal</span>
+                </button>
+            </div>
+            <!-- Modal body -->
+            <form action="#">
+                <div class="grid gap-4 grid-cols-2 py-4 md:py-6">
+                    <div class="col-span-2">
+                        <label for="${id}-name" class="block mb-2.5 text-sm font-medium text-heading">Name</label>
+                        <input type="text" name="name" id="${id}-name" class="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body" placeholder="Type product name" required="">
+                    </div>
+                    <div class="col-span-2 sm:col-span-1">
+                        <label for="${id}-price" class="block mb-2.5 text-sm font-medium text-heading">Price</label>
+                        <input type="number" name="price" id="${id}-price" class="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body" placeholder="$2999" required="">
+                    </div>
+                    <div class="col-span-2 sm:col-span-1">
+                        <label for="${id}-category" class="block mb-2.5 text-sm font-medium text-heading">Category</label>
+                        <select id="${id}-category" class="block w-full px-3 py-2.5 bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand shadow-xs placeholder:text-body">
+                            <option selected="">Select category</option>
+                            <option value="TV">TV/Monitors</option>
+                            <option value="PC">PC</option>
+                            <option value="GA">Gaming/Console</option>
+                            <option value="PH">Phones</option>
+                        </select>
+                    </div>
+                    <div class="col-span-2">
+                        <label for="${id}-description" class="block mb-2.5 text-sm font-medium text-heading">Product Description</label>
+                        <textarea id="${id}-description" rows="4" class="block bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full p-3.5 shadow-xs placeholder:text-body" placeholder="Write product description here"></textarea>                    
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4 border-t border-default pt-4 md:pt-6">
+                    <button type="submit" class="inline-flex items-center text-white bg-brand hover:bg-brand-strong box-border border border-transparent focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+                        <svg class="w-4 h-4 me-1.5 -ms-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7 7V5"/></svg>
+                        Add new product
+                    </button>
+                    <button data-modal-hide="${id}" type="button" class="text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 5. Modal with Advanced Radio Inputs
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteRadioModal(options = {}) {
+  const {
+    id = 'select-modal',
+    title = 'Open positions',
+    buttonText = 'Toggle modal',
+  } = options;
+
+  return `
+<!-- Modal toggle -->
+<button data-modal-target="${id}" data-modal-toggle="${id}" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+  ${buttonText}
+</button>
+
+<!-- Main modal -->
+<div id="${id}" tabindex="-1" aria-hidden="true" class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative p-4 w-full max-w-md max-h-full">
+        <!-- Modal content -->
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <!-- Modal header -->
+            <div class="flex items-center justify-between border-b border-default pb-4 md:pb-5">
+                <h3 class="text-lg font-medium text-heading">
+                    ${title}
+                </h3>
+                <button type="button" class="text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${id}">
+                    <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    <span class="sr-only">Close modal</span>
+                </button>
+            </div>
+            <!-- Modal body -->
+            <div class="pt-4 md:pt-6">
+                <p class="text-body mb-4">Select your desired position:</p>
+                <ul class="space-y-4 mb-4">
+                    <li>
+                        <input type="radio" id="${id}-job-1" name="job" value="job-1" class="hidden peer" required />
+                        <label for="${id}-job-1" class="inline-flex items-center w-full p-5 text-body bg-neutral-primary-soft border border-default rounded-base cursor-pointer peer-checked:hover:bg-brand-softer peer-checked:border-brand-subtle peer-checked:bg-brand-softer hover:bg-neutral-secondary-medium peer-checked:text-fg-brand-strong">
+                            <div class="flex items-center justify-center w-9 h-9 rounded bg-brand-soft text-fg-brand-strong">
+                                <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="2" d="M7.111 20A3.111 3.111 0 0 1 4 16.889v-12C4 4.398 4.398 4 4.889 4h4.444a.89.89 0 0 1 .89.889v12A3.111 3.111 0 0 1 7.11 20Zm0 0h12a.889.889 0 0 0 .889-.889v-4.444a.889.889 0 0 0-.889-.89h-4.389a.889.889 0 0 0-.62.253l-3.767 3.665a.933.933 0 0 0-.146.185c-.868 1.433-1.581 1.858-3.078 2.12Zm0-3.556h.009m7.933-10.927 3.143 3.143a.889.889 0 0 1 0 1.257l-7.974 7.974v-8.8l3.574-3.574a.889.889 0 0 1 1.257 0Z"/></svg>
+                            </div>                           
+                            <div class="block ms-2.5">
+                                <div class="w-full text-base font-medium">UI/UX Engineer</div>
+                                <div class="w-full font-normal">Flowbite</div>
+                            </div>
+                            <svg class="w-5 h-5 ms-3 rtl:rotate-180 ms-auto" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+                        </label>
+                    </li>
+                    <li>
+                        <input type="radio" id="${id}-job-2" name="job" value="job-2" class="hidden peer">
+                        <label for="${id}-job-2" class="inline-flex items-center justify-between w-full p-5 text-body bg-neutral-primary-soft border border-default rounded-base cursor-pointer peer-checked:hover:bg-brand-softer peer-checked:border-brand-subtle peer-checked:bg-brand-softer hover:bg-neutral-secondary-medium peer-checked:text-fg-brand-strong">
+                            <div class="flex items-center justify-center w-9 h-9 rounded bg-brand-soft text-fg-brand-strong">
+                                <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m8 8-4 4 4 4m8 0 4-4-4-4m-2-3-4 14"/></svg>
+                            </div> 
+                            <div class="block ms-2.5">
+                                <div class="w-full text-base font-medium">React Developer</div>
+                                <div class="w-full font-normal">Alphabet</div>
+                            </div>
+                            <svg class="w-5 h-5 ms-auto rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+                        </label>
+                    </li>
+                    <li>
+                        <input type="radio" id="${id}-job-3" name="job" value="job-3" class="hidden peer">
+                        <label for="${id}-job-3" class="inline-flex items-center justify-between w-full p-5 text-body bg-neutral-primary-soft border border-default rounded-base cursor-pointer peer-checked:hover:bg-brand-softer peer-checked:border-brand-subtle peer-checked:bg-brand-softer hover:bg-neutral-secondary-medium peer-checked:text-fg-brand-strong">
+                            <div class="flex items-center justify-center w-9 h-9 rounded bg-brand-soft text-fg-brand-strong">
+                                <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 6c0 1.657-3.134 3-7 3S5 7.657 5 6m14 0c0-1.657-3.134-3-7-3S5 4.343 5 6m14 0v6M5 6v6m0 0c0 1.657 3.134 3 7 3s7-1.343 7-3M5 12v6c0 1.657 3.134 3 7 3s7-1.343 7-3v-6"/></svg>
+                            </div> 
+                            <div class="block ms-2.5">
+                                <div class="w-full text-base font-medium">Full Stack Engineer</div>
+                                <div class="w-full font-normal">Apple</div>
+                            </div>
+                            <svg class="w-5 h-5 ms-auto rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+                        </label>
+                    </li>
+                </ul>
+                <button type="submit" class="w-full inline-flex items-center justify-center text-white bg-brand hover:bg-brand-strong box-border border border-transparent focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+                    Next step
+                    <svg class="w-4 h-4 ms-1.5 -me-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 6. Modal with Timeline
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteTimelineModal(options = {}) {
+  const {
+    id = 'timeline-modal',
+    title = 'Changelog',
+    buttonText = 'Toggle modal',
+  } = options;
+
+  return `
+<!-- Modal toggle -->
+<button data-modal-target="${id}" data-modal-toggle="${id}" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+  ${buttonText}
+</button>
+
+<!-- Main modal -->
+<div id="${id}" tabindex="-1" aria-hidden="true" class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative p-4 w-full max-w-lg max-h-full">
+        <!-- Modal content -->
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <!-- Modal header -->
+            <div class="flex items-center justify-between border-b border-default pb-4 md:pb-5">
+                <h3 class="text-lg font-medium text-heading">
+                    ${title}
+                </h3>
+                <button type="button" class="text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${id}">
+                    <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    <span class="sr-only">Close modal</span>
+                </button>
+            </div>
+            <!-- Modal body -->
+            <div class="py-4 md:py-6">
+                <ol class="relative border-s border-default ms-3.5 mb-4 md:mb-5">                  
+                    <li class="mb-11 ms-6">            
+                        <span class="absolute flex items-center justify-center w-6 h-6 bg-brand-softer text-fg-brand rounded-full -start-3 ring-8 ring-buffer-medium">
+                            <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 10h16m-8-3V4M7 7V4m10 3V4M5 20h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1Zm3-7h.01v.01H8V13Zm4 0h.01v.01H12V13Zm4 0h.01v.01H16V13Zm-8 4h.01v.01H8V17Zm4 0h.01v.01H12V17Zm4 0h.01v.01H16V17Z"/></svg>
+                        </span>
+                        <h3 class="flex items-start my-2 text-lg font-semibold text-heading">Flowbite Figma Design System v.2.10</h3>
+                        <p class="text-body mb-5">500+ components & over 50 new pages</p>
+                        <button type="button" class="inline-flex items-center text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-3 py-2 focus:outline-none">
+                            <svg class="w-4 h-4 me-1.5 -ms-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13V4M7 14H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1h-2m-1-5-4 5-4-5m9 8h.01"/></svg>
+                            Download
+                        </button>
+                    </li>
+                    <li class="mb-11 ms-6">
+                        <span class="absolute flex items-center justify-center w-6 h-6 bg-brand-softer text-fg-brand rounded-full -start-3 ring-8 ring-buffer-medium">
+                            <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 10h16m-8-3V4M7 7V4m10 3V4M5 20h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1Zm3-7h.01v.01H8V13Zm4 0h.01v.01H12V13Zm4 0h.01v.01H16V13Zm-8 4h.01v.01H8V17Zm4 0h.01v.01H12V17Zm4 0h.01v.01H16V17Z"/></svg>
+                        </span>
+                        <h3 class="flex items-start my-2 text-lg font-semibold text-heading">Flowbite Application UI</h3>
+                        <p class="text-body mb-5">Over 70 new pages</p>
+                        <button type="button" class="inline-flex items-center text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-3 py-2 focus:outline-none">
+                            <svg class="w-4 h-4 me-1.5 -ms-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 13V4M7 14H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1h-2m-1-5-4 5-4-5m9 8h.01"/></svg>
+                            Download
+                        </button>
+                    </li>
+                    <li class="ms-6">
+                        <span class="absolute flex items-center justify-center w-6 h-6 bg-brand-softer text-fg-brand rounded-full -start-3 ring-8 ring-buffer-medium">
+                            <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 10h16m-8-3V4M7 7V4m10 3V4M5 20h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1Zm3-7h.01v.01H8V13Zm4 0h.01v.01H12V13Zm4 0h.01v.01H16V13Zm-8 4h.01v.01H8V17Zm4 0h.01v.01H12V17Zm4 0h.01v.01H16V17Z"/></svg>
+                        </span>
+                        <h3 class="flex items-start my-2 text-lg font-semibold text-heading">Flowbite Design System Free</h3>
+                        <p class="text-body mb-5">All atomic components and variables</p>
+                        <button type="button" class="inline-flex items-center text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-3 py-2 focus:outline-none">
+                            <svg class="w-4 h-4 me-1.5 -ms-0.5" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 8C8 7.46957 8.21071 6.96086 8.58579 6.58579C8.96086 6.21071 9.46957 6 10 6C10.5304 6 11.0391 6.21071 11.4142 6.58579C11.7893 6.96086 12 7.46957 12 8C12 8.53043 11.7893 9.03914 11.4142 9.41421C11.0391 9.78929 10.5304 10 10 10C9.46957 10 8.96086 9.78929 8.58579 9.41421C8.21071 9.03914 8 8.53043 8 8V8Z" fill="#86A6FF"/><path d="M4 12C4 11.4696 4.21071 10.9609 4.58579 10.5858C4.96086 10.2107 5.46957 10 6 10H8V12C8 12.5304 7.78929 13.0391 7.41421 13.4142C7.03914 13.7893 6.53043 14 6 14C5.46957 14 4.96086 13.7893 4.58579 13.4142C4.21071 13.0391 4 12.5304 4 12V12Z" fill="#0ACF83"/><path d="M8 2V6H10C10.5304 6 11.0391 5.78929 11.4142 5.41421C11.7893 5.03914 12 4.53043 12 4C12 3.46957 11.7893 2.96086 11.4142 2.58579C11.0391 2.21071 10.5304 2 10 2H8Z" fill="#FF7262"/><path d="M4 4C4 4.53043 4.21071 5.03914 4.58579 5.41421C4.96086 5.78929 5.46957 6 6 6H8V2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V4Z" fill="#F24E1E"/><path d="M4 8C4 8.53043 4.21071 9.03914 4.58579 9.41421C4.96086 9.78929 5.46957 10 6 10H8V6H6C5.46957 6 4.96086 6.21071 4.58579 6.58579C4.21071 6.96086 4 7.46957 4 8V8Z" fill="#A259FF"/></svg>
+                            Duplicate in Figma
+                        </button>
+                    </li>
+                </ol>
+            </div>
+            <button type="button" class="w-full text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">My Downloads</button>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 7. Modal with Progress Bar
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressBarModal(options = {}) {
+  const {
+    id = 'progress-modal',
+    title = 'Approaching Full Capacity',
+    buttonText = 'Toggle modal',
+    progress = 85,
+  } = options;
+
+  return `
+<!-- Modal toggle -->
+<button data-modal-target="${id}" data-modal-toggle="${id}" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+  ${buttonText}
+</button>
+
+<!-- Main modal -->
+<div id="${id}" tabindex="-1" aria-hidden="true" class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative p-4 w-full max-w-md max-h-full">
+        <!-- Modal content -->
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <button type="button" class="absolute top-3 end-2.5 text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${id}">
+                <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                <span class="sr-only">Close modal</span>
+            </button>
+            <div>
+                <svg class="w-12 h-12 text-fg-disabled mb-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 6c0 1.657-3.134 3-7 3S5 7.657 5 6m14 0c0-1.657-3.134-3-7-3S5 4.343 5 6m14 0v6M5 6v6m0 0c0 1.657 3.134 3 7 3s7-1.343 7-3M5 12v6c0 1.657 3.134 3 7 3s7-1.343 7-3v-6"/></svg>
+                <h3 class="mb-1 text-lg font-semibold text-heading">${title}</h3>
+                <p class="text-body">Choosing the right server storage solution is essential for maintaining data integrity.</p>
+                <div class="flex justify-between mb-1.5 text-sm text-body mt-6">
+                    <span class="font-normal">My storage</span>
+                    <span class="font-medium">376,3 of 500 GB used</span>
+                </div>
+                <div class="w-full bg-neutral-quaternary rounded-full h-2.5 mb-6">
+                    <div class="bg-danger h-2.5 rounded-full" style="width: ${progress}%"></div>
+                </div>
+                <!-- Modal footer -->
+                <div class="flex items-center mt-6 space-x-4 rtl:space-x-reverse">
+                    <button data-modal-hide="${id}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Upgrade to PRO</button>
+                    <button data-modal-hide="${id}" type="button" class="text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 8. Modal Sizes (Small, Medium, Large, Extra Large)
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteModalSizes() {
+  const sizes = [
+    { id: 'small-modal', label: 'Small modal', maxW: 'max-w-md' },
+    { id: 'medium-modal', label: 'Default modal', maxW: 'max-w-lg' },
+    { id: 'large-modal', label: 'Large modal', maxW: 'max-w-4xl' },
+    { id: 'extralarge-modal', label: 'Extra large modal', maxW: 'max-w-7xl' },
+  ];
+
+  const buttonsRow = `
+<div class="block space-y-4 md:flex md:space-y-0 md:space-x-4 rtl:space-x-reverse">
+    ${sizes
+      .map(
+        (s) => `
+    <button data-modal-target="${s.id}" data-modal-toggle="${s.id}" class="inline-flex text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none" type="button">
+    ${s.label}
+    </button>`
+      )
+      .join('\n')}
+</div>`.trim();
+
+  const modalsMarkup = sizes
+    .map(
+      (s) => `
+<!-- ${s.label} -->
+<div id="${s.id}" tabindex="-1" class="fixed top-0 left-0 right-0 z-50 hidden w-full p-4 overflow-x-hidden overflow-y-auto md:inset-0 h-[calc(100%-1rem)] max-h-full">
+    <div class="relative w-full ${s.maxW} max-h-full">
+        <!-- Modal content -->
+        <div class="relative bg-neutral-primary-soft border border-default rounded-base shadow-sm p-4 md:p-6">
+            <!-- Modal header -->
+            <div class="flex items-center justify-between border-b border-default pb-4 md:pb-5">
+                <h3 class="text-lg font-medium text-heading">
+                    Terms of Service (${s.label})
+                </h3>
+                <button type="button" class="text-body bg-transparent hover:bg-neutral-tertiary hover:text-heading rounded-base text-sm w-9 h-9 ms-auto inline-flex justify-center items-center" data-modal-hide="${s.id}">
+                    <svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    <span class="sr-only">Close modal</span>
+                </button>
+            </div>
+            <!-- Modal body -->
+            <div class="space-y-4 md:space-y-6 py-4 md:py-6">
+                <p class="leading-relaxed text-body">
+                    With less than a month to go before the European Union enacts new consumer privacy laws for its citizens, companies around the world are updating their terms of service agreements to comply.
+                </p>
+                <p class="leading-relaxed text-body">
+                    The European Union’s General Data Protection Regulation (G.D.P.R.) goes into effect on May 25 and is meant to ensure a common set of data rights in the European Union. It requires organizations to notify users as soon as possible of high-risk data breaches that could personally affect them.
+                </p>
+            </div>
+            <!-- Modal footer -->
+            <div class="flex items-center border-t border-default space-x-4 pt-4 md:pt-5">
+                <button data-modal-hide="${s.id}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">I accept</button>
+                <button data-modal-hide="${s.id}" type="button" class="text-body bg-neutral-secondary-medium box-border border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading focus:ring-4 focus:ring-neutral-tertiary shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Decline</button>
+            </div>
+        </div>
+    </div>
+</div>`
+    )
+    .join('\n');
+
+  return `
+<div class="space-y-4">
+  ${buttonsRow}
+  ${modalsMarkup}
+</div>`.trim();
+}
+
+/**
+ * 9. Comprehensive Showcase Renderer for Modals
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteModalShowcase() {
+  return `
+<div class="flowbite-modal-showcase space-y-10 p-4">
+  <!-- Header / Summary banner -->
+  <div class="p-4 bg-neutral-primary-soft border border-default rounded-base shadow-xs">
+    <h3 class="text-base font-semibold text-heading mb-1">Interactive Modal Component Suite</h3>
+    <p class="text-sm text-body">Flowbite dialogs, notifications, alerts, CRUD forms, advanced selectors, and multi-size overlays with dynamic backdrop handling and keyboard navigation.</p>
+  </div>
+
+  <!-- 1. Default Modal -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">1. Default Modal (Interactive Dialog)</h4>
+    <p class="text-xs text-body">Standard dialog window for terms of service, disclosures, and acknowledgments.</p>
+    ${renderFlowbiteDefaultModal()}
+  </div>
+
+  <!-- 2. Static Modal -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">2. Static Modal (Non-Dismissible Backdrop)</h4>
+    <p class="text-xs text-body">Requires explicit button click to dismiss; prevents accidental closing when clicking outside backdrop.</p>
+    ${renderFlowbiteStaticModal()}
+  </div>
+
+  <!-- 3. Pop-up Modal -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">3. Pop-up Decision / Destructive Confirmation</h4>
+    <p class="text-xs text-body">Two-step confirmation for deleting data, discarding drafts, or dangerous state changes.</p>
+    ${renderFlowbitePopupModal()}
+  </div>
+
+  <!-- 4. CRUD Modal -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">4. CRUD Operation Form Modal</h4>
+    <p class="text-xs text-body">Embedded form fields for creating products, updating records, or editing catalogue entities.</p>
+    ${renderFlowbiteCrudModal()}
+  </div>
+
+  <!-- 5. Advanced Radio Inputs Modal -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">5. Advanced Radio Inputs Modal</h4>
+    <p class="text-xs text-body">Single-choice selection with custom card styles, icons, and peer validation states.</p>
+    ${renderFlowbiteRadioModal()}
+  </div>
+
+  <!-- 6. Timeline Modal -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">6. Changelog / Timeline Modal</h4>
+    <p class="text-xs text-body">Visual progress markers, releases, and versioned audit history with action buttons.</p>
+    ${renderFlowbiteTimelineModal()}
+  </div>
+
+  <!-- 7. Progress Bar Modal -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">7. Progress Bar / Storage Capacity Modal</h4>
+    <p class="text-xs text-body">Dynamic percentage meter for server quotas, file upload processing, and quota threshold warnings.</p>
+    ${renderFlowbiteProgressBarModal()}
+  </div>
+
+  <!-- 8. Modal Sizing Hierarchy -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">8. Modal Sizing Hierarchy (Small, Medium, Large, Extra Large)</h4>
+    <p class="text-xs text-body">Pre-configured responsive widths scaling from max-w-md up to max-w-7xl.</p>
+    ${renderFlowbiteModalSizes()}
+  </div>
+</div>`.trim();
+}
+
+/* ============================================================
+   FLOWBITE NAVBAR COMPONENT GENERATORS
+   ============================================================ */
+
+/**
+ * 1. Multi-level dropdown Navbar
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteMultiLevelNavbar(options = {}) {
+  const {
+    id = 'navbar-multi-level-dropdown',
+    brand = 'Flowbite',
+    brandUrl = '#',
+    logoSrc = 'https://flowbite.com/docs/images/logo.svg',
+    isFixed = false,
+  } = options;
+
+  const positionClass = isFixed ? 'fixed w-full z-20 top-0 start-0' : 'relative w-full';
+
+  return `
+<nav class="bg-neutral-primary ${positionClass} border-b border-default">
+  <div class="max-w-screen-xl flex flex-wrap items-center justify-between mx-auto p-4">
+    <a href="${brandUrl}" class="flex items-center space-x-3 rtl:space-x-reverse">
+        <img src="${logoSrc}" class="h-7" alt="${brand} Logo" />
+        <span class="self-center text-xl text-heading font-semibold whitespace-nowrap">${brand}</span>
+    </a>
+    <button data-collapse-toggle="${id}" type="button" class="inline-flex items-center p-2 w-10 h-10 justify-center text-sm text-body rounded-base md:hidden hover:bg-neutral-secondary-soft hover:text-heading focus:outline-none focus:ring-2 focus:ring-neutral-tertiary" aria-controls="${id}" aria-expanded="false">
+        <span class="sr-only">Open main menu</span>
+        <svg class="w-6 h-6" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M5 7h14M5 12h14M5 17h14"/></svg>
+    </button>
+    <div class="hidden w-full md:block md:w-auto" id="${id}">
+      <ul class="flex flex-col font-medium p-4 md:p-0 mt-4 border border-default rounded-base bg-neutral-secondary-soft md:space-x-8 rtl:space-x-reverse md:flex-row md:mt-0 md:border-0 md:bg-neutral-primary">
+        <li>
+          <a href="#" class="block py-2 px-3 text-white bg-brand rounded md:bg-transparent md:text-fg-brand md:p-0" aria-current="page">Home</a>
+        </li>
+        <li>
+            <button id="multiLevelDropdownButton" data-dropdown-toggle="multi-dropdown" class="flex items-center justify-between w-full py-2 px-3 rounded font-medium text-heading md:w-auto hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0">
+              Dropdown 
+              <svg class="w-4 h-4 ms-1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7"/></svg>
+          </button>
+            <!-- Dropdown menu -->
+            <div id="multi-dropdown" class="z-10 hidden bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-44">
+                <ul class="p-2 text-sm text-body font-medium" aria-labelledby="multiLevelDropdownButton">
+                  <li>
+                    <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Dashboard</a>
+                  </li>
+                  <li>
+                    <button id="doubleDropdownButton" data-dropdown-toggle="doubleDropdown" data-dropdown-placement="right-start" type="button" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">
+                      Dropdown
+                      <svg class="h-4 w-4 ms-auto rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7"/></svg>
+                    </button>
+                      <div id="doubleDropdown" class="z-10 hidden bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-44">
+                        <ul class="p-2 text-sm text-body font-medium" aria-labelledby="doubleDropdownButton">
+                          <li>
+                            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Overview</a>
+                          </li>
+                          <li>
+                            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">My downloads</a>
+                          </li>
+                          <li>
+                            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Billing</a>
+                          </li>
+                          <li>
+                            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Rewards</a>
+                          </li>
+                        </ul>
+                    </div>
+                  </li>
+                  <li>
+                    <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Earnings</a>
+                  </li>
+                  <li>
+                    <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Sign out</a>
+                  </li>
+                </ul>
+            </div>
+        </li>
+        <li>
+          <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">Services</a>
+        </li>
+        <li>
+          <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">Pricing</a>
+        </li>
+        <li>
+          <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">Contact</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>`.trim();
+}
+
+/**
+ * 2. Navbar with Search Input
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteSearchNavbar(options = {}) {
+  const {
+    id = 'navbar-search',
+    brand = 'Flowbite',
+    brandUrl = 'https://flowbite.com/',
+    logoSrc = 'https://flowbite.com/docs/images/logo.svg',
+    isFixed = false,
+  } = options;
+
+  const positionClass = isFixed ? 'fixed w-full z-20 top-0 start-0' : 'relative w-full';
+
+  return `
+<nav class="bg-neutral-primary ${positionClass} border-b border-default">
+  <div class="max-w-screen-xl flex flex-wrap items-center justify-between mx-auto p-4">
+  <a href="${brandUrl}" class="flex items-center space-x-3 rtl:space-x-reverse">
+      <img src="${logoSrc}" class="h-7" alt="${brand} Logo" />
+      <span class="self-center text-xl text-heading font-semibold whitespace-nowrap">${brand}</span>
+  </a>
+  <div class="flex items-center md:order-2">
+    <button type="button" data-collapse-toggle="${id}" aria-controls="${id}" aria-expanded="false" class="flex items-center justify-center md:hidden text-body hover:text-heading bg-transparent box-border border border-transparent hover:bg-neutral-secondary-medium focus:ring-2 focus:ring-neutral-tertiary font-medium leading-5 rounded-base text-sm w-10 h-10 focus:outline-none">
+      <svg class="w-6 h-6" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m21 21-3.5-3.5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
+      <span class="sr-only">Search</span>
+    </button>
+    <label for="input-group-1" class="sr-only">Your Email</label>
+    <div class="relative hidden md:block">
+      <div class="absolute inset-y-0 start-0 flex items-center ps-3 pointer-events-none">
+        <svg class="w-4 h-4 text-body" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m21 21-3.5-3.5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
+      </div>
+      <input type="text" id="input-group-1" class="block w-full ps-9 pe-3 py-2.5 bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand px-2.5 py-2 shadow-xs placeholder:text-body" placeholder="Search">
+    </div>
+    <button data-collapse-toggle="${id}" type="button" class="inline-flex items-center p-2 w-10 h-10 justify-center text-sm text-body rounded-base md:hidden hover:bg-neutral-secondary-soft hover:text-heading focus:outline-none focus:ring-2 focus:ring-neutral-tertiary" aria-controls="${id}" aria-expanded="false">
+        <span class="sr-only">Open main menu</span>
+        <svg class="w-6 h-6" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M5 7h14M5 12h14M5 17h14"/></svg>
+    </button>
+  </div>
+    <div class="items-center justify-between hidden w-full md:flex md:w-auto md:order-1" id="${id}">
+      <div class="relative mt-3 md:hidden">
+        <div class="absolute inset-y-0 start-0 flex items-center ps-3 pointer-events-none">
+          <svg class="w-4 h-4 text-body" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m21 21-3.5-3.5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
+        </div>
+        <input type="text" id="input-group-1-mobile" class="block w-full ps-9 pe-3 py-2.5 bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand px-2.5 py-2 shadow-xs placeholder:text-body" placeholder="Search">
+      </div>
+      <ul class="font-medium flex flex-col p-4 md:p-0 mt-4 border border-default rounded-base bg-neutral-secondary-soft md:flex-row md:space-x-8 rtl:space-x-reverse md:mt-0 md:border-0 md:bg-neutral-primary">
+        <li>
+          <a href="#" class="block py-2 px-3 text-white bg-brand rounded md:bg-transparent md:text-fg-brand md:p-0" aria-current="page">Home</a>
+        </li>
+        <li>
+          <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">About</a>
+        </li>
+        <li>
+          <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">Services</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>`.trim();
+}
+
+/**
+ * 3. User menu dropdown Navbar
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteUserMenuNavbar(options = {}) {
+  const {
+    id = 'navbar-user',
+    brand = 'Flowbite',
+    brandUrl = 'https://flowbite.com/',
+    logoSrc = 'https://flowbite.com/docs/images/logo.svg',
+    userName = 'Joseph McFall',
+    userEmail = 'name@flowbite.com',
+    userAvatar = '/docs/images/people/profile-picture-5.jpg',
+    isFixed = false,
+  } = options;
+
+  const positionClass = isFixed ? 'fixed w-full z-20 top-0 start-0' : 'relative w-full';
+
+  return `
+<nav class="bg-neutral-primary ${positionClass} border-b border-default">
+  <div class="max-w-screen-xl flex flex-wrap items-center justify-between mx-auto p-4">
+  <a href="${brandUrl}" class="flex items-center space-x-3 rtl:space-x-reverse">
+      <img src="${logoSrc}" class="h-7" alt="${brand} Logo" />
+      <span class="self-center text-xl text-heading font-semibold whitespace-nowrap">${brand}</span>
+  </a>
+  <div class="flex items-center md:order-2 space-x-3 md:space-x-0 rtl:space-x-reverse">
+      <button type="button" class="flex text-sm bg-neutral-primary rounded-full md:me-0 focus:ring-4 focus:ring-neutral-tertiary" id="user-menu-button" aria-expanded="false" data-dropdown-toggle="user-dropdown" data-dropdown-placement="bottom">
+        <span class="sr-only">Open user menu</span>
+        <img class="w-8 h-8 rounded-full object-cover" src="${userAvatar}" alt="user photo" onerror="this.onerror=null;this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 24 24\\' fill=\\'%236b7280\\'><path d=\\'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z\\'/></svg>';">
+      </button>
+      <!-- Dropdown menu -->
+      <div class="z-50 hidden bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-44" id="user-dropdown">
+        <div class="px-4 py-3 text-sm border-b border-default">
+          <span class="block text-heading font-medium">${userName}</span>
+          <span class="block text-body truncate">${userEmail}</span>
+        </div>
+        <ul class="p-2 text-sm text-body font-medium" aria-labelledby="user-menu-button">
+          <li>
+            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Dashboard</a>
+          </li>
+          <li>
+            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Settings</a>
+          </li>
+          <li>
+            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Earnings</a>
+          </li>
+          <li>
+            <a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Sign out</a>
+          </li>
+        </ul>
+      </div>
+      <button data-collapse-toggle="${id}" type="button" class="inline-flex items-center p-2 w-10 h-10 justify-center text-sm text-body rounded-base md:hidden hover:bg-neutral-secondary-soft hover:text-heading focus:outline-none focus:ring-2 focus:ring-neutral-tertiary" aria-controls="${id}" aria-expanded="false">
+        <span class="sr-only">Open main menu</span>
+        <svg class="w-6 h-6" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M5 7h14M5 12h14M5 17h14"/></svg>
+      </button>
+  </div>
+  <div class="items-center justify-between hidden w-full md:flex md:w-auto md:order-1" id="${id}">
+    <ul class="font-medium flex flex-col p-4 md:p-0 mt-4 border border-default rounded-base bg-neutral-secondary-soft md:flex-row md:space-x-8 rtl:space-x-reverse md:mt-0 md:border-0 md:bg-neutral-primary">
+      <li>
+        <a href="#" class="block py-2 px-3 text-white bg-brand rounded md:bg-transparent md:text-fg-brand md:p-0" aria-current="page">Home</a>
+      </li>
+      <li>
+        <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">About</a>
+      </li>
+      <li>
+        <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">Services</a>
+      </li>
+      <li>
+        <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">Pricing</a>
+      </li>
+      <li>
+        <a href="#" class="block py-2 px-3 text-heading rounded hover:bg-neutral-tertiary md:hover:bg-transparent md:border-0 md:hover:text-fg-brand md:p-0 md:dark:hover:bg-transparent">Contact</a>
+      </li>
+    </ul>
+  </div>
+  </div>
+</nav>`.trim();
+}
+
+/**
+ * 4. Comprehensive Showcase Renderer for Flowbite Navbars
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteNavbarShowcase() {
+  return `
+<div class="flowbite-navbar-showcase space-y-10 p-4">
+  <div class="p-4 bg-neutral-primary-soft border border-default rounded-base shadow-xs">
+    <h3 class="text-base font-semibold text-heading mb-1">Responsive Navbar Component Suite</h3>
+    <p class="text-sm text-body">Flowbite responsive navigation bars with multi-level dropdowns, integrated search inputs, user profile popovers, and mobile hamburger collapse controls.</p>
+  </div>
+
+  <!-- 1. Multi-level Dropdown Navbar -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">1. Multi-Level Dropdown Navbar</h4>
+    <p class="text-xs text-body">Hierarchical navigation with nested sub-menus (Overview, Downloads, Billing, Rewards).</p>
+    <div class="border border-default rounded-base overflow-visible bg-neutral-primary shadow-xs">
+      ${renderFlowbiteMultiLevelNavbar({ isFixed: false })}
+    </div>
+  </div>
+
+  <!-- 2. Navbar with Search -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">2. Navbar with Integrated Search</h4>
+    <p class="text-xs text-body">Desktop inline search input with mobile collapsible search overlay.</p>
+    <div class="border border-default rounded-base overflow-visible bg-neutral-primary shadow-xs">
+      ${renderFlowbiteSearchNavbar({ isFixed: false })}
+    </div>
+  </div>
+
+  <!-- 3. User Menu Dropdown Navbar -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">3. User Profile Dropdown Navbar</h4>
+    <p class="text-xs text-body">Account switcher menu with user identity header and direct links to settings and sign out.</p>
+    <div class="border border-default rounded-base overflow-visible bg-neutral-primary shadow-xs">
+      ${renderFlowbiteUserMenuNavbar({ isFixed: false })}
+    </div>
+  </div>
+</div>`.trim();
+}
+
+/* ============================================================
+   FLOWBITE PAGINATION COMPONENT GENERATORS
+   ============================================================ */
+
+/**
+ * 1. Flowbite Pagination with Dropdown (Per-page select)
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePaginationWithDropdown(options = {}) {
+  const {
+    currentPage = 3,
+    totalPages = 5,
+    perPageOptions = [10, 25, 50, 100],
+    selectedPerPage = 10,
+    selectId = 'countries',
+  } = options;
+
+  let pagesMarkup = '';
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === currentPage) {
+      pagesMarkup += `
+    <li>
+      <a href="#" aria-current="page" class="flex items-center justify-center text-fg-brand bg-neutral-tertiary-medium box-border border border-default-medium hover:text-fg-brand font-medium text-sm w-9 h-9 focus:outline-none">${p}</a>
+    </li>`;
+    } else {
+      pagesMarkup += `
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 text-sm w-9 h-9 focus:outline-none">${p}</a>
+    </li>`;
+    }
+  }
+
+  return `
+<nav aria-label="Page navigation example" class="flex items-center space-x-4">
+  <ul class="flex -space-x-px text-sm">
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 rounded-s-base text-sm px-3 h-9 focus:outline-none">Previous</a>
+    </li>${pagesMarkup}
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 rounded-e-base text-sm px-3 h-9 focus:outline-none">Next</a>
+    </li>
+  </ul>
+  <form class="w-32 mx-auto">
+    <label for="${selectId}" class="sr-only">Select an option</label>
+    <select id="${selectId}" class="block w-full px-3 py-2.5 bg-neutral-secondary-medium border border-default-medium text-heading text-sm leading-4 rounded-base focus:ring-brand focus:border-brand shadow-xs placeholder:text-body">
+      ${perPageOptions
+        .map(
+          (opt) =>
+            `<option value="${opt}" ${opt === selectedPerPage ? 'selected' : ''}>${opt} per page</option>`
+        )
+        .join('\n      ')}
+    </select>
+  </form>
+</nav>`.trim();
+}
+
+/**
+ * 2. Default Flowbite Numbered Pagination
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePagination(options = {}) {
+  const {
+    currentPage = 3,
+    totalPages = 5,
+    prevLabel = 'Previous',
+    nextLabel = 'Next',
+  } = options;
+
+  let pagesMarkup = '';
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === currentPage) {
+      pagesMarkup += `
+    <li>
+      <a href="#" aria-current="page" class="flex items-center justify-center text-fg-brand bg-neutral-tertiary-medium box-border border border-default-medium hover:text-fg-brand font-medium text-sm w-9 h-9 focus:outline-none">${p}</a>
+    </li>`;
+    } else {
+      pagesMarkup += `
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 text-sm w-9 h-9 focus:outline-none">${p}</a>
+    </li>`;
+    }
+  }
+
+  return `
+<nav aria-label="Page navigation">
+  <ul class="flex -space-x-px text-sm">
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 rounded-s-base text-sm px-3 h-9 focus:outline-none">${prevLabel}</a>
+    </li>${pagesMarkup}
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 rounded-e-base text-sm px-3 h-9 focus:outline-none">${nextLabel}</a>
+    </li>
+  </ul>
+</nav>`.trim();
+}
+
+/**
+ * 3. Flowbite Pagination with Chevron Icons
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePaginationIcons(options = {}) {
+  const {
+    currentPage = 3,
+    totalPages = 5,
+  } = options;
+
+  let pagesMarkup = '';
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === currentPage) {
+      pagesMarkup += `
+    <li>
+      <a href="#" aria-current="page" class="flex items-center justify-center text-fg-brand bg-neutral-tertiary-medium box-border border border-default-medium hover:text-fg-brand font-medium text-sm w-9 h-9 focus:outline-none">${p}</a>
+    </li>`;
+    } else {
+      pagesMarkup += `
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 text-sm w-9 h-9 focus:outline-none">${p}</a>
+    </li>`;
+    }
+  }
+
+  return `
+<nav aria-label="Page navigation with icons">
+  <ul class="flex -space-x-px text-sm">
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 rounded-s-base text-sm px-3 h-9 focus:outline-none">
+        <span class="sr-only">Previous</span>
+        <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 19-7-7 7-7"/></svg>
+      </a>
+    </li>${pagesMarkup}
+    <li>
+      <a href="#" class="flex items-center justify-center text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs font-medium leading-5 rounded-e-base text-sm px-3 h-9 focus:outline-none">
+        <span class="sr-only">Next</span>
+        <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7"/></svg>
+      </a>
+    </li>
+  </ul>
+</nav>`.trim();
+}
+
+/**
+ * 4. Flowbite Previous and Next (Simple)
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePaginationSimple(options = {}) {
+  const {
+    prevText = 'Previous',
+    nextText = 'Next',
+  } = options;
+
+  return `
+<div class="flex">
+  <a href="#" class="flex items-center justify-center px-4 h-10 text-sm font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded-s-base hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs focus:outline-none">
+    <svg class="w-3.5 h-3.5 me-2 rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 10">
+      <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5H1m0 0 4 4M1 5l4-4"/>
+    </svg>
+    ${prevText}
+  </a>
+  <a href="#" class="flex items-center justify-center px-4 h-10 text-sm font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded-e-base hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs focus:outline-none">
+    ${nextText}
+    <svg class="w-3.5 h-3.5 ms-2 rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 10">
+      <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 5h12m0 0L9 1m4 4L9 9"/>
+    </svg>
+  </a>
+</div>`.trim();
+}
+
+/**
+ * 5. Flowbite Table Data Entries Pagination
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePaginationTable(options = {}) {
+  const {
+    startEntry = 1,
+    endEntry = 10,
+    totalEntries = 100,
+  } = options;
+
+  return `
+<div class="flex flex-col items-center space-y-2">
+  <span class="text-sm text-body">
+    Showing <span class="font-semibold text-heading">${startEntry}</span> to <span class="font-semibold text-heading">${endEntry}</span> of <span class="font-semibold text-heading">${totalEntries}</span> Entries
+  </span>
+  <div class="inline-flex mt-2 xs:mt-0">
+    <button class="flex items-center justify-center px-4 h-10 text-base font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded-s-base hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs focus:outline-none">
+      <svg class="w-3.5 h-3.5 me-2 rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 10">
+        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5H1m0 0 4 4M1 5l4-4"/>
+      </svg>
+      Prev
+    </button>
+    <button class="flex items-center justify-center px-4 h-10 text-base font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded-e-base hover:bg-neutral-tertiary-medium hover:text-heading shadow-xs focus:outline-none">
+      Next
+      <svg class="w-3.5 h-3.5 ms-2 rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 10">
+        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 5h12m0 0L9 1m4 4L9 9"/>
+      </svg>
+    </button>
+  </div>
+</div>`.trim();
+}
+
+/**
+ * 6. Flowbite Pagination Sizing (Small, Default, Large)
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePaginationSizes() {
+  return `
+<div class="space-y-6">
+  <!-- Small -->
+  <div>
+    <p class="text-xs font-medium text-body mb-2">Small (h-8, text-xs)</p>
+    <nav aria-label="Small pagination">
+      <ul class="flex -space-x-px text-xs">
+        <li><a href="#" class="flex items-center justify-center px-2.5 h-8 leading-tight text-body bg-neutral-secondary-medium border border-default-medium rounded-s-base hover:bg-neutral-tertiary-medium hover:text-heading">Previous</a></li>
+        <li><a href="#" class="flex items-center justify-center px-2.5 h-8 leading-tight text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading">1</a></li>
+        <li><a href="#" aria-current="page" class="flex items-center justify-center px-2.5 h-8 text-fg-brand bg-neutral-tertiary-medium border border-default-medium font-semibold">2</a></li>
+        <li><a href="#" class="flex items-center justify-center px-2.5 h-8 leading-tight text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading">3</a></li>
+        <li><a href="#" class="flex items-center justify-center px-2.5 h-8 leading-tight text-body bg-neutral-secondary-medium border border-default-medium rounded-e-base hover:bg-neutral-tertiary-medium hover:text-heading">Next</a></li>
+      </ul>
+    </nav>
+  </div>
+
+  <!-- Default -->
+  <div>
+    <p class="text-xs font-medium text-body mb-2">Default (h-9, text-sm)</p>
+    <nav aria-label="Default pagination">
+      <ul class="flex -space-x-px text-sm">
+        <li><a href="#" class="flex items-center justify-center px-3 h-9 leading-tight text-body bg-neutral-secondary-medium border border-default-medium rounded-s-base hover:bg-neutral-tertiary-medium hover:text-heading">Previous</a></li>
+        <li><a href="#" class="flex items-center justify-center px-3 h-9 leading-tight text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading">1</a></li>
+        <li><a href="#" aria-current="page" class="flex items-center justify-center px-3 h-9 text-fg-brand bg-neutral-tertiary-medium border border-default-medium font-semibold">2</a></li>
+        <li><a href="#" class="flex items-center justify-center px-3 h-9 leading-tight text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading">3</a></li>
+        <li><a href="#" class="flex items-center justify-center px-3 h-9 leading-tight text-body bg-neutral-secondary-medium border border-default-medium rounded-e-base hover:bg-neutral-tertiary-medium hover:text-heading">Next</a></li>
+      </ul>
+    </nav>
+  </div>
+
+  <!-- Large -->
+  <div>
+    <p class="text-xs font-medium text-body mb-2">Large (h-11, text-base)</p>
+    <nav aria-label="Large pagination">
+      <ul class="flex -space-x-px text-base">
+        <li><a href="#" class="flex items-center justify-center px-4 h-11 leading-tight text-body bg-neutral-secondary-medium border border-default-medium rounded-s-base hover:bg-neutral-tertiary-medium hover:text-heading">Previous</a></li>
+        <li><a href="#" class="flex items-center justify-center px-4 h-11 leading-tight text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading">1</a></li>
+        <li><a href="#" aria-current="page" class="flex items-center justify-center px-4 h-11 text-fg-brand bg-neutral-tertiary-medium border border-default-medium font-semibold">2</a></li>
+        <li><a href="#" class="flex items-center justify-center px-4 h-11 leading-tight text-body bg-neutral-secondary-medium border border-default-medium hover:bg-neutral-tertiary-medium hover:text-heading">3</a></li>
+        <li><a href="#" class="flex items-center justify-center px-4 h-11 leading-tight text-body bg-neutral-secondary-medium border border-default-medium rounded-e-base hover:bg-neutral-tertiary-medium hover:text-heading">Next</a></li>
+      </ul>
+    </nav>
+  </div>
+</div>`.trim();
+}
+
+/**
+ * 7. Comprehensive Showcase Renderer for Flowbite Pagination
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePaginationShowcase() {
+  return `
+<div class="flowbite-pagination-showcase space-y-10 p-4">
+  <div class="p-4 bg-neutral-primary-soft border border-default rounded-base shadow-xs">
+    <h3 class="text-base font-semibold text-heading mb-1">Pagination Component Suite</h3>
+    <p class="text-sm text-body">Flowbite pagination components for data tables, catalogue listings, per-page selectors, and responsive entry steppers.</p>
+  </div>
+
+  <!-- 1. Pagination with Dropdown (Per-page select) -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">1. Pagination with Dropdown (Items Per Page)</h4>
+    <p class="text-xs text-body">Combines step navigation with a select menu to set catalogue page size (10, 25, 50, 100).</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePaginationWithDropdown()}
+    </div>
+  </div>
+
+  <!-- 2. Default Numbered Pagination -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">2. Default Numbered Pagination</h4>
+    <p class="text-xs text-body">Standard numeric button group with Previous and Next action items.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePagination()}
+    </div>
+  </div>
+
+  <!-- 3. Pagination with Icons -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">3. Pagination with Chevron Icons</h4>
+    <p class="text-xs text-body">Directional chevrons replace textual Previous/Next buttons for tight layouts.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePaginationIcons()}
+    </div>
+  </div>
+
+  <!-- 4. Simple Previous & Next Buttons -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">4. Simple Previous / Next Buttons</h4>
+    <p class="text-xs text-body">Minimalist stepper suitable for articles, cards, or mobile viewports.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePaginationSimple()}
+    </div>
+  </div>
+
+  <!-- 5. Table Data Entries Pagination -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">5. Table Data Entries Pagination</h4>
+    <p class="text-xs text-body">Summarizes visible records and total entry count with forward/backward controls.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePaginationTable()}
+    </div>
+  </div>
+
+  <!-- 6. Pagination Sizing Hierarchy -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">6. Pagination Sizing Options</h4>
+    <p class="text-xs text-body">Three responsive sizing heights: Small (h-8), Default (h-9), and Large (h-11).</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePaginationSizes()}
+    </div>
+  </div>
+</div>`.trim();
+}
+
+/* ============================================================
+   FLOWBITE POPOVER CLASS & INTERACTION CONTROLLER
+   ============================================================ */
+
+/**
+ * Flowbite Popover Class
+ * Manages positioning, display transitions, hover/click triggers, accessibility, and callbacks.
+ */
+export class Popover {
+  /**
+   * @param {HTMLElement} targetEl - The popover element ([data-popover])
+   * @param {HTMLElement} triggerEl - The element that triggers the popover
+   * @param {Object} [options={}] - Options configuration
+   * @param {string} [options.placement='top'] - 'top' | 'right' | 'bottom' | 'left'
+   * @param {string} [options.triggerType='hover'] - 'hover' | 'click' | 'none'
+   * @param {number} [options.offset=10] - Offset in pixels
+   * @param {Function} [options.onHide]
+   * @param {Function} [options.onShow]
+   * @param {Function} [options.onToggle]
+   * @param {Object} [instanceOptions={}]
+   * @param {string} [instanceOptions.id]
+   * @param {boolean} [instanceOptions.override]
+   */
+  constructor(targetEl, triggerEl, options = {}, instanceOptions = {}) {
+    this._targetEl = targetEl;
+    this._triggerEl = triggerEl;
+    this._options = {
+      placement:
+        options.placement ||
+        (triggerEl?.getAttribute('data-popover-placement') || 'top'),
+      triggerType:
+        options.triggerType ||
+        (triggerEl?.getAttribute('data-popover-trigger') || 'hover'),
+      offset:
+        options.offset !== undefined
+          ? options.offset
+          : parseInt(triggerEl?.getAttribute('data-popover-offset') || '10', 10),
+      onHide: options.onHide || (() => {}),
+      onShow: options.onShow || (() => {}),
+      onToggle: options.onToggle || (() => {}),
+      ...options,
+    };
+    this._instanceOptions = instanceOptions;
+    this._visible =
+      targetEl &&
+      !targetEl.classList.contains('invisible') &&
+      !targetEl.classList.contains('opacity-0')
+        ? true
+        : false;
+
+    this._clickOutsideHandler = null;
+    this._clickHandler = null;
+    this._mouseEnterTriggerHandler = null;
+    this._mouseLeaveTriggerHandler = null;
+    this._mouseEnterTargetHandler = null;
+    this._mouseLeaveTargetHandler = null;
+    this._focusHandler = null;
+    this._blurHandler = null;
+    this._hoverTimeout = null;
+
+    this.init();
+  }
+
+  init() {
+    if (!this._triggerEl || !this._targetEl) return;
+
+    if (this._options.triggerType === 'click') {
+      this._clickHandler = (e) => {
+        e.preventDefault();
+        this.toggle();
+      };
+      this._triggerEl.addEventListener('click', this._clickHandler);
+
+      this._clickOutsideHandler = (e) => {
+        if (
+          this._visible &&
+          !this._triggerEl.contains(e.target) &&
+          !this._targetEl.contains(e.target)
+        ) {
+          this.hide();
+        }
+      };
+      document.addEventListener('click', this._clickOutsideHandler);
+    } else if (this._options.triggerType === 'hover') {
+      this._mouseEnterTriggerHandler = () => {
+        if (this._hoverTimeout) clearTimeout(this._hoverTimeout);
+        this.show();
+      };
+
+      this._mouseLeaveTriggerHandler = () => {
+        this._hoverTimeout = setTimeout(() => {
+          this.hide();
+        }, 150);
+      };
+
+      this._mouseEnterTargetHandler = () => {
+        if (this._hoverTimeout) clearTimeout(this._hoverTimeout);
+      };
+
+      this._mouseLeaveTargetHandler = () => {
+        this._hoverTimeout = setTimeout(() => {
+          this.hide();
+        }, 150);
+      };
+
+      this._triggerEl.addEventListener('mouseenter', this._mouseEnterTriggerHandler);
+      this._triggerEl.addEventListener('mouseleave', this._mouseLeaveTriggerHandler);
+      this._targetEl.addEventListener('mouseenter', this._mouseEnterTargetHandler);
+      this._targetEl.addEventListener('mouseleave', this._mouseLeaveTargetHandler);
+
+      // Keyboard accessibility
+      this._focusHandler = () => this.show();
+      this._blurHandler = () => this.hide();
+      this._triggerEl.addEventListener('focus', this._focusHandler);
+      this._triggerEl.addEventListener('blur', this._blurHandler);
+    }
+  }
+
+  show() {
+    if (!this._targetEl || this._visible) return;
+
+    this._visible = true;
+
+    // Toggle Tailwind visibility classes
+    this._targetEl.classList.remove('invisible', 'opacity-0');
+    this._targetEl.classList.add('opacity-100');
+    this._targetEl.setAttribute('aria-hidden', 'false');
+
+    if (this._triggerEl) {
+      this._triggerEl.setAttribute('aria-expanded', 'true');
+    }
+
+    this._options.onShow(this);
+  }
+
+  hide() {
+    if (!this._targetEl || !this._visible) return;
+
+    this._visible = false;
+
+    // Toggle Tailwind visibility classes
+    this._targetEl.classList.remove('opacity-100');
+    this._targetEl.classList.add('invisible', 'opacity-0');
+    this._targetEl.setAttribute('aria-hidden', 'true');
+
+    if (this._triggerEl) {
+      this._triggerEl.setAttribute('aria-expanded', 'false');
+    }
+
+    this._options.onHide(this);
+  }
+
+  toggle() {
+    if (this._visible) {
+      this.hide();
+    } else {
+      this.show();
+    }
+    this._options.onToggle(this);
+  }
+
+  isVisible() {
+    return this._visible;
+  }
+
+  updateOnShow(callback) {
+    this._options.onShow = callback;
+  }
+
+  updateOnHide(callback) {
+    this._options.onHide = callback;
+  }
+
+  updateOnToggle(callback) {
+    this._options.onToggle = callback;
+  }
+
+  destroy() {
+    if (this._hoverTimeout) clearTimeout(this._hoverTimeout);
+
+    if (this._clickHandler && this._triggerEl) {
+      this._triggerEl.removeEventListener('click', this._clickHandler);
+    }
+    if (this._clickOutsideHandler) {
+      document.removeEventListener('click', this._clickOutsideHandler);
+    }
+    if (this._mouseEnterTriggerHandler && this._triggerEl) {
+      this._triggerEl.removeEventListener('mouseenter', this._mouseEnterTriggerHandler);
+      this._triggerEl.removeEventListener('mouseleave', this._mouseLeaveTriggerHandler);
+    }
+    if (this._mouseEnterTargetHandler && this._targetEl) {
+      this._targetEl.removeEventListener('mouseenter', this._mouseEnterTargetHandler);
+      this._targetEl.removeEventListener('mouseleave', this._mouseLeaveTargetHandler);
+    }
+    if (this._focusHandler && this._triggerEl) {
+      this._triggerEl.removeEventListener('focus', this._focusHandler);
+      this._triggerEl.removeEventListener('blur', this._blurHandler);
+    }
+
+    this._targetEl = null;
+    this._triggerEl = null;
+  }
+}
+
+/**
+ * Initializes all [data-popover-target] elements in the root.
+ * @param {HTMLElement|Document} [root=document]
+ */
+export function initPopovers(root = document) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+
+  const triggers = root.querySelectorAll('[data-popover-target]');
+  triggers.forEach((trigger) => {
+    if (trigger._fbPopoverBound) return;
+    trigger._fbPopoverBound = true;
+
+    const targetId = trigger.getAttribute('data-popover-target');
+    if (!targetId) return;
+
+    const target = root.getElementById
+      ? root.getElementById(targetId)
+      : (root.querySelector ? root.querySelector('#' + targetId) : null) ||
+        (document.getElementById ? document.getElementById(targetId) : null);
+
+    if (target) {
+      const placement = trigger.getAttribute('data-popover-placement') || 'top';
+      const triggerType = trigger.getAttribute('data-popover-trigger') || 'hover';
+      const offset = parseInt(trigger.getAttribute('data-popover-offset') || '10', 10);
+
+      trigger._fbPopoverInstance = new Popover(target, trigger, {
+        placement,
+        triggerType,
+        offset,
+      });
+    }
+  });
+}
+
+/* ============================================================
+   FLOWBITE POPOVER COMPONENT GENERATORS
+   ============================================================ */
+
+/**
+ * 1. Default Popover
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteDefaultPopover(options = {}) {
+  const {
+    id = 'popover-default',
+    title = 'Popover title',
+    content = "And here's some amazing content. It's very engaging. Right?",
+    buttonText = 'Default popover',
+  } = options;
+
+  return `
+<button data-popover-target="${id}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${buttonText}</button>
+<div data-popover id="${id}" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+    <div class="px-3 py-2 bg-neutral-tertiary border-b border-default rounded-t-base">
+        <h3 class="font-medium text-heading">${title}</h3>
+    </div>
+    <div class="px-3 py-2">
+        <p>${content}</p>
+    </div>
+    <div data-popper-arrow></div>
+</div>`.trim();
+}
+
+/**
+ * 2. User Profile Popover
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteUserProfilePopover(options = {}) {
+  const {
+    id = 'popover-user-profile',
+    name = 'Jese Leos',
+    handle = '@jeseleos',
+    bio = 'Open-source contributor & CEO. Building flowbite.com.',
+    avatar = '/docs/images/people/profile-picture-1.jpg',
+    following = '799',
+    followers = '3,758',
+    buttonText = 'User profile',
+  } = options;
+
+  return `
+<button data-popover-target="${id}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${buttonText}</button>
+<div data-popover id="${id}" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+    <div class="p-3">
+        <div class="flex items-center justify-between mb-2">
+            <a href="#">
+                <img class="w-8 h-8 rounded-full object-cover" src="${avatar}" alt="${name}" onerror="this.onerror=null;this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 24 24\\' fill=\\'%236b7280\\'><path d=\\'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z\\'/></svg>';">
+            </a>
+            <div>
+                <button type="button" class="text-white bg-brand hover:bg-brand-strong box-border border border-transparent focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded text-xs px-3 py-1.5 focus:outline-none">Follow</button>
+            </div>
+        </div>
+        <p class="text-sm font-semibold text-heading">
+            <a href="#">${name}</a>
+        </p>
+        <p class="mb-3 text-sm font-normal text-body">
+            <a href="#" class="hover:underline">${handle}</a>
+        </p>
+        <p class="mb-4 text-sm">${bio}</p>
+        <ul class="flex text-sm">
+            <li class="me-2.5">
+                <a href="#" class="hover:underline">
+                    <span class="font-medium text-heading">${following}</span>
+                    <span>Following</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="hover:underline">
+                    <span class="font-medium text-heading">${followers}</span>
+                    <span>Followers</span>
+                </a>
+            </li>
+        </ul>
+    </div>
+    <div data-popper-arrow></div>
+</div>`.trim();
+}
+
+/**
+ * 3. Company Profile Popover
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteCompanyProfilePopover(options = {}) {
+  const {
+    id = 'popover-company-profile',
+    company = 'Flowbite',
+    category = 'Tech company',
+    tagline = 'Breaking news alerts and the most talked about stories.',
+    website = 'https://flowbite.com/',
+    likes = '102,567,936 people like this including 5 of your friends',
+    buttonText = 'Company profile',
+  } = options;
+
+  return `
+<button data-popover-target="${id}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${buttonText}</button>
+<div data-popover id="${id}" role="tooltip" class="absolute z-10 invisible inline-block w-80 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+    <div class="p-3">
+        <div class="flex">
+            <div class="me-3 shrink-0">
+                <a href="#" class="block w-10 h-10 flex items-center justify-center p-2 bg-neutral-tertiary rounded">
+                    <img class="w-8 h-8 rounded-full" src="https://flowbite.com/docs/images/logo.svg" alt="${company} logo">
+                </a>
+            </div>
+            <div>
+                <p class="text-base font-semibold text-heading">
+                    <a href="#" class="hover:underline">${company}</a>
+                </p>
+                <p class="mb-3 text-sm font-normal text-body">${category}</p>
+                <p class="mb-3 text-sm">${tagline}</p>
+                <ul class="text-sm">
+                    <li class="flex items-center mb-2">
+                        <span class="me-2 font-semibold text-body">
+                            <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.213 9.787a3.391 3.391 0 0 0-4.795 0l-3.425 3.426a3.39 3.39 0 0 0 4.795 4.794l.321-.304m-.321-4.49a3.39 3.39 0 0 0 4.795 0l3.424-3.426a3.39 3.39 0 0 0-4.794-4.795l-1.028.961"/></svg>
+                        </span>
+                        <a href="${website}" class="font-medium text-fg-brand hover:underline">${website}</a>
+                    </li>
+                    <li class="flex items-start mb-2">
+                        <span class="me-2 text-body">
+                            <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.01 6.001C6.5 1 1 8 5.782 13.001L12.011 20l6.23-7C23 8 17.5 1 12.01 6.002Z"/></svg>
+                        </span>
+                        <span class="-mt-1 text-xs">${likes}</span>
+                    </li>
+                </ul>
+                <div class="flex mb-4 -space-x-3 rtl:space-x-reverse">
+                    <span class="w-8 h-8 flex items-center justify-center rounded-full bg-brand-soft text-fg-brand-strong text-xs font-semibold border-2 border-buffer-medium">JM</span>
+                    <span class="w-8 h-8 flex items-center justify-center rounded-full bg-purple-soft text-fg-purple-strong text-xs font-semibold border-2 border-buffer-medium">BG</span>
+                    <span class="w-8 h-8 flex items-center justify-center rounded-full bg-teal-soft text-fg-teal-strong text-xs font-semibold border-2 border-buffer-medium">RL</span>
+                    <a class="flex items-center justify-center w-8 h-8 text-xs font-medium text-heading bg-neutral-tertiary border-2 border-buffer-medium rounded-full hover:bg-neutral-quaternary" href="#">+3</a>
+                </div>
+                <div class="flex space-x-2">
+                    <button type="button" class="flex items-center justify-center w-full text-body bg-neutral-primary-medium border border-default-medium hover:bg-neutral-secondary-strong hover:text-heading hover:border-default-strong focus:ring-4 focus:ring-neutral-tertiary-soft shadow-xs font-medium leading-5 rounded-base text-sm px-3 py-2 focus:outline-none">
+                        <svg class="w-4 h-4 me-1.5 -ms-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11c.889-.086 1.416-.543 2.156-1.057a22.323 22.323 0 0 0 3.958-5.084 1.6 1.6 0 0 1 .582-.628 1.549 1.549 0 0 1 1.466-.087c.205.095.388.233.537.406a1.64 1.64 0 0 1 .384 1.279l-1.388 4.114M7 11H4v6.5A1.5 1.5 0 0 0 5.5 19v0A1.5 1.5 0 0 0 7 17.5V11Zm6.5-1h4.915c.286 0 .372.014.626.15.254.135.472.332.637.572a1.874 1.874 0 0 1 .215 1.673l-2.098 6.4C17.538 19.52 17.368 20 16.12 20c-2.303 0-4.79-.943-6.67-1.475"/></svg> Like page
+                    </button>
+                    <button id="${id}-dropdown-button" data-dropdown-toggle="${id}-dropdown-menu" data-dropdown-placement="right" type="button" class="flex items-center justify-center text-body bg-neutral-primary-medium border border-default-medium hover:bg-neutral-secondary-strong hover:text-heading hover:border-default-strong focus:ring-4 focus:ring-neutral-tertiary-soft shadow-xs font-medium leading-5 rounded-base w-9 h-9 shrink-0 focus:outline-none">
+                        <svg class="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="3" d="M6 12h.01m6 0h.01m5.99 0h.01"/></svg>
+                    </button>
+                </div>
+                <div id="${id}-dropdown-menu" class="z-10 hidden bg-neutral-primary-medium border border-default-medium rounded-base shadow-lg w-44">
+                    <ul class="p-2 text-sm text-body font-medium" aria-labelledby="${id}-dropdown-button">
+                        <li><a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Report this page</a></li>
+                        <li><a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Add to favorites</a></li>
+                        <li><a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Block this page</a></li>
+                        <li><a href="#" class="inline-flex items-center w-full p-2 hover:bg-neutral-tertiary-medium hover:text-heading rounded">Invite users</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div data-popper-arrow></div>
+</div>`.trim();
+}
+
+/**
+ * 4. Image Popover (Wikipedia style preview)
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteImagePopover(options = {}) {
+  const {
+    id = 'popover-image',
+    keyword = 'Italy',
+    title = 'About Italy',
+    description = 'Italy is located in the middle of the Mediterranean Sea, in Southern Europe it is also part of Western Europe.',
+  } = options;
+
+  return `
+<p class="text-body leading-relaxed">
+  Due to its central geographic location in Southern Europe, <a href="#" class="text-fg-brand font-medium underline hover:no-underline" data-popover-target="${id}">${keyword}</a> has historically been home to myriad peoples and cultures. In addition to the various ancient peoples dispersed throughout what is now modern-day Italy, the most predominant being the Indo-European Italic peoples who gave the peninsula its name, beginning from the classical era, Phoenicians and Carthaginians founded colonies mostly in insular Italy.
+</p>
+<div data-popover id="${id}" role="tooltip" class="absolute z-10 p-3 invisible inline-block text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-lg shadow-xs opacity-0 w-96">
+    <div class="grid grid-cols-5 gap-2">
+        <div class="col-span-3 pe-3">
+            <div class="space-y-2">
+                <h3 class="font-semibold text-heading">${title}</h3>
+                <p class="mb-2 text-xs leading-normal">${description}</p>
+                <p class="text-xs leading-normal">A unitary parliamentary republic with Rome as its capital and largest city.</p>
+                <a href="#" class="flex items-center font-medium text-xs text-fg-brand hover:underline">
+                    Read more <svg class="w-3.5 h-3.5 ms-1 rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+                </a>
+            </div>
+        </div>
+        <div class="col-span-2 flex items-center justify-center bg-neutral-tertiary rounded p-2">
+            <svg class="w-12 h-12 text-body" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m3 9 2.457-2.457a4 4 0 0 1 5.657 0L13.771 9a4 4 0 0 0 5.657 0L21 7.371M3 15l2.457-2.457a4 4 0 0 1 5.657 0L13.771 15a4 4 0 0 0 5.657 0L21 13.371"/></svg>
+        </div>
+    </div>
+    <div data-popper-arrow></div>
+</div>`.trim();
+}
+
+/**
+ * 5. Description Popover (Info button trigger)
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteDescriptionPopover(options = {}) {
+  const {
+    id = 'popover-description',
+  } = options;
+
+  return `
+<p class="flex items-center text-sm text-body">
+  This is just some informational text 
+  <button data-popover-target="${id}" data-popover-placement="bottom-end" type="button" class="inline-flex items-center">
+    <svg class="w-4 h-4 text-body hover:text-heading ms-2" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.529 9.988a2.502 2.502 0 1 1 5 .191A2.441 2.441 0 0 1 12 12.582V14m-.01 3.008H12M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+    <span class="sr-only">Show information</span>
+  </button>
+</p>
+<div data-popover id="${id}" role="tooltip" class="absolute z-10 p-3 invisible inline-block text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0 w-72">
+    <div>
+        <h3 class="font-semibold text-heading mb-2">Activity growth - Incremental</h3>
+        <p class="mb-4 text-xs leading-normal">Report helps navigate cumulative growth of community activities. Ideally, the chart should have a growing trend, as stagnating chart signifies a significant decrease of community activity.</p>
+        <h3 class="font-semibold text-heading mb-2">Calculation</h3>
+        <p class="mb-4 text-xs leading-normal">For each date bucket, the all-time volume of activities is calculated. This means that activities in period n contain all activities up to period n, plus the activities generated by your community in period.</p>
+        <a href="#" class="flex items-center font-medium text-xs text-fg-brand hover:underline">
+            Read more <svg class="w-3.5 h-3.5 ms-1 rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+        </a>
+    </div>
+    <div data-popper-arrow></div>
+</div>`.trim();
+}
+
+/**
+ * 6. Progress Popover (Storage quota meter)
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressPopover(options = {}) {
+  const {
+    id = 'popover-progress',
+    buttonText = 'Storage status',
+    used = '30',
+    total = '150 GB',
+    percent = 85,
+  } = options;
+
+  return `
+<button data-popover-target="${id}" type="button" class="inline-flex items-center text-white bg-brand hover:bg-brand-strong box-border border border-transparent focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">
+    <svg class="w-4 h-4 me-1.5 -ms-0.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 6c0 1.657-3.134 3-7 3S5 7.657 5 6m14 0c0-1.657-3.134-3-7-3S5 4.343 5 6m14 0v6M5 6v6m0 0c0 1.657 3.134 3 7 3s7-1.343 7-3M5 12v6c0 1.657 3.134 3 7 3s7-1.343 7-3v-6"/></svg>
+    ${buttonText}
+</button>
+<div data-popover id="${id}" role="tooltip" class="absolute z-10 p-3 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+    <div class="space-y-2.5">
+        <h3 class="font-semibold text-heading">Available storage</h3>
+        <p class="text-xs">This server has <span class="font-semibold text-heading">${used}</span> of <span class="font-semibold text-heading">${total}</span> of block storage remaining.</p>
+        <div class="w-full bg-neutral-quaternary rounded-full h-1.5 mb-4">
+            <div class="bg-danger h-1.5 rounded-full" style="width: ${percent}%"></div>
+        </div>
+    </div>
+    <a href="#" class="flex items-center font-medium text-xs text-fg-brand hover:underline">
+        Upgrade now <svg class="w-3.5 h-3.5 ms-1 rtl:rotate-180" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m14 0-4 4m4-4-4-4"/></svg>
+    </a>
+    <div data-popper-arrow></div>
+</div>`.trim();
+}
+
+/**
+ * 7. Password Strength Popover
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePasswordStrengthPopover(options = {}) {
+  const {
+    id = 'popover-password',
+  } = options;
+
+  return `
+<form class="max-w-sm">
+  <div class="mb-4">
+    <label for="${id}-email" class="block mb-2 text-sm font-medium text-heading">Your email</label>
+    <input type="email" id="${id}-email" class="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body" placeholder="name@flowbite.com" required />
+  </div>
+  <div class="mb-4">
+    <label for="${id}-input" class="block mb-2 text-sm font-medium text-heading">Your password</label>
+    <input data-popover-target="${id}" data-popover-placement="bottom" type="password" id="${id}-input" class="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body" required />
+    <div data-popover id="${id}" role="tooltip" class="absolute z-10 p-3 invisible inline-block w-72 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+        <div>
+            <h3 class="font-semibold text-heading mb-3 text-xs">Must have at least 6 characters</h3>
+            <div class="grid grid-cols-4 gap-2 mb-3">
+                <div class="h-1 bg-warning rounded-full"></div>
+                <div class="h-1 bg-warning rounded-full"></div>
+                <div class="h-1 bg-neutral-quaternary rounded-full"></div>
+                <div class="h-1 bg-neutral-quaternary rounded-full"></div>
+            </div>
+            <p class="mb-2 text-xs text-body">It’s better to have:</p>
+            <ul class="text-xs space-y-1">
+                <li class="flex items-center">
+                    <svg class="w-3.5 h-3.5 me-1.5 text-success" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 11.917 9.724 16.5 19 7.5"/></svg>
+                    Upper & lower case letters
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-3.5 h-3.5 me-1.5 text-success" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    A symbol (#$&)
+                </li>
+                <li class="flex items-center">
+                    <svg class="w-3.5 h-3.5 me-1.5 text-fg-disabled" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 17.94 6M18 18 6.06 6"/></svg>
+                    A longer password (min. 12 chars.)
+                </li>
+            </ul>
+        </div>
+        <div data-popper-arrow></div>
+    </div>
+  </div>
+  <button type="submit" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Submit</button>
+</form>`.trim();
+}
+
+/**
+ * 8. Popover Placements (Top, Right, Bottom, Left)
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePopoverPlacements() {
+  const placements = [
+    { id: 'popover-top', placement: 'top', label: 'Top popover', title: 'Popover top' },
+    { id: 'popover-right', placement: 'right', label: 'Right popover', title: 'Popover right' },
+    { id: 'popover-bottom', placement: 'bottom', label: 'Bottom popover', title: 'Popover bottom' },
+    { id: 'popover-left', placement: 'left', label: 'Left popover', title: 'Popover left' },
+  ];
+
+  return `
+<div class="flex flex-wrap gap-4">
+  ${placements
+    .map(
+      (p) => `
+  <div>
+    <button data-popover-target="${p.id}" data-popover-placement="${p.placement}" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">${p.label}</button>
+    <div data-popover id="${p.id}" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+        <div class="px-3 py-2 bg-neutral-tertiary border-b border-default rounded-t-base">
+            <h3 class="font-medium text-heading">${p.title}</h3>
+        </div>
+        <div class="px-3 py-2">
+            <p>And here's some amazing content. It's very engaging. Right?</p>
+        </div>
+        <div data-popper-arrow></div>
+    </div>
+  </div>`
+    )
+    .join('\n')}
+</div>`.trim();
+}
+
+/**
+ * 9. Popover Triggers (Hover vs Click)
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePopoverTriggers() {
+  return `
+<div class="flex flex-wrap gap-4">
+  <div>
+    <button data-popover-target="popover-hover" data-popover-trigger="hover" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Hover popover</button>
+    <div data-popover id="popover-hover" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+        <div class="px-3 py-2 bg-neutral-tertiary border-b border-default rounded-t-base">
+            <h3 class="font-medium text-heading">Hover popover</h3>
+        </div>
+        <div class="px-3 py-2">
+            <p>Triggered on mouse enter or focus event.</p>
+        </div>
+        <div data-popper-arrow></div>
+    </div>
+  </div>
+
+  <div>
+    <button data-popover-target="popover-click" data-popover-trigger="click" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Click popover</button>
+    <div data-popover id="popover-click" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+        <div class="px-3 py-2 bg-neutral-tertiary border-b border-default rounded-t-base">
+            <h3 class="font-medium text-heading">Click popover</h3>
+        </div>
+        <div class="px-3 py-2">
+            <p>Triggered on click and dismissed on outside click.</p>
+        </div>
+        <div data-popper-arrow></div>
+    </div>
+  </div>
+</div>`.trim();
+}
+
+/**
+ * 10. Popover Offset
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePopoverOffset() {
+  return `
+<div>
+  <button data-popover-target="popover-offset" data-popover-offset="30" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Offset popover (30px)</button>
+  <div data-popover id="popover-offset" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+      <div class="px-3 py-2 bg-neutral-tertiary border-b border-default rounded-t-base">
+          <h3 class="font-medium text-heading">Offset popover</h3>
+      </div>
+      <div class="px-3 py-2">
+          <p>This popover has a custom 30px offset distance from the trigger button.</p>
+      </div>
+      <div data-popper-arrow></div>
+  </div>
+</div>`.trim();
+}
+
+/**
+ * 11. Popover Animation
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePopoverAnimation() {
+  return `
+<div>
+  <button data-popover-target="popover-animation" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Animated popover</button>
+  <div data-popover id="popover-animation" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-500 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+      <div class="px-3 py-2 bg-neutral-tertiary border-b border-default rounded-t-base">
+          <h3 class="font-medium text-heading">Animated transition</h3>
+      </div>
+      <div class="px-3 py-2">
+          <p>Custom duration-500 fade transition curve.</p>
+      </div>
+      <div data-popper-arrow></div>
+  </div>
+</div>`.trim();
+}
+
+/**
+ * 12. Popover Without Arrow
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePopoverNoArrow() {
+  return `
+<div>
+  <button data-popover-target="popover-no-arrow" type="button" class="text-white bg-brand box-border border border-transparent hover:bg-brand-strong focus:ring-4 focus:ring-brand-medium shadow-xs font-medium leading-5 rounded-base text-sm px-4 py-2.5 focus:outline-none">Popover without arrow</button>
+  <div data-popover id="popover-no-arrow" role="tooltip" class="absolute z-10 invisible inline-block w-64 text-sm text-body transition-opacity duration-300 bg-neutral-primary-soft border border-default rounded-base shadow-xs opacity-0">
+      <div class="px-3 py-2 bg-neutral-tertiary border-b border-default rounded-t-base">
+          <h3 class="font-medium text-heading">No arrow popover</h3>
+      </div>
+      <div class="px-3 py-2">
+          <p>Clean border container without pointing chevron node.</p>
+      </div>
+  </div>
+</div>`.trim();
+}
+
+/**
+ * 13. Comprehensive Showcase Renderer for Flowbite Popovers
+ * @returns {string} HTML markup
+ */
+export function renderFlowbitePopoverShowcase() {
+  return `
+<div class="flowbite-popover-showcase space-y-10 p-4">
+  <div class="p-4 bg-neutral-primary-soft border border-default rounded-base shadow-xs">
+    <h3 class="text-base font-semibold text-heading mb-1">Popover Component Suite</h3>
+    <p class="text-sm text-body">Flowbite contextual popover dialogs for rich tooltips, user and company profiles, password guidelines, storage meters, and multi-directional positioning.</p>
+  </div>
+
+  <!-- 1. Default Popover -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">1. Default Popover</h4>
+    <p class="text-xs text-body">Basic contextual popover with title header and descriptive paragraph.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteDefaultPopover()}
+    </div>
+  </div>
+
+  <!-- 2. User Profile Popover -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">2. User Profile Popover</h4>
+    <p class="text-xs text-body">Shows avatar, user handle, follow CTA, and follower analytics metrics.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteUserProfilePopover()}
+    </div>
+  </div>
+
+  <!-- 3. Company Profile Popover -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">3. Company Profile Popover</h4>
+    <p class="text-xs text-body">Rich card with brand logo, bio, likes counter, avatar stack, and dropdown menu actions.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteCompanyProfilePopover()}
+    </div>
+  </div>
+
+  <!-- 4. Image Popover (Wikipedia Preview) -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">4. Image Popover (Highlighted Link Preview)</h4>
+    <p class="text-xs text-body">Encyclopedic inline definition popup with thumbnail image and external link.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteImagePopover()}
+    </div>
+  </div>
+
+  <!-- 5. Description Popover -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">5. Description Popover (Help Icon Trigger)</h4>
+    <p class="text-xs text-body">Explanatory guidelines triggered from question-mark button.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteDescriptionPopover()}
+    </div>
+  </div>
+
+  <!-- 6. Progress Popover -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">6. Progress Popover (Storage Capacity)</h4>
+    <p class="text-xs text-body">Visual disk meter showing current allocation and upgrade CTA link.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteProgressPopover()}
+    </div>
+  </div>
+
+  <!-- 7. Password Strength Popover -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">7. Password Strength Popover</h4>
+    <p class="text-xs text-body">Real-time validation criteria card triggered on input focus.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePasswordStrengthPopover()}
+    </div>
+  </div>
+
+  <!-- 8. Directional Placements -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">8. Directional Placements (Top, Right, Bottom, Left)</h4>
+    <p class="text-xs text-body">Demonstrates automatic offset positioning along the four compass axes.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePopoverPlacements()}
+    </div>
+  </div>
+
+  <!-- 9. Triggers (Hover vs Click) -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">9. Trigger Modes (Hover vs Click)</h4>
+    <p class="text-xs text-body">Choose between mouseenter/focus or click-to-toggle event listeners.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbitePopoverTriggers()}
+    </div>
+  </div>
+
+  <!-- 10. Offset, Animation & Arrow Variants -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">10. Offset, Animation & Arrow Customization</h4>
+    <p class="text-xs text-body">Custom 30px offset distance, 500ms duration transition, and arrowless card.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs flex flex-wrap gap-4">
+      ${renderFlowbitePopoverOffset()}
+      ${renderFlowbitePopoverAnimation()}
+      ${renderFlowbitePopoverNoArrow()}
+    </div>
+  </div>
+</div>`.trim();
+}
+
+/* ============================================================
+   FLOWBITE PROGRESS BAR COMPONENT GENERATORS & UTILITIES
+   ============================================================ */
+
+/**
+ * Maps size string to Tailwind height classes
+ */
+const PROGRESS_SIZES = {
+  sm: 'h-1.5',
+  default: 'h-2',
+  md: 'h-2',
+  lg: 'h-2.5',
+  xl: 'h-4',
+};
+
+/**
+ * 1. Flexible Flowbite Progress Bar Generator
+ * @param {Object} [options={}]
+ * @param {number|string} [options.progress=45] - Value 0 to 100
+ * @param {'sm'|'default'|'md'|'lg'|'xl'} [options.size='default']
+ * @param {'brand'|'dark'|'success'|'danger'|'warning'|'purple'|'teal'} [options.color='brand']
+ * @param {boolean} [options.labelInside=false]
+ * @param {boolean} [options.labelOutside=false]
+ * @param {string} [options.labelText='Flowbite']
+ * @param {string} [options.id='']
+ * @param {string} [options.extraClasses='']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressBar(options = {}) {
+  const {
+    progress = 45,
+    size = 'default',
+    color = 'brand',
+    labelInside = false,
+    labelOutside = false,
+    labelText = 'Flowbite',
+    id = '',
+    extraClasses = '',
+  } = options;
+
+  const numericProgress = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  const idAttr = id ? `id="${id}"` : '';
+
+  if (labelInside) {
+    return `
+<div ${idAttr} class="w-full bg-neutral-quaternary rounded-full ${extraClasses}">
+    <div class="bg-${color} text-xs font-medium text-white text-center p-0.5 leading-none rounded-full h-4 flex items-center justify-center transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100">
+        ${numericProgress}%
+    </div>
+</div>`.trim();
+  }
+
+  const heightClass = PROGRESS_SIZES[size] || 'h-2';
+
+  if (labelOutside) {
+    return `
+<div ${idAttr} class="${extraClasses}">
+    <div class="flex justify-between mb-1">
+        <span class="text-sm font-medium text-body">${labelText}</span>
+        <span class="text-sm font-medium text-body" data-progress-label>${numericProgress}%</span>
+    </div>
+    <div class="w-full bg-neutral-quaternary rounded-full ${heightClass}">
+        <div class="bg-${color} ${heightClass} rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+</div>`.trim();
+  }
+
+  return `
+<div ${idAttr} class="w-full bg-neutral-quaternary rounded-full ${heightClass} ${extraClasses}">
+    <div class="bg-${color} ${heightClass} rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+</div>`.trim();
+}
+
+/**
+ * 2. Default Flowbite Progress Bar (45% brand)
+ * @param {number|string} [progress=45]
+ * @param {string} [color='brand']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteDefaultProgressBar(progress = 45, color = 'brand') {
+  const numericProgress = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  return `
+<div class="w-full bg-neutral-quaternary rounded-full h-2">
+    <div class="bg-${color} h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+</div>`.trim();
+}
+
+/**
+ * 3. Flowbite Progress Bar Sizes (Small, Default, Large)
+ * @param {number|string} [progress=45]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressSizes(progress = 45) {
+  const numericProgress = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  return `
+<div class="space-y-4">
+    <div>
+        <div class="mb-1 text-sm font-medium text-heading">Small</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-1.5">
+            <div class="bg-brand h-1.5 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+    <div>
+        <div class="mb-1 text-sm font-medium text-heading">Default</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-2">
+            <div class="bg-brand h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+    <div>
+        <div class="mb-1 text-base font-medium text-heading">Large</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-2.5">
+            <div class="bg-brand h-2.5 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 4. Flowbite Progress Bar with Label Inside
+ * @param {number|string} [progress=45]
+ * @param {string} [color='brand']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressLabelInside(progress = 45, color = 'brand') {
+  const numericProgress = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  return `
+<div class="w-full bg-neutral-quaternary rounded-full">
+    <div class="bg-${color} text-xs font-medium text-white text-center p-0.5 leading-none rounded-full h-4 flex items-center justify-center transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100">
+        ${numericProgress}%
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 5. Flowbite Progress Bar with Label Outside
+ * @param {string} [label='Flowbite']
+ * @param {number|string} [progress=45]
+ * @param {string} [color='brand']
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressLabelOutside(label = 'Flowbite', progress = 45, color = 'brand') {
+  const numericProgress = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  return `
+<div>
+    <div class="flex justify-between mb-1">
+        <span class="text-sm font-medium text-body">${label}</span>
+        <span class="text-sm font-medium text-body" data-progress-label>${numericProgress}%</span>
+    </div>
+    <div class="w-full bg-neutral-quaternary rounded-full h-2">
+        <div class="bg-${color} h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * 6. Flowbite Progress Bar Colors (Dark, Brand, Success, Danger, Warning)
+ * @param {number|string} [progress=45]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressColors(progress = 45) {
+  const numericProgress = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  return `
+<div class="space-y-4">
+    <div>
+        <div class="mb-1 text-sm font-medium text-heading">Dark</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-2">
+            <div class="bg-dark h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+    <div>
+        <div class="mb-1 text-sm font-medium text-fg-brand">Brand</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-2">
+            <div class="bg-brand h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+    <div>
+        <div class="mb-1 text-sm font-medium text-fg-success">Success</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-2">
+            <div class="bg-success h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+    <div>
+        <div class="mb-1 text-sm font-medium text-fg-danger">Danger</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-2">
+            <div class="bg-danger h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+    <div>
+        <div class="mb-1 text-sm font-medium text-fg-warning">Warning</div>
+        <div class="w-full bg-neutral-quaternary rounded-full h-2">
+            <div class="bg-warning h-2 rounded-full transition-all duration-300" style="width: ${numericProgress}%" role="progressbar" aria-valuenow="${numericProgress}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+</div>`.trim();
+}
+
+/**
+ * Dynamically updates a progress bar element with a new percentage value
+ * @param {HTMLElement} barEl - The progress bar element or wrapper
+ * @param {number} percentage - Value from 0 to 100
+ */
+export function setProgressBar(barEl, percentage) {
+  if (!barEl) return;
+  const clamped = Math.max(0, Math.min(100, Math.round(percentage)));
+  
+  const innerBar = barEl.getAttribute('role') === 'progressbar'
+    ? barEl
+    : barEl.querySelector('[role="progressbar"]') ||
+      barEl.querySelector('.rounded-full > div');
+
+  if (innerBar) {
+    innerBar.style.width = `${clamped}%`;
+    innerBar.setAttribute('aria-valuenow', clamped);
+    if (innerBar.textContent && innerBar.textContent.includes('%')) {
+      innerBar.textContent = `${clamped}%`;
+    }
+  }
+
+  const labelEl = barEl.querySelector('[data-progress-label]');
+  if (labelEl) {
+    labelEl.textContent = `${clamped}%`;
+  }
+}
+
+/**
+ * Initializes interactive progress bar demo elements within root
+ * @param {HTMLElement|Document} [root=document]
+ */
+export function initProgressBars(root = document) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+
+  const interactiveContainers = [];
+  if (root.matches && root.matches('[data-progress-demo]')) {
+    interactiveContainers.push(root);
+  }
+  if (root.querySelectorAll) {
+    interactiveContainers.push(...root.querySelectorAll('[data-progress-demo]'));
+  }
+
+  interactiveContainers.forEach((container) => {
+    if (container._fbProgressBound) return;
+    container._fbProgressBound = true;
+
+    const targetBar = container.querySelector('[data-interactive-target]');
+    const buttons = container.querySelectorAll('[data-progress-set]');
+
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const val = parseInt(btn.getAttribute('data-progress-set') || '0', 10);
+        if (targetBar) {
+          setProgressBar(targetBar, val);
+        }
+      });
+    });
+  });
+}
+
+/**
+ * 7. Comprehensive Showcase Renderer for Flowbite Progress Bars
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteProgressShowcase() {
+  return `
+<div class="flowbite-progress-showcase space-y-10 p-4">
+  <div class="p-4 bg-neutral-primary-soft border border-default rounded-base shadow-xs">
+    <h3 class="text-base font-semibold text-heading mb-1">Progress Bar Component Suite</h3>
+    <p class="text-sm text-body">Flowbite progress indicators for demonstrating completion metrics, data load stages, quotas, and animated tasks with full Tailwind CSS v4 token compatibility.</p>
+  </div>
+
+  <!-- 1. Default Progress Bar -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">1. Default Progress Bar</h4>
+    <p class="text-xs text-body">Standard completion indicator styled at 45% using rounded-full tracks.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteDefaultProgressBar(45)}
+    </div>
+  </div>
+
+  <!-- 2. Progress Sizes -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">2. Sizing Hierarchy</h4>
+    <p class="text-xs text-body">Available in Small (h-1.5), Default (h-2), and Large (h-2.5) scale dimensions.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteProgressSizes(45)}
+    </div>
+  </div>
+
+  <!-- 3. Label Inside -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">3. Progress Bar with Label Inside</h4>
+    <p class="text-xs text-body">Centered badge text inside the active meter track for compact displays.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteProgressLabelInside(45)}
+    </div>
+  </div>
+
+  <!-- 4. Label Outside -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">4. Progress Bar with Label Outside</h4>
+    <p class="text-xs text-body">Header row displaying process title and exact percentage counter alongside the bar.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteProgressLabelOutside('Flowbite', 45)}
+    </div>
+  </div>
+
+  <!-- 5. Color Variations -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">5. Color Palette System</h4>
+    <p class="text-xs text-body">Theme-tokenized status indicators (Dark, Brand, Success, Danger, Warning).</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs">
+      ${renderFlowbiteProgressColors(45)}
+    </div>
+  </div>
+
+  <!-- 6. Interactive Live Stepper Demo -->
+  <div class="space-y-3" data-progress-demo>
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">6. Interactive Live Stepper Simulation</h4>
+    <p class="text-xs text-body">Click the percentage steps below to test dynamic bar width and label updates.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs space-y-4">
+      <div data-interactive-target>
+        ${renderFlowbiteProgressLabelOutside('Data Sync Progress', 45, 'brand')}
+      </div>
+      <div class="flex flex-wrap gap-2 pt-2 border-t border-default">
+        <button type="button" data-progress-set="15" class="px-2.5 py-1 text-xs font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded hover:bg-neutral-tertiary hover:text-heading">15%</button>
+        <button type="button" data-progress-set="35" class="px-2.5 py-1 text-xs font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded hover:bg-neutral-tertiary hover:text-heading">35%</button>
+        <button type="button" data-progress-set="60" class="px-2.5 py-1 text-xs font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded hover:bg-neutral-tertiary hover:text-heading">60%</button>
+        <button type="button" data-progress-set="85" class="px-2.5 py-1 text-xs font-medium text-body bg-neutral-secondary-medium border border-default-medium rounded hover:bg-neutral-tertiary hover:text-heading">85%</button>
+        <button type="button" data-progress-set="100" class="px-2.5 py-1 text-xs font-medium text-white bg-brand rounded hover:bg-brand-strong">100%</button>
+      </div>
+    </div>
+  </div>
+</div>`.trim();
+}
 
 
 
@@ -6606,6 +10399,365 @@ export function renderFlowbiteFooterIndicatorShowcase() {
 
 
 
+/* ============================================================
+   FLOWBITE SIDEBAR COMPONENT GENERATORS
+   ============================================================ */
 
+/**
+ * 1. Multi-level Menu Sidebar
+ * Full sidebar with collapsible sub-menu items, Flowbite drawer toggle on mobile.
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteSidebarMultiLevel(options = {}) {
+  const {
+    id = 'sidebar-multi-level',
+    brand = 'Zamorin CafÃ© ERP',
+  } = options;
 
+  return `
+<button
+  data-drawer-target="${id}"
+  data-drawer-toggle="${id}"
+  aria-controls="${id}"
+  type="button"
+  class="text-heading bg-transparent box-border border border-transparent hover:bg-neutral-secondary-medium focus:ring-4 focus:ring-neutral-tertiary font-medium leading-5 rounded-base text-sm p-2 md:hidden"
+>
+  <span class="sr-only">Open sidebar</span>
+  <svg class="w-5 h-5" aria-hidden="true" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+    <path clip-rule="evenodd" fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z"></path>
+  </svg>
+</button>
+<aside id="${id}" class="fixed top-0 left-0 z-40 w-64 h-screen transition-transform -translate-x-full sm:translate-x-0" aria-label="Sidebar">
+  <div class="h-full px-3 py-4 overflow-y-auto bg-neutral-primary-soft border-r border-default">
+    <a href="#" class="flex items-center ps-2.5 mb-5">
+      <span class="self-center text-xl font-semibold whitespace-nowrap text-heading">${brand}</span>
+    </a>
+    <ul class="space-y-2 font-medium">
+      <li>
+        <a href="#" class="flex items-center p-2 text-heading rounded-base hover:bg-neutral-secondary-medium group">
+          <svg class="w-5 h-5 text-neutral-tertiary group-hover:text-heading" aria-hidden="true" fill="currentColor" viewBox="0 0 22 21"><path d="M16.975 11H10V4.025a1 1 0 0 0-1.066-.998 8.5 8.5 0 1 0 9.039 9.039.999.999 0 0 0-1-1.066h.002Z"/><path d="M12.5 0c-.157 0-.311.01-.565.027A1 1 0 0 0 11 1.02V10h8.975a1 1 0 0 0 1-.935c.013-.188.028-.374.028-.565A8.51 8.51 0 0 0 12.5 0Z"/></svg>
+          <span class="ms-3">Dashboard</span>
+        </a>
+      </li>
+      <li>
+        <a href="#" class="flex items-center p-2 text-heading rounded-base hover:bg-neutral-secondary-medium group">
+          <svg class="shrink-0 w-5 h-5 text-neutral-tertiary group-hover:text-heading" aria-hidden="true" fill="currentColor" viewBox="0 0 18 18"><path d="M6.143 0H1.857A1.857 1.857 0 0 0 0 1.857v4.286C0 7.169.831 8 1.857 8h4.286A1.857 1.857 0 0 0 8 6.143V1.857A1.857 1.857 0 0 0 6.143 0Zm10 0h-4.286A1.857 1.857 0 0 0 10 1.857v4.286C10 7.169 10.831 8 11.857 8h4.286A1.857 1.857 0 0 0 18 6.143V1.857A1.857 1.857 0 0 0 16.143 0Zm-10 10H1.857A1.857 1.857 0 0 0 0 11.857v4.286C0 17.169.831 18 1.857 18h4.286A1.857 1.857 0 0 0 8 16.143v-4.286A1.857 1.857 0 0 0 6.143 10Zm10 0h-4.286A1.857 1.857 0 0 0 10 11.857v4.286c0 1.026.831 1.857 1.857 1.857h4.286A1.857 1.857 0 0 0 18 16.143v-4.286A1.857 1.857 0 0 0 16.143 10Z"/></svg>
+          <span class="flex-1 ms-3 whitespace-nowrap">Kanban</span>
+          <span class="inline-flex items-center justify-center px-2 ms-3 text-xs font-medium text-heading bg-neutral-tertiary-medium rounded-full">Pro</span>
+        </a>
+      </li>
+      <li>
+        <button type="button" class="flex items-center w-full p-2 text-base text-heading transition duration-75 rounded-base group hover:bg-neutral-secondary-medium" aria-controls="dropdown-ecommerce-${id}" data-collapse-toggle="dropdown-ecommerce-${id}">
+          <svg class="shrink-0 w-5 h-5 text-neutral-tertiary group-hover:text-heading" aria-hidden="true" fill="currentColor" viewBox="0 0 18 21"><path d="M15 12a1 1 0 0 0 .962-.726l2-7A1 1 0 0 0 17 3H3.77L3.175.745A1 1 0 0 0 2.208 0H1a1 1 0 0 0 0 2h.438l.6 2.255v.019l2 7 .746 2.986A3 3 0 1 0 9 17a2.966 2.966 0 0 0-.184-1h2.368c-.118.32-.18.659-.184 1a3 3 0 1 0 3-3H6.78l-.5-2H15Z"/></svg>
+          <span class="flex-1 ms-3 text-left rtl:text-right whitespace-nowrap">E-commerce</span>
+          <svg class="w-3 h-3" aria-hidden="true" fill="none" viewBox="0 0 10 6"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 1 4 4 4-4"/></svg>
+        </button>
+        <ul id="dropdown-ecommerce-${id}" class="hidden py-2 space-y-2">
+          <li><a href="#" class="flex items-center w-full p-2 text-body transition duration-75 rounded-base pl-11 group hover:bg-neutral-secondary-medium hover:text-heading">Products</a></li>
+          <li><a href="#" class="flex items-center w-full p-2 text-body transition duration-75 rounded-base pl-11 group hover:bg-neutral-secondary-medium hover:text-heading">Billing</a></li>
+          <li><a href="#" class="flex items-center w-full p-2 text-body transition duration-75 rounded-base pl-11 group hover:bg-neutral-secondary-medium hover:text-heading">Invoice</a></li>
+        </ul>
+      </li>
+      <li>
+        <a href="#" class="flex items-center p-2 text-heading rounded-base hover:bg-neutral-secondary-medium group">
+          <svg class="shrink-0 w-5 h-5 text-neutral-tertiary group-hover:text-heading" aria-hidden="true" fill="none" viewBox="0 0 18 16"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 8h11m0 0-4-4m4 4-4 4m4-11h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3"/></svg>
+          <span class="flex-1 ms-3 whitespace-nowrap">Sign In</span>
+        </a>
+      </li>
+    </ul>
+  </div>
+</aside>`.trim();
+}
 
+/**
+ * 2. Sidebar with CTA Banner
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteSidebarCTA(options = {}) {
+  const {
+    id = 'sidebar-cta',
+    brand = 'Zamorin CafÃ© ERP',
+    ctaText = 'Discover new ERP modules including payroll, advanced reports, and vendor analytics.',
+    ctaHref = '#',
+    ctaLabel = 'Explore now',
+  } = options;
+
+  return `
+<aside id="${id}" class="fixed top-0 left-0 z-40 w-64 h-screen transition-transform -translate-x-full sm:translate-x-0" aria-label="Sidenav">
+  <div class="overflow-y-auto py-5 px-3 h-full bg-neutral-primary-soft border-r border-default">
+    <a href="#" class="flex items-center pl-2.5 mb-5">
+      <span class="self-center text-xl font-semibold whitespace-nowrap text-heading">${brand}</span>
+    </a>
+    <ul class="space-y-2">
+      <li><a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium group"><svg aria-hidden="true" class="w-6 h-6 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 20 20"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"></path><path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z"></path></svg><span class="ml-3">Overview</span></a></li>
+      <li><a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium group"><svg aria-hidden="true" class="flex-shrink-0 w-6 h-6 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg><span class="flex-1 ml-3 whitespace-nowrap">Users</span></a></li>
+      <li><a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium group"><svg aria-hidden="true" class="flex-shrink-0 w-6 h-6 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 2a4 4 0 00-4 4v1H5a1 1 0 00-.994.89l-1 9A1 1 0 004 18h12a1 1 0 00.994-1.11l-1-9A1 1 0 0015 7h-1V6a4 4 0 00-4-4zm2 5V6a2 2 0 10-4 0v1h4zm-6 3a1 1 0 112 0 1 1 0 01-2 0zm7-1a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd"></path></svg><span class="flex-1 ml-3 whitespace-nowrap">Products</span></a></li>
+    </ul>
+    <div class="pt-5 mt-5 space-y-2 border-t border-default">
+      <a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium group"><span class="ml-3">Documentation</span></a>
+      <a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium group"><span class="ml-3">Components</span></a>
+    </div>
+    <div id="cta-banner-${id}" class="p-4 mt-6 rounded-base bg-brand-softer border border-brand-subtle" role="alert">
+      <div class="flex items-center mb-3">
+        <span class="text-xs font-semibold bg-warning-soft text-warning-strong px-2 py-0.5 rounded">Beta</span>
+        <button type="button" class="ml-auto -mx-1.5 -my-1.5 text-fg-brand-strong rounded-base p-1 hover:bg-brand-medium inline-flex h-6 w-6" data-dismiss-target="#cta-banner-${id}" aria-label="Close">
+          <span class="sr-only">Close</span>
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+        </button>
+      </div>
+      <p class="mb-3 text-sm text-fg-brand-strong">${ctaText}</p>
+      <a class="text-sm text-fg-brand-strong underline font-medium" href="${ctaHref}">${ctaLabel} â†’</a>
+    </div>
+  </div>
+</aside>`.trim();
+}
+
+/**
+ * 3. Sidebar with Navbar Integration
+ * @param {Object} [options={}]
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteSidebarNavbar(options = {}) {
+  const {
+    id = 'sidebar-navbar',
+    brand = 'Zamorin CafÃ©',
+  } = options;
+
+  return `
+<nav class="fixed top-0 z-50 w-full bg-neutral-primary-soft border-b border-default">
+  <div class="px-3 py-3 lg:px-5 lg:pl-3">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center justify-start rtl:justify-end">
+        <button data-drawer-target="${id}" data-drawer-toggle="${id}" aria-controls="${id}" type="button" class="inline-flex items-center p-2 text-sm text-neutral-tertiary rounded-base sm:hidden hover:bg-neutral-secondary-medium focus:outline-none focus:ring-2 focus:ring-neutral-tertiary">
+          <span class="sr-only">Open sidebar</span>
+          <svg class="w-6 h-6" aria-hidden="true" fill="currentColor" viewBox="0 0 20 20"><path clip-rule="evenodd" fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z"></path></svg>
+        </button>
+        <a href="#" class="flex ms-2 md:me-24">
+          <span class="self-center text-xl font-semibold sm:text-2xl whitespace-nowrap text-heading">${brand}</span>
+        </a>
+      </div>
+      <div class="flex items-center">
+        <div class="w-8 h-8 rounded-full bg-neutral-tertiary-medium flex items-center justify-center">
+          <svg class="w-5 h-5 text-neutral-tertiary" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+<aside id="${id}" class="fixed top-0 left-0 z-40 w-64 h-screen pt-14 transition-transform -translate-x-full bg-neutral-primary-soft border-r border-default sm:translate-x-0" aria-label="Sidenav">
+  <div class="overflow-y-auto py-5 px-3 h-full">
+    <ul class="space-y-2">
+      <li><a href="#" class="flex items-center p-2 text-base font-medium text-heading rounded-base hover:bg-neutral-secondary-medium group"><svg aria-hidden="true" class="w-6 h-6 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 20 20"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"></path><path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z"></path></svg><span class="ml-3">Dashboard</span></a></li>
+      <li><a href="#" class="flex items-center p-2 text-base font-medium text-heading rounded-base hover:bg-neutral-secondary-medium group"><svg aria-hidden="true" class="flex-shrink-0 w-6 h-6 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 20 20"><path clip-rule="evenodd" fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"></path></svg><span class="flex-1 ml-3 whitespace-nowrap">Transactions</span></a></li>
+      <li><a href="#" class="flex items-center p-2 text-base font-medium text-heading rounded-base hover:bg-neutral-secondary-medium group"><svg aria-hidden="true" class="flex-shrink-0 w-6 h-6 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg><span class="flex-1 ml-3 whitespace-nowrap">Users</span></a></li>
+      <li><a href="#" class="flex items-center p-2 text-base font-medium text-heading rounded-base hover:bg-neutral-secondary-medium group"><span class="flex-1 ml-3 whitespace-nowrap">Help</span></a></li>
+    </ul>
+    <div class="pt-5 mt-5 space-y-2 border-t border-default">
+      <a href="#" class="flex items-center p-2 text-base font-medium text-heading rounded-base hover:bg-neutral-secondary-medium group"><span class="ml-3">Docs</span></a>
+      <a href="#" class="flex items-center p-2 text-base font-medium text-heading rounded-base hover:bg-neutral-secondary-medium group"><span class="ml-3">Components</span></a>
+    </div>
+  </div>
+</aside>`.trim();
+}
+
+/**
+ * Unified Sidebar Showcase
+ * @returns {string} HTML markup
+ */
+export function renderFlowbiteSidebarShowcase() {
+  return `
+<div class="space-y-10">
+
+  <!-- 1. Multi-level Menu Sidebar -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">1. Multi-level Menu Sidebar</h4>
+    <p class="text-xs text-body">Sidebar with collapsible sub-menus using <code class="bg-neutral-secondary-medium px-1 rounded text-xs">data-collapse-toggle</code>. On mobile, the hamburger button opens it via <code class="bg-neutral-secondary-medium px-1 rounded text-xs">data-drawer-toggle</code>.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs overflow-auto">
+      <div class="flex gap-4 min-h-[380px]">
+        <div class="w-64 flex-shrink-0">
+          <div class="h-full px-3 py-4 overflow-y-auto bg-neutral-primary-soft border border-default rounded-base">
+            <a href="#" class="flex items-center ps-2.5 mb-5">
+              <span class="self-center text-xl font-semibold whitespace-nowrap text-heading">Zamorin ERP</span>
+            </a>
+            <ul class="space-y-2 font-medium">
+              <li>
+                <a href="#" class="flex items-center p-2 text-heading rounded-base hover:bg-neutral-secondary-medium group">
+                  <svg class="w-5 h-5 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 22 21"><path d="M16.975 11H10V4.025a1 1 0 0 0-1.066-.998 8.5 8.5 0 1 0 9.039 9.039.999.999 0 0 0-1-1.066h.002Z"/><path d="M12.5 0c-.157 0-.311.01-.565.027A1 1 0 0 0 11 1.02V10h8.975a1 1 0 0 0 1-.935c.013-.188.028-.374.028-.565A8.51 8.51 0 0 0 12.5 0Z"/></svg>
+                  <span class="ms-3">Dashboard</span>
+                </a>
+              </li>
+              <li>
+                <a href="#" class="flex items-center p-2 text-heading rounded-base hover:bg-neutral-secondary-medium group">
+                  <svg class="shrink-0 w-5 h-5 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 18 18"><path d="M6.143 0H1.857A1.857 1.857 0 0 0 0 1.857v4.286C0 7.169.831 8 1.857 8h4.286A1.857 1.857 0 0 0 8 6.143V1.857A1.857 1.857 0 0 0 6.143 0Zm10 0h-4.286A1.857 1.857 0 0 0 10 1.857v4.286C10 7.169 10.831 8 11.857 8h4.286A1.857 1.857 0 0 0 18 6.143V1.857A1.857 1.857 0 0 0 16.143 0Zm-10 10H1.857A1.857 1.857 0 0 0 0 11.857v4.286C0 17.169.831 18 1.857 18h4.286A1.857 1.857 0 0 0 8 16.143v-4.286A1.857 1.857 0 0 0 6.143 10Zm10 0h-4.286A1.857 1.857 0 0 0 10 11.857v4.286c0 1.026.831 1.857 1.857 1.857h4.286A1.857 1.857 0 0 0 18 16.143v-4.286A1.857 1.857 0 0 0 16.143 10Z"/></svg>
+                  <span class="flex-1 ms-3 whitespace-nowrap">Kanban</span>
+                  <span class="inline-flex items-center justify-center px-2 ms-3 text-xs font-medium text-heading bg-neutral-tertiary-medium rounded-full">Pro</span>
+                </a>
+              </li>
+              <li>
+                <button type="button" class="flex items-center w-full p-2 text-base text-heading transition duration-75 rounded-base group hover:bg-neutral-secondary-medium" aria-controls="showcase-sidebar-ecommerce" data-collapse-toggle="showcase-sidebar-ecommerce">
+                  <svg class="shrink-0 w-5 h-5 text-neutral-tertiary group-hover:text-heading" fill="currentColor" viewBox="0 0 18 21"><path d="M15 12a1 1 0 0 0 .962-.726l2-7A1 1 0 0 0 17 3H3.77L3.175.745A1 1 0 0 0 2.208 0H1a1 1 0 0 0 0 2h.438l.6 2.255v.019l2 7 .746 2.986A3 3 0 1 0 9 17a2.966 2.966 0 0 0-.184-1h2.368c-.118.32-.18.659-.184 1a3 3 0 1 0 3-3H6.78l-.5-2H15Z"/></svg>
+                  <span class="flex-1 ms-3 text-left whitespace-nowrap">E-commerce</span>
+                  <svg class="w-3 h-3" fill="none" viewBox="0 0 10 6"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 1 4 4 4-4"/></svg>
+                </button>
+                <ul id="showcase-sidebar-ecommerce" class="hidden py-2 space-y-2">
+                  <li><a href="#" class="flex items-center w-full p-2 text-body transition duration-75 rounded-base pl-11 hover:bg-neutral-secondary-medium hover:text-heading">Products</a></li>
+                  <li><a href="#" class="flex items-center w-full p-2 text-body transition duration-75 rounded-base pl-11 hover:bg-neutral-secondary-medium hover:text-heading">Billing</a></li>
+                  <li><a href="#" class="flex items-center w-full p-2 text-body transition duration-75 rounded-base pl-11 hover:bg-neutral-secondary-medium hover:text-heading">Invoice</a></li>
+                </ul>
+              </li>
+              <li>
+                <a href="#" class="flex items-center p-2 text-heading rounded-base hover:bg-neutral-secondary-medium group">
+                  <svg class="shrink-0 w-5 h-5 text-neutral-tertiary group-hover:text-heading" fill="none" viewBox="0 0 18 16"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 8h11m0 0-4-4m4 4-4 4m4-11h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3"/></svg>
+                  <span class="flex-1 ms-3 whitespace-nowrap">Sign In</span>
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="flex-1 p-4 border border-dashed border-default rounded-base bg-neutral-secondary-soft flex items-center justify-center">
+          <p class="text-xs text-neutral-tertiary text-center">Click "E-commerce" above to expand sub-menu.<br>â† Sidebar with collapsible multi-level menu.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Sidebar with CTA Banner -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">2. Sidebar with CTA Banner</h4>
+    <p class="text-xs text-body">Sidebar with a dismissible call-to-action panel at the bottom using <code class="bg-neutral-secondary-medium px-1 rounded text-xs">data-dismiss-target</code>.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs overflow-auto">
+      <div class="flex gap-4 min-h-[420px]">
+        <div class="w-64 flex-shrink-0">
+          <div class="overflow-y-auto py-5 px-3 bg-neutral-primary-soft border border-default rounded-base">
+            <a href="#" class="flex items-center pl-2.5 mb-5">
+              <span class="self-center text-xl font-semibold whitespace-nowrap text-heading">Zamorin ERP</span>
+            </a>
+            <ul class="space-y-2">
+              <li><a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium"><span class="ml-3">Overview</span></a></li>
+              <li><a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium"><span class="ml-3">Inbox <span class="ml-2 inline-flex justify-center items-center w-5 h-5 text-xs font-semibold text-white bg-brand rounded-full">7</span></span></a></li>
+              <li><a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium"><span class="ml-3">Users</span></a></li>
+              <li><a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium"><span class="ml-3">Products</span></a></li>
+            </ul>
+            <div class="pt-5 mt-5 border-t border-default">
+              <a href="#" class="flex items-center p-2 text-base font-normal text-heading rounded-base hover:bg-neutral-secondary-medium"><span class="ml-3">Documentation</span></a>
+            </div>
+            <div id="showcase-sidebar-cta" class="p-4 mt-4 rounded-base bg-brand-softer border border-brand-subtle" role="alert">
+              <div class="flex items-center mb-3">
+                <span class="text-xs font-semibold bg-warning-soft text-warning-strong px-2 py-0.5 rounded">Beta</span>
+                <button type="button" class="ml-auto -mx-1.5 -my-1.5 text-fg-brand-strong rounded p-1 hover:bg-brand-medium inline-flex h-6 w-6" data-dismiss-target="#showcase-sidebar-cta" aria-label="Close">
+                  <span class="sr-only">Close</span>
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+                </button>
+              </div>
+              <p class="mb-3 text-sm text-fg-brand-strong">Discover new ERP modules including payroll, advanced reports, and vendor analytics.</p>
+              <a class="text-sm text-fg-brand-strong underline font-medium" href="#">Explore now â†’</a>
+            </div>
+          </div>
+        </div>
+        <div class="flex-1 p-4 border border-dashed border-default rounded-base bg-neutral-secondary-soft flex items-center justify-center">
+          <p class="text-xs text-neutral-tertiary text-center">Click âœ• to dismiss the CTA banner.<br>â† Sidebar with promotionally styled bottom panel.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Sidebar + Navbar (static preview) -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">3. Sidebar + Navbar Integration</h4>
+    <p class="text-xs text-body">Fixed sidebar paired with a top navbar. The hamburger toggle uses <code class="bg-neutral-secondary-medium px-1 rounded text-xs">data-drawer-toggle</code> to open the sidebar on mobile screens.</p>
+    <div class="p-4 border border-default rounded-base bg-neutral-primary shadow-xs overflow-hidden rounded-base" style="height:340px; position:relative;">
+      <div class="absolute inset-0 flex flex-col">
+        <div class="w-full bg-neutral-primary-soft border-b border-default px-4 py-2.5 flex items-center justify-between z-10 flex-shrink-0">
+          <div class="flex items-center gap-3">
+            <button type="button" class="p-1.5 text-neutral-tertiary rounded hover:bg-neutral-secondary-medium">
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path clip-rule="evenodd" fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z"></path></svg>
+            </button>
+            <span class="text-base font-semibold text-heading">Zamorin CafÃ© ERP</span>
+          </div>
+          <div class="w-8 h-8 rounded-full bg-neutral-tertiary-medium flex items-center justify-center">
+            <svg class="w-5 h-5 text-neutral-tertiary" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden">
+          <div class="w-52 flex-shrink-0 border-r border-default bg-neutral-primary-soft overflow-y-auto py-4 px-3">
+            <ul class="space-y-1">
+              <li><a href="#" class="flex items-center p-2 text-sm font-medium text-heading rounded-base bg-brand-softer text-fg-brand-strong">Dashboard</a></li>
+              <li><a href="#" class="flex items-center p-2 text-sm font-normal text-body rounded-base hover:bg-neutral-secondary-soft hover:text-heading">Transactions</a></li>
+              <li><a href="#" class="flex items-center p-2 text-sm font-normal text-body rounded-base hover:bg-neutral-secondary-soft hover:text-heading">Users</a></li>
+              <li><a href="#" class="flex items-center p-2 text-sm font-normal text-body rounded-base hover:bg-neutral-secondary-soft hover:text-heading">Reports</a></li>
+              <li class="pt-3 mt-2 border-t border-default"><a href="#" class="flex items-center p-2 text-sm font-normal text-body rounded-base hover:bg-neutral-secondary-soft hover:text-heading">Settings</a></li>
+            </ul>
+          </div>
+          <div class="flex-1 p-5 bg-neutral-secondary-soft flex items-center justify-center">
+            <p class="text-xs text-neutral-tertiary text-center">Sidebar always visible on desktop.<br>Collapses to a Drawer on mobile via hamburger button.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Data Attribute Reference -->
+  <div class="space-y-3">
+    <h4 class="text-xs font-semibold text-body uppercase tracking-wider">4. Data Attribute Reference</h4>
+    <div class="overflow-auto rounded-base border border-default">
+      <table class="w-full text-xs text-left text-body">
+        <thead class="bg-neutral-secondary-soft text-body uppercase">
+          <tr>
+            <th class="px-4 py-2.5 font-semibold">Attribute</th>
+            <th class="px-4 py-2.5 font-semibold">Applied To</th>
+            <th class="px-4 py-2.5 font-semibold">Effect</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-default">
+          <tr class="bg-neutral-primary hover:bg-neutral-secondary-soft"><td class="px-4 py-2 font-mono text-brand">data-drawer-target</td><td class="px-4 py-2">Toggle button</td><td class="px-4 py-2">Points to the sidebar &lt;aside&gt; ID</td></tr>
+          <tr class="bg-neutral-primary hover:bg-neutral-secondary-soft"><td class="px-4 py-2 font-mono text-brand">data-drawer-toggle</td><td class="px-4 py-2">Toggle button</td><td class="px-4 py-2">Opens/closes the sidebar drawer on mobile</td></tr>
+          <tr class="bg-neutral-primary hover:bg-neutral-secondary-soft"><td class="px-4 py-2 font-mono text-brand">data-collapse-toggle</td><td class="px-4 py-2">Sub-menu button</td><td class="px-4 py-2">Expands/collapses a nested menu list</td></tr>
+          <tr class="bg-neutral-primary hover:bg-neutral-secondary-soft"><td class="px-4 py-2 font-mono text-brand">data-dismiss-target</td><td class="px-4 py-2">CTA close button</td><td class="px-4 py-2">Hides the CTA banner on click</td></tr>
+          <tr class="bg-neutral-primary hover:bg-neutral-secondary-soft"><td class="px-4 py-2 font-mono text-brand">sm:translate-x-0</td><td class="px-4 py-2">&lt;aside&gt;</td><td class="px-4 py-2">Always visible â‰¥sm; hidden and drawer-based on mobile</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>`.trim();
+}
+
+/**
+ * Initialize sidebar collapse toggles (sub-menus) and dismiss buttons.
+ * Idempotent: skips already-bound elements.
+ * @param {Element} [root=document]
+ */
+export function initSidebars(root = document) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+
+  // Sub-menu collapse toggles
+  root.querySelectorAll('[data-collapse-toggle]').forEach((btn) => {
+    if (btn._fbSidebarCollapseBound) return;
+    btn._fbSidebarCollapseBound = true;
+    const targetId = btn.getAttribute('data-collapse-toggle');
+    const target = (root.getElementById ? root.getElementById(targetId) : null)
+      || (document.getElementById ? document.getElementById(targetId) : null);
+    if (target) {
+      btn.addEventListener('click', () => {
+        target.classList.toggle('hidden');
+        btn.setAttribute('aria-expanded', String(!target.classList.contains('hidden')));
+      });
+    }
+  });
+
+  // CTA dismiss buttons (within sidebar context)
+  root.querySelectorAll('[data-dismiss-target]').forEach((btn) => {
+    if (btn._fbSidebarDismissBound) return;
+    btn._fbSidebarDismissBound = true;
+    const targetId = btn.getAttribute('data-dismiss-target');
+    const target = (root.querySelector ? root.querySelector(targetId) : null)
+      || (document.querySelector ? document.querySelector(targetId) : null);
+    if (target) {
+      btn.addEventListener('click', () => {
+        target.classList.add('hidden');
+      });
+    }
+  });
+}
