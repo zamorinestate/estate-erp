@@ -576,6 +576,9 @@ export class ApiClientError extends Error {
 export function mapErrorToUserMessage(code, status, fallbackMessage) {
   const sanitizeFallback = (msg) => {
     if (!msg || typeof msg !== "string") return null;
+    if (/jwt|TokenExpiredError|JsonWebTokenError|Bearer\s+(undefined|null)|signature/i.test(msg)) {
+      return "Your authenticated session could not be validated. Please sign in again.";
+    }
     if (/MongoServerError|MongooseError|CastError|at\s+[\w\.]+\s+\(|\\Users\\|\/home\/|localhost|\.js:\d+/i.test(msg)) {
       return "The request could not be completed.";
     }

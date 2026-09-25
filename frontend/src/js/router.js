@@ -10,7 +10,7 @@
 
 import { state, setState } from "./state.js";
 import { NAVIGATION, isRouteAllowed, ROLES } from "./navigation.js";
-import { renderSidebar, wireSidebar, renderTopbar, wireBell, updateBellBadge, updateSidebarActive, renderModuleErrorState, wireCafeContextStrip } from "./components.js";
+import { renderSidebar, wireSidebar, renderTopbar, wireBell, updateBellBadge, updateSidebarActive, renderModuleErrorState, wireCafeContextStrip, autoEnhanceDataTables } from "./components.js";
 import { renderNotificationCentre, wireNotificationCentre } from "./pages/notificationCentre.js";
 import { icon } from "./icons.js";
 import { renderMasterDashboard, hydrateMasterDashboard } from "./pages/dashboardMaster.js";
@@ -81,6 +81,9 @@ import { renderOwnerMenuPricing, initOwnerMenuPricingEvents, setOwnerMenuPricing
 import { renderOwnerCustomerLoyalty, initOwnerCustomerLoyaltyEvents, setOwnerCustomerLoyaltySection } from "./pages/ownerCustomerLoyalty.js";
 import { renderOwnerUtilitiesWaste, initOwnerUtilitiesWasteEvents, setOwnerUtilitiesWasteSection } from "./pages/ownerUtilitiesWaste.js";
 import { renderOwnerGovernanceDelegation, initOwnerGovernanceDelegationEvents, setOwnerGovernanceDelegationSection } from "./pages/ownerGovernanceDelegation.js";
+import { renderDesignSystem, wireDesignSystem } from "./pages/designSystem.js";
+import { renderFlowbiteFooter } from "./flowbiteUtils.js";
+
 
 // ROLE_LABELS: display-safe generic labels used only for topbar scope chip
 // until /auth/me bootstrap provides the real user's display name.
@@ -170,6 +173,30 @@ if (typeof window !== "undefined") {
   window.zamorinNavigate = navigate;
 }
 
+export function ensureAppFooterMounted() {
+  const mainShell = document.querySelector(".main-shell");
+  if (!mainShell) return;
+  let ft = document.getElementById("app-footer-container");
+  if (!ft) {
+    ft = document.createElement("div");
+    ft.id = "app-footer-container";
+    mainShell.appendChild(ft);
+  }
+  if (!ft.innerHTML || ft.children.length === 0) {
+    ft.innerHTML = renderFlowbiteFooter({
+      brand: "Zamorin Café ERP™",
+      brandUrl: "#dashboard",
+      year: new Date().getFullYear(),
+      links: [
+        { label: "About", href: "#settings" },
+        { label: "Privacy Policy", href: "/privacy" },
+        { label: "Licensing", href: "#settings" },
+        { label: "Contact", href: "#mailops" },
+      ],
+    });
+  }
+}
+
 export function renderShell() {
   const app = document.getElementById("app");
   if (!app) return;
@@ -198,8 +225,9 @@ export function renderShell() {
         <div id="sidebar-overlay" class="sidebar-overlay" aria-hidden="true"></div>
         <aside id="sidebar" class="sidebar" role="navigation" aria-label="Main Navigation"></aside>
         <main class="main-shell" role="main">
-          <header id="topbar" class="topbar" role="banner"></header>
+          <header id="topbar" class="topbar fb-navbar" role="banner"></header>
           <div id="page-content" class="page"></div>
+          <div id="app-footer-container"></div>
         </main>
       </div>
       <div id="modal-root" role="region" aria-label="Modals"></div>
@@ -217,6 +245,7 @@ export function renderShell() {
         wireBell(tb);
         updateBellBadge();
       }
+      ensureAppFooterMounted();
     } catch (shellMountErr) {
       console.error("[Router] Shell sidebar/topbar mount error:", shellMountErr);
     }
@@ -225,6 +254,7 @@ export function renderShell() {
     // Retain mounted sidebar DOM & preserve scrollTop; update active route indicators in place.
     try {
       updateSidebarActive(state.route);
+      ensureAppFooterMounted();
     } catch {}
   }
 
@@ -245,6 +275,13 @@ export function renderShell() {
     }
   }).finally(() => {
     hideNavProgressBar();
+    try {
+      const pc = document.getElementById("page-content");
+      if (pc) autoEnhanceDataTables(pc);
+      ensureAppFooterMounted();
+    } catch (dtErr) {
+      console.warn("[Router] DataTable enhance non-fatal notice:", dtErr);
+    }
   });
 }
 
@@ -945,6 +982,11 @@ async function renderPage() {
       });
       break;
     // ── End Stage-2 Terminal Auth ─────────────────────────────────────────────
+
+    case 'design-system':
+      content.innerHTML = renderDesignSystem();
+      wireDesignSystem(content);
+      break;
 
     default:
       content.innerHTML = renderNotAvailable();

@@ -11,6 +11,8 @@ const PRECACHE_SHELL = [
   './index.html',
   './manifest.json',
   './src/styles/tokens.css',
+  './src/styles/tailwind.css',
+  './src/styles/flowbite-integration.css',
   './src/styles/layout.css',
   './src/styles/components.css',
   './src/styles/zamorin.css',

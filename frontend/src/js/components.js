@@ -3,12 +3,13 @@
 // =============================================================================
 
 import { NAVIGATION, ROLES, getGroupedNavItems } from "./navigation.js";
-import { icon } from "./icons.js";
+import { icon, flowbiteIcon } from "./icons.js";
 import { state, setState } from "./state.js";
 import { navigate } from "./router.js";
 import { forRole, unreadCount, markRead, markAllRead, syncNotificationsFromServer } from "./notifications.js";
 import { apiGet, apiPost, clearAllAuthTokens, clearApiCacheAndInFlight } from "./apiClient.js";
 import { setSettingsActiveSection } from "./pages/settingsShared.js";
+import { generateQR, buildUpiUri, initClipboard, initDataTable, initSpeedDial, initStepper, renderFlowbiteTypography, initRtlToggle, getTextDirection, toggleTextDirection, renderFlowbiteRtlNav, Accordion, initAccordions, renderNestedAccordionSample, Dismiss, initDismiss, initTooltips, initDropdowns, Dropdown, renderFlowbiteAdditionalContentAlerts, renderFlowbiteAvatarShowcase, renderFlowbiteBadge, renderFlowbiteBadgesShowcase, renderFlowbiteMarketingBanner, renderFlowbiteBottomNav, wireFlowbiteBottomNav, renderFlowbiteBannerAndBottomNavShowcase, renderFlowbiteButton, renderFlowbiteButtonsShowcase, renderFlowbiteButtonGroup, renderFlowbiteButtonGroupShowcase, CopyClipboard, initCopyClipboards, renderFlowbiteClipboard, renderFlowbiteClipboardShowcase, Datepicker, DateRangePicker, initDatepickers, renderFlowbiteDatepicker, renderFlowbiteDateRangePicker, renderFlowbiteTimepicker, renderFlowbiteDatepickerShowcase, renderFlowbitePhoneMockup, renderFlowbiteTabletMockup, renderFlowbiteLaptopMockup, renderFlowbiteDesktopMockup, renderFlowbiteSmartwatchMockup, renderFlowbiteDeviceMockup, renderFlowbiteDeviceMockupShowcase, Drawer, initDrawers, renderFlowbiteDrawer, renderFlowbiteDrawerNavigation, renderFlowbiteDrawerContactForm, renderFlowbiteDrawerFormElements, renderFlowbiteDrawerSwipeableEdge, renderFlowbiteDrawerShowcase, renderFlowbiteDropdown, renderFlowbiteDropdownHover, renderFlowbiteDropdownHeader, renderFlowbiteMultiLevelDropdown, renderFlowbiteDropdownCheckbox, renderFlowbiteDropdownRadio, renderFlowbiteDropdownToggleSwitch, renderFlowbiteDropdownScrolling, renderFlowbiteDropdownSearch, renderFlowbiteDropdownNotification, renderFlowbiteDropdownUserAvatar, renderFlowbiteDropdownNavbar, renderFlowbiteDropdownDatepicker, renderFlowbiteDropdownShowcase, renderFlowbiteFooter, renderFlowbiteFooterSitemap, renderFlowbiteFooterSocial, renderFlowbiteFooterSticky, renderFlowbiteLegendIndicator, renderFlowbiteCountIndicator, renderFlowbiteStatusIndicator, renderFlowbiteBadgeIndicator, renderFlowbiteLoadingIndicator, renderFlowbiteFooterIndicatorShowcase } from "./flowbiteUtils.js";
 
 const ROLE_LABELS = {
   [ROLES.MASTER]: "Master User",
@@ -165,6 +166,211 @@ export function wireSidebar(root) {
   }
 }
 
+function renderMegaMenuContent(role, isPrimary) {
+  if (role === ROLES.STAFF) {
+    return `
+      <div class="mega-menu-col">
+        <div class="mega-menu-col-title">☕ Cashier Station</div>
+        <button class="mega-menu-link" data-route="pos" type="button">
+          <span class="mega-menu-link-icon">${icon("pos")}</span>
+          <span>POS Terminal</span>
+          <span class="mega-menu-link-badge" style="background:rgba(34,197,94,0.15);color:#16a34a;">LIVE</span>
+        </button>
+        <button class="mega-menu-link" data-route="menu" type="button">
+          <span class="mega-menu-link-icon">${icon("menuBook")}</span>
+          <span>Menu Catalog</span>
+        </button>
+        <button class="mega-menu-link" data-action="pos-qr" type="button">
+          <span class="mega-menu-link-icon">📱</span>
+          <span>UPI Payment QR</span>
+          <span class="mega-menu-link-badge">QR</span>
+        </button>
+        <button class="mega-menu-link" data-route="bills" type="button">
+          <span class="mega-menu-link-icon">${icon("receipt")}</span>
+          <span>Today's Receipts</span>
+        </button>
+      </div>
+      <div class="mega-menu-col">
+        <div class="mega-menu-col-title">⏱️ Shifts & Attendance</div>
+        <button class="mega-menu-link" data-route="staff-attendance" type="button">
+          <span class="mega-menu-link-icon">${icon("clock")}</span>
+          <span>Punch In / Out</span>
+        </button>
+        <button class="mega-menu-link" data-action="attendance-qr" type="button">
+          <span class="mega-menu-link-icon">🕒</span>
+          <span>Attendance QR Kiosk</span>
+        </button>
+        <button class="mega-menu-link" data-route="staff-roster" type="button">
+          <span class="mega-menu-link-icon">${icon("calendar")}</span>
+          <span>My Shift Roster</span>
+        </button>
+        <button class="mega-menu-link" data-route="staff-leave" type="button">
+          <span class="mega-menu-link-icon">${icon("leave")}</span>
+          <span>Request Leave</span>
+        </button>
+      </div>
+      <div class="mega-menu-col">
+        <div class="mega-menu-col-title">📋 Self-Service & Finances</div>
+        <button class="mega-menu-link" data-route="staff-payslips" type="button">
+          <span class="mega-menu-link-icon">${icon("payslip")}</span>
+          <span>My Payslips</span>
+        </button>
+        <button class="mega-menu-link" data-route="staff-advance" type="button">
+          <span class="mega-menu-link-icon">${icon("cash")}</span>
+          <span>Salary Advance</span>
+        </button>
+        <button class="mega-menu-link" data-route="personal-ledger" type="button">
+          <span class="mega-menu-link-icon">${icon("ledger")}</span>
+          <span>Personal Ledger</span>
+        </button>
+        <button class="mega-menu-link" data-route="staff-settings" type="button">
+          <span class="mega-menu-link-icon">${icon("settings")}</span>
+          <span>Profile & Security</span>
+        </button>
+      </div>
+    `;
+  }
+
+  if (role === ROLES.CAFE_ADMIN) {
+    return `
+      <div class="mega-menu-col">
+        <div class="mega-menu-col-title">☕ Floor & Operations</div>
+        <button class="mega-menu-link" data-route="pos" type="button">
+          <span class="mega-menu-link-icon">${icon("pos")}</span>
+          <span>Active POS Register</span>
+        </button>
+        <button class="mega-menu-link" data-route="inventory" type="button">
+          <span class="mega-menu-link-icon">${icon("inventory")}</span>
+          <span>Live Cafe Stock</span>
+        </button>
+        <button class="mega-menu-link" data-route="procurement" type="button">
+          <span class="mega-menu-link-icon">${icon("truck")}</span>
+          <span>Arriving GRN Orders</span>
+          <span class="mega-menu-link-badge">GRN</span>
+        </button>
+        <button class="mega-menu-link" data-route="waste" type="button">
+          <span class="mega-menu-link-icon">${icon("trash")}</span>
+          <span>Waste / Spoilage Log</span>
+        </button>
+      </div>
+      <div class="mega-menu-col">
+        <div class="mega-menu-col-title">💵 Cash & End of Day</div>
+        <button class="mega-menu-link" data-route="cashbook" type="button">
+          <span class="mega-menu-link-icon">${icon("cash")}</span>
+          <span>Daily Cash Book</span>
+        </button>
+        <button class="mega-menu-link" data-route="expenses" type="button">
+          <span class="mega-menu-link-icon">${icon("dollar")}</span>
+          <span>Cafe Store Expenses</span>
+        </button>
+        <button class="mega-menu-link" data-route="eod-closing" type="button">
+          <span class="mega-menu-link-icon">${icon("checkCircle")}</span>
+          <span>End-of-Day Balancing</span>
+        </button>
+        <button class="mega-menu-link" data-route="bills" type="button">
+          <span class="mega-menu-link-icon">${icon("receipt")}</span>
+          <span>Sales & Till Receipts</span>
+        </button>
+      </div>
+      <div class="mega-menu-col">
+        <div class="mega-menu-col-title">👥 Team & Quick QR</div>
+        <button class="mega-menu-link" data-route="attendance" type="button">
+          <span class="mega-menu-link-icon">${icon("clock")}</span>
+          <span>Shift Attendance</span>
+        </button>
+        <button class="mega-menu-link" data-action="pos-qr" type="button">
+          <span class="mega-menu-link-icon">📱</span>
+          <span>Generate UPI QR</span>
+          <span class="mega-menu-link-badge">QR</span>
+        </button>
+        <button class="mega-menu-link" data-action="attendance-qr" type="button">
+          <span class="mega-menu-link-icon">🕒</span>
+          <span>Staff Clock-in Kiosk</span>
+        </button>
+        <button class="mega-menu-link" data-action="menu-qr" type="button">
+          <span class="mega-menu-link-icon">📜</span>
+          <span>Digital Menu QR</span>
+        </button>
+      </div>
+    `;
+  }
+
+  // MASTER & OWNER
+  return `
+    <div class="mega-menu-col">
+      <div class="mega-menu-col-title">☕ Operations & Stores</div>
+      <button class="mega-menu-link" data-route="dashboard" type="button">
+        <span class="mega-menu-link-icon">${icon("dashboard")}</span>
+        <span>Executive Overview</span>
+      </button>
+      <button class="mega-menu-link" data-route="pos" type="button">
+        <span class="mega-menu-link-icon">${icon("pos")}</span>
+        <span>POS Terminal</span>
+      </button>
+      <button class="mega-menu-link" data-route="inventory" type="button">
+        <span class="mega-menu-link-icon">${icon("inventory")}</span>
+        <span>Live Inventory & Lots</span>
+      </button>
+      <button class="mega-menu-link" data-route="procurement" type="button">
+        <span class="mega-menu-link-icon">${icon("truck")}</span>
+        <span>Procurement & GRN</span>
+        <span class="mega-menu-link-badge" style="background:var(--bronze-100);color:var(--bronze-600);">LIFECYCLE</span>
+      </button>
+      <button class="mega-menu-link" data-route="vendors" type="button">
+        <span class="mega-menu-link-icon">${icon("users")}</span>
+        <span>Vendor Master</span>
+      </button>
+    </div>
+    <div class="mega-menu-col">
+      <div class="mega-menu-col-title">💰 Financials & Ledger</div>
+      <button class="mega-menu-link" data-route="cashbook" type="button">
+        <span class="mega-menu-link-icon">${icon("cash")}</span>
+        <span>Daily Cash Book</span>
+      </button>
+      <button class="mega-menu-link" data-route="expenses" type="button">
+        <span class="mega-menu-link-icon">${icon("dollar")}</span>
+        <span>Operating Expenses</span>
+      </button>
+      <button class="mega-menu-link" data-route="bills" type="button">
+        <span class="mega-menu-link-icon">${icon("receipt")}</span>
+        <span>Invoices & Vendor Bills</span>
+      </button>
+      <button class="mega-menu-link" data-route="finance-summary" type="button">
+        <span class="mega-menu-link-icon">${icon("pieChart")}</span>
+        <span>P&L & Portfolio Revenue</span>
+      </button>
+      <button class="mega-menu-link" data-route="revenue-share" type="button">
+        <span class="mega-menu-link-icon">${icon("trendingUp")}</span>
+        <span>Landlord Revenue Share</span>
+      </button>
+    </div>
+    <div class="mega-menu-col">
+      <div class="mega-menu-col-title">👥 HR & QR Ecosystem</div>
+      <button class="mega-menu-link" data-route="employees" type="button">
+        <span class="mega-menu-link-icon">${icon("user")}</span>
+        <span>Staff Directory</span>
+      </button>
+      <button class="mega-menu-link" data-route="payroll" type="button">
+        <span class="mega-menu-link-icon">${icon("payslip")}</span>
+        <span>Payroll & Salary Advances</span>
+      </button>
+      <button class="mega-menu-link" data-action="pos-qr" type="button">
+        <span class="mega-menu-link-icon">📱</span>
+        <span>Dynamic UPI Payment QR</span>
+        <span class="mega-menu-link-badge">QR</span>
+      </button>
+      <button class="mega-menu-link" data-action="attendance-qr" type="button">
+        <span class="mega-menu-link-icon">🕒</span>
+        <span>Staff Clock-in QR Kiosk</span>
+      </button>
+      <button class="mega-menu-link" data-action="menu-qr" type="button">
+        <span class="mega-menu-link-icon">📜</span>
+        <span>Table Digital Menu QR</span>
+      </button>
+    </div>
+  `;
+}
+
 /* -------------------------------------------------------------------------
    Topbar — Design System v2 Header with Persistent Cafe Context Bar
    ------------------------------------------------------------------------- */
@@ -273,13 +479,38 @@ export function renderTopbar({ scopeChip } = {}) {
     ? "Search this café…"
     : "Search modules, records, employees...";
 
+  const megaMenuHtml = `
+    <div class="mega-menu-wrap" style="position:relative; display:inline-flex; align-items:center; margin-left:4px;">
+      <button class="topbar-action-btn mega-menu-btn" id="mega-menu-btn" type="button" aria-expanded="false" title="Flowbite Mega Menu — Quick Hub & QR" style="display:inline-flex; align-items:center; gap:5px; padding:0 12px; height:38px; min-height:38px; font-weight:700; font-size:12px; border-radius:var(--radius-control); background:var(--surface); border:1px solid var(--line-strong); color:var(--ink); cursor:pointer;">
+        <span style="font-size:13px; line-height:1;">⚡</span>
+        <span class="mega-menu-btn-label" style="letter-spacing:0.02em;">Quick Hub</span>
+        <span id="mega-menu-arrow" style="display:inline-flex; align-items:center; transition:transform 0.2s;">${flowbiteIcon('caretDown', 'w-3 h-3 text-gray-500 dark:text-gray-400')}</span>
+      </button>
+      <div id="megaMenuDropdown" class="mega-menu-dropdown popover">
+        <div class="mega-menu-header" style="padding:10px 14px 8px; border-bottom:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:space-between; width:100%; box-sizing:border-box;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            ${flowbiteIcon('briefcase', 'w-5 h-5 text-gray-800 dark:text-white')}
+            <div>
+              <p class="text-lg font-medium text-gray-900 dark:text-white" style="margin:0;">Quick Navigation Hub</p>
+            </div>
+          </div>
+          ${flowbiteIcon('badgeCheck', 'w-5 h-5 text-emerald-600 dark:text-emerald-400')}
+        </div>
+        <div class="mega-menu-grid" style="display:contents;">
+          ${renderMegaMenuContent(role, isPrimaryMasterUser)}
+        </div>
+      </div>
+    </div>
+  `;
+
   return `
     <div class="topbar-inner">
       <div class="topbar-left">
         <button class="topbar-action-btn sidebar-topbar-toggle" id="sidebar-toggle-btn" title="Toggle Navigation Sidebar (Ctrl+[)" aria-label="Toggle Sidebar" type="button">
-          ${icon("menu")}
+          ${flowbiteIcon("bars", "w-5 h-5 text-gray-700 dark:text-gray-200")}
         </button>
         ${cafeScopeHtml}
+        ${megaMenuHtml}
       </div>
 
       <div class="topbar-centre">
@@ -309,6 +540,22 @@ export function renderTopbar({ scopeChip } = {}) {
           <span style="font-size:10px;">●</span> Online
         </div>
 
+        <!-- Flowbite Quick UPI QR Modal Action -->
+        <button class="topbar-action-btn" id="topbar-qr-quick-btn" title="Quick UPI QR Payment" type="button" aria-label="Quick UPI QR">
+          ${flowbiteIcon("cameraPhoto", "w-5 h-5 text-gray-700 dark:text-gray-200")}
+        </button>
+
+        <!-- Flowbite Dark Mode Switcher Button -->
+        <button id="theme-toggle" type="button" class="text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-700 rounded-lg text-sm p-2.5" title="Toggle theme mode" aria-label="Toggle theme mode">
+            <svg id="theme-toggle-dark-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path></svg>
+            <svg id="theme-toggle-light-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 0 0 2h1z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+        </button>
+
+        <!-- Flowbite RTL / LTR Direction Toggle Button -->
+        <button id="rtl-toggle" type="button" class="text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-700 rounded-lg text-xs px-2.5 py-1.5 font-bold" title="Toggle LTR / RTL text direction" aria-label="Toggle text direction" style="min-height:38px; min-width:38px; display:inline-flex; align-items:center; justify-content:center;">
+          <span id="rtl-toggle-label" style="font-size:11px; letter-spacing:0.5px; font-weight:700;">LTR</span>
+        </button>
+
         <!-- Theme Switcher Button -->
         <button class="topbar-action-btn" id="theme-btn" title="Change Appearance & Theme" type="button">
           ${icon("sun")}
@@ -317,7 +564,7 @@ export function renderTopbar({ scopeChip } = {}) {
         <!-- Notification Bell Button -->
         <div class="notif-wrap">
           <button class="topbar-action-btn" id="notif-bell-btn" title="Notifications" type="button">
-            ${icon("bell")}
+            ${flowbiteIcon("bellRing", "w-5 h-5 text-gray-700 dark:text-gray-200")}
             <span id="notif-bell-badge" class="badge-dot" style="display:none;"></span>
           </button>
         </div>
@@ -369,9 +616,11 @@ export function renderTopbar({ scopeChip } = {}) {
     <div id="notifPopover" class="popover notif-popover" style="display:none;">
       <div class="notif-popover-head">
         <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span style="font-size:14px;">🔔</span>
-            <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--ink);">Notifications</h4>
+          <div style="display:flex; align-items:center; gap:8px;">
+            ${flowbiteIcon('bellActive', 'w-5 h-5 text-blue-600 dark:text-blue-400')}
+            <div>
+              <p class="text-lg font-medium text-gray-900 dark:text-white" style="margin:0;">Notifications</p>
+            </div>
           </div>
           <button class="btn btn-ghost btn-xs" id="popover-mark-all" style="font-size:11.5px; font-weight:600; padding:2px 8px;" type="button">Mark all read</button>
         </div>
@@ -383,7 +632,10 @@ export function renderTopbar({ scopeChip } = {}) {
       </div>
       <div id="notif-popover-list" class="notif-list"></div>
       <div class="popover-foot" style="padding:10px 14px; border-top:1px solid var(--line); background:var(--surface-sunken);">
-        <button class="btn btn-sm btn-ghost btn-block" id="popover-view-all" style="font-size:12px; font-weight:600; justify-content:center;" type="button">Open Notification Centre →</button>
+        <button class="btn btn-sm btn-ghost btn-block" id="popover-view-all" style="font-size:12px; font-weight:600; justify-content:center; display:inline-flex; align-items:center; gap:6px;" type="button">
+          <span>Open Notification Centre</span>
+          ${flowbiteIcon('arrowRight', 'w-4 h-4 text-gray-600 dark:text-gray-300')}
+        </button>
       </div>
     </div>
 
@@ -468,6 +720,47 @@ export function wireBell(root) {
       } else {
         setSidebarCollapsed(!isSidebarCollapsed());
       }
+    });
+  }
+
+  // Flowbite Mega Menu interaction
+  const megaBtn = root.querySelector("#mega-menu-btn");
+  const megaMenu = root.querySelector("#megaMenuDropdown");
+  if (megaBtn && megaMenu) {
+    megaBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isVisible = megaMenu.classList.contains("open") || megaMenu.style.display === "grid";
+      closeAllPopovers();
+      if (!isVisible) {
+        megaMenu.style.display = "grid";
+        megaMenu.classList.add("open");
+        megaBtn.setAttribute("aria-expanded", "true");
+        const arrow = root.querySelector("#mega-menu-arrow");
+        if (arrow) arrow.style.transform = "rotate(180deg)";
+      }
+    });
+
+    megaMenu.querySelectorAll(".mega-menu-link").forEach((link) => {
+      link.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const route = link.dataset.route;
+        const action = link.dataset.action;
+        closeAllPopovers();
+
+        if (action === "pos-qr") {
+          openPosQrModal();
+        } else if (action === "attendance-qr") {
+          import("./modules/attendance/attendanceShifts.js")
+            .then(m => m.openAttendanceQrModal({ cafeId: state.currentCafeId || state.selectedCafeId }))
+            .catch(() => showToast("Attendance QR module loading...", "info"));
+        } else if (action === "menu-qr") {
+          openMenuQrModal();
+        } else if (action === "switch-op") {
+          openSwitchOperatorModal();
+        } else if (route) {
+          navigate(route);
+        }
+      });
     });
   }
 
@@ -713,6 +1006,56 @@ export function wireBell(root) {
       });
     });
   }
+
+  // Flowbite Dark Mode Switcher
+  var themeToggleDarkIcon = root.querySelector('#theme-toggle-dark-icon') || document.getElementById('theme-toggle-dark-icon');
+  var themeToggleLightIcon = root.querySelector('#theme-toggle-light-icon') || document.getElementById('theme-toggle-light-icon');
+
+  // Change the icons inside the button based on previous settings
+  if (themeToggleDarkIcon && themeToggleLightIcon) {
+    if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      themeToggleLightIcon.classList.remove('hidden');
+      themeToggleDarkIcon.classList.add('hidden');
+    } else {
+      themeToggleDarkIcon.classList.remove('hidden');
+      themeToggleLightIcon.classList.add('hidden');
+    }
+  }
+
+  var themeToggleBtn = root.querySelector('#theme-toggle') || document.getElementById('theme-toggle');
+
+  if (themeToggleBtn && !themeToggleBtn.dataset.wired) {
+    themeToggleBtn.dataset.wired = "true";
+    themeToggleBtn.addEventListener('click', function() {
+      // toggle icons inside button
+      if (themeToggleDarkIcon) themeToggleDarkIcon.classList.toggle('hidden');
+      if (themeToggleLightIcon) themeToggleLightIcon.classList.toggle('hidden');
+
+      // if set via local storage previously
+      if (localStorage.getItem('color-theme')) {
+        if (localStorage.getItem('color-theme') === 'light') {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('color-theme', 'dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('color-theme', 'light');
+        }
+
+      // if NOT set via local storage previously
+      } else {
+        if (document.documentElement.classList.contains('dark')) {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('color-theme', 'light');
+        } else {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('color-theme', 'dark');
+        }
+      }
+    });
+  }
+
+  // Flowbite RTL (Right-to-Left) Direction Switcher
+  initRtlToggle('rtl-toggle', 'rtl-toggle-label');
 
   // Notification Bell
   const notifBtn = root.querySelector("#notif-bell-btn");
@@ -978,6 +1321,15 @@ export function wireBell(root) {
     window.addEventListener("offline", syncStatus);
   }
 
+  // Quick UPI QR Payment Modal Trigger
+  const qrQuickBtn = root.querySelector("#topbar-qr-quick-btn");
+  if (qrQuickBtn) {
+    qrQuickBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openPosQrModal();
+    });
+  }
+
   document.addEventListener("click", (e) => {
     if (!e.target.closest(".popover") && !e.target.closest(".topbar-action-btn") && !e.target.closest(".profile-avatar-btn")) {
       closeAllPopovers();
@@ -1031,12 +1383,16 @@ function renderNotifList(popoverEl, filter = "all") {
 }
 
 function closeAllPopovers(exceptEl = null) {
-  document.querySelectorAll(".popover").forEach((p) => {
+  document.querySelectorAll(".popover, .mega-menu-dropdown").forEach((p) => {
     if (p !== exceptEl) {
       p.style.display = "none";
       p.classList.remove("open");
     }
   });
+  const arrow = document.getElementById("mega-menu-arrow");
+  if (arrow) arrow.style.transform = "none";
+  const megaBtn = document.getElementById("mega-menu-btn");
+  if (megaBtn) megaBtn.setAttribute("aria-expanded", "false");
 }
 
 export function openMobileDrawer() {
@@ -2775,4 +3131,346 @@ export function openUniversalDocumentModal({
 
   return modal;
 }
+
+// =============================================================================
+// FLOWBITE QR ECOSYSTEM & TABLE ENHANCER (Phase 2 & 5)
+// =============================================================================
+
+export function openPosQrModal(initialAmount = null) {
+  const currentTotal = (typeof initialAmount === "number" && initialAmount > 0) ? initialAmount : 150;
+  const initialRef = `UPI-${Date.now().toString().slice(-6)}`;
+  const cafeId = state.currentCafeId || state.selectedCafeId || "ZC-MAIN";
+  const defaultUpi = "zamorincafe@icici";
+
+  openModal({
+    title: "📱 Dynamic UPI Payment QR",
+    maxWidth: "480px",
+    body: `
+      <div style="display:flex; flex-direction:column; align-items:center; text-align:center; padding:4px 0;">
+        <div style="margin-bottom:16px; font-size:13px; color:var(--muted); line-height:1.4;">
+          Instant contactless payment via Google Pay, PhonePe, Paytm, BHIM & all UPI apps.
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; width:100%; margin-bottom:16px; text-align:left;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:11.5px; font-weight:700;">Amount (₹)</label>
+            <input type="number" id="pos-qr-amount-input" class="form-control" value="${currentTotal}" min="1" step="0.5" style="font-family:var(--font-mono); font-weight:700; font-size:15px;" />
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:11.5px; font-weight:700;">Transaction Ref</label>
+            <input type="text" id="pos-qr-ref-input" class="form-control" value="${initialRef}" style="font-family:var(--font-mono); font-size:13px;" />
+          </div>
+        </div>
+
+        <!-- Flowbite QR Card -->
+        <div class="fb-qr-panel qr-panel" style="width:100%; box-sizing:border-box;">
+          <div id="pos-qr-canvas-wrap" class="fb-qr-canvas-wrap qr-canvas-wrap"></div>
+          
+          <div style="font-size:13px; font-weight:700; color:var(--ink); margin-top:2px;">
+            ₹<span id="pos-qr-amt-display">${currentTotal.toFixed(2)}</span>
+          </div>
+
+          <!-- Flowbite Clipboard Bar -->
+          <div class="fb-clipboard-wrap" style="width:100%;">
+            <input type="text" id="pos-qr-uri-display" class="fb-clipboard-input qr-value-display" readonly value="Loading UPI URI..." style="padding-right:48px;" />
+            <button type="button" class="fb-clipboard-btn clipboard-btn" id="pos-qr-copy-btn" data-copy-to-clipboard-target="pos-qr-uri-display" title="Copy to clipboard">
+              <svg id="default-icon" class="fb-clipboard-icon-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+              <svg id="success-icon" class="fb-clipboard-icon-check hidden" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+          </div>
+
+          <div class="fb-qr-actions qr-actions">
+            <button class="btn btn-sm btn-secondary" id="pos-qr-refresh-btn" type="button" style="display:inline-flex; align-items:center; gap:6px; min-height:36px;">
+              ${flowbiteIcon('arrowsRepeat', 'w-4 h-4 text-gray-700 dark:text-gray-200')}
+              <span>Refresh</span>
+            </button>
+            <button class="btn btn-sm btn-primary" id="pos-qr-download-btn" type="button" style="display:inline-flex; align-items:center; gap:6px; min-height:36px;">
+              ${flowbiteIcon('arrowDownToBracket', 'w-4 h-4 text-white')}
+              <span>Download PNG</span>
+            </button>
+          </div>
+        </div>
+
+        <div style="font-size:11.5px; color:#10b981; font-weight:600; display:flex; align-items:center; gap:6px; margin-top:8px;">
+          ${flowbiteIcon('badgeCheck', 'w-4 h-4 text-emerald-600 dark:text-emerald-400')}
+          <span>Scannable on any camera or banking app</span>
+        </div>
+      </div>
+    `,
+    cancelLabel: "Close",
+  });
+
+  const renderQr = async () => {
+    const amt = parseFloat(document.getElementById("pos-qr-amount-input")?.value || currentTotal);
+    const ref = document.getElementById("pos-qr-ref-input")?.value || initialRef;
+    const uri = buildUpiUri({
+      upiId: defaultUpi,
+      name: "Zamorin Cafe",
+      amount: isNaN(amt) ? 100 : amt,
+      tn: `Bill Ref ${ref} (${cafeId})`,
+    });
+
+    const uriDisplay = document.getElementById("pos-qr-uri-display");
+    if (uriDisplay) uriDisplay.value = uri;
+
+    const amtDisplay = document.getElementById("pos-qr-amt-display");
+    if (amtDisplay) amtDisplay.textContent = (isNaN(amt) ? 100 : amt).toFixed(2);
+
+    await generateQR({
+      containerId: "pos-qr-canvas-wrap",
+      value: uri,
+      size: 190,
+      color: "#111827",
+      bg: "#ffffff",
+    });
+  };
+
+  setTimeout(() => {
+    renderQr();
+    document.getElementById("pos-qr-amount-input")?.addEventListener("input", renderQr);
+    document.getElementById("pos-qr-ref-input")?.addEventListener("input", renderQr);
+    document.getElementById("pos-qr-refresh-btn")?.addEventListener("click", renderQr);
+    document.getElementById("pos-qr-download-btn")?.addEventListener("click", () => {
+      const canvas = document.querySelector("#pos-qr-canvas-wrap canvas");
+      if (canvas) {
+        const link = document.createElement("a");
+        link.download = `Zamorin-UPI-QR-${Date.now()}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      } else {
+        const svg = document.querySelector("#pos-qr-canvas-wrap svg");
+        if (svg) {
+          const svgData = new XMLSerializer().serializeToString(svg);
+          const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+          const url = URL.createObjectURL(svgBlob);
+          const link = document.createElement("a");
+          link.download = `Zamorin-UPI-QR-${Date.now()}.svg`;
+          link.href = url;
+          link.click();
+        }
+      }
+    });
+  }, 60);
+}
+
+export function openMenuQrModal() {
+  const cafeId = state.currentCafeId || state.selectedCafeId || "ZC-MAIN";
+  const baseUrl = window.location.origin;
+
+  openModal({
+    title: "📜 Table Digital Menu QR",
+    maxWidth: "480px",
+    body: `
+      <div style="display:flex; flex-direction:column; align-items:center; text-align:center; padding:4px 0;">
+        <div style="margin-bottom:16px; font-size:13px; color:var(--muted); line-height:1.4;">
+          Generate table placards for customers to scan and browse the live digital menu on their smartphones.
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; width:100%; margin-bottom:16px; text-align:left;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:11.5px; font-weight:700;">Outlet Scope</label>
+            <select id="menu-qr-cafe-sel" class="form-control" style="font-weight:600; font-size:12.5px;">
+              ${(state.cafes || [{ cafeId: 'ZC-MAIN', name: 'Zamorin Flagship' }]).map(c => `<option value="${c.cafeId || c.id}" ${(c.cafeId || c.id) === cafeId ? 'selected' : ''}>☕ ${c.name || c.cafeId}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:11.5px; font-weight:700;">Table Identifier</label>
+            <select id="menu-qr-table-sel" class="form-control" style="font-weight:600; font-size:12.5px;">
+              <option value="GENERAL">General Menu (Counter)</option>
+              ${Array.from({ length: 20 }, (_, i) => `<option value="T-${i + 1}">Table ${i + 1}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <!-- Flowbite QR Card -->
+        <div class="fb-qr-panel qr-panel" style="width:100%; box-sizing:border-box;">
+          <div id="menu-qr-canvas-wrap" class="fb-qr-canvas-wrap qr-canvas-wrap"></div>
+          
+          <!-- Flowbite Clipboard Bar -->
+          <div class="fb-clipboard-wrap" style="width:100%;">
+            <input type="text" id="menu-qr-uri-display" class="fb-clipboard-input qr-value-display" readonly value="Loading Menu URL..." style="padding-right:48px;" />
+            <button type="button" class="fb-clipboard-btn clipboard-btn" id="menu-qr-copy-btn" data-copy-to-clipboard-target="menu-qr-uri-display" title="Copy to clipboard">
+              <svg id="default-icon" class="fb-clipboard-icon-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+              <svg id="success-icon" class="fb-clipboard-icon-check hidden" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+          </div>
+
+          <div class="fb-qr-actions qr-actions">
+            <button class="btn btn-sm btn-primary" id="menu-qr-download-btn" type="button">
+              📥 Download PNG
+            </button>
+            <button class="btn btn-sm btn-secondary" id="menu-qr-print-btn" type="button">
+              🖨️ Print Placard
+            </button>
+          </div>
+        </div>
+
+        <div style="font-size:11.5px; color:var(--muted); line-height:1.4;">
+          Customers scan this QR to view active menu categories, dietary tags, and prices.
+        </div>
+      </div>
+    `,
+    cancelLabel: "Close",
+  });
+
+  const renderMenuQr = async () => {
+    const selCafe = document.getElementById("menu-qr-cafe-sel")?.value || cafeId;
+    const selTable = document.getElementById("menu-qr-table-sel")?.value || "GENERAL";
+    const menuUrl = `${baseUrl}/#menu?cafe=${encodeURIComponent(selCafe)}&table=${encodeURIComponent(selTable)}`;
+
+    const uriDisplay = document.getElementById("menu-qr-uri-display");
+    if (uriDisplay) uriDisplay.value = menuUrl;
+
+    await generateQR({
+      containerId: "menu-qr-canvas-wrap",
+      value: menuUrl,
+      size: 190,
+      color: "#111827",
+      bg: "#ffffff",
+    });
+  };
+
+  setTimeout(() => {
+    renderMenuQr();
+    document.getElementById("menu-qr-cafe-sel")?.addEventListener("change", renderMenuQr);
+    document.getElementById("menu-qr-table-sel")?.addEventListener("change", renderMenuQr);
+    document.getElementById("menu-qr-download-btn")?.addEventListener("click", () => {
+      const canvas = document.querySelector("#menu-qr-canvas-wrap canvas");
+      if (canvas) {
+        const link = document.createElement("a");
+        link.download = `Zamorin-Menu-QR-${Date.now()}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      } else {
+        const svg = document.querySelector("#menu-qr-canvas-wrap svg");
+        if (svg) {
+          const svgData = new XMLSerializer().serializeToString(svg);
+          const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+          const url = URL.createObjectURL(svgBlob);
+          const link = document.createElement("a");
+          link.download = `Zamorin-Menu-QR-${Date.now()}.svg`;
+          link.href = url;
+          link.click();
+        }
+      }
+    });
+    document.getElementById("menu-qr-print-btn")?.addEventListener("click", () => {
+      window.print();
+    });
+  }, 60);
+}
+
+export function autoEnhanceDataTables(root = document) {
+  if (!window.simpleDatatables?.DataTable) return;
+  const tables = root.querySelectorAll("table[data-datatable='true'], table.data-table:not([data-no-dt='true'])");
+  tables.forEach((table, idx) => {
+    if (table.dataset.dtInitialized === "true") return;
+    if (!table.id) table.id = `zamorin-dt-${Date.now()}-${idx}`;
+    if (!table.querySelector("thead") || !table.querySelector("tbody tr")) return;
+    try {
+      new window.simpleDatatables.DataTable(`#${table.id}`, {
+        searchable: true,
+        sortable: true,
+        perPage: 15,
+        perPageSelect: [10, 15, 25, 50],
+        labels: {
+          placeholder: "Search records...",
+          searchTitle: "Search within table",
+          perPage: "rows per page",
+          noRows: "No records found",
+          info: "Showing {start} to {end} of {rows} entries",
+        },
+      });
+      table.dataset.dtInitialized = "true";
+    } catch (e) {
+      // Graceful fallback
+    }
+  });
+
+  // Auto-enhance Flowbite interactive components
+  try {
+    initAccordions(root);
+    initDismiss(root);
+    initTooltips(root);
+    initDropdowns(root);
+    initDatepickers(root);
+    initDrawers(root);
+  } catch (e) {}
+}
+
+export {
+  Accordion,
+  initAccordions,
+  renderNestedAccordionSample,
+  Dismiss,
+  initDismiss,
+  initTooltips,
+  initDropdowns,
+  Dropdown,
+  renderFlowbiteAdditionalContentAlerts,
+  renderFlowbiteAvatarShowcase,
+  renderFlowbiteBadge,
+  renderFlowbiteBadgesShowcase,
+  renderFlowbiteMarketingBanner,
+  renderFlowbiteBottomNav,
+  wireFlowbiteBottomNav,
+  renderFlowbiteBannerAndBottomNavShowcase,
+  renderFlowbiteButton,
+  renderFlowbiteButtonsShowcase,
+  renderFlowbiteButtonGroup,
+  renderFlowbiteButtonGroupShowcase,
+  CopyClipboard,
+  initCopyClipboards,
+  renderFlowbiteClipboard,
+  renderFlowbiteClipboardShowcase,
+  Datepicker,
+  DateRangePicker,
+  initDatepickers,
+  renderFlowbiteDatepicker,
+  renderFlowbiteDateRangePicker,
+  renderFlowbiteTimepicker,
+  renderFlowbiteDatepickerShowcase,
+  renderFlowbitePhoneMockup,
+  renderFlowbiteTabletMockup,
+  renderFlowbiteLaptopMockup,
+  renderFlowbiteDesktopMockup,
+  renderFlowbiteSmartwatchMockup,
+  renderFlowbiteDeviceMockup,
+  renderFlowbiteDeviceMockupShowcase,
+  Drawer,
+  initDrawers,
+  renderFlowbiteDrawer,
+  renderFlowbiteDrawerNavigation,
+  renderFlowbiteDrawerContactForm,
+  renderFlowbiteDrawerFormElements,
+  renderFlowbiteDrawerSwipeableEdge,
+  renderFlowbiteDrawerShowcase,
+  renderFlowbiteDropdown,
+  renderFlowbiteDropdownHover,
+  renderFlowbiteDropdownHeader,
+  renderFlowbiteMultiLevelDropdown,
+  renderFlowbiteDropdownCheckbox,
+  renderFlowbiteDropdownRadio,
+  renderFlowbiteDropdownToggleSwitch,
+  renderFlowbiteDropdownScrolling,
+  renderFlowbiteDropdownSearch,
+  renderFlowbiteDropdownNotification,
+  renderFlowbiteDropdownUserAvatar,
+  renderFlowbiteDropdownNavbar,
+  renderFlowbiteDropdownDatepicker,
+  renderFlowbiteDropdownShowcase,
+  renderFlowbiteFooter,
+  renderFlowbiteFooterSitemap,
+  renderFlowbiteFooterSocial,
+  renderFlowbiteFooterSticky,
+  renderFlowbiteLegendIndicator,
+  renderFlowbiteCountIndicator,
+  renderFlowbiteStatusIndicator,
+  renderFlowbiteBadgeIndicator,
+  renderFlowbiteLoadingIndicator,
+  renderFlowbiteFooterIndicatorShowcase,
+};
+
+
+
 

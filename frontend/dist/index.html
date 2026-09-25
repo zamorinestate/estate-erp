@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" style="background-color: #0b1120 !important; background: #0b1120 !important; color-scheme: dark;">
+<html lang="en" dir="ltr" style="background-color: #0b1120 !important; background: #0b1120 !important; color-scheme: dark;">
 <head>
   <meta charset="UTF-8" />
   <meta name="color-scheme" content="dark" />
@@ -10,6 +10,21 @@
   <link rel="icon" type="image/svg+xml" href="/src/assets/zamorin-app-icon-vector.svg" />
   <link rel="apple-touch-icon" href="/src/assets/zamorin-app-icon-1024.png" />
   <link rel="manifest" href="/manifest.json" />
+
+  <script>
+    // Text direction (LTR/RTL) initialization to avoid FOUC
+    try {
+      const savedDir = localStorage.getItem('zamorin-dir') || 'ltr';
+      document.documentElement.setAttribute('dir', savedDir);
+    } catch (e) {}
+
+    // On page load or when changing themes, best to add inline in `head` to avoid FOUC
+    if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark')
+    }
+  </script>
 
   <!-- Critical zero-latency dark base paint: First element in head to ensure dark canvas on byte 1 -->
   <style>
@@ -1249,10 +1264,79 @@ body:has(#app.auth-screen) {
   </div>
   <div id="toast-root"></div>
 
-  <!-- Non-blocking deferred internal dashboard styles -->
-  <link rel="stylesheet" href="/src/styles/layout.css?v=3.5.4" media="print" onload="this.media='all'" />
-  <link rel="stylesheet" href="/src/styles/components.css?v=3.5.4" media="print" onload="this.media='all'" />
-  <link rel="stylesheet" href="/src/styles/zamorin.css?v=3.5.4" media="print" onload="this.media='all'" />
+  <!-- Core Tailwind CSS v4, Flowbite Component System & Application Styles -->
+  <link rel="stylesheet" href="/src/styles/tailwind.css?v=4.0.0" />
+  <link rel="stylesheet" href="/src/styles/flowbite-integration.css?v=4.0.0" />
+  <link rel="stylesheet" href="/src/styles/layout.css?v=4.0.0" />
+  <link rel="stylesheet" href="/src/styles/components.css?v=4.0.0" />
+  <link rel="stylesheet" href="/src/styles/zamorin.css?v=4.0.0" />
+
+  <!-- ============================================================
+       PHASE 1 — FLOWBITE ECOSYSTEM CDN INTEGRATION
+       Strategy: Flowbite JS behaviors only (no Tailwind CSS conflict).
+       All scripts deferred — zero impact on login-page first paint.
+       ============================================================ -->
+
+  <!-- Simple-Datatables CSS: skinned to Zamorin tokens via zamorin.css overrides -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/simple-datatables@9/dist/style.css"
+    media="print"
+    onload="this.media='all'"
+  />
+
+  <!-- Flowbite JS: Interactive behaviors — dropdowns, modals, drawers, tooltips,
+       popovers, tabs, accordions, datepicker, clipboard, toast, dismiss.
+       Pure vanilla JS — zero Tailwind dependency. -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.js"
+    defer
+  ></script>
+
+  <!-- QR Code Generator: Generates SVG/Canvas QR codes for:
+       1. UPI/BharatPe payment QR at POS till
+       2. Table digital-menu QR
+       3. Staff attendance QR clock-in
+       4. GRN vendor crate verification -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"
+    defer
+  ></script>
+
+  <!-- Simple-Datatables: Search, sort, pagination for all list views
+       (Vendors, Inventory, Procurement, Employees, Cash Book, Expenses) -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/simple-datatables@9/dist/umd/simple-datatables.js"
+    defer
+  ></script>
+
+  <!-- ApexCharts: Dashboard analytics — sales charts, inventory trends,
+       revenue breakdown, employee attendance heatmaps -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"
+    defer
+  ></script>
+
+  <!-- Flowbite CDN availability check & graceful fallback logger -->
+  <script>
+    window.addEventListener('load', function() {
+      if (typeof window.initFlowbite === 'function') {
+        try { window.initFlowbite(); } catch(e) {}
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          console.info('[Zamorin ERP] ✅ Flowbite JS initialized successfully.');
+        }
+      }
+      if (typeof window.ApexCharts !== 'undefined') {
+        window.__zamorinApexReady = true;
+      }
+      if (typeof window.QRCode !== 'undefined') {
+        window.__zamorinQRReady = true;
+      }
+      if (typeof window.simpleDatatables !== 'undefined') {
+        window.__zamorinDTReady = true;
+      }
+    });
+  </script>
 
   <script type="module" src="/src/js/main.js?v=3.5.4"></script>
 </body>

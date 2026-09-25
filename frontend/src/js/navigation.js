@@ -65,10 +65,10 @@ const PRIMARY_MASTER_ITEMS = [
   { id: 'mailops',       label: 'MailOps Communications', icon: 'announce',     route: 'mailops',           group: 'FACILITIES', primaryMasterOnly: true },
 
   // ── SYSTEM & GOVERNANCE ──────────────────────────────────────────────────────
-  { id: 'admin',         label: 'Administration',         icon: 'admin',        route: 'admin',             group: 'SYSTEM' },
-  { id: 'cafe-ops-devices', label: 'Devices & Sessions',  icon: 'devices',      route: 'cafe-ops-devices',  group: 'SYSTEM' },
-  { id: 'system-health', label: 'System Health & Ops',    icon: 'settings',     route: 'system-health',     group: 'SYSTEM' },
-  { id: 'settings',      label: 'Settings',               icon: 'settings',     route: 'settings',          group: 'SYSTEM' },
+  { id: 'admin',            label: 'Administration',         icon: 'admin',        route: 'admin',             group: 'SYSTEM' },
+  { id: 'cafe-ops-devices', label: 'Devices & Sessions',     icon: 'devices',      route: 'cafe-ops-devices',  group: 'SYSTEM' },
+  { id: 'system-health',    label: 'System Health & Ops',    icon: 'settings',     route: 'system-health',     group: 'SYSTEM' },
+  { id: 'settings',         label: 'Settings',               icon: 'settings',     route: 'settings',          group: 'SYSTEM' },
 ];
 
 export const NAVIGATION = {
@@ -204,6 +204,7 @@ const IMPLICIT_ROUTES_ALL = new Set([
   'staff-home',
   'announcements',
   'employee-profile',
+  'design-system',
 ]);
 
 // Implicit routes specific to CAFE_ADMIN — auth-context pages (not sidebar items)

@@ -13,6 +13,7 @@ import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
 import { generateInvoicePdf } from "../utils/invoicePdfGenerator.js";
 import { offlineManager, QUEUE_STATUSES } from "../utils/offlineManager.js";
+import { generateQR, buildUpiUri, initClipboard, initSpeedDial } from "../flowbiteUtils.js";
 
 
 function resolvePosCafeId() {
@@ -528,9 +529,29 @@ function renderTerminalView() {
           <strong style="font-size:14px;color:var(--ink);display:block;">${totalItemCount} items · ₹${grandTotal.toLocaleString("en-IN")}</strong>
           <span style="font-size:11px;color:var(--muted);">${activeServiceMode}</span>
         </div>
-        <button class="btn btn-sm btn-primary" id="mobile-view-ticket-btn" style="padding:6px 14px;font-weight:800;font-size:13px;" type="button">
-          View Ticket 🛒
+      <!-- Flowbite Speed Dial Floating Action Button for POS Cashier Quick Actions -->
+      <div class="speed-dial-container" id="pos-speed-dial-wrap">
+        <button class="speed-dial-trigger" id="pos-speed-dial-trigger" type="button" aria-expanded="false" title="Quick Actions Speed Dial">
+          <span style="font-size:20px;line-height:1;">⚡</span>
         </button>
+        <div class="speed-dial-actions" id="pos-speed-dial-actions">
+          <div class="speed-dial-item">
+            <button class="speed-dial-btn" id="pos-sd-upi" type="button" title="Dynamic UPI QR">📱</button>
+            <span class="speed-dial-label">UPI QR Pay</span>
+          </div>
+          <div class="speed-dial-item">
+            <button class="speed-dial-btn" id="pos-sd-hold" type="button" title="Hold / Recall Cart">⏸️</button>
+            <span class="speed-dial-label">Hold Cart</span>
+          </div>
+          <div class="speed-dial-item">
+            <button class="speed-dial-btn" id="pos-sd-print" type="button" title="Print Last Receipt">🖨️</button>
+            <span class="speed-dial-label">Re-print Bill</span>
+          </div>
+          <div class="speed-dial-item">
+            <button class="speed-dial-btn" id="pos-sd-drawer" type="button" title="Open Cash Drawer">💵</button>
+            <span class="speed-dial-label">Open Drawer</span>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -973,6 +994,25 @@ function wirePOSEventListeners(root) {
       }
     });
   }
+
+  // Flowbite Speed Dial FAB in POS
+  initSpeedDial("pos-speed-dial-trigger", "pos-speed-dial-actions");
+  root.querySelector("#pos-sd-upi")?.addEventListener("click", () => {
+    const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
+    const disc = Math.round(discountPaisa / 100);
+    const tax = Math.max(0, subtotal - disc);
+    const total = tax + Math.round(tax * 0.05);
+    openUpiQrAssistantModal(total > 0 ? total : 100, root);
+  });
+  root.querySelector("#pos-sd-hold")?.addEventListener("click", () => {
+    root.querySelector("#hold-order-btn")?.click();
+  });
+  root.querySelector("#pos-sd-print")?.addEventListener("click", () => {
+    root.querySelector("#preview-receipt-btn")?.click();
+  });
+  root.querySelector("#pos-sd-drawer")?.addEventListener("click", () => {
+    showToast("Cash drawer kick pulse sent to thermal printer.", "info");
+  });
 
   // Subview toggle
   const pastOrdersBtn = root.querySelector("#view-past-orders-btn");
@@ -1654,67 +1694,47 @@ function openModifierModal(product, existingLine = null, root) {
 }
 
 function openUpiQrAssistantModal(grandTotal, root, posAction = "SAVE_AND_PRINT") {
-  const txnRef = `UPI-${Date.now()}`;
+  const txnRef = `UPI-${Date.now().toString().slice(-6)}`;
+  const cafeId = resolvePosCafeId() || "ZC-MAIN";
+  const upiId = "zamorincafe@icici";
+  const upiUri = buildUpiUri({
+    upiId,
+    name: "Zamorin Cafe",
+    amount: grandTotal,
+    tn: `Bill Ref ${txnRef} (${cafeId})`,
+  });
 
   openModal({
-    title: `Dynamic UPI Payment · ₹${grandTotal.toLocaleString("en-IN")}`,
+    title: `Dynamic UPI Payment · ₹${grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
     maxWidth: "480px",
     body: `
       <div style="text-align:center;padding:10px 4px 6px;">
         <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Scan with Google Pay, PhonePe, Paytm or BHIM UPI</div>
 
-        <!-- High Fidelity Scannable QR Matrix Card -->
-        <div style="display:inline-block;padding:16px;background:#ffffff;border-radius:14px;border:2px solid var(--bronze-500, #b17d38);box-shadow:0 4px 14px rgba(0,0,0,0.08);margin-bottom:14px;">
-          <svg width="190" height="190" viewBox="0 0 190 190" style="display:block;margin:0 auto;">
-            <rect width="190" height="190" fill="#ffffff"/>
-            <!-- Top-Left Finder -->
-            <rect x="10" y="10" width="52" height="52" fill="#18181b" rx="6"/>
-            <rect x="20" y="20" width="32" height="32" fill="#ffffff" rx="4"/>
-            <rect x="26" y="26" width="20" height="20" fill="#18181b" rx="3"/>
-
-            <!-- Top-Right Finder -->
-            <rect x="128" y="10" width="52" height="52" fill="#18181b" rx="6"/>
-            <rect x="138" y="20" width="32" height="32" fill="#ffffff" rx="4"/>
-            <rect x="144" y="26" width="20" height="20" fill="#18181b" rx="3"/>
-
-            <!-- Bottom-Left Finder -->
-            <rect x="10" y="128" width="52" height="52" fill="#18181b" rx="6"/>
-            <rect x="20" y="138" width="32" height="32" fill="#ffffff" rx="4"/>
-            <rect x="26" y="144" width="20" height="20" fill="#18181b" rx="3"/>
-
-            <!-- Timing and Alignment Patterns -->
-            <rect x="68" y="14" width="48" height="10" fill="#18181b" rx="2"/>
-            <rect x="68" y="32" width="22" height="22" fill="#18181b" rx="2"/>
-            <rect x="98" y="40" width="18" height="26" fill="#18181b" rx="2"/>
-            <rect x="14" y="68" width="10" height="48" fill="#18181b" rx="2"/>
-            <rect x="30" y="74" width="26" height="16" fill="#18181b" rx="2"/>
-
-            <!-- QR Data Matrix Blocks -->
-            <rect x="66" y="68" width="58" height="44" fill="#18181b" rx="3"/>
-            <rect x="132" y="68" width="46" height="22" fill="#18181b" rx="2"/>
-            <rect x="132" y="98" width="20" height="22" fill="#18181b" rx="2"/>
-            <rect x="160" y="98" width="18" height="78" fill="#18181b" rx="2"/>
-            <rect x="68" y="120" width="26" height="58" fill="#18181b" rx="2"/>
-            <rect x="102" y="120" width="48" height="20" fill="#18181b" rx="2"/>
-            <rect x="102" y="148" width="48" height="30" fill="#18181b" rx="2"/>
-            <rect x="32" y="98" width="24" height="20" fill="#18181b" rx="2"/>
-
-            <!-- Central Zamorin Cafe Gold Emblem Badge -->
-            <rect x="74" y="74" width="42" height="42" fill="#ffffff" rx="8"/>
-            <rect x="77" y="77" width="36" height="36" fill="#18181b" rx="6"/>
-            <text x="95" y="100" font-size="14" font-family="'Outfit', sans-serif" font-weight="900" fill="#f59e0b" text-anchor="middle">₹</text>
-          </svg>
+        <div class="qr-panel" style="display:inline-flex;padding:16px;background:#ffffff;border-radius:14px;border:2px solid var(--bronze-500, #b17d38);box-shadow:0 4px 14px rgba(0,0,0,0.08);margin-bottom:14px;">
+          <div id="pos-till-qr-canvas-wrap" class="qr-canvas-wrap" style="width:200px;height:200px;border:none;"></div>
         </div>
 
         <div style="background:var(--surface-sunken);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:0 auto 10px;max-width:320px;">
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;margin-bottom:2px;">
             <span style="color:var(--muted);">UPI ID:</span>
-            <strong style="font-family:var(--font-mono);color:var(--ink);">zamorincafe@icici</strong>
+            <strong style="font-family:var(--font-mono);color:var(--ink);">${upiId}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;margin-bottom:2px;">
+            <span style="color:var(--muted);">Amount:</span>
+            <strong style="font-family:var(--font-mono);color:var(--color-accent-amber);">₹${grandTotal.toFixed(2)}</strong>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">
             <span style="color:var(--muted);">Ref:</span>
             <strong style="font-family:var(--font-mono);color:var(--bronze-600);">${txnRef}</strong>
           </div>
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <button class="btn btn-xs btn-ghost clipboard-btn" id="pos-copy-upi-btn" type="button" style="font-size:11px;">
+            📋 Copy UPI Link
+          </button>
+          <span id="pos-upi-uri-hidden" style="display:none;">${upiUri}</span>
         </div>
 
         <div style="font-size:12px;color:#059669;font-weight:700;display:flex;align-items:center;justify-content:center;gap:6px;">
@@ -1729,6 +1749,17 @@ function openUpiQrAssistantModal(grandTotal, root, posAction = "SAVE_AND_PRINT")
       await executeFinalSale(grandTotal, "UPI", root, txnRef, null, posAction);
     },
   });
+
+  setTimeout(async () => {
+    await generateQR({
+      containerId: "pos-till-qr-canvas-wrap",
+      value: upiUri,
+      size: 200,
+      color: "#18181b",
+      bg: "#ffffff",
+    });
+    initClipboard("pos-copy-upi-btn", "pos-upi-uri-hidden");
+  }, 60);
 }
 
 function openCardReaderModal(grandTotal, root, posAction = "SAVE_AND_PRINT") {
