@@ -26,8 +26,7 @@
  *   18. Popovers
  *   19. Progress Bars
  *   20. Sidebars
- *   21. RTL / Directionality
- *   22. Accordion & Dismiss
+ *   21. Accordion & Dismiss
  * =============================================================================
  */
 
@@ -56,7 +55,6 @@ import {
   renderFlowbiteFooterSocial,
   renderFlowbiteFooterSticky,
   renderFlowbiteFooterIndicatorShowcase,
-  renderFlowbiteRtlNav,
   renderNestedAccordionSample,
   renderFlowbiteFormsShowcase,
   renderFlowbiteMegaMenuShowcase,
@@ -208,12 +206,6 @@ const SECTIONS = [
     label: 'Sidebars',
     icon: '◧',
     render: () => renderFlowbiteSidebarShowcase(),
-  },
-  {
-    id: 'rtl',
-    label: 'RTL / i18n',
-    icon: '↔',
-    render: () => renderFlowbiteRtlNav(),
   },
   {
     id: 'accordions',
