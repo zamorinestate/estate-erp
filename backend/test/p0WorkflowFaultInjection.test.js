@@ -551,7 +551,7 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
 
   it('P0-FI-011: AttendanceCorrection Approval failure rolls back correction request and attendance mutation', async () => {
     const attendance = await Attendance.create({
-      attendanceId: 'ATT-FI-0001',
+      attendanceId: 'AT-20261004-001',
       organisationId: ORG,
       cafeId: CAFE,
       userId: 'ST-0001',
@@ -559,6 +559,7 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       checkInAt: new Date('2026-10-04T04:00:00.000Z'),
       status: 'CHECKED_IN',
       correctionRequired: false,
+      createdBy: 'ST-0001',
     });
 
     const originalSave = Approval.prototype.save;
