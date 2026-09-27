@@ -110,6 +110,11 @@ approvalSchema.index(
   { name: 'org_status' }
 );
 
+approvalSchema.index(
+  { organisationId: 1, entityType: 1, entityId: 1 },
+  { unique: true, name: 'org_entity_unique' }
+);
+
 approvalSchema.pre('validate', function normaliseApprovalFields() {
   const upperFields = ['approvalId', 'organisationId', 'cafeId', 'entityType', 'entityId', 'requestingUserId', 'decidedByUserId'];
   for (const field of upperFields) {

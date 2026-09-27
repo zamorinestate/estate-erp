@@ -1637,6 +1637,77 @@ async function seedVendorsData({ organisationId, masterUserId }) {
 
     await Vendor.insertMany(vendors);
   }
+
+  // Ensure canonical vendor user and enriched VEN-0001 profile exist
+  const { User } = require('../models/User');
+  const { hashPassword } = require('../services/authService');
+  const vendorEmail = (process.env.VENDOR_E2E_EMAIL || 'vendor@malabarfresh.com').trim().toLowerCase();
+  const vendorSeedPassword = (process.env.INITIAL_VENDOR_PASSWORD || process.env.VENDOR_E2E_PASSWORD || '').trim();
+
+  if (vendorSeedPassword) {
+    const passwordHash = await hashPassword(vendorSeedPassword);
+    const existingVendorUser = await User.findOne({ email: vendorEmail });
+    if (!existingVendorUser) {
+      await User.create({
+        userId: 'VU-0001',
+        organisationId,
+        name: 'Malabar Dairy Accounts Lead',
+        email: vendorEmail,
+        role: 'VENDOR',
+        vendorId: 'VEN-0001',
+        accountStatus: 'ACTIVE',
+        passwordHash,
+        createdBy: masterUserId,
+      });
+    } else {
+      existingVendorUser.passwordHash = passwordHash;
+      await existingVendorUser.save();
+    }
+  }
+
+  await Vendor.updateOne(
+    { vendorId: 'VEN-0001', organisationId },
+    {
+      $set: {
+        'bankDetails.bankName': 'State Bank of India',
+        'bankDetails.accountHolderName': 'Malabar Fresh Dairy & Produce Ltd',
+        'bankDetails.accountNumber': '98765432101234',
+        'bankDetails.accountNumberMasked': '••••••••••1234',
+        fssaiDetails: {
+          isApplicable: true,
+          isValid: true,
+          licenseNumber: '10019042000876',
+          expiryDate: new Date('2028-12-31'),
+          verificationSource: 'FoSCoS Digital Registry',
+        },
+        sites: [
+          {
+            siteId: 'SITE-001',
+            siteName: 'Calicut Central Dairy Plant',
+            siteType: 'DISPATCH_LOCATION',
+            address: { line1: 'Mavoor Road', city: 'Kozhikode', state: 'Kerala', pincode: '673001' },
+            primaryContactName: 'K. Rajeev Nair',
+            phone: '+91 98470 12345',
+            leadTimeDays: 1,
+            deliveryCutoffTime: '18:00',
+            deliveryDays: ['MON', 'WED', 'FRI'],
+            status: 'ACTIVE',
+          },
+        ],
+        qualifications: [
+          { qualificationId: 'Q-01', area: 'LEGAL', status: 'QUALIFIED' },
+          { qualificationId: 'Q-02', area: 'TAX', status: 'QUALIFIED' },
+          { qualificationId: 'Q-03', area: 'FOOD_SAFETY_FSSAI', status: 'QUALIFIED' },
+          { qualificationId: 'Q-04', area: 'QUALITY', status: 'QUALIFIED' },
+          { qualificationId: 'Q-05', area: 'COMMERCIAL', status: 'QUALIFIED' },
+        ],
+        contractExpiryDate: new Date(Date.now() + 300 * 86400000),
+        insuranceExpiryDate: new Date(Date.now() + 200 * 86400000),
+        insurancePolicyNumber: 'POL-2026-MALABAR',
+        insuranceProvider: 'National Insurance',
+      },
+    }
+  );
 }
 
 async function seedMenuData(orgOrObj, mUserId) {

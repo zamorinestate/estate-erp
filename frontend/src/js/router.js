@@ -13,7 +13,7 @@ import { NAVIGATION, isRouteAllowed, ROLES } from "./navigation.js";
 import { renderSidebar, wireSidebar, renderTopbar, wireBell, updateBellBadge, updateSidebarActive, renderModuleErrorState, wireCafeContextStrip, autoEnhanceDataTables } from "./components.js";
 import { renderNotificationCentre, wireNotificationCentre } from "./pages/notificationCentre.js";
 import { icon } from "./icons.js";
-import { renderMasterDashboard, hydrateMasterDashboard } from "./pages/dashboardMaster.js";
+import { renderMasterDashboard, hydrateMasterDashboard } from "./pages/dashboardMaster.js?v=3.9.0";
 import { renderOwnerDashboard, hydrateOwnerDashboard } from "./pages/dashboardOwner.js";
 import { renderAdminDashboard, hydrateAdminDashboard } from "./pages/dashboardAdmin.js";
 import { renderStaffHome, wireStaffHome } from "./pages/staffHome.js";
@@ -82,6 +82,19 @@ import { renderOwnerCustomerLoyalty, initOwnerCustomerLoyaltyEvents, setOwnerCus
 import { renderOwnerUtilitiesWaste, initOwnerUtilitiesWasteEvents, setOwnerUtilitiesWasteSection } from "./pages/ownerUtilitiesWaste.js";
 import { renderOwnerGovernanceDelegation, initOwnerGovernanceDelegationEvents, setOwnerGovernanceDelegationSection } from "./pages/ownerGovernanceDelegation.js";
 import { renderDesignSystem, wireDesignSystem } from "./pages/designSystem.js";
+import { renderVendorDashboard, wireVendorDashboard } from "./pages/vendorDashboard.js";
+import { renderVendorOrders, wireVendorOrders } from "./pages/vendorOrders.js";
+import { renderVendorDeliveries, wireVendorDeliveries } from "./pages/vendorDeliveries.js";
+import { renderVendorInvoices, wireVendorInvoices } from "./pages/vendorInvoices.js";
+import { renderVendorPayments, wireVendorPayments } from "./pages/vendorPayments.js";
+import { renderVendorStatement, initVendorStatement } from "./pages/vendorStatement.js";
+import { renderVendorReceivables, initVendorReceivables } from "./pages/vendorReceivables.js";
+import { renderVendorAdjustments, initVendorAdjustments } from "./pages/vendorAdjustments.js";
+import { renderVendorProducts, initVendorProducts } from "./pages/vendorProducts.js";
+import { renderVendorDocuments, initVendorDocuments } from "./pages/vendorDocuments.js";
+import { renderVendorReports, initVendorReports } from "./pages/vendorReports.js";
+import { renderVendorNotifications, initVendorNotifications } from "./pages/vendorNotifications.js";
+import { renderVendorProfile, initVendorProfile } from "./pages/vendorProfile.js";
 import { renderFlowbiteFooter } from "./flowbiteUtils.js";
 
 
@@ -92,6 +105,7 @@ const ROLE_LABELS = {
   [ROLES.OWNER]: "Owner",
   [ROLES.CAFE_ADMIN]: "Cafe Operations",
   [ROLES.STAFF]: "Staff",
+  [ROLES.VENDOR]: "Vendor (Read-Only)",
 };
 
 export function showNavProgressBar() {
@@ -149,8 +163,12 @@ export function navigate(route) {
   // Route-layer guard: deny by default, exactly per Part B.3 / Part R's
   // closing rule ("any action not explicitly marked defaults to no access").
   const isPrimary = getIsPrimaryMaster();
+  const isVendor = state.role === ROLES.VENDOR || state.role === "vendor";
+  const isAllowed = isVendor
+    ? isRouteAllowed(state.role, route, false)
+    : (route === "notifications" || isRouteAllowed(state.role, route, isPrimary));
 
-  if (route !== "notifications" && !isRouteAllowed(state.role, route, isPrimary)) {
+  if (!isAllowed) {
     setState({ route: "__blocked__" });
     renderShell();
     hideNavProgressBar();
@@ -385,12 +403,50 @@ async function renderPage() {
       } else if (normalizedRole === ROLES.STAFF || normalizedRole === "employee") {
         content.innerHTML = renderStaffHome();
         wireStaffHome(content);
+      } else if (normalizedRole === ROLES.VENDOR || normalizedRole === "vendor") {
+        content.innerHTML = renderVendorDashboard();
+        await wireVendorDashboard(content);
       } else {
         content.innerHTML = renderMasterDashboard({ roleLabel: ROLE_LABELS[state.role] || "Master" });
         hydrateMasterDashboard(content);
       }
       break;
     }
+
+    case "vendor-dashboard":
+    case "vendor":
+      if (subroute === "orders" || subroute === "purchase-orders") {
+        content.innerHTML = renderVendorOrders();
+        await wireVendorOrders(content);
+      } else if (subroute === "deliveries" || subroute === "grns") {
+        content.innerHTML = renderVendorDeliveries();
+        await wireVendorDeliveries(content);
+      } else {
+        content.innerHTML = renderVendorDashboard();
+        await wireVendorDashboard(content);
+      }
+      break;
+
+    case "vendor-orders":
+    case "vendor-purchase-orders":
+    case "vendor/orders":
+      content.innerHTML = renderVendorOrders();
+      await wireVendorOrders(content);
+      break;
+
+    case "vendor-deliveries":
+    case "vendor/deliveries":
+    case "vendor-grns":
+    case "vendor/grns":
+      content.innerHTML = renderVendorDeliveries();
+      await wireVendorDeliveries(content);
+      break;
+
+    case "vendor-invoices":
+    case "vendor/invoices":
+      content.innerHTML = renderVendorInvoices();
+      await wireVendorInvoices(content);
+      break;
 
     case "system-health":
     case "ops":
@@ -896,6 +952,13 @@ async function renderPage() {
       });
       break;
 
+    case "design-system":
+    case "components":
+    case "flowbite":
+      content.innerHTML = renderDesignSystem();
+      wireDesignSystem(content);
+      break;
+
     case "not-built":
       content.innerHTML = renderNotBuiltYet();
       break;
@@ -986,6 +1049,90 @@ async function renderPage() {
     case 'design-system':
       content.innerHTML = renderDesignSystem();
       wireDesignSystem(content);
+      break;
+
+    case 'vendor-dashboard':
+    case 'vendor/dashboard':
+      content.innerHTML = renderVendorDashboard();
+      await wireVendorDashboard(content);
+      break;
+
+    case 'vendor-orders':
+    case 'vendor/orders':
+      content.innerHTML = renderVendorOrders();
+      await wireVendorOrders(content);
+      break;
+
+    case 'vendor-deliveries':
+    case 'vendor/deliveries':
+    case 'vendor-grns':
+    case 'vendor/grns':
+      content.innerHTML = renderVendorDeliveries();
+      await wireVendorDeliveries(content);
+      break;
+
+    case 'vendor-invoices':
+    case 'vendor/invoices':
+      content.innerHTML = renderVendorInvoices();
+      await wireVendorInvoices(content);
+      break;
+
+    case 'vendor-payments':
+    case 'vendor/payments':
+      content.innerHTML = renderVendorPayments();
+      await wireVendorPayments(content);
+      break;
+
+    case 'vendor-statement':
+    case 'vendor/statement':
+      content.innerHTML = renderVendorStatement();
+      await initVendorStatement();
+      break;
+
+    case 'vendor-receivables':
+    case 'vendor/receivables':
+      content.innerHTML = renderVendorReceivables();
+      await initVendorReceivables();
+      break;
+
+    case 'vendor-adjustments':
+    case 'vendor/adjustments':
+    case 'vendor-returns':
+    case 'vendor/returns':
+      content.innerHTML = renderVendorAdjustments();
+      await initVendorAdjustments();
+      break;
+
+    case 'vendor-products':
+    case 'vendor/products':
+    case 'vendor-pricing':
+    case 'vendor/pricing':
+      content.innerHTML = renderVendorProducts();
+      await initVendorProducts();
+      break;
+
+    case 'vendor-documents':
+    case 'vendor/documents':
+      content.innerHTML = renderVendorDocuments();
+      await initVendorDocuments();
+      break;
+
+    case 'vendor-reports':
+    case 'vendor/reports':
+      content.innerHTML = renderVendorReports();
+      await initVendorReports();
+      break;
+
+    case 'vendor-notifications':
+    case 'vendor/notifications':
+      content.innerHTML = renderVendorNotifications();
+      await initVendorNotifications();
+      break;
+
+    case 'vendor-profile':
+    case 'vendor/profile':
+      content.innerHTML = renderVendorProfile();
+      await initVendorProfile(content);
       break;
 
     default:

@@ -1,10 +1,10 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-const MONGODB_URI = 'mongodb+srv://zamorin_admin:2gCygldpDF0kw1AY@zamorin-cluster.maxooka.mongodb.net/zamorin_cafe_erp?retryWrites=true&w=majority&appName=zamorin-cluster';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/zamorin_cafe_erp';
 
 async function seedUsers() {
-  console.log('Connecting to MongoDB Atlas...');
+  console.log(`Connecting to MongoDB (${MONGODB_URI.replace(/:([^:@]+)@/, ':***@')})...`);
   await mongoose.connect(MONGODB_URI);
   const db = mongoose.connection.db;
   const usersColl = db.collection('users');

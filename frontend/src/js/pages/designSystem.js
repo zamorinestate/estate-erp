@@ -18,8 +18,16 @@
  *   10. Device Mockups
  *   11. Banners & Bottom Navigation
  *   12. Footers (all 4 variants)
- *   13. RTL / Directionality
- *   14. Accordion & Dismiss
+ *   13. Forms & Inputs
+ *   14. Mega Menu
+ *   15. Modals
+ *   16. Navbars
+ *   17. Pagination
+ *   18. Popovers
+ *   19. Progress Bars
+ *   20. Sidebars
+ *   21. RTL / Directionality
+ *   22. Accordion & Dismiss
  * =============================================================================
  */
 
@@ -50,12 +58,25 @@ import {
   renderFlowbiteFooterIndicatorShowcase,
   renderFlowbiteRtlNav,
   renderNestedAccordionSample,
+  renderFlowbiteFormsShowcase,
+  renderFlowbiteMegaMenuShowcase,
+  renderFlowbiteModalShowcase,
+  renderFlowbiteNavbarShowcase,
+  renderFlowbitePaginationShowcase,
+  renderFlowbitePopoverShowcase,
+  renderFlowbiteProgressShowcase,
+  renderFlowbiteSidebarShowcase,
   initAccordions,
   initDropdowns,
   initDrawers,
   initCopyClipboards,
   initDatepickers,
   initDismiss,
+  initCollapses,
+  initModals,
+  initPopovers,
+  initProgressBars,
+  initSidebars,
 } from '../flowbiteUtils.js';
 import { state } from '../state.js';
 
@@ -141,6 +162,54 @@ const SECTIONS = [
     render: () => _renderFooterSection(),
   },
   {
+    id: 'forms',
+    label: 'Forms & Inputs',
+    icon: '📝',
+    render: () => renderFlowbiteFormsShowcase(),
+  },
+  {
+    id: 'mega-menu',
+    label: 'Mega Menu',
+    icon: '▤',
+    render: () => renderFlowbiteMegaMenuShowcase(),
+  },
+  {
+    id: 'modals',
+    label: 'Modals',
+    icon: '🗖',
+    render: () => renderFlowbiteModalShowcase(),
+  },
+  {
+    id: 'navbars',
+    label: 'Navbars',
+    icon: '🧭',
+    render: () => renderFlowbiteNavbarShowcase(),
+  },
+  {
+    id: 'pagination',
+    label: 'Pagination',
+    icon: '🔢',
+    render: () => renderFlowbitePaginationShowcase(),
+  },
+  {
+    id: 'popovers',
+    label: 'Popovers',
+    icon: '💬',
+    render: () => renderFlowbitePopoverShowcase(),
+  },
+  {
+    id: 'progress',
+    label: 'Progress Bars',
+    icon: '▰',
+    render: () => renderFlowbiteProgressShowcase(),
+  },
+  {
+    id: 'sidebars',
+    label: 'Sidebars',
+    icon: '◧',
+    render: () => renderFlowbiteSidebarShowcase(),
+  },
+  {
     id: 'rtl',
     label: 'RTL / i18n',
     icon: '↔',
@@ -197,7 +266,7 @@ export function renderDesignSystem() {
     (s) => `
     <li>
       <button
-        class="ds-nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-base text-sm font-medium text-body hover:bg-neutral-secondary-soft hover:text-heading transition-colors"
+        class="ds-nav-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-blue-50 hover:text-blue-700 transition-all duration-150"
         data-ds-section="${s.id}"
         id="ds-nav-${s.id}"
         type="button"
@@ -209,25 +278,34 @@ export function renderDesignSystem() {
   ).join('');
 
   return `
-<div id="ds-shell" class="flex min-h-screen bg-neutral-secondary-soft">
+<div id="ds-shell" class="flex min-h-screen" style="background:#f0f4ff;">
 
   <!-- ── Sidebar rail ──────────────────────────────────────────────────── -->
   <aside
     id="ds-sidebar"
-    class="flex-shrink-0 w-56 bg-neutral-primary-soft border-r border-default flex flex-col sticky top-0 h-screen overflow-y-auto"
+    class="flex-shrink-0 w-60 flex flex-col sticky top-0 h-screen overflow-y-auto"
+    style="background:#ffffff; border-right:1px solid #dbeafe;"
     aria-label="Component sections"
   >
-    <div class="px-4 pt-5 pb-3 border-b border-default">
-      <span class="text-xs font-bold text-body uppercase tracking-widest">Design System</span>
-      <p class="text-[11px] text-neutral-tertiary mt-0.5">Flowbite Component Library</p>
+    <!-- Sidebar header -->
+    <div class="px-4 pt-5 pb-4" style="border-bottom:1px solid #dbeafe; background:linear-gradient(135deg,#1d4ed8 0%,#2563eb 100%);">
+      <div class="flex items-center gap-2 mb-1">
+        <div class="w-7 h-7 rounded-lg flex items-center justify-center text-sm" style="background:rgba(255,255,255,0.2);">🎨</div>
+        <span class="text-sm font-bold text-white tracking-wide">Design System</span>
+      </div>
+      <p class="text-xs" style="color:rgba(255,255,255,0.7); padding-left:2.25rem;">Flowbite · ${SECTIONS.length} Components</p>
     </div>
-    <nav class="flex-1 px-2 py-3">
+
+    <!-- Nav list -->
+    <nav class="flex-1 px-2 py-3 overflow-y-auto">
       <ul class="space-y-0.5" role="list">
         ${navItems}
       </ul>
     </nav>
-    <div class="px-4 py-3 border-t border-default">
-      <span class="text-[10px] text-neutral-tertiary">Zamorin Café ERP v1.0 · Master Only</span>
+
+    <!-- Sidebar footer -->
+    <div class="px-4 py-3" style="border-top:1px solid #dbeafe;">
+      <span class="text-[10px]" style="color:#93c5fd;">Zamorin Café ERP · Master Only</span>
     </div>
   </aside>
 
@@ -235,17 +313,17 @@ export function renderDesignSystem() {
   <main id="ds-main" class="flex-1 min-w-0 overflow-auto">
 
     <!-- Page header -->
-    <header class="sticky top-0 z-10 bg-neutral-primary-soft border-b border-default px-6 py-4 flex items-center justify-between">
+    <header class="sticky top-0 z-10 px-6 py-4 flex items-center justify-between" style="background:#ffffff; border-bottom:1px solid #dbeafe; box-shadow:0 1px 8px rgba(37,99,235,0.08);">
       <div>
-        <h1 class="text-lg font-bold text-heading leading-tight" id="ds-section-title">Flowbite Design System</h1>
-        <p class="text-xs text-body mt-0.5" id="ds-section-sub">Select a component category from the sidebar</p>
+        <h1 class="text-lg font-bold leading-tight" style="color:#1e3a8a;" id="ds-section-title">Flowbite Design System</h1>
+        <p class="text-xs mt-0.5" style="color:#64748b;" id="ds-section-sub">Select a component category from the sidebar</p>
       </div>
-      <div class="flex items-center gap-2">
-        <span class="inline-flex items-center bg-brand-softer border border-brand-subtle text-fg-brand-strong text-xs font-semibold px-2.5 py-1 rounded-full">
+      <div class="flex items-center gap-3">
+        <span class="inline-flex items-center text-xs font-semibold px-3 py-1 rounded-full" style="background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe;">
           PRIMARY MASTER
         </span>
-        <span class="inline-flex items-center gap-1 text-xs text-body">
-          <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+        <span class="inline-flex items-center gap-1.5 text-xs" style="color:#64748b;">
+          <span class="w-2 h-2 rounded-full animate-pulse" style="background:#22c55e;"></span>
           Live Components
         </span>
       </div>
@@ -253,21 +331,25 @@ export function renderDesignSystem() {
 
     <!-- Welcome / landing state -->
     <div id="ds-welcome" class="p-10 text-center">
-      <div class="max-w-lg mx-auto">
-        <div class="text-6xl mb-5">🎨</div>
-        <h2 class="text-2xl font-bold text-heading mb-3">Zamorin Café ERP Design System</h2>
-        <p class="text-body text-sm leading-relaxed mb-6">
+      <div class="max-w-2xl mx-auto">
+        <div class="w-20 h-20 mx-auto mb-6 rounded-2xl flex items-center justify-center text-4xl" style="background:linear-gradient(135deg,#dbeafe,#eff6ff); box-shadow:0 4px 20px rgba(37,99,235,0.15);">🎨</div>
+        <h2 class="text-2xl font-bold mb-3" style="color:#1e3a8a;">Zamorin Café ERP — Design System</h2>
+        <p class="text-sm leading-relaxed mb-8" style="color:#64748b;">
           A living library of all UI primitives — Flowbite components adapted for the Zamorin
-          design tokens. Select any section from the sidebar to preview fully wired, production-grade components.
+          design tokens. Select any section from the sidebar or click a card below to preview
+          fully wired, production-grade components.
         </p>
-        <div class="grid grid-cols-2 gap-3 text-left text-sm">
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-left text-sm">
           ${SECTIONS.map(s => `
           <button
-            class="ds-nav-btn p-3 rounded-base border border-default bg-neutral-primary-soft hover:border-brand-subtle hover:bg-brand-softer transition-all text-left flex items-center gap-2"
+            class="ds-nav-btn p-3 rounded-xl text-left flex items-center gap-2.5 transition-all duration-150 group"
+            style="background:#ffffff; border:1px solid #e2e8f0; box-shadow:0 1px 4px rgba(0,0,0,0.04);"
+            onmouseover="this.style.borderColor='#93c5fd';this.style.background='#eff6ff';this.style.boxShadow='0 4px 12px rgba(37,99,235,0.12)';"
+            onmouseout="this.style.borderColor='#e2e8f0';this.style.background='#ffffff';this.style.boxShadow='0 1px 4px rgba(0,0,0,0.04)';"
             data-ds-section="${s.id}" type="button"
           >
-            <span class="text-lg" aria-hidden="true">${s.icon}</span>
-            <span class="font-medium text-heading text-sm">${s.label}</span>
+            <span class="text-lg flex-shrink-0" aria-hidden="true">${s.icon}</span>
+            <span class="font-medium text-sm" style="color:#1e3a8a;">${s.label}</span>
           </button>`).join('')}
         </div>
       </div>
@@ -309,13 +391,20 @@ export function wireDesignSystem(root) {
     }
     if (welcomePane) welcomePane.classList.add('hidden');
 
-    // Highlight active nav button
-    root.querySelectorAll('.ds-nav-btn').forEach(btn => {
+    // Highlight active nav button — blue pill style
+    root.querySelectorAll('.ds-nav-btn[data-ds-section]').forEach(btn => {
       const isActive = btn.dataset.dsSection === sectionId;
-      btn.classList.toggle('bg-brand-softer',        isActive);
-      btn.classList.toggle('text-fg-brand-strong',   isActive);
-      btn.classList.toggle('font-semibold',          isActive);
-      btn.classList.toggle('border-brand-subtle',    isActive);
+      if (isActive) {
+        btn.style.background = '#eff6ff';
+        btn.style.color = '#1d4ed8';
+        btn.style.fontWeight = '600';
+        btn.style.borderColor = '#bfdbfe';
+      } else {
+        btn.style.background = '';
+        btn.style.color = '';
+        btn.style.fontWeight = '';
+        btn.style.borderColor = '';
+      }
     });
 
     // Wire Flowbite interactivity after render
@@ -326,6 +415,11 @@ export function wireDesignSystem(root) {
       try { initCopyClipboards(contentPane); } catch (_) {}
       try { initDatepickers(contentPane);  } catch (_) {}
       try { initDismiss(contentPane);      } catch (_) {}
+      try { initCollapses(contentPane);    } catch (_) {}
+      try { initModals(contentPane);       } catch (_) {}
+      try { initPopovers(contentPane);     } catch (_) {}
+      try { initProgressBars(contentPane); } catch (_) {}
+      try { initSidebars(contentPane);     } catch (_) {}
     });
 
     // Scroll content pane to top

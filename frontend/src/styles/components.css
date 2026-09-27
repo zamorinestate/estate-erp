@@ -1349,16 +1349,19 @@
   gap: 9px;
   padding: 8px 15px;
   min-height: 38px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm, 6px);
-  color: var(--ink);
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  border: 1px solid #0284c7;
+  border-radius: var(--radius-sm, 8px);
+  color: #ffffff;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  box-shadow: var(--shadow-xs);
+  box-shadow: 0 3px 10px rgba(2, 132, 199, 0.32);
   transition: all var(--motion-fast, 150ms) var(--ease, ease);
   white-space: nowrap;
+}
+.exec-action-btn span {
+  color: #ffffff;
 }
 .exec-action-btn .exec-icon-box {
   display: inline-flex;
@@ -1366,20 +1369,25 @@
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 5px;
-  background: rgba(180,83,9,0.08);
-  color: var(--bronze-600, #b45309);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
   flex-shrink: 0;
+}
+.exec-action-btn .exec-icon-box svg {
+  stroke: #ffffff;
+  color: #ffffff;
 }
 .exec-action-btn:hover {
   transform: translateY(-2px);
-  border-color: var(--bronze-500, #b45309);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-  color: var(--ink);
+  background: linear-gradient(135deg, #0369a1 0%, #075985 100%);
+  border-color: #0369a1;
+  box-shadow: 0 6px 18px rgba(2, 132, 199, 0.48);
+  color: #ffffff;
 }
 .exec-action-btn:hover .exec-icon-box {
-  background: rgba(180,83,9,0.16);
-  color: var(--bronze-700, #92400e);
+  background: rgba(255, 255, 255, 0.32);
+  color: #ffffff;
 }
 .exec-action-btn:active {
   transform: translateY(0);

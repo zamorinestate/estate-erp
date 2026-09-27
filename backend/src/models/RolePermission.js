@@ -7,6 +7,7 @@ const ROLES = [
   'OWNER',
   'CAFE_ADMIN',
   'STAFF',
+  'VENDOR',
 ];
 
 const PERMISSION_EFFECTS = [

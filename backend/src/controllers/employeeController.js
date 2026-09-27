@@ -436,15 +436,38 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     pin = null,
   } = req.body;
 
-  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
-  const cleanPhone = phone ? String(phone).trim() : '';
+  const effectiveName = (name || req.body.legalName || req.body.fullName || '').trim();
+  const effectivePreferredName = (preferredName || req.body.displayName || '').trim();
+  const effectiveEmail = (email || req.body.personalEmail || req.body.companyEmail || '').trim().toLowerCase();
+  const effectivePhone = (phone || req.body.phoneNumber || req.body.mobile || '').trim();
+  const rawRole = (role || req.body.assignedRole || 'STAFF').trim();
+  const effectiveDesignation = (designation || req.body.position || 'Junior Barista').trim();
 
-  if (!name || !cleanEmail) {
+  if (!effectiveName || !effectiveEmail) {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'Employee name and email are required for onboarding.');
   }
 
+  const normalizeWorkerType = (wt) => {
+    if (!wt) return 'PERMANENT';
+    const clean = String(wt).toUpperCase().replace(/[\s\-_()]/g, '');
+    if (clean.includes('PERMANENT')) return 'PERMANENT';
+    if (clean.includes('FIXED') || clean.includes('CONTRACT')) return 'FIXED_TERM';
+    if (clean.includes('TRAIN')) return 'TRAINEE';
+    if (clean.includes('INTERN')) return 'INTERN';
+    if (clean.includes('CONTINGENT')) return 'CONTINGENT';
+    return 'PERMANENT';
+  };
+
+  const effectiveWorkerType = normalizeWorkerType(workerType);
+  const effectivePrimaryCafeId = (primaryCafeId && String(primaryCafeId).trim())
+    ? String(primaryCafeId).trim().toUpperCase()
+    : 'ZC-0001';
+  const effectiveAssignedCafeIds = (Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0)
+    ? assignedCafeIds.map(c => String(c).trim().toUpperCase()).filter(Boolean)
+    : [effectivePrimaryCafeId];
+
   // Reject assigning MASTER role to any new employee
-  const candidateRole = String(role || 'STAFF').trim().toUpperCase();
+  const candidateRole = String(rawRole || 'STAFF').trim().toUpperCase();
   if (candidateRole === 'MASTER') {
     throw new ApiError(
       400,
@@ -455,18 +478,18 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   const effectiveRole = ['STAFF', 'CAFE_ADMIN', 'OWNER'].includes(candidateRole) ? candidateRole : 'STAFF';
 
   // Duplicate check - strictly query non-empty values
-  const orConditions = [{ email: cleanEmail }];
-  if (cleanPhone) {
-    orConditions.push({ phone: cleanPhone });
+  const orConditions = [{ email: effectiveEmail }];
+  if (effectivePhone) {
+    orConditions.push({ phone: effectivePhone });
   }
 
   const existingUser = await User.findOne({
     $or: orConditions,
   });
   if (existingUser) {
-    const duplicateDetail = existingUser.email === cleanEmail
-      ? `email ${cleanEmail}`
-      : `phone ${cleanPhone}`;
+    const duplicateDetail = existingUser.email === effectiveEmail
+      ? `email ${effectiveEmail}`
+      : `phone ${effectivePhone}`;
     throw new ApiError(409, 'DUPLICATE_EMPLOYEE', `An employee with ${duplicateDetail} already exists.`);
   }
 
@@ -543,19 +566,19 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   const newUser = await User.create({
     userId: newUserId,
     organisationId,
-    name: name.trim(),
-    preferredName: preferredName.trim(),
-    email: email.toLowerCase().trim(),
-    phone: phone.trim(),
+    name: effectiveName,
+    preferredName: effectivePreferredName,
+    email: effectiveEmail,
+    phone: effectivePhone,
     role: effectiveRole,
     department,
-    designation,
+    designation: effectiveDesignation,
     employmentType,
-    workerType,
+    workerType: effectiveWorkerType,
     employmentStatus,
     probationStatus: 'PENDING',
-    primaryCafeId,
-    assignedCafeIds,
+    primaryCafeId: effectivePrimaryCafeId,
+    assignedCafeIds: effectiveAssignedCafeIds,
     positionId,
     managerUserId,
     joiningDate: new Date(joiningDate),

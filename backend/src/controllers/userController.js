@@ -290,6 +290,14 @@ function ensureUserIsAccessible(
 
 const listUsers = asyncHandler(
   async (request, response) => {
+    if (request.auth.role === 'VENDOR') {
+      throw new ApiError(
+        403,
+        'FORBIDDEN_VENDOR_ACCESS',
+        'Vendor accounts cannot access internal user administration.'
+      );
+    }
+
     const users = await User.find(
       buildUserFilter(request)
     ).sort({
@@ -311,6 +319,14 @@ const listUsers = asyncHandler(
 
 const getUser = asyncHandler(
   async (request, response) => {
+    if (request.auth.role === 'VENDOR') {
+      throw new ApiError(
+        403,
+        'FORBIDDEN_VENDOR_ACCESS',
+        'Vendor accounts cannot access internal user administration.'
+      );
+    }
+
     const userId =
       normalizeIdentifier(
         request.params.userId

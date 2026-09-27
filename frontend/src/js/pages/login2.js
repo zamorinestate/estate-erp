@@ -1281,6 +1281,10 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
             errorEl.textContent = "Too many sign-in attempts detected. Please wait a moment before trying again.";
           } else if (err.isServerError || (err.status >= 500 && err.status <= 599)) {
             errorEl.textContent = "The server encountered a temporary error. Please try again in a moment.";
+          } else if (err.status === 401 || err.code === "INVALID_LOGIN" || err.code === "INVALID_CREDENTIALS") {
+            errorEl.textContent = "Invalid email or password. Please verify your credentials and try again.";
+          } else if (rawMsg === "You do not have permission to perform this action." || err.status === 403 || err.code === "PERMISSION_DENIED" || err.code === "FORBIDDEN") {
+            errorEl.textContent = "Invalid credentials or access denied. Please verify your Organisation ID, email, and password.";
           } else {
             errorEl.textContent = rawMsg || "Invalid credentials. Please check your Organisation ID, email, and password.";
           }

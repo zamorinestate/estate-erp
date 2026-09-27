@@ -23,6 +23,7 @@ const { User } = require('../models/User');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { extractIdempotencyKey, acquireLock } = require('../utils/idempotencyHelper');
 
 function normalizeIdentifier(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -269,125 +270,166 @@ const createExpense = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, cafeId);
 
-  // Duplicate Check
-  const normalizedInvoice = invoiceNumber.trim().toUpperCase();
-  if (normalizedInvoice && vendorName) {
-    const existing = await Expense.findOne({
-      organisationId,
-      vendorName: new RegExp(`^${vendorName.trim()}$`, 'i'),
-      invoiceNumber: normalizedInvoice,
-      status: { $ne: 'CANCELLED' },
-    });
-    if (existing) {
-      throw new ApiError(409, 'DUPLICATE_EXPENSE_DETECTED', `An expense with invoice #${normalizedInvoice} from ${vendorName} already exists (${existing.expenseId}).`);
-    }
-  }
-
-  const dateStr = businessDate || getIstBusinessDate();
-  const dateCompact = dateStr.replace(/-/g, '');
-  let expenseId;
-  try {
-    expenseId = await SequenceCounter.generateId({
-      organisationId,
-      sequenceKey: `EXPENSE:${dateCompact}`,
-      prefix: `EX-${dateCompact}`,
-      minimumDigits: 4,
-    });
-  } catch (err) {
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    expenseId = `EX-${dateCompact}-${randomSuffix}`;
-  }
-
   const amountPaisa = amount ? Math.round(Number(amount) * 100) : items.reduce((sum, it) => sum + (it.amountPaisa || 0), 0);
   const totalPaisa = amountPaisa + Number(taxPaisa);
+  const dateStr = businessDate || getIstBusinessDate();
+  const dateCompact = dateStr.replace(/-/g, '');
 
-  // Evidence hashes
-  const processedEvidence = (evidence || []).map((ev, idx) => ({
-    documentId: ev.documentId || `DOC-EXP-${idx + 1}`,
-    documentType: ev.documentType || 'RECEIPT',
-    fileUrl: ev.fileUrl || '/receipts/default.pdf',
-    fileHash: ev.fileHash || crypto.createHash('sha256').update(ev.fileUrl || `${expenseId}-${idx}`).digest('hex'),
-    fileName: ev.fileName || 'Receipt.pdf',
-    uploadedBy: userId,
-  }));
+  const idempotencyKey = extractIdempotencyKey(request);
+  const lockKey = `EXPENSE:${organisationId}:${cafeId}:${userId}:${totalPaisa}:${dateStr}`;
+  const releaseLock = acquireLock(lockKey);
 
-  const initialStatus = isDraft ? 'DRAFT' : 'SUBMITTED';
+  let expense;
+  try {
+    // Duplicate Check
+    const normalizedInvoice = invoiceNumber.trim().toUpperCase();
+    const duplicateQuery = {
+      organisationId,
+      cafeId,
+      status: { $nin: ['CANCELLED', 'REJECTED'] },
+      $or: [
+        ...(idempotencyKey ? [{ idempotencyKey }] : []),
+        ...(normalizedInvoice && vendorName ? [{ vendorName: new RegExp(`^${vendorName.trim()}$`, 'i'), invoiceNumber: normalizedInvoice }] : []),
+        {
+          preparerUserId: userId,
+          totalPaisa,
+          category: category.toUpperCase(),
+          businessDate: dateStr,
+          createdAt: { $gte: new Date(Date.now() - 30000) },
+        },
+      ],
+    };
 
-  const expense = await Expense.create({
-    expenseId,
-    organisationId,
-    cafeId,
-    businessDate: dateStr,
-    expenseType,
-    ownerUserId: request.body.ownerUserId || userId,
-    preparerUserId: userId,
-    category: category.toUpperCase(),
-    purpose,
-    description,
-    amount: amountPaisa / 100,
-    amountPaisa,
-    taxPaisa: Number(taxPaisa),
-    totalPaisa,
-    currency: 'INR',
-    paymentMethod,
-    paymentSource,
-    vendorName,
-    invoiceNumber: normalizedInvoice,
-    receiptStatus: processedEvidence.length > 0 ? 'ATTACHED' : 'REQUIRED',
-    evidence: processedEvidence,
-    items,
-    allocations: allocations.length > 0 ? allocations : [{ cafeId, amountPaisa: totalPaisa, percentage: 100 }],
-    gstDetails,
-    relatedRecords,
-    status: initialStatus,
-    submittedAt: isDraft ? null : new Date(),
-    submittedBy: isDraft ? null : userId,
-    createdBy: userId,
-  });
-
-  if (!isDraft) {
-    try {
-      const approvalCount = await Approval.countDocuments({ organisationId });
-      const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-      await Approval.create({
-        approvalId,
-        organisationId,
-        cafeId,
-        entityType: 'EXPENSE',
-        entityId: expense.expenseId,
-        requestingUserId: userId,
-        actionRequired: `Expense Claim: ₹${(totalPaisa / 100).toFixed(2)} (${expense.purpose || expense.category})`,
-        amountPaisa: totalPaisa,
-        status: 'PENDING',
+    const existing = await Expense.findOne(duplicateQuery).sort({ createdAt: -1 });
+    if (existing) {
+      return response.status(409).json({
+        success: false,
+        code: 'DUPLICATE_EXPENSE_DETECTED',
+        message: `An identical or matching expense claim was already recorded (${existing.expenseId}).`,
+        data: { expense: existing },
+        correlationId: request.correlationId || null,
       });
-
-      const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
-      const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      for (const m of masterUsers) {
-        const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
-        await Notification.create({
-          notificationId: notifId,
-          organisationId,
-          cafeId,
-          eventType: 'EXPENSE_SUBMITTED',
-          category: 'FINANCE',
-          recipientUserId: m.userId,
-          recipientRole: 'MASTER',
-          recipientEmail: m.email || 'master@zamorincafe.com',
-          title: `🧾 Expense Claim: ${expense.expenseId}`,
-          message: `${userId} submitted an expense claim of ₹${(totalPaisa / 100).toFixed(2)} (${expense.purpose || expense.category}) for ${cafeId}.`,
-          priority: 'NORMAL',
-          channels: ['IN_APP'],
-          deepLink: `#approvals`,
-          sourceModule: 'EXPENSES',
-          sourceEntityType: 'EXPENSE',
-          sourceEntityId: expense.expenseId,
-          createdBy: userId,
-        });
-      }
-    } catch (err) {
-      console.warn(`[EXPENSE_APPROVAL_HOOK_WARN] ${err.message}`);
     }
+
+    let expenseId;
+    try {
+      expenseId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `EXPENSE:${dateCompact}`,
+        prefix: `EX-${dateCompact}`,
+        minimumDigits: 4,
+      });
+    } catch (err) {
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+      expenseId = `EX-${dateCompact}-${randomSuffix}`;
+    }
+
+    // Evidence hashes
+    const processedEvidence = (evidence || []).map((ev, idx) => ({
+      documentId: ev.documentId || `DOC-EXP-${idx + 1}`,
+      documentType: ev.documentType || 'RECEIPT',
+      fileUrl: ev.fileUrl || '/receipts/default.pdf',
+      fileHash: ev.fileHash || crypto.createHash('sha256').update(ev.fileUrl || `${expenseId}-${idx}`).digest('hex'),
+      fileName: ev.fileName || 'Receipt.pdf',
+      uploadedBy: userId,
+    }));
+
+    const initialStatus = isDraft ? 'DRAFT' : 'SUBMITTED';
+
+    expense = await Expense.create({
+      expenseId,
+      organisationId,
+      cafeId,
+      businessDate: dateStr,
+      idempotencyKey: idempotencyKey || null,
+      expenseType,
+      ownerUserId: request.body.ownerUserId || userId,
+      preparerUserId: userId,
+      category: category.toUpperCase(),
+      purpose,
+      description,
+      amount: amountPaisa / 100,
+      amountPaisa,
+      taxPaisa: Number(taxPaisa),
+      totalPaisa,
+      currency: 'INR',
+      paymentMethod,
+      paymentSource,
+      vendorName,
+      invoiceNumber: normalizedInvoice,
+      receiptStatus: processedEvidence.length > 0 ? 'ATTACHED' : 'REQUIRED',
+      evidence: processedEvidence,
+      items,
+      allocations: allocations.length > 0 ? allocations : [{ cafeId, amountPaisa: totalPaisa, percentage: 100 }],
+      gstDetails,
+      relatedRecords,
+      status: initialStatus,
+      submittedAt: isDraft ? null : new Date(),
+      submittedBy: isDraft ? null : userId,
+      createdBy: userId,
+    });
+
+    if (!isDraft) {
+      try {
+        let approval = await Approval.findOne({
+          organisationId,
+          entityType: 'EXPENSE',
+          entityId: expense.expenseId,
+        });
+
+        if (!approval) {
+          let approvalId;
+          try {
+            approvalId = await SequenceCounter.generateId({ organisationId, sequenceKey: 'APPROVAL', prefix: 'APP', minimumDigits: 5 });
+          } catch {
+            const approvalCount = await Approval.countDocuments({ organisationId });
+            approvalId = `APP-${Date.now().toString().slice(-6)}-${String(approvalCount + 1).padStart(3, '0')}`;
+          }
+          await Approval.create({
+            approvalId,
+            organisationId,
+            cafeId,
+            entityType: 'EXPENSE',
+            entityId: expense.expenseId,
+            requestingUserId: userId,
+            actionRequired: `Expense Claim: ₹${(totalPaisa / 100).toFixed(2)} (${expense.purpose || expense.category})`,
+            amountPaisa: totalPaisa,
+            status: 'PENDING',
+          });
+        }
+
+        const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+        const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        for (const m of masterUsers) {
+          const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+          await Notification.create({
+            notificationId: notifId,
+            organisationId,
+            cafeId,
+            eventType: 'EXPENSE_SUBMITTED',
+            category: 'FINANCE',
+            recipientUserId: m.userId,
+            recipientRole: 'MASTER',
+            recipientEmail: m.email || 'master@zamorincafe.com',
+            title: `🧾 Expense Claim: ${expense.expenseId}`,
+            message: `${userId} submitted an expense claim of ₹${(totalPaisa / 100).toFixed(2)} (${expense.purpose || expense.category}) for ${cafeId}.`,
+            priority: 'NORMAL',
+            channels: ['IN_APP'],
+            deepLink: `#approvals`,
+            sourceModule: 'EXPENSES',
+            sourceEntityType: 'EXPENSE',
+            sourceEntityId: expense.expenseId,
+            deduplicationKey: `EXP_${expense.expenseId}_${m.userId}`,
+            correlationId: request.correlationId || notifId,
+            createdBy: userId,
+          });
+        }
+      } catch (err) {
+        console.warn(`[EXPENSE_APPROVAL_HOOK_WARN] ${err.message}`);
+      }
+    }
+  } finally {
+    releaseLock();
   }
 
   return response.status(201).json({

@@ -252,6 +252,13 @@ const staffLoanAdvanceSchema = new mongoose.Schema(
       noDueCertificateGenerated: { type: Boolean, default: false },
     },
 
+    idempotencyKey: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+
     createdByUserId: {
       type: String,
       required: true,

@@ -55,6 +55,13 @@ function requireMaster(request) {
 }
 
 function assertCafeAccess(request, cafeId) {
+  if (request.auth?.role === 'VENDOR') {
+    throw new ApiError(
+      403,
+      'FORBIDDEN_VENDOR_ACCESS',
+      'Vendor accounts cannot access internal café administration.'
+    );
+  }
   if (request.auth.role === 'MASTER') return;
   const rawCafes = [
     ...(Array.isArray(request.auth.assignedCafeIds) ? request.auth.assignedCafeIds : (request.auth.assignedCafeIds ? [request.auth.assignedCafeIds] : [])),
@@ -141,6 +148,14 @@ function buildCafeFilter(request) {
 
 const listCafes = asyncHandler(
   async (request, response) => {
+    if (request.auth?.role === 'VENDOR') {
+      throw new ApiError(
+        403,
+        'FORBIDDEN_VENDOR_ACCESS',
+        'Vendor accounts cannot access internal café administration.'
+      );
+    }
+
     const cafes = await Cafe.find(
       buildCafeFilter(request)
     ).sort({

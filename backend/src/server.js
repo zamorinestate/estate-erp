@@ -52,6 +52,24 @@ function isAllowedVercelOrigin(origin) {
   }
 }
 
+function isPrivateNetworkOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return false;
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+    return (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.startsWith('10.') ||
+      host.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      host.endsWith('.local')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function createCorsOptions(environment) {
   const allowedOrigins =
     new Set(environment.allowedOrigins || []);
@@ -70,7 +88,8 @@ function createCorsOptions(environment) {
           origin === 'http://127.0.0.1:3000' ||
           origin === 'http://localhost:4000' ||
           origin.startsWith('http://localhost:') ||
-          origin.startsWith('http://127.0.0.1:')
+          origin.startsWith('http://127.0.0.1:') ||
+          isPrivateNetworkOrigin(origin)
         ))
       ) {
         callback(null, true);
@@ -170,7 +189,8 @@ function createCsrfOriginProtection(environment) {
           normalizedOrigin === 'http://127.0.0.1:3000' ||
           normalizedOrigin === 'http://localhost:4000' ||
           normalizedOrigin.startsWith('http://localhost:') ||
-          normalizedOrigin.startsWith('http://127.0.0.1:')
+          normalizedOrigin.startsWith('http://127.0.0.1:') ||
+          isPrivateNetworkOrigin(normalizedOrigin)
         )
       )
     ) {
@@ -439,6 +459,19 @@ async function listen(
 async function startServer() {
   const environment =
     loadEnvironment();
+
+  const appMode = String(process.env.APP_MODE || '').trim().toUpperCase();
+  const isRealDataOrUatMode = ['UAT', 'REAL_USER_TEST', 'STAGING', 'PRODUCTION'].includes(appMode) ||
+                              environment.production ||
+                              process.env.REQUIRE_PERSISTENT_DB === 'true';
+
+  if (isRealDataOrUatMode) {
+    const uriLower = String(environment.mongodbUri || '').toLowerCase();
+    if (uriLower.includes('memory') || uriLower.includes('mongomemoryserver') || global.__MONGODB_MEMORY_SERVER__) {
+      console.error('[FATAL] PERSISTENT_DATABASE_REQUIRED: Ephemeral in-memory database detected during startup in ' + (appMode || environment.nodeEnvironment) + ' mode. Aborting.');
+      process.exit(1);
+    }
+  }
 
   await connectDatabase({
     uri: environment.mongodbUri,

@@ -53,7 +53,7 @@ import {
 let routerModulePromise = null;
 export function getRouter() {
   if (!routerModulePromise) {
-    routerModulePromise = import("./router.js");
+    routerModulePromise = import("./router.js?v=3.9.0");
   }
   return routerModulePromise;
 }
@@ -402,6 +402,13 @@ function resolveAuthenticatedRole(user) {
     };
   }
 
+  if (rawRole === "VENDOR") {
+    return {
+      role: "vendor",
+      isPrimaryMaster: false,
+    };
+  }
+
   // Fail closed to the least-privileged application navigation context.
   return {
     role: "staff",
@@ -666,7 +673,8 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
       err?.data?.mfaChallengeToken ||
       err?.data?.mfaSetupToken ||
       err?.data?.requiresMfa ||
-      err?.data?.mfaRequired
+      err?.data?.mfaRequired ||
+      (err?.status === 403 && (err?.message?.includes("Multi-factor") || err?.message?.includes("MFA")))
     ) {
       const mfaChallengeToken = err?.data?.mfaChallengeToken || err?.data?.mfaSetupToken || err?.data?.tempToken || "";
       const isSetup = err?.code === "MFA_SETUP_REQUIRED" || Boolean(err?.data?.mfaSetupRequired);
@@ -689,7 +697,7 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
 function handleAuthenticatedUserSession(user) {
   abortActivePasskeyRequests();
   const { role, isPrimaryMaster } = resolveAuthenticatedRole(user);
-  const landingRoute = (role === "staff") ? "staff-home" : "dashboard";
+  const landingRoute = (role === "staff") ? "staff-home" : (role === "vendor" ? "vendor-dashboard" : "dashboard");
 
   let targetRoute = landingRoute;
   if (typeof window !== "undefined") {
@@ -1013,6 +1021,29 @@ async function boot() {
       }
     }
 
+    // Café Operations Operator Sign-In — always public, bypass session check
+    if (urlHash === "cafe-operator-signin") {
+      const { renderCafeOperatorSignIn, wireCafeOperatorSignIn } = await import("./pages/cafeOperatorSignIn.js");
+      const appEl = document.getElementById("app");
+      if (appEl) {
+        appEl.innerHTML = renderCafeOperatorSignIn();
+        wireCafeOperatorSignIn(appEl, {
+          onSignIn: async ({ employeeId, pin }) => {
+            const { apiPost, getCanonicalDeviceId, setCafeOpsSessionToken, setCafeOpsDeviceToken, setSessionId } = await import("./apiClient.js");
+            const deviceId = getCanonicalDeviceId();
+            const res = await apiPost('/cafe-operations/operator/signin', { deviceId, operatorUserId: employeeId, pin });
+            const sessionToken = res?.sessionToken || res?.operatorSession?.sessionToken;
+            if (sessionToken) setCafeOpsSessionToken(sessionToken);
+            if (res?.trustedDeviceToken) setCafeOpsDeviceToken(res.trustedDeviceToken);
+            if (res?.operatorSession?.operatorSessionId) setSessionId(res.operatorSession.operatorSessionId);
+            window.location.hash = 'dashboard';
+          },
+          onReturnKiosk: () => { window.location.hash = 'kiosk-attendance'; },
+        });
+      }
+      return;
+    }
+
     // If already authenticated in memory, mount the app shell immediately
     if (state.auth?.authenticated && state.user) {
       if (pathname === "/login" || pathname === "/login2") {
@@ -1025,6 +1056,7 @@ async function boot() {
       registerServiceWorker().catch(() => {});
       return;
     }
+
 
     // Local development / automated testing persona resolution
     if (isDirectDashboardAllowed() && (params?.get("role") || params?.get("devRole") || (typeof localStorage !== "undefined" && localStorage.getItem("zamorin-dev-role")))) {
@@ -1051,6 +1083,41 @@ async function boot() {
       });
 
       renderShell();
+
+      // Automatically acquire authentic JWT session for this persona
+      const DEV_CREDENTIALS = {
+        master: { email: "pradeeshk331@gmail.com", password: "PRADEESHK@94309" },
+        owner: { email: "owner@example.com", password: "PK@NilaVega_8427!Cedar" },
+        cafe_admin: { email: "admin@example.com", password: "PK@NilaVega_8427!Cedar" },
+        admin: { email: "admin@example.com", password: "PK@NilaVega_8427!Cedar" },
+        staff: { email: "staff@example.com", password: "PK@NilaVega_8427!Cedar" },
+      };
+      const creds = DEV_CREDENTIALS[devKey] || DEV_CREDENTIALS.master;
+      apiPost("/auth/login", {
+        email: creds.email,
+        password: creds.password,
+        organisationId: "ZAMORIN",
+        device: {
+          deviceId: getOrCreateDeviceId(),
+          deviceName: "Browser Dev Client",
+          deviceType: "DESKTOP",
+        },
+      }).then((res) => {
+        const token = res?.data?.accessToken || res?.data?.token;
+        if (token) {
+          setAccessToken(token);
+        }
+        if (res?.data?.user) {
+          setState({
+            auth: { authenticated: true, loading: false, user: res.data.user, authentication: null, error: null },
+            user: res.data.user,
+          });
+        }
+        loadAvailableCafes().catch(() => {});
+      }).catch((err) => {
+        console.warn("[Dev Auth] Background token acquisition:", err.message);
+      });
+
       loadAvailableCafes().catch(() => {});
       registerServiceWorker().catch(() => {});
       return;
@@ -1064,10 +1131,42 @@ async function boot() {
       mountAuthScreen("mfa");
       return;
     }
+    if (urlHash === "cafe-gateway" || urlHash.startsWith("cafe-access/") || urlHash.startsWith("c/")) {
+      const isCShort = urlHash.startsWith("c/");
+      const isQr = isCShort || urlHash.startsWith("cafe-access/qr/");
+      const isLink = urlHash.startsWith("cafe-access/link/");
+      const token = isCShort ? urlHash.slice("c/".length) : isQr ? urlHash.slice("cafe-access/qr/".length) : isLink ? urlHash.slice("cafe-access/link/".length) : null;
+      const method = isQr ? "QR" : isLink ? "LINK" : null;
+      const { mountPublicCafeGateway } = await getCafeGateway();
+      mountPublicCafeGateway(document.getElementById("app"), { method, token });
+      return;
+    }
+    if (urlHash === "cafe-operator-signin") {
+      const { renderCafeOperatorSignIn, wireCafeOperatorSignIn } = await import("./pages/cafeOperatorSignIn.js");
+      const appEl = document.getElementById("app");
+      if (appEl) {
+        appEl.innerHTML = renderCafeOperatorSignIn();
+        wireCafeOperatorSignIn(appEl, {
+          onSignIn: async ({ employeeId, pin }) => {
+            const { apiPost } = await import("./apiClient.js");
+            const { getCanonicalDeviceId, setCafeOpsSessionToken, setCafeOpsDeviceToken, setSessionId } = await import("./apiClient.js");
+            const deviceId = getCanonicalDeviceId();
+            const res = await apiPost('/cafe-operations/operator/signin', { deviceId, operatorUserId: employeeId, pin });
+            const sessionToken = res?.sessionToken || res?.operatorSession?.sessionToken;
+            if (sessionToken) setCafeOpsSessionToken(sessionToken);
+            if (res?.trustedDeviceToken) setCafeOpsDeviceToken(res.trustedDeviceToken);
+            if (res?.operatorSession?.operatorSessionId) setSessionId(res.operatorSession.operatorSessionId);
+            window.location.hash = 'dashboard';
+          },
+          onReturnKiosk: () => { window.location.hash = 'kiosk-attendance'; },
+        });
+      }
+      return;
+    }
 
     const isExplicitAppHash = Boolean(
       urlHash &&
-      !["login", "login2", "forgot", "mfa", "register", "cafe-gateway"].includes(urlHash) &&
+      !["login", "login2", "forgot", "mfa", "register", "cafe-gateway", "cafe-operator-signin"].includes(urlHash) &&
       !urlHash.startsWith("cafe-access/") &&
       !urlHash.startsWith("c/")
     );
@@ -1080,7 +1179,8 @@ async function boot() {
       pathname === "/login" ||
       pathname === "/login2" ||
       params?.get("auth") === "login"
-    );
+    ) && urlHash !== "cafe-operator-signin";
+
 
     if (isLoginRoute) {
       // Mount login screen synchronously with ZERO latency (0ms perceived load)
@@ -1187,6 +1287,25 @@ if (typeof window !== "undefined") {
       const method = isQr ? "QR" : isLink ? "LINK" : null;
       const { mountPublicCafeGateway } = await getCafeGateway();
       mountPublicCafeGateway(document.getElementById("app"), { method, token });
+    } else if (rawHash === "cafe-operator-signin") {
+      const { renderCafeOperatorSignIn, wireCafeOperatorSignIn } = await import("./pages/cafeOperatorSignIn.js");
+      const appEl = document.getElementById("app");
+      if (appEl) {
+        appEl.innerHTML = renderCafeOperatorSignIn();
+        wireCafeOperatorSignIn(appEl, {
+          onSignIn: async ({ employeeId, pin }) => {
+            const { apiPost, getCanonicalDeviceId, setCafeOpsSessionToken, setCafeOpsDeviceToken, setSessionId } = await import("./apiClient.js");
+            const deviceId = getCanonicalDeviceId();
+            const res = await apiPost('/cafe-operations/operator/signin', { deviceId, operatorUserId: employeeId, pin });
+            const sessionToken = res?.sessionToken || res?.operatorSession?.sessionToken;
+            if (sessionToken) setCafeOpsSessionToken(sessionToken);
+            if (res?.trustedDeviceToken) setCafeOpsDeviceToken(res.trustedDeviceToken);
+            if (res?.operatorSession?.operatorSessionId) setSessionId(res.operatorSession.operatorSessionId);
+            window.location.hash = 'dashboard';
+          },
+          onReturnKiosk: () => { window.location.hash = 'kiosk-attendance'; },
+        });
+      }
     } else if (rawHash && state.route !== rawHash) {
       navigate(rawHash);
     }

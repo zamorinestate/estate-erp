@@ -45,6 +45,7 @@ const RECIPIENT_ROLES = [
   'OWNER',
   'CAFE_ADMIN',
   'STAFF',
+  'VENDOR',
 ];
 
 const deliveryAttemptSchema = new mongoose.Schema(
@@ -545,6 +546,24 @@ notificationSchema.methods.archive =
     this.archivedAt = new Date();
     return this.save();
   };
+
+notificationSchema.pre('validate', function preValidateNotification() {
+  if (!this.correlationId) {
+    this.correlationId = this.notificationId;
+  }
+  if (!this.sourceModule) {
+    this.sourceModule = 'SYSTEM';
+  }
+  if (!this.sourceEntityType) {
+    this.sourceEntityType = 'SYSTEM_NOTIFICATION';
+  }
+  if (!this.sourceEntityId) {
+    this.sourceEntityId = this.notificationId;
+  }
+  if (!this.deduplicationKey) {
+    this.deduplicationKey = `${this.recipientUserId || 'USER'}:${this.eventType || 'EVENT'}:${this.sourceEntityId}`;
+  }
+});
 
 const Notification =
   mongoose.models.Notification ||

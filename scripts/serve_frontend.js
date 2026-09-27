@@ -127,10 +127,9 @@ const server = http.createServer(async (req, res) => {
       "Content-Type": isHtml ? "text/html; charset=utf-8" : contentType,
       "Access-Control-Allow-Origin": "*",
       "Sec-CH-Prefers-Color-Scheme": "dark",
-      "Cache-Control": isHtml
-        ? "no-cache, must-revalidate"
-        : "public, max-age=86400, stale-while-revalidate=604800",
-      ...(isHtml ? { "Pragma": "no-cache", "Expires": "0" } : {})
+      "Cache-Control": "no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0"
     });
     res.end(content);
     return;

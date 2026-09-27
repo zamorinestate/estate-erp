@@ -52,12 +52,30 @@ async function connectDatabase({
     );
   }
 
-  await mongoose.connect(uri, {
-    serverSelectionTimeoutMS:
-      serverSelectionTimeoutMs,
-    maxPoolSize,
-    minPoolSize,
-  });
+  const appMode = String(process.env.APP_MODE || '').trim().toUpperCase();
+  const isRealDataOrUatMode = ['UAT', 'REAL_USER_TEST', 'STAGING', 'PRODUCTION'].includes(appMode) ||
+                              process.env.NODE_ENV === 'production' ||
+                              process.env.REQUIRE_PERSISTENT_DB === 'true';
+
+  const uriLower = String(uri || '').toLowerCase();
+  if (isRealDataOrUatMode && (uriLower.includes('memory') || uriLower.includes('mongomemoryserver') || global.__MONGODB_MEMORY_SERVER__)) {
+    throw new Error('PERSISTENT_DATABASE_REQUIRED: Ephemeral in-memory database is strictly forbidden for real-user testing or production.');
+  }
+
+  try {
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS:
+        serverSelectionTimeoutMs,
+      maxPoolSize,
+      minPoolSize,
+    });
+  } catch (err) {
+    if (isRealDataOrUatMode) {
+      const safeUri = uri.replace(/:([^:@]+)@/, ':***@');
+      throw new Error(`PERSISTENT_DATABASE_REQUIRED: Failed to connect to persistent database at ${safeUri}: ${err.message}`);
+    }
+    throw err;
+  }
 
   return mongoose.connection;
 }

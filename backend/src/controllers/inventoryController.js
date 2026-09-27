@@ -196,11 +196,42 @@ const createGlobalItem = asyncHandler(async (request, response) => {
     unitCost = 0,
   } = request.body;
 
-  if (!sku || !name || !category || !baseUnit) {
-    throw new ApiError(400, 'VALIDATION_FAILED', 'SKU, item name, category, and base unit are required.');
+  const effectiveName = (name || request.body.itemName || '').trim();
+  const rawCat = (category || request.body.itemCategory || 'OTHER').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const CATEGORY_MAP = {
+    RAW_MATERIAL: 'OTHER_CONTROLLED_MATERIALS',
+    RAW_MATERIALS: 'OTHER_CONTROLLED_MATERIALS',
+    COFFEE: 'COFFEE_BEANS',
+    BEANS: 'COFFEE_BEANS',
+    DAIRY: 'DAIRY_FRESH',
+    MILK: 'DAIRY_FRESH',
+    SYRUP: 'SYRUPS_FLAVOURS',
+    SYRUPS: 'SYRUPS_FLAVOURS',
+    FLAVOURS: 'SYRUPS_FLAVOURS',
+    BAKERY: 'BAKERY_FOOD_INPUTS',
+    FOOD_INPUTS: 'BAKERY_FOOD_INPUTS',
+    SUPPLIES: 'CLEANING_SUPPLIES',
+    CONSUMABLES: 'PACKAGING_CONSUMABLES',
+  };
+  const mappedCat = CATEGORY_MAP[rawCat] || rawCat;
+  const validCategories = new Set([
+    'COFFEE_BEANS', 'DAIRY_FRESH', 'SYRUPS_FLAVOURS', 'PACKAGING_CONSUMABLES',
+    'BAKERY_FOOD_INPUTS', 'CLEANING_SUPPLIES', 'OTHER_CONTROLLED_MATERIALS',
+    'BEVERAGE', 'FOOD', 'PACKAGING', 'CLEANING', 'EQUIPMENT', 'STATIONERY',
+    'PERISHABLE', 'NON_PERISHABLE', 'OTHER'
+  ]);
+  const effectiveCategory = validCategories.has(mappedCat) ? mappedCat : 'OTHER';
+  const effectiveBaseUnit = (baseUnit || request.body.unit || request.body.uom || 'kg').trim();
+  let cleanSku = (sku || request.body.itemSku || '').trim().toUpperCase();
+  if (!cleanSku) {
+    const prefix = effectiveCategory.slice(0, 3).toUpperCase() || 'SKU';
+    cleanSku = `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
   }
 
-  const cleanSku = sku.trim().toUpperCase();
+  if (!effectiveName) {
+    throw new ApiError(400, 'VALIDATION_FAILED', 'Item name is required.');
+  }
+
   const existing = await GlobalInventoryItem.findOne({ organisationId, sku: cleanSku });
   if (existing) {
     throw new ApiError(409, 'DUPLICATE_SKU', `An inventory item with SKU ${cleanSku} already exists.`);
@@ -222,13 +253,13 @@ const createGlobalItem = asyncHandler(async (request, response) => {
     organisationId,
     itemId,
     sku: cleanSku,
-    name: name.trim(),
+    name: effectiveName,
     shortName: shortName?.trim() || '',
     description: description?.trim() || '',
-    category,
-    baseUnit: baseUnit.trim().toLowerCase(),
-    stockUnit: stockUnit?.trim().toLowerCase() || baseUnit.trim().toLowerCase(),
-    purchaseUnit: purchaseUnit?.trim().toLowerCase() || baseUnit.trim().toLowerCase(),
+    category: effectiveCategory,
+    baseUnit: effectiveBaseUnit.toLowerCase(),
+    stockUnit: stockUnit?.trim().toLowerCase() || effectiveBaseUnit.toLowerCase(),
+    purchaseUnit: purchaseUnit?.trim().toLowerCase() || effectiveBaseUnit.toLowerCase(),
     packSize: Number(packSize) || 1,
     barcode: barcode?.trim() || null,
     criticality,

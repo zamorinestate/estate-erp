@@ -1,0 +1,857 @@
+/* ==========================================================================
+   ZAMORIN CAFÉ ERP — BLUE & WHITE THEME OVERRIDE
+   Replaces the "Ledger & Roastery" dark-navy/bronze palette with a clean,
+   professional blue-and-white corporate theme.
+
+   Loading order: LAST — overrides zamorin.css, components.css, layout.css.
+   ========================================================================== */
+
+/* ── 1. ROOT TOKEN OVERRIDES (Light/Paper theme only) ─────────────────────
+   We remap the brand tokens to blue while keeping functional colours intact.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Brand ink → Blue scale */
+  --ink-950: #0a1a3a;
+  --ink-900: #1d4ed8;   /* PRIMARY BLUE — was dark navy */
+  --ink-800: #2563eb;   /* hover blue */
+  --ink-700: #3b82f6;   /* mid blue */
+  --ink-600: #60a5fa;   /* light blue */
+
+  /* Bronze → Blue accent */
+  --bronze-700: #1e40af;
+  --bronze-600: #1d4ed8;
+  --bronze-500: #2563eb;  /* main accent — was amber/bronze */
+  --bronze-400: #3b82f6;
+  --bronze-300: #93c5fd;
+  --bronze-100: #dbeafe;
+  --bronze-050: #eff6ff;
+
+  /* Paper background → clean white */
+  --paper:          #f0f4ff;
+  --surface:        #ffffff;
+  --surface-sunken: #f0f7ff;
+  --surface-raised: #ffffff;
+  --surface-hover:  #eff6ff;
+
+  /* Ink text stays dark for readability */
+  --ink:    #0f172a;
+  --muted:  #475569;
+  --muted-2:#94a3b8;
+
+  /* Borders → blue-tinted */
+  --line:       #dbeafe;
+  --line-strong:#bfdbfe;
+
+  /* Focus ring → blue */
+  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.22);
+}
+
+/* ── 2. SIDEBAR ─────────────────────────────────────────────────────────────
+   White sidebar with blue gradient header band and blue active state.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .sidebar {
+  background: #ffffff;
+  border-right: 1px solid #dbeafe;
+}
+
+/* Brand badge: blue instead of dark navy */
+body:not(.auth-page) .brand-badge {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.30);
+}
+
+body:not(.auth-page) .brand-title { color: #0f172a; }
+body:not(.auth-page) .brand-subtitle { color: #64748b; }
+
+body:not(.auth-page) .sidebar-brand {
+  border-bottom-color: #dbeafe;
+}
+
+/* Scope pill: blue tint */
+body:not(.auth-page) .scope-pill {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+/* Nav section labels */
+body:not(.auth-page) .nav-scope-label { color: #94a3b8; }
+
+/* Nav links */
+body:not(.auth-page) .nav-link {
+  color: #334155;
+}
+body:not(.auth-page) .nav-link .nav-icon { color: #64748b; }
+
+body:not(.auth-page) .nav-link:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+body:not(.auth-page) .nav-link:hover .nav-icon { color: #2563eb; }
+
+/* Active nav: blue fill, white text, blue left bar */
+body:not(.auth-page) .nav-link.active {
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 600;
+}
+body:not(.auth-page) .nav-link.active .nav-icon { color: #bfdbfe; }
+body:not(.auth-page) .nav-link.active .count {
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.9);
+  border-color: transparent;
+}
+body:not(.auth-page) .nav-link.active::before {
+  background: #93c5fd;
+}
+
+/* Sidebar footer / user avatar */
+body:not(.auth-page) .user-avatar,
+body:not(.auth-page) .profile-avatar-btn {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+  color: #ffffff;
+}
+body:not(.auth-page) .profile-avatar-btn {
+  border-color: #bfdbfe;
+}
+body:not(.auth-page) .profile-avatar-btn:hover {
+  border-color: #3b82f6;
+}
+body:not(.auth-page) .footer-user {
+  background: #f0f7ff;
+}
+body:not(.auth-page) .footer-user:hover { background: #dbeafe; }
+body:not(.auth-page) .sidebar-footer { border-top-color: #dbeafe; }
+
+/* ── 3. TOPBAR ───────────────────────────────────────────────────────────────
+   White topbar with blue bottom border.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .topbar {
+  background: color-mix(in srgb, #ffffff 90%, transparent);
+  border-bottom: 1px solid #dbeafe;
+  box-shadow: 0 1px 8px rgba(37, 99, 235, 0.07);
+}
+
+body:not(.auth-page) .topbar-action-btn {
+  background: #ffffff;
+  border-color: #dbeafe;
+  color: #334155;
+}
+body:not(.auth-page) .topbar-action-btn:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+/* Notification badge dot: blue */
+body:not(.auth-page) .badge-dot {
+  background: #2563eb;
+  border-color: #ffffff;
+}
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4); }
+  50%       { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0); }
+}
+
+/* Search input: blue focus */
+body:not(.auth-page) .global-search-wrap input {
+  background: #ffffff;
+  border-color: #dbeafe;
+}
+body:not(.auth-page) .global-search-wrap input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+body:not(.auth-page) .select-scope:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+/* ── 4. BUTTONS ──────────────────────────────────────────────────────────────
+   All primary / gold / action buttons → Blue.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* .btn-primary  → solid blue */
+body:not(.auth-page) .btn-primary,
+body:not(.auth-page) button.btn-primary {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+}
+body:not(.auth-page) .btn-primary:hover,
+body:not(.auth-page) button.btn-primary:hover {
+  background: #1e40af !important;
+  border-color: #1e40af !important;
+}
+
+/* .btn-gold → also blue (was bronze/amber) */
+body:not(.auth-page) .btn-gold,
+body:not(.auth-page) button.btn-gold {
+  background: #2563eb !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25) !important;
+}
+body:not(.auth-page) .btn-gold:hover,
+body:not(.auth-page) button.btn-gold:hover {
+  background: #1d4ed8 !important;
+  border-color: #1e40af !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35) !important;
+}
+
+/* Focus ring on all buttons → blue */
+body:not(.auth-page) button:focus-visible,
+body:not(.auth-page) a:focus-visible,
+body:not(.auth-page) input:focus-visible,
+body:not(.auth-page) select:focus-visible,
+body:not(.auth-page) textarea:focus-visible {
+  outline-color: rgba(37, 99, 235, 0.5) !important;
+}
+
+/* ── 5. FORM CONTROLS ────────────────────────────────────────────────────────
+   Inputs and selects use blue focus ring.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .select:focus,
+body:not(.auth-page) .input:focus,
+body:not(.auth-page) .textarea:focus {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+}
+
+/* ── 6. TABS & SUBNAV ────────────────────────────────────────────────────────
+   Active tabs: blue fill instead of navy.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .tab.active,
+body:not(.auth-page) .tab.selected,
+body:not(.auth-page) .tab-btn.active,
+body:not(.auth-page) .subnav-btn.active,
+body:not(.auth-page) .subnav-btn.selected,
+body:not(.auth-page) .bills-nav-tab.active,
+body:not(.auth-page) .rs-tab-btn.active {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  border-color: #1d4ed8 !important;
+}
+
+/* ── 7. ACTION TILES (Fast Action Buttons on Dashboard) ──────────────────────
+   The quick-jump tiles on the Master dashboard.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .action-tile {
+  background: #ffffff;
+  border-color: #dbeafe;
+}
+body:not(.auth-page) .action-tile:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+body:not(.auth-page) .action-tile.primary {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  border-color: #1d4ed8 !important;
+}
+body:not(.auth-page) .action-tile.primary .tile-icon { color: #bfdbfe !important; }
+
+/* ── 8. CARDS & PANELS ────────────────────────────────────────────────────────
+   White cards with crisp borders and soft elevation.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .card,
+body:not(.auth-page) .glass-card,
+body:not(.auth-page) .dashboard-card,
+body:not(.auth-page) .stats-card,
+body:not(.auth-page) .metric-card {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+}
+
+/* ── 9. POPOVERS & DROPDOWNS ──────────────────────────────────────────────────
+   Profile & theme switcher popover: blue accents.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .theme-opt-btn.selected {
+  border-color: #2563eb !important;
+  background: #eff6ff !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15) !important;
+}
+body:not(.auth-page) .profile-details .user-sub { color: #1d4ed8 !important; }
+body:not(.auth-page) .dropdown-menu,
+body:not(.auth-page) .popover-content {
+  background: #ffffff !important;
+  border-color: #dbeafe !important;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.1) !important;
+}
+
+/* ── 10. SWITCH (Toggle) ─────────────────────────────────────────────────────
+   On-state: blue instead of bronze.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .switch.on { background: #2563eb !important; }
+body:not(.auth-page) .switch.on::after { background: #ffffff !important; }
+
+/* ── 11. PAGE TITLE & HEADINGS ───────────────────────────────────────────────
+   Crisp dark headings with blue accent badges.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .page-title h1,
+body:not(.auth-page) .page-header h1,
+body:not(.auth-page) h1,
+body:not(.auth-page) h2,
+body:not(.auth-page) h3 {
+  color: #0f172a;
+}
+
+/* ── 12. BODY & APP BACKGROUND ───────────────────────────────────────────────
+   Crisp, clean white canvas.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+#app:not(.auth-screen) {
+  background: #f8fafc !important;
+}
+.main-shell {
+  background: #f8fafc !important;
+}
+
+/* ── 13. ALL BUTTONS BLUE THEME ──────────────────────────────────────────────
+   Every single button across the ERP is styled with modern Dark Sky Blue.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* 13.1 Primary & Solid Action Buttons */
+body:not(.auth-page) .btn-primary,
+body:not(.auth-page) button.btn-primary,
+body:not(.auth-page) .btn-gold,
+body:not(.auth-page) button.btn-gold,
+body:not(.auth-page) .btn-action,
+body:not(.auth-page) button.btn-action,
+body:not(.auth-page) .btn-accent,
+body:not(.auth-page) button.btn-accent,
+body:not(.auth-page) .btn-save,
+body:not(.auth-page) button.btn-save,
+body:not(.auth-page) .btn-submit,
+body:not(.auth-page) button.btn-submit,
+body:not(.auth-page) .btn-confirm,
+body:not(.auth-page) button.btn-confirm,
+body:not(.auth-page) .modal-footer .btn-primary,
+body:not(.auth-page) .modal-footer button.primary,
+body:not(.auth-page) .pos-pay-btn,
+body:not(.auth-page) .pos-action-btn.primary,
+body:not(.auth-page) .quick-actions button.primary,
+body:not(.auth-page) .table-action-btn.primary,
+body:not(.auth-page) #cc-refresh-btn,
+body:not(.auth-page) #cc-apply-custom-btn,
+body:not(.auth-page) #cc-save-target-btn,
+body:not(.auth-page) #cc-open-target-modal-btn {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  border: 1px solid #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35) !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-xs, 6px) !important;
+}
+
+body:not(.auth-page) .btn-primary:hover,
+body:not(.auth-page) button.btn-primary:hover,
+body:not(.auth-page) .btn-gold:hover,
+body:not(.auth-page) button.btn-gold:hover,
+body:not(.auth-page) .btn-action:hover,
+body:not(.auth-page) button.btn-action:hover,
+body:not(.auth-page) .btn-save:hover,
+body:not(.auth-page) button.btn-save:hover,
+body:not(.auth-page) .btn-submit:hover,
+body:not(.auth-page) button.btn-submit:hover,
+body:not(.auth-page) .btn-confirm:hover,
+body:not(.auth-page) button.btn-confirm:hover,
+body:not(.auth-page) #cc-refresh-btn:hover,
+body:not(.auth-page) #cc-apply-custom-btn:hover,
+body:not(.auth-page) #cc-save-target-btn:hover,
+body:not(.auth-page) #cc-open-target-modal-btn:hover,
+body:not(.auth-page) .pos-pay-btn:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #075985 100%) !important;
+  border-color: #0369a1 !important;
+  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.45) !important;
+  color: #ffffff !important;
+}
+
+/* 13.2 Executive Fast Action Buttons (Dashboard Shortcuts) - FILLED WITH DARK SKY BLUE */
+body:not(.auth-page) .exec-action-btn {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  border: 1px solid #0284c7 !important;
+  border-radius: 8px !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  box-shadow: 0 3px 10px rgba(2, 132, 199, 0.32) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+body:not(.auth-page) .exec-action-btn span {
+  color: #ffffff !important;
+}
+
+body:not(.auth-page) .exec-action-btn .exec-icon-box {
+  background: rgba(255, 255, 255, 0.22) !important;
+  color: #ffffff !important;
+  border-radius: 6px !important;
+}
+
+body:not(.auth-page) .exec-action-btn .exec-icon-box svg {
+  stroke: #ffffff !important;
+  color: #ffffff !important;
+}
+
+body:not(.auth-page) .exec-action-btn:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #075985 100%) !important;
+  border-color: #0369a1 !important;
+  color: #ffffff !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 18px rgba(2, 132, 199, 0.48) !important;
+}
+
+body:not(.auth-page) .exec-action-btn:hover .exec-icon-box {
+  background: rgba(255, 255, 255, 0.32) !important;
+  color: #ffffff !important;
+}
+
+body:not(.auth-page) .exec-action-btn:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.3) !important;
+}
+
+/* 13.3 Date Range & Period Filter Buttons */
+body:not(.auth-page) button[data-period] {
+  background: #f0f9ff !important;
+  border: 1.5px solid #7dd3fc !important;
+  color: #0369a1 !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  padding: 4px 12px !important;
+  transition: all 0.15s ease !important;
+}
+
+body:not(.auth-page) button[data-period].btn-primary,
+body:not(.auth-page) button[data-period].active,
+body:not(.auth-page) button[data-period]:hover {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  border-color: #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35) !important;
+}
+
+/* 13.4 Trend Chart & View Switch Buttons */
+body:not(.auth-page) #cc-toggle-trend-chart.btn-primary,
+body:not(.auth-page) #cc-toggle-trend-data.btn-primary {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  color: #ffffff !important;
+  border-color: #0284c7 !important;
+}
+
+body:not(.auth-page) #cc-toggle-trend-chart.btn-ghost,
+body:not(.auth-page) #cc-toggle-trend-data.btn-ghost {
+  background: #f0f9ff !important;
+  color: #0369a1 !important;
+  border-color: #bae6fd !important;
+  font-weight: 700 !important;
+}
+
+/* 13.5 Secondary, Outline, Ghost & Card Navigation Buttons */
+body:not(.auth-page) .btn-secondary,
+body:not(.auth-page) button.btn-secondary,
+body:not(.auth-page) .btn-outline,
+body:not(.auth-page) button.btn-outline,
+body:not(.auth-page) .btn-default,
+body:not(.auth-page) button.btn-default,
+body:not(.auth-page) .btn-ghost,
+body:not(.auth-page) button.btn-ghost,
+body:not(.auth-page) .btn-pill-white,
+body:not(.auth-page) button.btn-pill-white,
+body:not(.auth-page) .cc-card-bottom-btn,
+body:not(.auth-page) button[data-loc-action],
+body:not(.auth-page) .location-card-actions button,
+body:not(.auth-page) #cc-save-view-btn,
+body:not(.auth-page) #cc-manage-views-btn {
+  background: #f0f9ff !important;
+  border: 1.5px solid #0284c7 !important;
+  color: #0284c7 !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-xs, 6px) !important;
+}
+
+body:not(.auth-page) .btn-secondary:hover,
+body:not(.auth-page) button.btn-secondary:hover,
+body:not(.auth-page) .btn-outline:hover,
+body:not(.auth-page) button.btn-outline:hover,
+body:not(.auth-page) .btn-default:hover,
+body:not(.auth-page) button.btn-default:hover,
+body:not(.auth-page) .btn-ghost:hover,
+body:not(.auth-page) button.btn-ghost:hover,
+body:not(.auth-page) .btn-pill-white:hover,
+body:not(.auth-page) button.btn-pill-white:hover,
+body:not(.auth-page) .cc-card-bottom-btn:hover,
+body:not(.auth-page) button[data-loc-action]:hover,
+body:not(.auth-page) .location-card-actions button:hover,
+body:not(.auth-page) #cc-save-view-btn:hover,
+body:not(.auth-page) #cc-manage-views-btn:hover {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  border-color: #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35) !important;
+}
+
+/* 13.6 Topbar Action Buttons */
+body:not(.auth-page) .topbar-action-btn {
+  background: #f0f9ff !important;
+  border: 1.5px solid #bae6fd !important;
+  color: #0369a1 !important;
+  font-weight: 700 !important;
+  border-radius: 8px !important;
+}
+
+body:not(.auth-page) .topbar-action-btn:hover {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  border-color: #0284c7 !important;
+  color: #ffffff !important;
+}
+
+/* 13.7 Primary Master Authority Status Banner (Remap Amber to Royal Blue) */
+body:not(.auth-page) #cc-authority-banner .card {
+  border-left: 5px solid #2563eb !important;
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+
+body:not(.auth-page) #cc-authority-banner span[style*="c99a5c"],
+body:not(.auth-page) #cc-authority-banner span[style*="201,154,92"],
+body:not(.auth-page) #cc-authority-banner span[style*="rgba(201"] {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+  border: 1px solid #3b82f6 !important;
+}
+
+body:not(.auth-page) #cc-authority-banner strong {
+  color: #1e3a8a !important;
+}
+
+/* ── 14. DATA TABLES ──────────────────────────────────────────────────────────
+   Clean white tables with subtle blue borders and headers.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) table,
+body:not(.auth-page) .data-table,
+body:not(.auth-page) .table-wrap {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+body:not(.auth-page) th {
+  background: #f8fafc !important;
+  color: #334155 !important;
+  border-bottom: 2px solid #e2e8f0 !important;
+  font-weight: 700 !important;
+}
+body:not(.auth-page) td {
+  border-bottom: 1px solid #f1f5f9 !important;
+  color: #1e293b !important;
+}
+body:not(.auth-page) tr:hover td {
+  background: #f8fafc !important;
+}
+
+/* ── 15. MODALS & DIALOGS ─────────────────────────────────────────────────────
+   Clean white modals with blue headers and action buttons.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .modal-box,
+body:not(.auth-page) .modal-content,
+body:not(.auth-page) .dialog-box {
+  background: #ffffff !important;
+  border: 1px solid #dbeafe !important;
+  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.15), 0 10px 10px -5px rgba(15, 23, 42, 0.1) !important;
+}
+body:not(.auth-page) .modal-header {
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+body:not(.auth-page) .modal-footer {
+  border-top: 1px solid #e2e8f0 !important;
+}
+
+/* ── 16. BADGES & STATUS PILLS ────────────────────────────────────────────────
+   Blue tints for primary, info, and active indicators.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .badge-primary,
+body:not(.auth-page) .pill-primary,
+body:not(.auth-page) .badge-blue,
+body:not(.auth-page) .scope-pill {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border: 1px solid #bfdbfe !important;
+  font-weight: 700 !important;
+}
+
+/* ── 17. SCROLLBAR TINT ───────────────────────────────────────────────────────
+   Sidebar scrollbar → blue.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .sidebar::-webkit-scrollbar-thumb { background: #bfdbfe; }
+body:not(.auth-page) .sidebar { scrollbar-color: #bfdbfe transparent; }
+
+/* ── 18. AUTH & LOGIN ACTION BUTTONS ──────────────────────────────────────────
+   Royal blue action buttons across Login 2.0 and MFA interfaces.
+   ─────────────────────────────────────────────────────────────────────────── */
+.light-btn,
+.btn-pill-lime,
+#l2-submit-btn,
+#l2-mfa-submit,
+#l2-modal-pin-submit,
+#l2-reset-req-submit,
+#l2-tc-agree-btn,
+#login-submit,
+#mfa-verify-submit {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 16px rgba(29, 78, 216, 0.40), 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+}
+
+.light-btn:hover:not(:disabled),
+.btn-pill-lime:hover:not(:disabled),
+#l2-submit-btn:hover:not(:disabled),
+#l2-mfa-submit:hover:not(:disabled),
+#l2-modal-pin-submit:hover:not(:disabled),
+#l2-reset-req-submit:hover:not(:disabled),
+#l2-tc-agree-btn:hover:not(:disabled),
+#login-submit:hover:not(:disabled),
+#mfa-verify-submit:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%) !important;
+  box-shadow: 0 8px 24px rgba(29, 78, 216, 0.55), 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+}
+
+.light-btn:active:not(:disabled),
+.btn-pill-lime:active:not(:disabled),
+#l2-submit-btn:active:not(:disabled),
+#l2-mfa-submit:active:not(:disabled),
+#l2-modal-pin-submit:active:not(:disabled),
+#l2-reset-req-submit:active:not(:disabled),
+#l2-tc-agree-btn:active:not(:disabled) {
+  background: #1e3a8a !important;
+}
+
+/* ── 20. POS TILL SERVICE & CATEGORY BUTTONS ──────────────────────────────────
+   Active state in solid royal blue; inactive state in soft blue tint.
+   ─────────────────────────────────────────────────────────────────────────── */
+body:not(.auth-page) .pos-service-mode-btn.active,
+body:not(.auth-page) .pos-cat-pill-btn.active {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  border-color: #1d4ed8 !important;
+}
+
+body:not(.auth-page) .pos-service-mode-btn:not(.active),
+body:not(.auth-page) .pos-cat-pill-btn:not(.active) {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border: 1.5px solid #bfdbfe !important;
+}
+
+/* ── 21. PAGINATED EXECUTIVE FLOW & PREMIUM CONTAINERS ─────────────────────────
+   Reorganizes the Command Centre into 4 orderly, premium views with instant
+   pagination, balanced card grids, and high-visibility executive fast actions.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.cc-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #ffffff;
+  border: 1px solid #e0f2fe;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px -2px rgba(2, 132, 199, 0.08);
+  margin-bottom: 22px;
+}
+
+.cc-page-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cc-page-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  text-align: left;
+}
+
+.cc-page-tab:hover {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  transform: translateY(-1px);
+}
+
+.cc-page-tab.active {
+  background: #f0f9ff;
+  border-color: #0284c7;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.18);
+}
+
+.cc-tab-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 11.5px;
+  font-weight: 800;
+  background: #e2e8f0;
+  color: #475569;
+  flex-shrink: 0;
+  transition: all 0.18s ease;
+}
+
+.cc-page-tab.active .cc-tab-num {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.35);
+}
+
+.cc-tab-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.cc-tab-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.2;
+}
+
+.cc-page-tab.active .cc-tab-title {
+  color: #0369a1;
+}
+
+.cc-tab-desc {
+  font-size: 10.5px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.cc-tab-badge {
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #7dd3fc;
+}
+
+.cc-pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cc-page-indicator {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.cc-page-indicator strong {
+  color: #0284c7;
+}
+
+/* 4-column balanced vital grid for Page 1 */
+.cc-kpi-quad-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+/* 2-column balanced grid */
+.cc-two-col-balanced {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+/* Bottom Pagination Toolbar matching Flowbite Pagination style */
+.cc-pagination-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 20px;
+  background: #ffffff;
+  border: 1px solid #e0f2fe;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+  margin-top: 24px;
+}
+
+.cc-page-numbers-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cc-page-num-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cc-page-num-btn.active {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  border: 1px solid #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35) !important;
+}
+
+@media (max-width: 1024px) {
+  .cc-kpi-quad-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cc-two-col-balanced {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .cc-kpi-quad-grid {
+    grid-template-columns: 1fr;
+  }
+  .cc-page-tabs {
+    width: 100%;
+  }
+  .cc-page-tab {
+    flex: 1 1 100%;
+  }
+  .cc-pagination-nav {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .cc-pagination-bottom {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+

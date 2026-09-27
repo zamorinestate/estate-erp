@@ -23,6 +23,7 @@ export const ROLES = {
   OWNER: 'owner',
   CAFE_ADMIN: 'cafe_admin',
   STAFF: 'staff',
+  VENDOR: 'vendor',
 };
 
 // ─── Primary Master Navigation ────────────────────────────────────────────────
@@ -66,6 +67,7 @@ const PRIMARY_MASTER_ITEMS = [
 
   // ── SYSTEM & GOVERNANCE ──────────────────────────────────────────────────────
   { id: 'admin',            label: 'Administration',         icon: 'admin',        route: 'admin',             group: 'SYSTEM' },
+  { id: 'design-system',    label: 'UI Components & Suite',   icon: 'integrations', route: 'design-system',     group: 'SYSTEM' },
   { id: 'cafe-ops-devices', label: 'Devices & Sessions',     icon: 'devices',      route: 'cafe-ops-devices',  group: 'SYSTEM' },
   { id: 'system-health',    label: 'System Health & Ops',    icon: 'settings',     route: 'system-health',     group: 'SYSTEM' },
   { id: 'settings',         label: 'Settings',               icon: 'settings',     route: 'settings',          group: 'SYSTEM' },
@@ -176,6 +178,27 @@ export const NAVIGATION = {
     ],
     footnote: 'Self-service only. Payslips & Loans are inside Settings.',
   },
+
+  // ── VENDOR (EXTERNAL VISIBILITY USER) ─────────────────────────────────────────
+  [ROLES.VENDOR]: {
+    scopeLabel: 'Vendor Portal (Read-Only)',
+    items: [
+      { id: 'vendor-dashboard', label: 'Vendor Overview', icon: 'home', route: 'vendor-dashboard', group: 'WORKSPACE' },
+      { id: 'vendor-orders', label: 'Purchase Orders', icon: 'procurement', route: 'vendor-orders', group: 'WORKSPACE' },
+      { id: 'vendor-deliveries', label: 'Deliveries & GRN', icon: 'shipping', route: 'vendor-deliveries', group: 'WORKSPACE' },
+      { id: 'vendor-invoices', label: 'Invoices', icon: 'finance', route: 'vendor-invoices', group: 'WORKSPACE' },
+      { id: 'vendor-payments', label: 'Payments & Balance', icon: 'finance', route: 'vendor-payments', group: 'WORKSPACE' },
+      { id: 'vendor-statement', label: 'Account Statement', icon: 'reports', route: 'vendor-statement', group: 'WORKSPACE' },
+      { id: 'vendor-receivables', label: 'Outstanding & Ageing', icon: 'finance', route: 'vendor-receivables', group: 'WORKSPACE' },
+      { id: 'vendor-adjustments', label: 'Returns & Adjustments', icon: 'tasks', route: 'vendor-adjustments', group: 'WORKSPACE' },
+      { id: 'vendor-products', label: 'Products & Pricing', icon: 'inventory', route: 'vendor-products', group: 'WORKSPACE' },
+      { id: 'vendor-documents', label: 'Documents Centre', icon: 'documents', route: 'vendor-documents', group: 'WORKSPACE' },
+      { id: 'vendor-reports', label: 'Commercial Reports', icon: 'reports', route: 'vendor-reports', group: 'WORKSPACE' },
+      { id: 'vendor-notifications', label: 'Notifications & Alerts', icon: 'announce', route: 'vendor-notifications', group: 'WORKSPACE' },
+      { id: 'vendor-profile', label: 'Vendor Profile', icon: 'settings', route: 'vendor-profile', group: 'WORKSPACE' },
+    ],
+    footnote: 'READ-ONLY VENDOR ACCESS — External visibility into authorized transactions.',
+  },
 };
 
 // ── Routes exclusively accessible only to Primary Master (for MASTER role) ───
@@ -221,7 +244,53 @@ const IMPLICIT_ROUTES_CAFE_ADMIN = new Set([
 export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
   const cleanRoute = (rawRoute || '').replace(/^#/, '');
   const route = cleanRoute.split('?')[0];
-  // Implicit routes allowed for all authenticated roles
+
+  // STRICT VENDOR ROUTE ISOLATION:
+  // Vendor users operate under a dedicated external visibility boundary.
+  // They must NEVER inherit internal employee implicit routes (e.g. staff attendance,
+  // payslips, leave, settings) or any other internal operational routes.
+  if (String(role || '').toLowerCase() === 'vendor') {
+    const navConfig = NAVIGATION[ROLES.VENDOR];
+    const allowed = (navConfig?.items || []).map((i) => i.route);
+    const VENDOR_ALLOWED_ROUTES = new Set([
+      ...allowed,
+      'vendor-dashboard',
+      'vendor/dashboard',
+      'vendor-orders',
+      'vendor/orders',
+      'vendor-deliveries',
+      'vendor/deliveries',
+      'vendor-grns',
+      'vendor/grns',
+      'vendor-invoices',
+      'vendor/invoices',
+      'vendor-payments',
+      'vendor/payments',
+      'vendor-statement',
+      'vendor/statement',
+      'vendor-receivables',
+      'vendor/receivables',
+      'vendor-adjustments',
+      'vendor/adjustments',
+      'vendor-returns',
+      'vendor/returns',
+      'vendor-products',
+      'vendor/products',
+      'vendor-pricing',
+      'vendor/pricing',
+      'vendor-documents',
+      'vendor/documents',
+      'vendor-reports',
+      'vendor/reports',
+      'vendor-notifications',
+      'vendor/notifications',
+      'vendor-profile',
+      'vendor/profile',
+    ]);
+    return VENDOR_ALLOWED_ROUTES.has(route);
+  }
+
+  // Implicit routes allowed for all authenticated internal roles
   if (IMPLICIT_ROUTES_ALL.has(route)) return true;
 
   // Primary Master has 100% universal unrestricted access to every route and module

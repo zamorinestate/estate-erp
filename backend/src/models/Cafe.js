@@ -247,6 +247,13 @@ const cafeSchema = new mongoose.Schema(
       default: '',
     },
 
+    code: {
+      type: String,
+      trim: true,
+      maxlength: 50,
+      default: '',
+    },
+
     internalCafeId: {
       type: String,
       trim: true,
