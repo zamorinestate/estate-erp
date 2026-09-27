@@ -19,6 +19,7 @@ const { StaffLoanAdvance } = require('../src/models/StaffLoanAdvance');
 const { ProfileChangeRequest } = require('../src/models/ProfileChangeRequest');
 const { AttendanceCorrectionRequest } = require('../src/models/AttendanceCorrectionRequest');
 const { User } = require('../src/models/User');
+const { PurchaseOrder } = require('../src/models/PurchaseOrder');
 
 const approvalController = require('../src/controllers/approvalController');
 const leaveController = require('../src/controllers/leaveController');
@@ -128,6 +129,7 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       ProfileChangeRequest,
       AttendanceCorrectionRequest,
       User,
+      PurchaseOrder,
     ];
     for (const model of models) {
       try { await model.createCollection(); } catch {}
@@ -154,6 +156,7 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       ProfileChangeRequest,
       AttendanceCorrectionRequest,
       User,
+      PurchaseOrder,
     ]) {
       await model.deleteMany({});
     }
@@ -852,6 +855,70 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       assert.equal(reloaded.checkOutAt, null);
     } finally {
       Attendance.prototype.save = originalSave;
+    }
+  });
+
+
+  it('P0-FI-016: Purchase Order target write failure rolls back Approval decision', async () => {
+    await PurchaseOrder.create({
+      purchaseOrderId: 'PO-FAULT-1601',
+      organisationId: ORG,
+      cafeId: CAFE,
+      vendorId: 'VEN-FAULT-01',
+      vendorNameSnapshot: 'Fault Vendor',
+      lineItems: [{
+        itemId: 'ITM-FAULT-01',
+        itemNameSnapshot: 'Fault Item',
+        orderedQuantityBase: 10,
+        unitPricePaisa: 1000,
+        totalLinePaisa: 10000,
+      }],
+      subtotalPaisa: 10000,
+      taxPaisa: 0,
+      totalPaisa: 10000,
+      status: 'SUBMITTED',
+      createdByUserId: 'AD-0001',
+    });
+    await Approval.create({
+      approvalId: 'APP-10124',
+      organisationId: ORG,
+      cafeId: CAFE,
+      entityType: 'PURCHASE_ORDER',
+      entityId: 'PO-FAULT-1601',
+      requestingUserId: 'AD-0001',
+      actionRequired: 'Approve purchase order',
+      amountPaisa: 10000,
+      status: 'PENDING',
+    });
+
+    const originalSave = PurchaseOrder.prototype.save;
+    PurchaseOrder.prototype.save = async function injectedPoTargetWriteFailure() {
+      if (!this.isNew) {
+        const err = new Error('INJECTED_PO_TARGET_WRITE_FAILURE');
+        err.code = 'INJECTED_PO_TARGET_WRITE_FAILURE';
+        throw err;
+      }
+      return originalSave.apply(this, arguments);
+    };
+
+    try {
+      const { error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10124' },
+        body: { decision: 'APPROVED', reason: 'PO rollback test' },
+        correlationId: 'FI-PO-DECISION',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10124/decide',
+      });
+
+      assert.ok(error);
+      const approval = await Approval.findOne({ approvalId: 'APP-10124' }).lean();
+      const order = await PurchaseOrder.findOne({ purchaseOrderId: 'PO-FAULT-1601' }).lean();
+      assert.equal(approval.status, 'PENDING');
+      assert.equal(order.status, 'SUBMITTED');
+      assert.equal(order.masterApproval?.approvedAt || null, null);
+    } finally {
+      PurchaseOrder.prototype.save = originalSave;
     }
   });
 
