@@ -1,0 +1,84 @@
+/* =============================================================================
+   ZAMORIN CAFÉ ERP — CAFÉ OPERATIONS LOGIN 2.0 STYLES
+   Exact visual parity with normal Login 2.0 glassmorphic design system.
+   ============================================================================= */
+
+/* Select Input Styling to match Login 2.0 inputs */
+.light-input-group select.light-select {
+  width: 100%;
+  height: var(--auth-control-height, 52px);
+  min-height: var(--auth-control-height, 52px);
+  padding: 0 44px;
+  background: var(--l2-input-bg, rgba(255, 255, 255, 0.45));
+  border: 1px solid var(--l2-glass-border, rgba(255, 255, 255, 0.75));
+  border-radius: 14px;
+  color: #0f172a;
+  font-size: 14.5px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  transition: var(--l2-transition, all 0.25s cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.light-input-group select.light-select:focus {
+  background: var(--l2-input-focus-bg, rgba(255, 255, 255, 0.75));
+  border-color: #b17d38;
+  box-shadow: 0 0 0 3px rgba(177, 125, 56, 0.22);
+}
+
+.light-input-group select.light-select option {
+  background: #0f172a;
+  color: #f8fafc;
+  font-weight: 500;
+  padding: 10px;
+}
+
+/* PIN toggle eye button within light-input-icon right */
+button.col-toggle-pin {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--l2-text-muted, #334155);
+  transition: color 0.2s ease;
+}
+
+button.col-toggle-pin:hover {
+  color: #0f172a;
+}
+
+button.col-toggle-pin:focus-visible {
+  outline: 2px solid #b17d38;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Cafe Preselection Tag */
+.col-cafe-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(177, 125, 56, 0.15);
+  border: 1px solid rgba(177, 125, 56, 0.35);
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #d4a359;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+/* Responsive Scaling Verification */
+@media (max-width: 480px) {
+  .light-input-group select.light-select {
+    font-size: 13.5px;
+    padding: 0 38px;
+  }
+}
