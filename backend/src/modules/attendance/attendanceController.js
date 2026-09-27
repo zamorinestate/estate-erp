@@ -496,12 +496,13 @@ const getRoster = asyncHandler(async (request, response) => {
   const { weekStartDate, cafeId: rawCafe } = request.query;
   ensureCafeOperationsAllowed(request);
 
-  let cafeId = rawCafe ? normalizeIdentifier(rawCafe) : (request.auth.assignedCafeIds?.[0] || 'ZC-0001');
-  if (rawCafe) {
-    ensureCafeAccess(request, cafeId);
-  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
-    cafeId = request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+  const cafeId = rawCafe
+    ? normalizeIdentifier(rawCafe)
+    : normalizeIdentifier(request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || '');
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required for attendance roster access.');
   }
+  ensureCafeAccess(request, cafeId);
 
   const effectiveWeekStart = weekStartDate || getWeekStartDate(getIstBusinessDate());
 
@@ -522,12 +523,13 @@ const saveRoster = asyncHandler(async (request, response) => {
   const { cafeId: rawCafe, weekStartDate, assignments = [] } = request.body || {};
   ensureCafeOperationsAllowed(request);
 
-  let cafeId = rawCafe ? normalizeIdentifier(rawCafe) : (request.auth.assignedCafeIds?.[0] || 'ZC-0001');
-  if (rawCafe) {
-    ensureCafeAccess(request, cafeId);
-  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
-    cafeId = request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+  const cafeId = rawCafe
+    ? normalizeIdentifier(rawCafe)
+    : normalizeIdentifier(request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || '');
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required for attendance roster access.');
   }
+  ensureCafeAccess(request, cafeId);
 
   let roster = await ShiftRoster.findOne({
     organisationId: request.auth.organisationId,
@@ -924,7 +926,13 @@ const getServerTime = asyncHandler(async (request, response) => {
 
 // 10. GET /api/v1/attendance/policy
 const getStaffPolicy = asyncHandler(async (request, response) => {
-  const cafeId = normalizeIdentifier(request.query.cafeId) || (request.auth.assignedCafeIds && request.auth.assignedCafeIds[0]) || 'ZC-0001';
+  const cafeId = normalizeIdentifier(
+    request.query.cafeId || request.auth.primaryCafeId || (request.auth.assignedCafeIds && request.auth.assignedCafeIds[0]) || ''
+  );
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'No café scope is available for attendance policy.');
+  }
+  ensureCafeAccess(request, cafeId);
 
   return response.status(200).json({
     success: true,
@@ -980,16 +988,18 @@ const getStaffToday = asyncHandler(async (request, response) => {
     }
   } catch (e) {}
 
-  const cafeIdForShift = attendance?.cafeId || request.auth.primaryCafeId || (request.auth.assignedCafeIds && request.auth.assignedCafeIds[0]) || 'ZC-0001';
+  const cafeIdForShift = attendance?.cafeId || request.auth.primaryCafeId || (request.auth.assignedCafeIds && request.auth.assignedCafeIds[0]) || null;
   let resolvedShift = null;
-  try {
-    resolvedShift = await resolveEmployeeShiftForDate({
-      organisationId,
-      userId,
-      cafeId: cafeIdForShift,
-      businessDate,
-    });
-  } catch (_) {}
+  if (cafeIdForShift) {
+    try {
+      resolvedShift = await resolveEmployeeShiftForDate({
+        organisationId,
+        userId,
+        cafeId: cafeIdForShift,
+        businessDate,
+      });
+    } catch (_) {}
+  }
 
   const defaultShift = resolvedShift ? {
     shiftId: resolvedShift.shiftId || 'SH-MRN-01',
@@ -1087,11 +1097,11 @@ const staffCheckIn = asyncHandler(async (request, response) => {
     employeeRole: request.auth.role,
   });
 
-  // Authoritative café: derived strictly from validated QR challenge
-  const resolvedCafeId = qrValidation.resolvedCafeId || normalizeIdentifier(rawCafeId);
-  const cafeId = resolvedCafeId || request.auth.primaryCafeId || (request.auth.assignedCafeIds && request.auth.assignedCafeIds[0]) || 'ZC-0001';
+  // Authoritative café: derived strictly from the validated QR challenge.
+  // Caller-supplied/profile café values never override a verified QR scope.
+  const cafeId = normalizeIdentifier(qrValidation.resolvedCafeId || '');
   if (!cafeId) {
-    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'A cafeId must be provided.');
+    throw new ApiError(400, 'QR_CAFE_SCOPE_REQUIRED', 'The validated attendance QR did not resolve an authoritative café.');
   }
 
   // Server-authoritative geofence verification
