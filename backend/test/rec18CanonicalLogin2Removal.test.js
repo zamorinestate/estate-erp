@@ -24,7 +24,7 @@
  *  16 tampered QR denied
  *  17 suspended café QR denied
  *  18 Primary Master login
- *  19 Normal Master login
+ *  19 Normal Master sign-in rejected
  *  20 Owner login
  *  21 Café Admin login
  *  22 Staff login
@@ -480,14 +480,15 @@ test('REC-18 Canonical Login Page 2.0 & Legacy Login Permanent Removal 40-Point 
     assert.equal(sessionData.session.roleSnapshot, 'MASTER');
   });
 
-  await t.test('19. Normal Master login', async () => {
-    const authResult = await authService.authenticatePassword({
-      organisationId: TEST_ORG,
-      email: 'normal.master@zamorin.com',
-      password: 'Password@123',
-    });
-    assert.equal(authResult.user.role, 'MASTER');
-    assert.equal(authResult.user.isPrimaryMaster, false);
+  await t.test('19. Normal Master sign-in rejected', async () => {
+    await assert.rejects(
+      () => authService.authenticatePassword({
+        organisationId: TEST_ORG,
+        email: 'normal.master@zamorin.com',
+        password: 'Password@123',
+      }),
+      /This account is not available for sign-in\./
+    );
   });
 
   await t.test('20. Owner login', async () => {
