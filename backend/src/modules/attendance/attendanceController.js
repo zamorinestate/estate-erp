@@ -1867,41 +1867,89 @@ const requestStaffCorrection = asyncHandler(async (request, response) => {
       organisationId,
       userId,
     });
+    if (!attendance) {
+      throw new ApiError(404, 'ATTENDANCE_NOT_FOUND', 'Attendance record not found for this user.');
+    }
   }
 
   const businessDate = attendance ? attendance.businessDate : (rawDate || getIstBusinessDate());
-  const cafeId = attendance ? attendance.cafeId : (request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001');
+  const assignedCafeIds = Array.isArray(request.auth.assignedCafeIds)
+    ? request.auth.assignedCafeIds
+    : (request.auth.assignedCafeIds ? [request.auth.assignedCafeIds] : []);
+  const cafeId = attendance?.cafeId || request.auth.primaryCafeId || assignedCafeIds[0] || null;
 
-  const requestId = await SequenceCounter.generateId({
-    organisationId,
-    sequenceKey: 'CORRECTION_REQUEST',
-    prefix: `ACR-${businessDate.replace(/-/g, '')}`,
-    minimumDigits: 3,
-  });
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'An assigned Café is required before requesting an attendance correction.');
+  }
+  if (assignedCafeIds.length > 0 && !assignedCafeIds.includes(cafeId)) {
+    throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'The attendance correction Café is outside your assigned scope.');
+  }
 
-  const correctionRequest = new AttendanceCorrectionRequest({
-    correctionRequestId: requestId,
-    requestId,
-    organisationId,
-    cafeId,
-    userId,
-    submittedBy: userId,
-    attendanceId: attendance?.attendanceId || null,
-    businessDate,
-    issueType,
-    requestedCheckInAt: requestedCheckIn ? new Date(requestedCheckIn) : null,
-    requestedCheckOutAt: requestedCheckOut ? new Date(requestedCheckOut) : null,
-    requestedBreakMinutes: Number(requestedBreakMinutes) || 0,
-    reason: reason.trim(),
-    status: 'PENDING',
-  });
+  let correctionRequest = null;
+  const session = await mongoose.startSession();
 
-  await correctionRequest.save();
+  try {
+    await session.withTransaction(async () => {
+      const requestId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'CORRECTION_REQUEST',
+        prefix: `ACR-${businessDate.replace(/-/g, '')}`,
+        minimumDigits: 3,
+        session,
+      });
 
-  if (attendance) {
-    attendance.correctionRequired = true;
-    attendance.correctionReason = reason.trim();
-    await attendance.save();
+      correctionRequest = new AttendanceCorrectionRequest({
+        correctionRequestId: requestId,
+        requestId,
+        organisationId,
+        cafeId,
+        userId,
+        submittedBy: userId,
+        attendanceId: attendance?.attendanceId || null,
+        businessDate,
+        issueType,
+        requestedCheckInAt: requestedCheckIn ? new Date(requestedCheckIn) : null,
+        requestedCheckOutAt: requestedCheckOut ? new Date(requestedCheckOut) : null,
+        requestedBreakMinutes: Number(requestedBreakMinutes) || 0,
+        reason: reason.trim(),
+        status: 'PENDING',
+      });
+      await correctionRequest.save({ session });
+
+      if (attendance) {
+        attendance.correctionRequired = true;
+        attendance.correctionReason = reason.trim();
+        await attendance.save({ session });
+      }
+
+      const approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+        session,
+      });
+
+      const approval = new Approval({
+        approvalId,
+        organisationId,
+        cafeId,
+        entityType: 'ATTENDANCE_CORRECTION',
+        entityId: requestId,
+        requestingUserId: userId,
+        actionRequired: `Attendance Correction: ${businessDate} (${userId})`,
+        amountPaisa: 0,
+        status: 'PENDING',
+      });
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
   }
 
   await recordRequestAudit({
@@ -1909,54 +1957,35 @@ const requestStaffCorrection = asyncHandler(async (request, response) => {
     module: 'ATTENDANCE',
     action: 'STAFF_CORRECTION_REQUESTED',
     entityType: 'AttendanceCorrectionRequest',
-    entityId: requestId,
+    entityId: correctionRequest.requestId,
     metadata: { userId, cafeId, businessDate, reason: reason.trim() },
   });
 
-  // Create Master Approval and in-app Notification for Primary Master
   try {
-    let approvalId;
-    try {
-      approvalId = await SequenceCounter.generateId({
-        organisationId,
-        sequenceKey: 'APPROVAL',
-        prefix: 'APP',
-        minimumDigits: 5,
-      });
-    } catch {
-      const apprCount = await Approval.countDocuments({ organisationId });
-      approvalId = `APP-${String(apprCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
-    }
-
-    await Approval.create({
-      approvalId,
+    const masterUsers = await User.find({
       organisationId,
-      cafeId,
-      entityType: 'ATTENDANCE_CORRECTION',
-      entityId: requestId,
-      requestingUserId: userId,
-      actionRequired: `Attendance Correction: ${businessDate} (${userId})`,
-      amountPaisa: 0,
-      status: 'PENDING',
-    });
-
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
-    const recipientUserIds = new Set(masterUsers.map((m) => m.userId));
-    recipientUserIds.add('MU-0001');
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
 
     const notifDateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const masterId of recipientUserIds) {
-      const mUser = masterUsers.find((m) => m.userId === masterId);
-      const notifId = `NT-${notifDateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${notifDateStr}`,
+        prefix: `NT-${notifDateStr}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
-        cafeId: cafeId || 'ALL',
+        cafeId,
         eventType: 'ATTENDANCE_CORRECTION_REQUESTED',
         category: 'OPERATIONS',
-        recipientUserId: masterId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
+        recipientEmail: master.email,
         title: `⏱️ Attendance Correction: ${userId}`,
         message: `${userId} requested attendance correction for ${businessDate}. Reason: ${reason.trim()}`,
         priority: 'NORMAL',
@@ -1964,16 +1993,16 @@ const requestStaffCorrection = asyncHandler(async (request, response) => {
         deepLink: '#approvals',
         sourceModule: 'ATTENDANCE',
         sourceEntityType: 'ATTENDANCE_CORRECTION',
-        sourceEntityId: requestId,
-        deduplicationKey: `ACR_${requestId}_${Date.now()}_${masterId}`,
-        correlationId: request.correlationId || `CORR-ACR-${requestId}-${Math.floor(1000 + Math.random() * 9000)}`,
+        sourceEntityId: correctionRequest.requestId,
+        deduplicationKey: `ACR_${correctionRequest.requestId}_${master.userId}`,
+        correlationId: request.correlationId || `CORR-ACR-${correctionRequest.requestId}`,
         status: 'DELIVERED',
         deliveredAt: new Date(),
         createdBy: userId,
       });
     }
-  } catch (apprErr) {
-    console.warn(`[ATTENDANCE_APPROVAL_WARN] ${apprErr.message}`);
+  } catch (notifErr) {
+    console.warn(`[ATTENDANCE_CORRECTION_NOTIFICATION_WARN] ${notifErr.message}`);
   }
 
   return response.status(201).json({
