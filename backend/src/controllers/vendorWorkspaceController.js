@@ -2613,7 +2613,7 @@ const downloadVendorPaymentReceiptPdf = asyncHandler(async (req, res) => {
   streamOps += `BT\n/F1 8 Tf\n0.3 0.3 0.3 rg\n1 0 0 1 40 692 Tm\n(Bank: Payment Account on File [Verified Commercial Payee]) Tj\nET\n`;
 
   streamOps += 'BT\n/F2 10 Tf\n0.1 0.2 0.1 rg\n1 0 0 1 310 735 Tm\n(ISSUED BY (PAYING ENTITY):) Tj\nET\n';
-  streamOps += `BT\n/F1 9 Tf\n0.2 0.2 0.2 rg\n1 0 0 1 310 720 Tm\n(${escapePdf(cafeName)} (${escapePdf(cafeCode || linkedCafeId || 'ZC-0001')})) Tj\nET\n`;
+  streamOps += `BT\n/F1 9 Tf\n0.2 0.2 0.2 rg\n1 0 0 1 310 720 Tm\n(${escapePdf(cafeName)} (${escapePdf(cafeCode || linkedCafeId || 'UNASSIGNED')})) Tj\nET\n`;
   streamOps += `BT\n/F1 8 Tf\n0.3 0.3 0.3 rg\n1 0 0 1 310 706 Tm\n(Zamorin Hospitality Private Limited) Tj\nET\n`;
   streamOps += `BT\n/F1 8 Tf\n0.3 0.3 0.3 rg\n1 0 0 1 310 692 Tm\n(Method: ${escapePdf(matchedPayment.paymentMethod || 'BANK_TRANSFER')} | Ref/UTR: ${escapePdf(matchedPayment.reference || 'N/A')}) Tj\nET\n`;
 
