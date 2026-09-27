@@ -18,6 +18,7 @@ const { Expense } = require('../src/models/Expense');
 const { StaffLoanAdvance } = require('../src/models/StaffLoanAdvance');
 const { ProfileChangeRequest } = require('../src/models/ProfileChangeRequest');
 const { AttendanceCorrectionRequest } = require('../src/models/AttendanceCorrectionRequest');
+const { User } = require('../src/models/User');
 
 const approvalController = require('../src/controllers/approvalController');
 const leaveController = require('../src/controllers/leaveController');
@@ -126,6 +127,7 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       StaffLoanAdvance,
       ProfileChangeRequest,
       AttendanceCorrectionRequest,
+      User,
     ];
     for (const model of models) {
       try { await model.createCollection(); } catch {}
@@ -151,9 +153,23 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       StaffLoanAdvance,
       ProfileChangeRequest,
       AttendanceCorrectionRequest,
+      User,
     ]) {
       await model.deleteMany({});
     }
+
+    await User.create({
+      userId: 'ST-0001',
+      organisationId: ORG,
+      name: 'Fault Test Staff',
+      email: 'fault-staff@example.test',
+      role: 'STAFF',
+      accountStatus: 'ACTIVE',
+      assignedCafeIds: [CAFE],
+      primaryCafeId: CAFE,
+      passwordHash: 'not-used',
+      createdBy: 'SYSTEM',
+    });
   });
 
   it('P0-FI-001: Approval creation failure rolls back LeaveRequest creation', async () => {
@@ -598,6 +614,244 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       assert.equal(Boolean(reloaded.correctionRequired), false, 'Attendance record mutation must roll back');
     } finally {
       Approval.prototype.save = originalSave;
+    }
+  });
+
+
+  it('P0-FI-012: Shift target write failure rolls back Approval decision', async () => {
+    await ShiftChangeRequest.create({
+      requestId: 'SCR-2026-1201',
+      organisationId: ORG,
+      employeeUserId: 'ST-0001',
+      employeeName: 'Fault Test Staff',
+      cafeId: CAFE,
+      requestedDate: '2026-10-12',
+      currentShift: 'MORNING',
+      requestedShift: 'EVENING',
+      reason: 'Shift target rollback fixture',
+      status: 'SUBMITTED',
+    });
+    await Approval.create({
+      approvalId: 'APP-10120',
+      organisationId: ORG,
+      cafeId: CAFE,
+      entityType: 'SHIFT_CHANGE',
+      entityId: 'SCR-2026-1201',
+      requestingUserId: 'ST-0001',
+      actionRequired: 'Approve shift change',
+      status: 'PENDING',
+    });
+
+    const originalSave = ShiftChangeRequest.prototype.save;
+    ShiftChangeRequest.prototype.save = async function injectedShiftWriteFailure() {
+      if (!this.isNew) {
+        const err = new Error('INJECTED_SHIFT_TARGET_WRITE_FAILURE');
+        err.code = 'INJECTED_SHIFT_TARGET_WRITE_FAILURE';
+        throw err;
+      }
+      return originalSave.apply(this, arguments);
+    };
+
+    try {
+      const { error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10120' },
+        body: { decision: 'APPROVED', reason: 'Shift rollback test' },
+        correlationId: 'FI-SHIFT-DECISION',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10120/decide',
+      });
+
+      assert.ok(error);
+      const approval = await Approval.findOne({ approvalId: 'APP-10120' }).lean();
+      const shift = await ShiftChangeRequest.findOne({ requestId: 'SCR-2026-1201' }).lean();
+      assert.equal(approval.status, 'PENDING');
+      assert.equal(shift.status, 'SUBMITTED');
+    } finally {
+      ShiftChangeRequest.prototype.save = originalSave;
+    }
+  });
+
+  it('P0-FI-013: Loan target write failure rolls back Approval decision', async () => {
+    await StaffLoanAdvance.create({
+      loanAdvanceId: 'LN-2026-1201',
+      organisationId: ORG,
+      cafeId: CAFE,
+      employeeUserId: 'ST-0001',
+      employeeName: 'Fault Test Staff',
+      requestType: 'LOAN',
+      loanCategory: 'WELFARE',
+      requestedAmountPaise: 500000,
+      tenureMonths: 10,
+      requestReason: 'Loan target rollback fixture',
+      status: 'SUBMITTED',
+      createdByUserId: 'ST-0001',
+    });
+    await Approval.create({
+      approvalId: 'APP-10121',
+      organisationId: ORG,
+      cafeId: CAFE,
+      entityType: 'LOAN_ADVANCE',
+      entityId: 'LN-2026-1201',
+      requestingUserId: 'ST-0001',
+      actionRequired: 'Approve loan',
+      amountPaisa: 500000,
+      status: 'PENDING',
+    });
+
+    const originalSave = StaffLoanAdvance.prototype.save;
+    StaffLoanAdvance.prototype.save = async function injectedLoanWriteFailure() {
+      if (!this.isNew) {
+        const err = new Error('INJECTED_LOAN_TARGET_WRITE_FAILURE');
+        err.code = 'INJECTED_LOAN_TARGET_WRITE_FAILURE';
+        throw err;
+      }
+      return originalSave.apply(this, arguments);
+    };
+
+    try {
+      const { error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10121' },
+        body: { decision: 'APPROVED', reason: 'Loan rollback test' },
+        correlationId: 'FI-LOAN-DECISION',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10121/decide',
+      });
+
+      assert.ok(error);
+      const approval = await Approval.findOne({ approvalId: 'APP-10121' }).lean();
+      const loan = await StaffLoanAdvance.findOne({ loanAdvanceId: 'LN-2026-1201' }).lean();
+      assert.equal(approval.status, 'PENDING');
+      assert.equal(loan.status, 'SUBMITTED');
+      assert.equal(loan.approvedAt, null);
+    } finally {
+      StaffLoanAdvance.prototype.save = originalSave;
+    }
+  });
+
+  it('P0-FI-014: Profile target user write failure rolls back PCR and Approval decision', async () => {
+    await ProfileChangeRequest.create({
+      requestId: 'PCR-202610-10001',
+      organisationId: ORG,
+      userId: 'ST-0001',
+      requestType: 'CONTACT_UPDATE',
+      title: 'Update contact',
+      reason: 'Profile decision rollback fixture',
+      oldValues: { preferredName: 'Old Name' },
+      proposedValues: { preferredName: 'New Name' },
+      status: 'SUBMITTED',
+    });
+    await Approval.create({
+      approvalId: 'APP-10122',
+      organisationId: ORG,
+      cafeId: null,
+      entityType: 'PROFILE_CHANGE',
+      entityId: 'PCR-202610-10001',
+      requestingUserId: 'ST-0001',
+      actionRequired: 'Approve profile change',
+      status: 'PENDING',
+    });
+
+    const originalSave = User.prototype.save;
+    User.prototype.save = async function injectedUserWriteFailure() {
+      if (!this.isNew) {
+        const err = new Error('INJECTED_PROFILE_TARGET_USER_WRITE_FAILURE');
+        err.code = 'INJECTED_PROFILE_TARGET_USER_WRITE_FAILURE';
+        throw err;
+      }
+      return originalSave.apply(this, arguments);
+    };
+
+    try {
+      const { error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10122' },
+        body: { decision: 'APPROVED', reason: 'Profile rollback test' },
+        correlationId: 'FI-PROFILE-DECISION',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10122/decide',
+      });
+
+      assert.ok(error);
+      const approval = await Approval.findOne({ approvalId: 'APP-10122' }).lean();
+      const pcr = await ProfileChangeRequest.findOne({ requestId: 'PCR-202610-10001' }).lean();
+      const user = await User.findOne({ userId: 'ST-0001' }).lean();
+      assert.equal(approval.status, 'PENDING');
+      assert.equal(pcr.status, 'SUBMITTED');
+      assert.equal(user.preferredName || '', '');
+    } finally {
+      User.prototype.save = originalSave;
+    }
+  });
+
+  it('P0-FI-015: Attendance target write failure rolls back correction and Approval decision', async () => {
+    const attendance = await Attendance.create({
+      attendanceId: 'AT-20261013-001',
+      organisationId: ORG,
+      cafeId: CAFE,
+      userId: 'ST-0001',
+      businessDate: '2026-10-13',
+      checkInAt: new Date('2026-10-13T04:00:00.000Z'),
+      status: 'CHECKED_IN',
+      correctionRequired: true,
+      correctionReason: 'Missed checkout',
+      createdBy: 'ST-0001',
+    });
+    await AttendanceCorrectionRequest.create({
+      correctionRequestId: 'ACR-20261013-001',
+      requestId: 'ACR-20261013-001',
+      organisationId: ORG,
+      cafeId: CAFE,
+      userId: 'ST-0001',
+      submittedBy: 'ST-0001',
+      attendanceId: attendance.attendanceId,
+      businessDate: '2026-10-13',
+      issueType: 'MISSED_CHECK_OUT',
+      requestedCheckOutAt: new Date('2026-10-13T12:30:00.000Z'),
+      reason: 'Attendance target rollback fixture',
+      status: 'PENDING',
+    });
+    await Approval.create({
+      approvalId: 'APP-10123',
+      organisationId: ORG,
+      cafeId: CAFE,
+      entityType: 'ATTENDANCE_CORRECTION',
+      entityId: 'ACR-20261013-001',
+      requestingUserId: 'ST-0001',
+      actionRequired: 'Approve attendance correction',
+      status: 'PENDING',
+    });
+
+    const originalSave = Attendance.prototype.save;
+    Attendance.prototype.save = async function injectedAttendanceTargetFailure() {
+      if (!this.isNew) {
+        const err = new Error('INJECTED_ATTENDANCE_TARGET_WRITE_FAILURE');
+        err.code = 'INJECTED_ATTENDANCE_TARGET_WRITE_FAILURE';
+        throw err;
+      }
+      return originalSave.apply(this, arguments);
+    };
+
+    try {
+      const { error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10123' },
+        body: { decision: 'APPROVED', reason: 'Attendance rollback test' },
+        correlationId: 'FI-ATTENDANCE-DECISION',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10123/decide',
+      });
+
+      assert.ok(error);
+      const approval = await Approval.findOne({ approvalId: 'APP-10123' }).lean();
+      const correction = await AttendanceCorrectionRequest.findOne({ requestId: 'ACR-20261013-001' }).lean();
+      const reloaded = await Attendance.findOne({ attendanceId: 'AT-20261013-001' }).lean();
+      assert.equal(approval.status, 'PENDING');
+      assert.equal(correction.status, 'PENDING');
+      assert.equal(reloaded.checkOutAt, null);
+    } finally {
+      Attendance.prototype.save = originalSave;
     }
   });
 
