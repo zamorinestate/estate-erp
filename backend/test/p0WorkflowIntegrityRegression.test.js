@@ -108,12 +108,21 @@ test('P0-WF-010: profile change request persists proposed values and Approval at
 });
 
 test('P0-WF-011: attendance correction create/review paths are transactionally coupled to Approval', () => {
-  assert.ok(attendanceController.includes('const requestStaffCorrection = asyncHandler'));
-  assert.ok(attendanceController.includes('const reviewStaffCorrection = asyncHandler'));
-  assert.ok(attendanceController.includes('session.withTransaction'));
-  assert.ok(attendanceController.includes("'PRIMARY_MASTER_AUTHORITY_REQUIRED'"));
-  assert.equal(attendanceController.includes("|| 'ZC-0001'"), false);
-  assert.equal(attendanceController.includes('[ATTENDANCE_APPROVAL_SYNC_WARN]'), false);
+  const createStart = attendanceController.indexOf('const requestStaffCorrection = asyncHandler');
+  const reviewStart = attendanceController.indexOf('const reviewStaffCorrection = asyncHandler');
+  const createBlock = attendanceController.slice(createStart, reviewStart);
+  const reviewEnd = attendanceController.indexOf('// 16.', reviewStart);
+  const reviewBlock = attendanceController.slice(reviewStart, reviewEnd);
+
+  assert.ok(createBlock.includes('session.withTransaction'));
+  assert.ok(createBlock.includes('await approval.save({ session })'));
+  assert.equal(createBlock.includes("|| 'ZC-0001'"), false);
+  assert.ok(createBlock.includes("'CAFE_SCOPE_REQUIRED'"));
+
+  assert.ok(reviewBlock.includes('session.withTransaction'));
+  assert.ok(reviewBlock.includes("'PRIMARY_MASTER_AUTHORITY_REQUIRED'"));
+  assert.ok(reviewBlock.includes('await approval.save({ session })'));
+  assert.equal(reviewBlock.includes('[ATTENDANCE_APPROVAL_SYNC_WARN]'), false);
 });
 
 test('P0-WF-012: outbox has durable lease fields and atomic claim processing', () => {
