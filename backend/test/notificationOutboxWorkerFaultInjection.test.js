@@ -296,4 +296,51 @@ describe('NOTIFICATION OUTBOX WORKER FAULT INJECTION', () => {
     }
   });
 
+
+  it('OUTBOX-FI-008: retry survives worker process replacement', async () => {
+    await NotificationOutbox.create(dueRecord({
+      outboxId: 'OUT-20260927-0008',
+      idempotencyKey: 'IDEMP-RESTART-RETRY',
+    }));
+
+    let sends = 0;
+    const firstWorker = new NotificationService();
+    firstWorker.setProvider({
+      async sendEmail() {
+        sends += 1;
+        const err = new Error('Injected first-worker outage');
+        err.code = 'INJECTED_FIRST_WORKER_OUTAGE';
+        throw err;
+      },
+    });
+
+    const first = await firstWorker.processDueOutbox({ limit: 1 });
+    assert.equal(first.retry, 1);
+
+    let record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0008' });
+    assert.equal(record.status, 'RETRY');
+
+    // Simulate time passing and the original process being replaced.
+    record.nextRetryAt = new Date(Date.now() - 1000);
+    record.nextAttemptAt = new Date(Date.now() - 1000);
+    await record.save();
+
+    const replacementWorker = new NotificationService();
+    replacementWorker.setProvider({
+      async sendEmail() {
+        sends += 1;
+        return { providerMessageId: 'MSG-AFTER-WORKER-RESTART' };
+      },
+    });
+
+    const second = await replacementWorker.processDueOutbox({ limit: 1 });
+    assert.equal(second.sent, 1);
+
+    record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0008' }).lean();
+    assert.equal(record.status, 'SENT');
+    assert.equal(record.providerMessageId, 'MSG-AFTER-WORKER-RESTART');
+    assert.equal(record.attemptCount, 2);
+    assert.equal(sends, 2);
+  });
+
 });
