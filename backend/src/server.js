@@ -38,6 +38,7 @@ const {
   stopNotificationOutboxWorker,
 } = require('./services/notificationOutboxWorker');
 const { getTrustedClientIp, getTrustedProxies } = require('./utils/clientIp');
+const { redisClientFactory } = require('./services/redisClientFactory');
 
 const SERVICE_NAME =
   'zamorin-cafe-erp-api';
@@ -327,7 +328,6 @@ function createApp(environment) {
     const isStorageReady = storageStatus === 'OK' || storageStatus === 'HEALTHY';
     const isDbReady = database.readyState === 1;
     const isProd = process.env.NODE_ENV === 'production';
-    const ready = isProd ? (isDbReady && isStorageReady) : isDbReady;
 
     const { malwareScannerService } = require('./services/malwareScannerService');
     let scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false };
@@ -337,6 +337,20 @@ function createApp(environment) {
       scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false, details: 'Probe failed' };
     }
 
+    let redisReport = { status: 'LOCAL_FALLBACK', isConnected: false, lastError: null };
+    try {
+      redisReport = await redisClientFactory.getHealthStatus();
+    } catch (redisError) {
+      redisReport = { status: 'DEGRADED', isConnected: false, lastError: redisError.message };
+    }
+
+    const requireScanner = isProd && process.env.REQUIRE_DOCUMENT_SCANNER !== 'false';
+    const isScannerReady = !requireScanner || scannerReport.DOCUMENT_SCANNER_READY === true;
+    const isRedisReady = !isProd || redisReport.isConnected === true;
+    const ready = isProd
+      ? (isDbReady && isStorageReady && isScannerReady && isRedisReady)
+      : isDbReady;
+
     return response
       .status(ready ? 200 : 503)
       .json({
@@ -345,6 +359,11 @@ function createApp(environment) {
         service: SERVICE_NAME,
         database: database.status,
         storage: storageStatus,
+        redis: {
+          status: redisReport.status,
+          connected: Boolean(redisReport.isConnected),
+          required: isProd,
+        },
         scanner: {
           coreAppReady: scannerReport.CORE_APP_READY,
           documentScannerReady: scannerReport.DOCUMENT_SCANNER_READY,
@@ -505,6 +524,15 @@ async function startServer() {
   const { validateStartupConfiguration: validateConfig } = require('./config/startupValidator');
   validateConfig(environment, { failClosed: true });
 
+  // Redis is a mandatory distributed-state dependency in production. Initialize
+  // before binding the HTTP listener so rate limits, event fan-out and device
+  // presence cannot silently fall back to per-process state in a multi-instance deployment.
+  await redisClientFactory.initializeClients({
+    url: process.env.REDIS_URL || null,
+    keyPrefix: process.env.REDIS_KEY_PREFIX || 'zamorin:',
+    clusterMode: environment.production || process.env.NODE_ENV === 'production',
+  });
+
   const app =
     createApp(environment);
 
@@ -584,6 +612,7 @@ function registerShutdownHandlers(
 
       await stopNotificationOutboxWorker();
       await closeHttpServer(server);
+      await redisClientFactory.close();
       await disconnectDatabase();
 
       console.log(
@@ -654,6 +683,14 @@ async function runMain() {
       server
     );
   } catch (error) {
+    try {
+      await redisClientFactory.close();
+    } catch (redisCloseError) {
+      console.error(
+        'Redis cleanup failed:',
+        redisCloseError.message
+      );
+    }
     try {
       await disconnectDatabase();
     } catch (disconnectError) {
