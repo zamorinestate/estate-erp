@@ -520,72 +520,118 @@ const submitExpense = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const { expenseId } = request.params;
 
-  const expense = await Expense.findOne({ organisationId, expenseId });
-  if (!expense) {
+  const existingExpense = await Expense.findOne({ organisationId, expenseId });
+  if (!existingExpense) {
     throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
   }
+  ensureCafeAccess(request, existingExpense.cafeId);
 
-  ensureCafeAccess(request, expense.cafeId);
-
-  if (expense.status !== 'DRAFT' && expense.status !== 'RETURNED') {
+  if (!['DRAFT', 'RETURNED'].includes(existingExpense.status)) {
     throw new ApiError(400, 'INVALID_STATE', 'Expense is not in draft or returned state.');
   }
 
-  expense.status = 'SUBMITTED';
-  expense.submittedAt = new Date();
-  expense.submittedBy = userId;
-  expense.updatedBy = userId;
-  await expense.save();
-
+  let expense;
+  const session = await mongoose.startSession();
   try {
-    const existing = await Approval.findOne({ organisationId, entityId: expense.expenseId });
-    if (existing) {
-      existing.status = 'PENDING';
-      existing.actionRequired = `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`;
-      existing.amountPaisa = expense.totalPaisa || 0;
-      await existing.save();
-    } else {
-      const approvalCount = await Approval.countDocuments({ organisationId });
-      const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-      await Approval.create({
-        approvalId,
+    await session.withTransaction(async () => {
+      expense = await Expense.findOne({ organisationId, expenseId }).session(session);
+      if (!expense) throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
+      if (!['DRAFT', 'RETURNED'].includes(expense.status)) {
+        throw new ApiError(409, 'INVALID_STATE', 'Expense is no longer eligible for submission.');
+      }
+
+      expense.status = 'SUBMITTED';
+      expense.submittedAt = new Date();
+      expense.submittedBy = userId;
+      expense.updatedBy = userId;
+      await expense.save({ session });
+
+      let approval = await Approval.findOne({
         organisationId,
-        cafeId: expense.cafeId,
         entityType: 'EXPENSE',
         entityId: expense.expenseId,
-        requestingUserId: userId,
-        actionRequired: `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`,
-        amountPaisa: expense.totalPaisa || 0,
-        status: 'PENDING',
-      });
-    }
+      }).session(session);
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+      if (approval) {
+        approval.status = 'PENDING';
+        approval.actionRequired = `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`;
+        approval.amountPaisa = expense.totalPaisa || 0;
+        approval.decidedByUserId = null;
+        approval.decidedAt = null;
+        approval.decisionReason = '';
+        await approval.save({ session });
+      } else {
+        const approvalId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: 'APPROVAL',
+          prefix: 'APP',
+          minimumDigits: 5,
+          session,
+        });
+        approval = new Approval({
+          approvalId,
+          organisationId,
+          cafeId: expense.cafeId,
+          entityType: 'EXPENSE',
+          entityId: expense.expenseId,
+          requestingUserId: userId,
+          actionRequired: `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`,
+          amountPaisa: expense.totalPaisa || 0,
+          status: 'PENDING',
+        });
+        await approval.save({ session });
+      }
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  try {
+    const masterUsers = await User.find({
+      organisationId,
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
     const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${dateKey}`,
+        prefix: `NT-${dateKey}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
         cafeId: expense.cafeId,
         eventType: 'EXPENSE_SUBMITTED',
         category: 'FINANCE',
-        recipientUserId: m.userId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
+        recipientEmail: master.email,
         title: `🧾 Expense Claim: ${expense.expenseId}`,
         message: `${userId} submitted an expense claim of ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category}) for ${expense.cafeId}.`,
         priority: 'NORMAL',
         channels: ['IN_APP'],
-        deepLink: `#approvals`,
+        deepLink: '#approvals',
         sourceModule: 'EXPENSES',
         sourceEntityType: 'EXPENSE',
         sourceEntityId: expense.expenseId,
+        deduplicationKey: `EXP_${expense.expenseId}_${master.userId}`,
+        correlationId: request.correlationId || `CORR-EXP-${expense.expenseId}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
         createdBy: userId,
       });
     }
   } catch (err) {
-    console.warn(`[EXPENSE_APPROVAL_HOOK_WARN] ${err.message}`);
+    console.warn(`[EXPENSE_NOTIFICATION_WARN] ${err.message}`);
   }
 
   return response.status(200).json({
@@ -594,85 +640,113 @@ const submitExpense = asyncHandler(async (request, response) => {
   });
 });
 
+
 // 7. Decide Expense (Approve / Return / Reject)
 const decideExpense = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const { expenseId } = request.params;
   const { decision, reason = '', approvedAmountPaisa } = request.body;
 
+  if (request.auth.role !== 'MASTER' || !request.auth.isPrimaryMaster) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Expense decisions require Primary Master authority.');
+  }
+
   if (!['APPROVE', 'RETURN', 'REJECT'].includes(decision)) {
     throw new ApiError(400, 'INVALID_DECISION', 'Decision must be APPROVE, RETURN, or REJECT.');
   }
 
-  const expense = await Expense.findOne({ organisationId, expenseId });
-  if (!expense) {
+  const existingExpense = await Expense.findOne({ organisationId, expenseId }).lean();
+  if (!existingExpense) {
     throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
   }
+  ensureCafeAccess(request, existingExpense.cafeId);
 
-  ensureCafeAccess(request, expense.cafeId);
-
-  // Maker-Checker enforcement: cannot approve own expense
-  if (decision === 'APPROVE' && expense.ownerUserId === userId && request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'MAKER_CHECKER_VIOLATION', 'You cannot approve your own expense.');
-  }
-
-  if (expense.status !== 'SUBMITTED' && expense.status !== 'PENDING_APPROVAL') {
-    throw new ApiError(400, 'INVALID_STATE', 'Expense is not pending a decision.');
-  }
-
-  const finalApprovedPaisa = approvedAmountPaisa !== undefined ? Number(approvedAmountPaisa) : expense.totalPaisa;
-
-  if (decision === 'APPROVE') {
-    expense.status = 'APPROVED';
-    expense.approvalSnapshot = {
-      version: (expense.approvalSnapshot?.version || 0) + 1,
-      approvedAt: new Date(),
-      approvedBy: userId,
-      approvedAmountPaisa: finalApprovedPaisa,
-      reason,
-    };
-    expense.financeHandoff = {
-      status: 'AWAITING_FINANCE',
-      sentAt: new Date(),
-      postingStatus: 'PENDING',
-      paymentStatus: 'UNPAID',
-    };
-  } else if (decision === 'RETURN') {
-    expense.status = 'RETURNED';
-  } else {
-    expense.status = 'REJECTED';
-  }
-
-  expense.decisionAt = new Date();
-  expense.decisionBy = userId;
-  expense.decisionReason = reason;
-  expense.updatedBy = userId;
-  await expense.save();
-
-  // Sync Approval
+  let expense;
+  let approval;
+  const session = await mongoose.startSession();
   try {
-    const approvalStatus = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-    await Approval.updateOne(
-      { organisationId, entityId: expenseId, status: 'PENDING' },
-      {
-        $set: {
-          status: approvalStatus,
-          decidedByUserId: userId,
-          decisionReason: reason || (decision === 'RETURN' ? 'Returned for rework' : ''),
-          decidedAt: new Date(),
-        },
+    await session.withTransaction(async () => {
+      expense = await Expense.findOne({ organisationId, expenseId }).session(session);
+      if (!expense) throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
+      if (!['SUBMITTED', 'PENDING_APPROVAL'].includes(expense.status)) {
+        throw new ApiError(409, 'INVALID_STATE', 'Expense is not pending a decision.');
       }
-    );
-  } catch (_) {}
 
-  // Notify preparer / owner
+      approval = await Approval.findOne({
+        organisationId,
+        entityType: 'EXPENSE',
+        entityId: expenseId,
+      }).session(session);
+      if (!approval) {
+        throw new ApiError(409, 'APPROVAL_TARGET_NOT_FOUND', 'Expense approval record is missing. No decision was committed.');
+      }
+      if (approval.status !== 'PENDING') {
+        throw new ApiError(409, 'ALREADY_DECIDED', `Approval is already ${approval.status}.`);
+      }
+
+      const finalApprovedPaisa =
+        approvedAmountPaisa !== undefined ? Number(approvedAmountPaisa) : expense.totalPaisa;
+
+      if (decision === 'APPROVE') {
+        expense.status = 'APPROVED';
+        expense.approvalSnapshot = {
+          version: (expense.approvalSnapshot?.version || 0) + 1,
+          approvedAt: new Date(),
+          approvedBy: userId,
+          approvedAmountPaisa: finalApprovedPaisa,
+          reason,
+        };
+        expense.financeHandoff = {
+          status: 'AWAITING_FINANCE',
+          sentAt: new Date(),
+          postingStatus: 'PENDING',
+          paymentStatus: 'UNPAID',
+        };
+      } else if (decision === 'RETURN') {
+        expense.status = 'RETURNED';
+      } else {
+        expense.status = 'REJECTED';
+      }
+
+      expense.decisionAt = new Date();
+      expense.decisionBy = userId;
+      expense.decisionReason = reason;
+      expense.updatedBy = userId;
+      await expense.save({ session });
+
+      approval.status = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+      approval.decidedByUserId = userId;
+      approval.decisionReason = reason || (decision === 'RETURN' ? 'Returned for rework' : '');
+      approval.decidedAt = new Date();
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
+
   try {
     const recipientId = expense.preparerUserId || expense.ownerUserId || expense.createdBy;
     const recipientUser = await User.findOne({ organisationId, userId: recipientId }).select('email role').lean();
     const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const eventType = decision === 'APPROVE' ? 'EXPENSE_APPROVED' : (decision === 'RETURN' ? 'EXPENSE_RETURNED' : 'EXPENSE_REJECTED');
-    const decisionText = decision === 'APPROVE' ? 'Approved' : (decision === 'RETURN' ? 'Returned' : 'Rejected');
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${dateKey}`,
+      prefix: `NT-${dateKey}`,
+      minimumDigits: 4,
+    });
+    const eventType =
+      decision === 'APPROVE'
+        ? 'EXPENSE_APPROVED'
+        : decision === 'RETURN'
+          ? 'EXPENSE_RETURNED'
+          : 'EXPENSE_REJECTED';
+    const decisionText =
+      decision === 'APPROVE' ? 'Approved' : decision === 'RETURN' ? 'Returned' : 'Rejected';
 
     await Notification.create({
       notificationId: notifId,
@@ -682,7 +756,7 @@ const decideExpense = asyncHandler(async (request, response) => {
       category: 'FINANCE',
       recipientUserId: recipientId,
       recipientRole: recipientUser?.role || 'CAFE_ADMIN',
-      recipientEmail: recipientUser?.email || `${String(recipientId).toLowerCase()}@zamorincafe.com`,
+      recipientEmail: recipientUser?.email || null,
       title: `Expense ${expense.expenseId} ${decisionText}`,
       message: `Your expense claim ${expense.expenseId} (₹${((expense.totalPaisa || 0) / 100).toFixed(2)}) has been ${decisionText.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
       priority: 'NORMAL',
@@ -691,9 +765,15 @@ const decideExpense = asyncHandler(async (request, response) => {
       sourceModule: 'EXPENSES',
       sourceEntityType: 'EXPENSE',
       sourceEntityId: expense.expenseId,
+      deduplicationKey: `${recipientId}:${eventType}:${expense.expenseId}`,
+      correlationId: request.correlationId || `CORR-EXP-DEC-${expense.expenseId}`,
+      status: 'DELIVERED',
+      deliveredAt: new Date(),
       createdBy: userId,
     });
-  } catch (_) {}
+  } catch (err) {
+    console.warn(`[EXPENSE_NOTIFICATION_WARN] ${err.message}`);
+  }
 
   return response.status(200).json({
     message: `Expense ${decision.toLowerCase()}d successfully.`,
