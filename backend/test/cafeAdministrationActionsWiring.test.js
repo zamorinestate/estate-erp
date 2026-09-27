@@ -5,10 +5,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const routerSource = fs.readFileSync(path.join(__dirname, '../../Frontend/src/js/router.js'), 'utf8').replace(/\r\n/g, '\n');
-const adminSource = fs.readFileSync(path.join(__dirname, '../../Frontend/src/js/pages/administration.js'), 'utf8').replace(/\r\n/g, '\n');
-const swSource = fs.readFileSync(path.join(__dirname, '../../Frontend/sw.js'), 'utf8').replace(/\r\n/g, '\n');
-const indexHtmlSource = fs.readFileSync(path.join(__dirname, '../../Frontend/index.html'), 'utf8').replace(/\r\n/g, '\n');
+const routerSource = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/router.js'), 'utf8').replace(/\r\n/g, '\n');
+const adminSource = fs.readFileSync(path.join(__dirname, '../../frontend/src/js/pages/administration.js'), 'utf8').replace(/\r\n/g, '\n');
+const swSource = fs.readFileSync(path.join(__dirname, '../../frontend/sw.js'), 'utf8').replace(/\r\n/g, '\n');
+const indexHtmlSource = fs.readFileSync(path.join(__dirname, '../../frontend/index.html'), 'utf8').replace(/\r\n/g, '\n');
 
 test('1. Administration Cafés route hydrates fully with async loadAdminData and render', () => {
   assert.ok(adminSource.includes('export async function hydrateAdmin(root, subroute)'), 'hydrateAdmin must be an async function');
@@ -71,7 +71,7 @@ test('8. Actions survive Refresh button', () => {
 });
 
 test('9. Structured address displays correctly using addressFormatter', async () => {
-  const { formatCafeAddress, getCafeCity } = await import('../../Frontend/src/js/utils/addressFormatter.js');
+  const { formatCafeAddress, getCafeCity } = await import('../../frontend/src/js/utils/addressFormatter.js');
 
   const structuredCafe = {
     cafeId: 'ZC-0001',
@@ -100,7 +100,7 @@ test('9. Structured address displays correctly using addressFormatter', async ()
 });
 
 test('10. Legacy string address displays correctly', async () => {
-  const { formatCafeAddress, getCafeCity } = await import('../../Frontend/src/js/utils/addressFormatter.js');
+  const { formatCafeAddress, getCafeCity } = await import('../../frontend/src/js/utils/addressFormatter.js');
 
   const legacyCafe = {
     cafeId: 'CAFE-001',
@@ -115,7 +115,7 @@ test('10. Legacy string address displays correctly', async () => {
 });
 
 test('11. [object Object] never appears under any circumstances', async () => {
-  const { formatCafeAddress } = await import('../../Frontend/src/js/utils/addressFormatter.js');
+  const { formatCafeAddress } = await import('../../frontend/src/js/utils/addressFormatter.js');
 
   // Corrupted strings or empty objects
   assert.equal(formatCafeAddress({ address: '[object Object]' }), '');
