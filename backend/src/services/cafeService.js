@@ -24,6 +24,7 @@ const {
   hashOpaqueToken,
 } = require('./cafeAccessCryptoService');
 const { ApiError } = require('../utils/ApiError');
+const { commitWithRetry } = require('../utils/transactionHelper');
 const { verifyPassword } = require('./authService');
 const {
   INDIAN_STATE_CODES,
@@ -178,13 +179,13 @@ function requireMasterCreationAuthority(auth) {
   }
 
   const role = auth.role.toUpperCase();
-  const isAllowed = role === 'MASTER';
+  const isAllowed = role === 'MASTER' && auth.isPrimaryMaster === true;
 
   if (!isAllowed) {
     throw new ApiError(
       403,
-      'CAFE_CREATION_DENIED',
-      'Only Master governance authority may create or provision new cafés.'
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may create or provision new cafés.'
     );
   }
 }
@@ -296,47 +297,57 @@ class CafeService {
     // 4. Persistence with transaction safety
     let createdCafe = null;
     let createdAccess = null;
+    let universalQr = null;
 
+    // Café provisioning is a multi-document security boundary. In production,
+    // silently falling back to compensating writes is forbidden because it can
+    // leave orphaned QR/access/inventory records. Use Mongo transactions whenever
+    // the connected topology supports sessions.
     const useMongooseTransactions =
       mongoose.connection &&
-      mongoose.connection.client &&
-      typeof mongoose.connection.client.startSession === 'function' &&
-      Boolean(process.env.ENABLE_MONGO_TRANSACTIONS);
+      mongoose.connection.readyState === 1 &&
+      typeof mongoose.connection.startSession === 'function';
 
     let session = null;
     if (useMongooseTransactions) {
       try {
-        session = await mongoose.startSession();
+        session = await mongoose.connection.startSession();
         session.startTransaction();
       } catch {
         session = null;
       }
     }
 
+    if (process.env.NODE_ENV === 'production' && !session) {
+      throw new ApiError(
+        503,
+        'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
+        'Production café provisioning requires MongoDB transaction support.'
+      );
+    }
+
     try {
       // 4a. Legacy Permanent PIN reservation is retired in REC-02 (omitted)
 
-      // 4b. Create Stage 02 Universal QR Record for Café Login
+      // 4b. Create Stage 02 Universal QR Record for Café Login inside the same
+      // transaction as the Café and CaféAccess records.
       const { UniversalQrService } = require('./universalQrService');
       const securePublicCafeReference = generateOpaqueToken();
-      let universalQr = null;
-      try {
-        universalQr = await UniversalQrService.createQrRecord({
-          qrType: 'CAFE_LOGIN',
-          targetEntityId: securePublicCafeReference,
-          organisationId,
+      universalQr = await UniversalQrService.createQrRecord({
+        qrType: 'CAFE_LOGIN',
+        targetEntityId: securePublicCafeReference,
+        organisationId,
+        cafeId,
+        title: `Café Login QR — ${name}`,
+        metadata: {
           cafeId,
-          title: `Café Login QR — ${name}`,
-          metadata: {
-            cafeId,
-            name,
-            city: sanitized.city || (sanitized.address && sanitized.address.city) || '',
-          },
-          actorUserId: auth.userId,
-        });
-      } catch (_) {
-        // Non-blocking fallback if running in standalone test environment
-      }
+          name,
+          city: sanitized.city || (sanitized.address && sanitized.address.city) || '',
+        },
+        actorUserId: auth.userId,
+        session,
+        publicOrigin: getPublicAppOrigin(),
+      });
 
       // 4c. Resolve FSSAI 2026 eligibility and fee based on Kind of Business
       const kindOfBusiness = (
@@ -669,10 +680,10 @@ class CafeService {
           await CafeInventoryConfig.insertMany(
             configDocs,
             session ? { session, ordered: false } : { ordered: false }
-          ).catch(() => {});
+          );
         }
-      } catch (_) {
-        // Non-blocking inventory setup
+      } catch (inventoryProvisionError) {
+        throw inventoryProvisionError;
       }
 
       // 4e. Auto-provision FY-aware Tax Invoice & Receipt Sequences in SequenceCounter
@@ -695,7 +706,7 @@ class CafeService {
             },
           },
           { upsert: true, session: session || undefined }
-        ).catch(() => {});
+        );
 
         const receiptSeqKey = `RECEIPT_${organisationId}_${cafeId}_${fyInfo.fyShort}`;
         await SequenceCounter.findOneAndUpdate(
@@ -711,8 +722,8 @@ class CafeService {
           },
           { upsert: true, session: session || undefined }
         ).catch(() => {});
-      } catch (_) {
-        // Non-blocking sequence pre-provisioning
+      } catch (sequenceProvisionError) {
+        throw sequenceProvisionError;
       }
 
       // 5. Post-Creation Integrity Verification
@@ -752,23 +763,32 @@ class CafeService {
       }
 
       if (session) {
-        await session.commitTransaction();
-        session.endSession();
+        await commitWithRetry(session);
+        await session.endSession();
         session = null;
       }
     } catch (err) {
       if (session) {
-        await session.abortTransaction();
-        session.endSession();
+        await session.abortTransaction().catch(() => {});
+        await session.endSession().catch(() => {});
         session = null;
       } else {
-        // Compensating rollback if standalone
+        // Non-production standalone compensation. Production never enters this
+        // branch because transaction support is mandatory above.
         if (createdCafe?._id) {
           await Cafe.deleteOne({ _id: createdCafe._id }).catch(() => {});
         }
         if (createdAccess?._id) {
           await CafeAccess.deleteOne({ _id: createdAccess._id }).catch(() => {});
         }
+        if (universalQr?.qrId) {
+          const { UniversalQrRecord } = require('../models/UniversalQrRecord');
+          await UniversalQrRecord.deleteOne({ qrId: universalQr.qrId }).catch(() => {});
+        }
+        try {
+          const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
+          await CafeInventoryConfig.deleteMany({ organisationId, cafeId }).catch(() => {});
+        } catch (_) {}
       }
 
       throw new ApiError(
