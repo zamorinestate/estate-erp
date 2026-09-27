@@ -82,7 +82,7 @@ function renderAccessModalContent(container, data) {
     ? `<span class="status success" style="font-size:11px;font-weight:700;">ACTIVE</span>`
     : `<span class="status warning" style="font-size:11px;font-weight:700;">${escHtml(data.accessStatus)}</span>`;
 
-  const loginUrl = data.dedicatedLoginUrl || data.linkUrl || `${window.location.origin}/cafe-operations/login?cafe=${encodeURIComponent(data.cafeId)}`;
+  const loginUrl = data.dedicatedLoginUrl || data.linkUrl || `${window.location.origin}/cafe-access/link/${encodeURIComponent(data.cafeId)}`;
 
   container.innerHTML = `
     <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(18,17,16,0.82);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);">

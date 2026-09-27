@@ -231,11 +231,12 @@ test('Café Creation — Final Access Pack & Handover Comprehensive Test Suite',
     // Access Pack contents
     assert.equal(createdCafeResult.access.provisioningStatus, 'READY');
     assert.equal(createdCafeResult.access.accessStatus, 'ACTIVE');
+    assert.equal(createdCafeResult.access.initialCafePin, deliveredPlaintextPin, 'initialCafePin provided once');
     assert.ok(createdCafeResult.access.qrUrl, 'QR URL must be provisioned');
     assert.ok(createdCafeResult.access.dedicatedLoginUrl, 'Dedicated Login URL must be provisioned');
     assert.ok(
-      createdCafeResult.access.dedicatedLoginUrl.includes('/cafe-operations/login?cafe=ZC-0001'),
-      'Dedicated Login URL must route to Cafe Operations Login 2.0 with preselected cafe'
+      createdCafeResult.access.dedicatedLoginUrl.includes('/cafe-access/link/'),
+      'Dedicated Login URL must be canonical opaque link /cafe-access/link/<token>'
     );
   });
 
@@ -301,9 +302,11 @@ test('Café Creation — Final Access Pack & Handover Comprehensive Test Suite',
   });
 
   // =========================================================================
-  // 7. QR & Dedicated Link Credentials Security
+  // 7. QR & Opaque Dedicated Link: Resolution, Gateway Redirection & Regeneration
   // =========================================================================
-  await t.test('7. QR & Dedicated Link: High-entropy opaque tokens, no credentials or PIN in URLs', async () => {
+  let originalLinkToken;
+
+  await t.test('7. QR & Dedicated Link: Canonical opaque tokens, resolution, and invalidation upon regeneration', async () => {
     const accessSummary = await cafeService.getCafeAccessSummary('ZAMORIN', 'ZC-0001');
     assert.ok(accessSummary.dedicatedLoginUrl);
     assert.ok(accessSummary.qrUrl);
@@ -312,8 +315,75 @@ test('Café Creation — Final Access Pack & Handover Comprehensive Test Suite',
     assert.equal(accessSummary.dedicatedLoginUrl.includes(deliveredPlaintextPin), false);
     assert.equal(accessSummary.qrUrl.includes(deliveredPlaintextPin), false);
 
-    // Verify URLs route to Cafe Operations Login 2.0
-    assert.ok(accessSummary.dedicatedLoginUrl.includes('/cafe-operations/login?cafe=ZC-0001'));
+    // Verify canonical opaque link structure
+    assert.match(accessSummary.dedicatedLoginUrl, /\/cafe-access\/link\/[a-zA-Z0-9_-]+/);
+    assert.match(accessSummary.qrUrl, /\/cafe-access\/qr\/[a-zA-Z0-9_-]+/);
+
+    // Extract link token
+    originalLinkToken = createdCafeResult.access.linkToken;
+    assert.ok(originalLinkToken);
+
+    // 7.1 Resolve Link Token
+    const linkContext = await cafeService.resolvePublicLinkToken(originalLinkToken);
+    assert.equal(linkContext.cafeId, 'ZC-0001');
+    assert.equal(linkContext.loginEnabled, true);
+    assert.equal(linkContext.sessionToken, undefined, 'Must NOT authenticate user');
+
+    // 7.2 Resolve QR Token
+    const qrContext = await cafeService.resolvePublicQrToken(createdCafeResult.access.qrToken);
+    assert.equal(qrContext.cafeId, 'ZC-0001');
+    assert.equal(qrContext.loginEnabled, true);
+    assert.equal(qrContext.sessionToken, undefined, 'Must NOT authenticate user');
+
+    // 7.3 Regenerate Login Link
+    const rotateLinkRes = await cafeService.rotateLinkCredential({
+      organisationId: 'ZAMORIN',
+      cafeId: 'ZC-0001',
+      auth: primaryMasterUser,
+      currentPassword: 'MasterSecret!Pass123',
+    });
+
+    assert.ok(rotateLinkRes.linkToken);
+    assert.notEqual(rotateLinkRes.linkToken, originalLinkToken);
+    assert.ok(rotateLinkRes.linkUrl.includes(rotateLinkRes.linkToken));
+
+    // Old link token must now FAIL with 401 CAFE_ACCESS_LINK_UNAVAILABLE
+    await assert.rejects(
+      async () => {
+        await cafeService.resolvePublicLinkToken(originalLinkToken);
+      },
+      (err) => {
+        assert.equal(err.statusCode, 401);
+        assert.equal(err.code, 'CAFE_ACCESS_LINK_UNAVAILABLE');
+        return true;
+      }
+    );
+
+    // New link token must SUCCEED
+    const newLinkContext = await cafeService.resolvePublicLinkToken(rotateLinkRes.linkToken);
+    assert.equal(newLinkContext.cafeId, 'ZC-0001');
+    assert.equal(newLinkContext.loginEnabled, true);
+  });
+
+  // =========================================================================
+  // 7b. Legacy Reveal PIN Permanently Retired (410 GONE)
+  // =========================================================================
+  await t.test('7b. PIN Reveal Retirement: revealPermanentPin throws 410 CAFE_PIN_REVEAL_RETIRED', async () => {
+    await assert.rejects(
+      async () => {
+        await cafeService.revealPermanentPin({
+          organisationId: 'ZAMORIN',
+          cafeId: 'ZC-0001',
+          auth: primaryMasterUser,
+          currentPassword: 'MasterSecret!Pass123',
+        });
+      },
+      (err) => {
+        assert.equal(err.statusCode, 410);
+        assert.equal(err.code, 'CAFE_PIN_REVEAL_RETIRED');
+        return true;
+      }
+    );
   });
 
   // =========================================================================

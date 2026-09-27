@@ -58,6 +58,30 @@ const getPublicQrContext = asyncHandler(async (req, res) => {
   });
 });
 
+const getPublicLinkContext = asyncHandler(async (req, res) => {
+  const token = (req.params.token || req.query.token || '').trim();
+  if (!token) {
+    throw new ApiError(400, 'TOKEN_REQUIRED', 'Access Link token is required.');
+  }
+
+  const result = await cafeService.resolvePublicLinkToken(token, {
+    clientIp: req.ip,
+    userAgent: req.headers['user-agent'],
+    correlationId: req.correlationId || req.headers['x-correlation-id'],
+  });
+
+  // If HTML requested from browser navigation, safe internal redirect to Login 2.0 with resolved cafe context
+  if (req.accepts && req.accepts('html') && !req.xhr && !req.path.startsWith('/api/')) {
+    return res.redirect(`/cafe-operations/login?cafe=${encodeURIComponent(result.cafeId)}`);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Café Operations gateway resolved successfully.',
+    data: result,
+  });
+});
+
 const resolveGateway = asyncHandler(async (req, res) => {
   const { method, credential } = req.body || {};
 
@@ -95,27 +119,11 @@ const getAccessSummary = asyncHandler(async (req, res) => {
 });
 
 const revealPermanentPin = asyncHandler(async (req, res) => {
-  const cafeId = (req.params.cafeId || '').trim().toUpperCase();
-  if (!cafeId) {
-    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'Café ID is required.');
-  }
-  requireGovernance(req, cafeId);
-  const { currentPassword } = req.body || {};
-
-  const result = await cafeService.revealPermanentPin({
-    organisationId: req.auth.organisationId,
-    cafeId,
-    auth: req.auth,
-    currentPassword,
-    clientIp: req.ip,
-    userAgent: req.headers['user-agent'],
-  });
-
-  return res.status(200).json({
-    success: true,
-    message: 'Permanent Café PIN revealed successfully.',
-    data: result,
-  });
+  throw new ApiError(
+    410,
+    'CAFE_PIN_REVEAL_RETIRED',
+    'Permanent Café PIN reveal has been permanently retired. The PIN is stored as a one-way bcrypt hash. If the PIN is lost, use Reset Café PIN.'
+  );
 });
 
 const rotateQr = asyncHandler(async (req, res) => {
@@ -363,6 +371,7 @@ const enableAccess = asyncHandler(async (req, res) => {
 
 module.exports = {
   getPublicQrContext,
+  getPublicLinkContext,
   resolveGateway,
   getAccessSummary,
   revealPermanentPin,

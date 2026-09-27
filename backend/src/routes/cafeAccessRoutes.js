@@ -5,6 +5,7 @@ const express = require('express');
 const { authenticate } = require('../middleware/authenticate');
 const {
   getPublicQrContext,
+  getPublicLinkContext,
   resolveGateway,
   getAccessSummary,
   revealPermanentPin,
@@ -27,6 +28,7 @@ const router = express.Router();
 // 1. Gateway Resolution (Public resolver: resolves QR, Link, or setup code to safe public context or Gateway Context)
 router.get('/qr/:token', getPublicQrContext);
 router.get('/c/:token', getPublicQrContext);
+router.get('/link/:token', getPublicLinkContext);
 router.post('/resolve', resolveGateway);
 
 // 2. Post-auth Café Binding (Requires valid authentication)
