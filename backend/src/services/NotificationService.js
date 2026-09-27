@@ -371,7 +371,7 @@ class NotificationService {
         },
       },
       {
-        new: true,
+        returnDocument: 'after',
         sort: { nextAttemptAt: 1, createdAt: 1 },
       }
     );
