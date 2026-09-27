@@ -129,7 +129,7 @@ class DistributedRateLimiter {
         }
 
         const ttlSeconds = Math.ceil((lockoutMs + windowMs) / 1000);
-        await this.redisClient.set(key, JSON.stringify(state), 'EX', ttlSeconds);
+        await this.redisClient.set(key, JSON.stringify(state), { EX: ttlSeconds });
         return {
           failures: state.failures,
           lockedUntil: state.lockedUntil ? new Date(state.lockedUntil) : null,
