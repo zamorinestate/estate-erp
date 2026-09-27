@@ -72,10 +72,21 @@ function normalizeId(value) {
 function assertCafeAccess(authContext = {}, cafeId) {
   const normCafeId = normalizeId(cafeId);
   if (!normCafeId) return;
-  if (authContext.role === 'MASTER' || authContext.role === 'OWNER') return;
+
+  const role = normalizeId(authContext.role);
+  if (role === 'MASTER') {
+    if (authContext.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'NORMAL_MASTER_RUNTIME_DISABLED',
+      'Normal Master runtime access is retired. Primary Master authority is required.'
+    );
+  }
+
   const assigned = Array.isArray(authContext.assignedCafeIds)
     ? authContext.assignedCafeIds.map(normalizeId)
     : authContext.primaryCafeId ? [normalizeId(authContext.primaryCafeId)] : [];
+
   if (!assigned.includes(normCafeId)) {
     throw new ApiError(
       403,
@@ -84,6 +95,27 @@ function assertCafeAccess(authContext = {}, cafeId) {
     );
   }
 }
+
+function requireOrganisationId(authContext = {}) {
+  const organisationId = normalizeId(authContext.organisationId);
+  if (!organisationId) {
+    throw new ApiError(
+      401,
+      'ORGANISATION_CONTEXT_REQUIRED',
+      'Authenticated organisation context is required for POS transactions.'
+    );
+  }
+  return organisationId;
+}
+
+const SETTLEMENT_TENDER_METHODS = new Set([
+  'CASH',
+  'UPI',
+  'CARD',
+  'CREDIT',
+  'COMPLIMENTARY',
+  'STAFF_MEAL',
+]);
 
 function computeRequestFingerprint(orderPayload = {}) {
   const normItems = (orderPayload.lineItems || []).map((li) => ({
@@ -375,7 +407,8 @@ class PosOrderService {
     }
 
     const cafeId = normalizeId(orderPayload.cafeId);
-    const orgId = normalizeId(authContext.organisationId || 'ORG-ZAMORIN');
+    const orgId = requireOrganisationId(authContext);
+    assertCafeAccess(authContext, cafeId);
     const idempotencyKey = String(orderPayload.idempotencyKey || options.idempotencyKey || '').trim();
 
     const saleAttemptId = String(
@@ -612,7 +645,8 @@ class PosOrderService {
     this.validateOrderPayload(orderPayload);
 
     const cafeId = normalizeId(orderPayload.cafeId);
-    const orgId = normalizeId(authContext.organisationId || 'ORG-ZAMORIN');
+    const orgId = requireOrganisationId(authContext);
+    assertCafeAccess(authContext, cafeId);
     let cutoffHour = 4;
 
     // REC-13: Validate café operational status before financial commit
@@ -701,7 +735,14 @@ class PosOrderService {
         prefix: `BILL-${datePart}`,
         minimumDigits: 4,
       });
-    } catch {
+    } catch (sequenceError) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ApiError(
+          503,
+          'POS_SEQUENCE_UNAVAILABLE',
+          'Unable to allocate a canonical POS bill number. The sale was not committed.'
+        );
+      }
       const randSuffix = Math.floor(1000 + Math.random() * 9000);
       billId = `BILL-${datePart}-${randSuffix}`;
     }
@@ -715,22 +756,30 @@ class PosOrderService {
         seriesPrefix: 'P',
       });
       invoiceNumber = invoiceAlloc.invoiceNumber;
-    } catch {
+    } catch (invoiceError) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ApiError(
+          503,
+          'POS_INVOICE_SEQUENCE_UNAVAILABLE',
+          'Unable to allocate the canonical tax invoice number. The sale was not committed.'
+        );
+      }
       const compactBranch = cafeId.replace(/[^A-Za-z0-9]/g, '').slice(-4).padStart(2, '0');
       const seqTail = billId.split('-').pop();
       invoiceNumber = `P/${compactBranch}/2627/${seqTail}`.slice(0, 16);
     }
 
-    // 5. Build Tenders & Payment Status
-    const paymentMethod = normalizeId(orderPayload.paymentMethod || 'CASH') || 'CASH';
+    // 5. Canonical settlement: every financial side effect derives from the same
+    // validated tender allocation persisted on the Bill.
+    const requestedPaymentMethod = normalizeId(orderPayload.paymentMethod || 'CASH') || 'CASH';
     const isImmediateCompletion = orderPayload.isImmediateCompletion !== false;
     const initialStatus = isImmediateCompletion ? 'COMPLETED' : 'OPEN';
     const paymentStatus = isImmediateCompletion ? 'PAID' : 'UNPAID';
 
     const tenders = Array.isArray(orderPayload.tenders) && orderPayload.tenders.length > 0
       ? orderPayload.tenders.map((t) => ({
-          paymentMethod: normalizeId(t.paymentMethod || paymentMethod),
-          amountPaisa: Math.max(0, Math.round(Number(t.amountPaisa || 0))),
+          paymentMethod: normalizeId(t.paymentMethod || requestedPaymentMethod),
+          amountPaisa: Math.round(Number(t.amountPaisa || 0)),
           status: 'COMPLETED',
           provider: t.provider || '',
           paymentReference: t.paymentReference || '',
@@ -741,7 +790,7 @@ class PosOrderService {
       : isImmediateCompletion
         ? [
             {
-              paymentMethod,
+              paymentMethod: requestedPaymentMethod,
               amountPaisa: totals.totalPaisa,
               status: 'COMPLETED',
               provider: orderPayload.provider || '',
@@ -751,6 +800,66 @@ class PosOrderService {
             },
           ]
         : [];
+
+    if (isImmediateCompletion) {
+      if (tenders.length === 0) {
+        throw new ApiError(400, 'PAYMENT_TENDER_REQUIRED', 'A completed sale requires at least one payment tender.');
+      }
+      for (const tender of tenders) {
+        if (!SETTLEMENT_TENDER_METHODS.has(tender.paymentMethod)) {
+          throw new ApiError(
+            400,
+            'INVALID_TENDER_PAYMENT_METHOD',
+            `Tender payment method ${tender.paymentMethod || 'UNKNOWN'} is not a settlement method.`
+          );
+        }
+        if (!Number.isInteger(tender.amountPaisa) || tender.amountPaisa <= 0) {
+          throw new ApiError(400, 'INVALID_TENDER_AMOUNT', 'Each completed payment tender must have a positive integer amountPaisa.');
+        }
+      }
+      const tenderTotalPaisa = tenders.reduce((sum, tender) => sum + tender.amountPaisa, 0);
+      if (tenderTotalPaisa !== totals.totalPaisa) {
+        throw new ApiError(
+          409,
+          'PAYMENT_SETTLEMENT_MISMATCH',
+          `Tender total ${tenderTotalPaisa} does not equal bill total ${totals.totalPaisa} paisa.`
+        );
+      }
+    }
+
+    const distinctTenderMethods = [...new Set(tenders.map((t) => t.paymentMethod))];
+    const paymentMethod = isImmediateCompletion
+      ? (distinctTenderMethods.length > 1 ? 'MIXED' : (distinctTenderMethods[0] || requestedPaymentMethod))
+      : requestedPaymentMethod;
+    const cashPaidPaisa = tenders
+      .filter((t) => t.paymentMethod === 'CASH')
+      .reduce((sum, t) => sum + t.amountPaisa, 0);
+    const upiPaidPaisa = tenders
+      .filter((t) => t.paymentMethod === 'UPI')
+      .reduce((sum, t) => sum + t.amountPaisa, 0);
+    const cardPaidPaisa = tenders
+      .filter((t) => t.paymentMethod === 'CARD')
+      .reduce((sum, t) => sum + t.amountPaisa, 0);
+    const isTraining = Boolean(orderPayload.isTraining || options.isTraining);
+    const registerSessionId = normalizeId(orderPayload.registerSessionId || '');
+    const registerId = normalizeId(orderPayload.registerId || 'REG-01') || 'REG-01';
+
+    if (!isTraining && registerSessionId) {
+      const scopedSession = await RegisterSession.findOne({
+        registerSessionId,
+        organisationId: orgId,
+        cafeId,
+        registerId,
+        status: 'OPEN',
+      });
+      if (!scopedSession) {
+        throw new ApiError(
+          409,
+          'REGISTER_SESSION_SCOPE_MISMATCH',
+          'The supplied register session is not open in the authenticated organisation/café/register scope.'
+        );
+      }
+    }
 
     const idempotencyKey = String(orderPayload.idempotencyKey || options.idempotencyKey || '').trim();
 
@@ -769,8 +878,8 @@ class PosOrderService {
       customerPhone: String(orderPayload.customerPhone || '').trim(),
       b2bCustomerGstin: normalizeId(orderPayload.b2bCustomerGstin || ''),
       b2bCustomerLegalName: String(orderPayload.b2bCustomerLegalName || '').trim(),
-      registerId: orderPayload.registerId || 'REG-01',
-      registerSessionId: orderPayload.registerSessionId || '',
+      registerId,
+      registerSessionId,
       financialYear: orderPayload.financialYear || '2026-2027',
       lineItems: totals.lineItems,
       subtotalPaisa: totals.subtotalPaisa,
@@ -790,7 +899,7 @@ class PosOrderService {
       tenders,
       reprints: [],
       refunds: [],
-      isTraining: Boolean(orderPayload.isTraining || options.isTraining),
+      isTraining,
       printStatus: action === 'SAVE_AND_PRINT' ? 'PRINT_PENDING' : 'NOT_REQUESTED',
       printJobs: [],
       businessDate,
@@ -883,39 +992,90 @@ class PosOrderService {
     }
 
     // 7. Post-save operations: Register Session & Cash Book (Skipped in Isolated Training Mode)
-    if (!billDoc.isTraining && orderPayload.registerSessionId) {
+    if (!billDoc.isTraining && registerSessionId) {
       try {
-        const session = await RegisterSession.findOne({
-          registerSessionId: orderPayload.registerSessionId,
-          status: 'OPEN',
-        });
-        if (session) {
-          session.orderCount = (session.orderCount || 0) + 1;
-          session.totalSalesPaisa = (session.totalSalesPaisa || 0) + totals.totalPaisa;
-          if (paymentMethod === 'CASH') {
-            session.totalCashSalesPaisa = (session.totalCashSalesPaisa || 0) + totals.totalPaisa;
-            session.cashEvents = session.cashEvents || [];
-            session.cashEvents.push({
+        const registerUpdate = {
+          $inc: {
+            orderCount: 1,
+            totalSalesPaisa: totals.totalPaisa,
+            totalCashSalesPaisa: cashPaidPaisa,
+            totalUpiSalesPaisa: upiPaidPaisa,
+            totalCardSalesPaisa: cardPaidPaisa,
+          },
+          $addToSet: { settledBillIds: billId },
+        };
+        if (cashPaidPaisa > 0) {
+          registerUpdate.$push = {
+            cashEvents: {
               eventType: 'CASH_SALE',
-              amountPaisa: totals.totalPaisa,
+              amountPaisa: cashPaidPaisa,
               reason: `Bill ${billId}`,
               actorId: authContext.userId,
               reference: billId,
               timestamp: new Date(),
-            });
-          } else if (paymentMethod === 'UPI') {
-            session.totalUpiSalesPaisa = (session.totalUpiSalesPaisa || 0) + totals.totalPaisa;
-          } else if (paymentMethod === 'CARD') {
-            session.totalCardSalesPaisa = (session.totalCardSalesPaisa || 0) + totals.totalPaisa;
+            },
+          };
+        }
+
+        const updatedSession = await RegisterSession.findOneAndUpdate(
+          {
+            registerSessionId,
+            organisationId: orgId,
+            cafeId,
+            registerId,
+            status: 'OPEN',
+            settledBillIds: { $ne: billId },
+          },
+          registerUpdate,
+          { new: true }
+        );
+
+        if (!updatedSession) {
+          const alreadySettled = await RegisterSession.findOne({
+            registerSessionId,
+            organisationId: orgId,
+            cafeId,
+            registerId,
+            status: 'OPEN',
+            settledBillIds: billId,
+          });
+          if (!alreadySettled) {
+            throw new ApiError(
+              409,
+              'REGISTER_SESSION_SETTLEMENT_CONFLICT',
+              'The committed bill could not be applied to its scoped register session.'
+            );
           }
-          await session.save();
         }
       } catch (err) {
         console.error('Failed to update register session for bill', billId, err);
+        try {
+          await PosReconciliationService.recordReconciliationFailure({
+            organisationId: orgId,
+            cafeId,
+            billId,
+            invoiceNumber,
+            effectType: 'REGISTER_SESSION',
+            error: err,
+            expectedAmount: totals.totalPaisa,
+            payloadSnapshot: {
+              registerSessionId,
+              registerId,
+              totalSalesPaisa: totals.totalPaisa,
+              cashPaidPaisa,
+              upiPaidPaisa,
+              cardPaidPaisa,
+              cashierUserId: authContext.userId,
+              businessDate,
+            },
+          });
+        } catch (recErr) {
+          console.error('[POS] Failed to record Register Session reconciliation job for bill', billId, recErr?.message);
+        }
       }
     }
 
-    if (isImmediateCompletion && paymentMethod === 'CASH') {
+    if (isImmediateCompletion && cashPaidPaisa > 0) {
       try {
         const ctSeqId = await SequenceCounter.generateId({
           organisationId: orgId,
@@ -932,7 +1092,7 @@ class PosOrderService {
           transactionType: 'CASH_IN',
           direction: 'IN',
           category: 'POS_SALE',
-          amount: Math.max(0.01, totals.totalPaisa / 100),
+          amount: Math.max(0.01, cashPaidPaisa / 100),
           paymentMethod: 'CASH',
           status: 'POSTED',
           description: `POS Sale Receipt #${invoiceNumber}`,
@@ -954,9 +1114,9 @@ class PosOrderService {
             invoiceNumber,
             effectType: 'CASH_LEDGER',
             error: err,
-            expectedAmount: Math.max(0.01, totals.totalPaisa / 100),
+            expectedAmount: Math.max(0.01, cashPaidPaisa / 100),
             payloadSnapshot: {
-              amount: Math.max(0.01, totals.totalPaisa / 100),
+              amount: Math.max(0.01, cashPaidPaisa / 100),
               invoiceNumber,
               businessDate,
               cashierUserId: authContext.userId,
