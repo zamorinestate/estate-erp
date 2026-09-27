@@ -4,7 +4,7 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://zamorin-cafe-erp-staging.onrender.com/api/$1" },
+    { "source": "/api/(.*)", "destination": "https://zamorin-cafe-erp-backend.onrender.com/api/$1" },
     { "source": "/windows-app-web-link", "destination": "/windows-app-web-link" },
     { "source": "/.well-known/(.*)", "destination": "/.well-known/$1" },
     { "source": "/privacy", "destination": "/privacy.html" },
