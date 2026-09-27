@@ -2004,22 +2004,43 @@ const listSelfChangeRequests = asyncHandler(async (req, res) => {
 
 const createSelfChangeRequest = asyncHandler(async (req, res) => {
   const { organisationId, userId } = req.auth;
-  const { requestType, section, title, reason, proposedValues, oldValues, supportingDocuments, idempotencyKey } = req.body || {};
+  const {
+    requestType,
+    section,
+    title,
+    reason,
+    proposedValues,
+    oldValues,
+    supportingDocuments,
+    idempotencyKey,
+  } = req.body || {};
 
   if (!requestType || !reason || !proposedValues) {
-    throw new ApiError(400, 'INVALID_CHANGE_REQUEST', 'Request type, reason, and proposed values are required.');
+    throw new ApiError(
+      400,
+      'INVALID_CHANGE_REQUEST',
+      'Request type, reason, and proposed values are required.'
+    );
   }
 
-  const effectiveIdempotencyKey = idempotencyKey || req.headers?.['x-idempotency-key'] || null;
+  const effectiveIdempotencyKey =
+    idempotencyKey || req.headers?.['x-idempotency-key'] || null;
 
   if (effectiveIdempotencyKey) {
-    const existing = await ProfileChangeRequest.findOne({ organisationId, userId, idempotencyKey: effectiveIdempotencyKey }).lean();
+    const existing = await ProfileChangeRequest.findOne({
+      organisationId,
+      userId,
+      idempotencyKey: effectiveIdempotencyKey,
+    }).lean();
     if (existing) {
-      return res.status(200).json({ success: true, data: { request: existing }, message: 'Profile change request already submitted.' });
+      return res.status(200).json({
+        success: true,
+        data: { request: existing },
+        message: 'Profile change request already submitted.',
+      });
     }
   }
 
-  // Prevent immediate rapid retry duplication
   const recentDuplicate = await ProfileChangeRequest.findOne({
     organisationId,
     userId,
@@ -2039,86 +2060,128 @@ const createSelfChangeRequest = asyncHandler(async (req, res) => {
 
   const now = new Date();
   const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
-  const randomSuffix = Math.floor(10000 + Math.random() * 90000);
-  const requestId = `PCR-${yearMonth}-${randomSuffix}`;
+  let changeRequest;
 
-  const changeRequest = await ProfileChangeRequest.create({
-    requestId,
-    organisationId,
-    userId,
-    requestType,
-    section: section || 'PERSONAL',
-    title: title || `${requestType} Change Request`,
-    reason: String(reason).trim(),
-    oldValues: oldValues || {},
-    proposedValues: proposedValues || {},
-    status: 'SUBMITTED',
-    supportingDocuments: Array.isArray(supportingDocuments) ? supportingDocuments : [],
-    idempotencyKey: effectiveIdempotencyKey || null,
-    auditCorrelationId: req.correlationId || null,
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const requestId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `PROFILE_CHANGE_REQUEST_${yearMonth}`,
+        prefix: `PCR-${yearMonth}`,
+        minimumDigits: 5,
+        session,
+      });
+
+      changeRequest = new ProfileChangeRequest({
+        requestId,
+        organisationId,
+        userId,
+        requestType,
+        section: section || 'PERSONAL',
+        title: title || `${requestType} Change Request`,
+        reason: String(reason).trim(),
+        oldValues: oldValues || {},
+        proposedValues: proposedValues || {},
+        status: 'SUBMITTED',
+        supportingDocuments: Array.isArray(supportingDocuments) ? supportingDocuments : [],
+        idempotencyKey: effectiveIdempotencyKey || null,
+        auditCorrelationId: req.correlationId || null,
+      });
+      await changeRequest.save({ session });
+
+      const approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+        session,
+      });
+
+      const approval = new Approval({
+        approvalId,
+        organisationId,
+        cafeId: null,
+        entityType: 'PROFILE_CHANGE',
+        entityId: requestId,
+        requestingUserId: userId,
+        actionRequired: `Profile Change: ${requestType} (${section || 'PERSONAL'})`,
+        amountPaisa: 0,
+        status: 'PENDING',
+      });
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  await auditService.recordRequestAudit({
+    request: req,
+    module: 'EMPLOYEES',
+    action: 'PROFILE_CHANGE_REQUEST_CREATE',
+    entityType: 'PROFILE_CHANGE_REQUEST',
+    entityId: changeRequest.requestId,
+    result: 'SUCCESS',
+    metadata: {
+      requestId: changeRequest.requestId,
+      requestType,
+      section: section || 'PERSONAL',
+    },
   });
 
   try {
-    await auditService.recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'PROFILE_CHANGE_REQUEST_CREATE',
-      entityType: 'PROFILE_CHANGE_REQUEST',
-      entityId: requestId,
-      result: 'SUCCESS',
-      metadata: { requestId, requestType, section: section || 'PERSONAL' },
-    });
-  } catch (auditErr) {
-    // Compensating rollback: delete changeRequest to eliminate partial-success state
-    if (changeRequest?._id) {
-      await ProfileChangeRequest.deleteOne({ _id: changeRequest._id }).catch(() => {});
-    }
-    throw new ApiError(500, 'AUDIT_RECORD_FAILED', `Failed to audit profile change request: ${auditErr.message}`);
-  }
-
-  try {
-    const approvalCount = await Approval.countDocuments({ organisationId });
-    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-    await Approval.create({
-      approvalId,
+    const masterUsers = await User.find({
       organisationId,
-      cafeId: null,
-      entityType: 'PROFILE_CHANGE',
-      entityId: requestId,
-      requestingUserId: userId,
-      actionRequired: `Profile Change: ${requestType} (${section || 'PERSONAL'})`,
-      amountPaisa: 0,
-      status: 'PENDING',
-    });
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${dateStr}`,
+        prefix: `NT-${dateStr}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
         eventType: 'PROFILE_CHANGE_REQUESTED',
         category: 'OPERATIONS',
-        recipientUserId: m.userId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
+        recipientEmail: master.email,
         title: `👤 Profile Change Request: ${userId}`,
         message: `${userId} requested a profile update (${requestType}). Reason: ${reason}`,
         priority: 'NORMAL',
         channels: ['IN_APP'],
-        deepLink: `#approvals`,
+        deepLink: '#approvals',
         sourceModule: 'EMPLOYEES',
         sourceEntityType: 'PROFILE_CHANGE',
-        sourceEntityId: requestId,
+        sourceEntityId: changeRequest.requestId,
+        deduplicationKey: `PCR_${changeRequest.requestId}_${master.userId}`,
+        correlationId: req.correlationId || `CORR-PCR-${changeRequest.requestId}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
         createdBy: userId,
       });
     }
   } catch (err) {
-    console.warn(`[PROFILE_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
+    console.warn(`[PROFILE_CHANGE_NOTIFICATION_WARN] ${err.message}`);
   }
 
-  return res.status(201).json({ success: true, data: { request: changeRequest }, message: 'Profile change request submitted for review.' });
+  return res.status(201).json({
+    success: true,
+    data: { request: changeRequest },
+    message: 'Profile change request submitted for review.',
+  });
 });
 
 const withdrawSelfChangeRequest = asyncHandler(async (req, res) => {
