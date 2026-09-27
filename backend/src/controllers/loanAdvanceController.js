@@ -503,25 +503,50 @@ const withdrawMyRequest = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
 
-  const loan = await StaffLoanAdvance.findOne({ organisationId, loanAdvanceId, employeeUserId: userId });
-  if (!loan) throw new ApiError(404, 'LOAN_NOT_FOUND', `Request ${loanAdvanceId} not found.`);
+  let loan;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      loan = await StaffLoanAdvance.findOne({
+        organisationId,
+        loanAdvanceId,
+        employeeUserId: userId,
+      }).session(session);
 
-  if (!['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFO_REQUIRED'].includes(loan.status)) {
-    throw new ApiError(400, 'CANNOT_WITHDRAW', `Cannot withdraw request in status ${loan.status}.`);
+      if (!loan) throw new ApiError(404, 'LOAN_NOT_FOUND', `Request ${loanAdvanceId} not found.`);
+      if (!['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFO_REQUIRED'].includes(loan.status)) {
+        throw new ApiError(400, 'CANNOT_WITHDRAW', `Cannot withdraw request in status ${loan.status}.`);
+      }
+
+      const approval = await Approval.findOne({
+        organisationId,
+        entityId: loanAdvanceId,
+        status: 'PENDING',
+      }).session(session);
+      if (!approval) {
+        throw new ApiError(409, 'APPROVAL_TARGET_NOT_FOUND', 'Pending Approval record is missing. Withdrawal was not committed.');
+      }
+
+      loan.status = 'WITHDRAWN';
+      loan.updatedByUserId = userId;
+      await loan.save({ session });
+
+      approval.status = 'REJECTED';
+      approval.decisionReason = 'Withdrawn by employee';
+      approval.decidedByUserId = userId;
+      approval.decidedAt = new Date();
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
   }
 
-  loan.status = 'WITHDRAWN';
-  loan.updatedByUserId = userId;
-  await loan.save();
-
-  try {
-    await Approval.updateOne(
-      { organisationId, entityId: loanAdvanceId, status: 'PENDING' },
-      { $set: { status: 'REJECTED', decisionReason: 'Withdrawn by employee', decidedAt: new Date() } }
-    );
-  } catch (_) {}
-
-  return response.status(200).json({ success: true, message: 'Request withdrawn successfully.' });
+  return response.status(200).json({ success: true, message: 'Request withdrawn successfully.', data: { loan } });
 });
 
 const reportManualRepayment = asyncHandler(async (request, response) => {
@@ -691,60 +716,89 @@ const approveLoan = asyncHandler(async (request, response) => {
   const { loanAdvanceId } = request.params;
   const { approvedAmountPaise, tenureMonths } = request.body;
 
-  const loan = await StaffLoanAdvance.findOne({ organisationId, loanAdvanceId });
-  if (!loan) throw new ApiError(404, 'LOAN_NOT_FOUND', `Loan ${loanAdvanceId} not found.`);
-
-  const approvedPaise = approvedAmountPaise !== undefined ? parseInt(approvedAmountPaise, 10) : loan.requestedAmountPaise;
-  const tenure = tenureMonths !== undefined ? parseInt(tenureMonths, 10) : loan.tenureMonths;
-
-  loan.approvedAmountPaise = approvedPaise;
-  loan.principalPaise = approvedPaise;
-  loan.outstandingPrincipalPaise = approvedPaise;
-  loan.tenureMonths = tenure;
-  loan.monthlyInstalmentPaise = Math.floor(approvedPaise / Math.max(1, tenure));
-  loan.status = 'DISBURSEMENT_PENDING';
-  loan.approvedAt = new Date();
-  loan.approvedByUserId = userId;
-  await loan.save();
-
-  // Sync Approval record
+  let loan;
+  const session = await mongoose.startSession();
   try {
-    await Approval.updateOne(
-      { organisationId, entityId: loanAdvanceId, status: 'PENDING' },
-      {
-        $set: {
-          status: 'APPROVED',
-          decidedByUserId: userId,
-          decisionReason: `Approved for ₹${(approvedPaise / 100).toFixed(2)} (${tenure} mos)`,
-          decidedAt: new Date(),
-        },
+    await session.withTransaction(async () => {
+      loan = await StaffLoanAdvance.findOne({ organisationId, loanAdvanceId }).session(session);
+      if (!loan) throw new ApiError(404, 'LOAN_NOT_FOUND', `Loan ${loanAdvanceId} not found.`);
+      if (!['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFO_REQUIRED', 'APPROVED'].includes(loan.status)) {
+        throw new ApiError(409, 'INVALID_STATE', `Loan cannot be approved from status ${loan.status}.`);
       }
-    );
-  } catch (_) {}
 
-  // Emit Notification to employee
+      const approval = await Approval.findOne({
+        organisationId,
+        entityId: loanAdvanceId,
+        status: 'PENDING',
+      }).session(session);
+      if (!approval) {
+        throw new ApiError(409, 'APPROVAL_TARGET_NOT_FOUND', 'Pending Approval record is missing. Loan approval was not committed.');
+      }
+
+      const approvedPaise =
+        approvedAmountPaise !== undefined ? parseInt(approvedAmountPaise, 10) : loan.requestedAmountPaise;
+      const tenure = tenureMonths !== undefined ? parseInt(tenureMonths, 10) : loan.tenureMonths;
+
+      loan.approvedAmountPaise = approvedPaise;
+      loan.principalPaise = approvedPaise;
+      loan.outstandingPrincipalPaise = approvedPaise;
+      loan.tenureMonths = tenure;
+      loan.monthlyInstalmentPaise = Math.floor(approvedPaise / Math.max(1, tenure));
+      loan.status = 'DISBURSEMENT_PENDING';
+      loan.approvedAt = new Date();
+      loan.approvedByUserId = userId;
+      await loan.save({ session });
+
+      approval.status = 'APPROVED';
+      approval.decidedByUserId = userId;
+      approval.decisionReason = `Approved for ₹${(approvedPaise / 100).toFixed(2)} (${tenure} mos)`;
+      approval.decidedAt = new Date();
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
+
   try {
     const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${todayStr}`,
+      prefix: `NT-${todayStr}`,
+      minimumDigits: 4,
+    });
+    const employee = await User.findOne({ organisationId, userId: loan.employeeUserId }).select('email').lean();
     await Notification.create({
       notificationId: notifId,
       organisationId,
+      cafeId: loan.cafeId,
       eventType: 'LOAN_APPROVED',
       category: 'FINANCE',
       recipientUserId: loan.employeeUserId,
       recipientRole: 'STAFF',
-      recipientEmail: `${String(loan.employeeUserId).toLowerCase()}@zamorincafe.com`,
-      title: `Loan/Advance Approved!`,
-      message: `Your ${loan.requestType || 'loan'} ${loanAdvanceId} has been approved for ₹${(approvedPaise / 100).toFixed(2)}. Pending disbursement.`,
+      recipientEmail: employee?.email || null,
+      title: 'Loan/Advance Approved!',
+      message: `Your ${loan.requestType || 'loan'} ${loanAdvanceId} has been approved for ₹${((loan.approvedAmountPaise || 0) / 100).toFixed(2)}. Pending disbursement.`,
       priority: 'NORMAL',
       channels: ['IN_APP'],
-      deepLink: `#staff-loans-advances`,
+      deepLink: '#staff-loans-advances',
       sourceModule: 'LOANS_ADVANCES',
       sourceEntityType: 'LOAN_ADVANCE',
       sourceEntityId: loanAdvanceId,
+      deduplicationKey: `${loan.employeeUserId}:LOAN_APPROVED:${loanAdvanceId}`,
+      correlationId: request.correlationId || `CORR-LN-APPROVE-${loanAdvanceId}`,
+      status: 'DELIVERED',
+      deliveredAt: new Date(),
       createdBy: userId,
     });
-  } catch (_) {}
+  } catch (err) {
+    console.warn(`[LOAN_NOTIFICATION_WARN] ${err.message}`);
+  }
 
   return response.status(200).json({ success: true, message: 'Loan approved for disbursement.', data: { loan } });
 });
@@ -755,57 +809,81 @@ const rejectLoan = asyncHandler(async (request, response) => {
   const { loanAdvanceId } = request.params;
   const { reason = '' } = request.body;
 
-  const loan = await StaffLoanAdvance.findOne({ organisationId, loanAdvanceId });
-  if (!loan) throw new ApiError(404, 'LOAN_NOT_FOUND', `Loan ${loanAdvanceId} not found.`);
+  let loan;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      loan = await StaffLoanAdvance.findOne({ organisationId, loanAdvanceId }).session(session);
+      if (!loan) throw new ApiError(404, 'LOAN_NOT_FOUND', `Loan ${loanAdvanceId} not found.`);
+      if (loan.status === 'REJECTED') {
+        throw new ApiError(409, 'ALREADY_REJECTED', `Loan ${loanAdvanceId} is already rejected.`);
+      }
 
-  if (loan.status === 'REJECTED') {
-    throw new ApiError(409, 'ALREADY_REJECTED', `Loan ${loanAdvanceId} is already rejected.`);
+      const approval = await Approval.findOne({
+        organisationId,
+        entityId: loanAdvanceId,
+        status: 'PENDING',
+      }).session(session);
+      if (!approval) {
+        throw new ApiError(409, 'APPROVAL_TARGET_NOT_FOUND', 'Pending Approval record is missing. Loan rejection was not committed.');
+      }
+
+      loan.status = 'REJECTED';
+      loan.rejectionReason = typeof reason === 'string' ? reason.trim() : '';
+      loan.rejectedAt = new Date();
+      loan.rejectedByUserId = userId;
+      await loan.save({ session });
+
+      approval.status = 'REJECTED';
+      approval.decidedByUserId = userId;
+      approval.decisionReason = loan.rejectionReason;
+      approval.decidedAt = new Date();
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
   }
 
-  loan.status = 'REJECTED';
-  loan.rejectionReason = typeof reason === 'string' ? reason.trim() : '';
-  loan.rejectedAt = new Date();
-  loan.rejectedByUserId = userId;
-  await loan.save();
-
-  // Sync Approval record
-  try {
-    await Approval.updateOne(
-      { organisationId, entityId: loanAdvanceId, status: 'PENDING' },
-      {
-        $set: {
-          status: 'REJECTED',
-          decidedByUserId: userId,
-          decisionReason: loan.rejectionReason,
-          decidedAt: new Date(),
-        },
-      }
-    );
-  } catch (_) {}
-
-  // Emit Notification to employee
   try {
     const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${todayStr}`,
+      prefix: `NT-${todayStr}`,
+      minimumDigits: 4,
+    });
+    const employee = await User.findOne({ organisationId, userId: loan.employeeUserId }).select('email').lean();
     await Notification.create({
       notificationId: notifId,
       organisationId,
+      cafeId: loan.cafeId,
       eventType: 'LOAN_REJECTED',
       category: 'FINANCE',
       recipientUserId: loan.employeeUserId,
       recipientRole: 'STAFF',
-      recipientEmail: `${String(loan.employeeUserId).toLowerCase()}@zamorincafe.com`,
-      title: `Loan/Advance Request Rejected`,
+      recipientEmail: employee?.email || null,
+      title: 'Loan/Advance Request Rejected',
       message: `Your ${loan.requestType || 'Loan'} request ${loanAdvanceId} was rejected.${reason ? ' Reason: ' + reason : ''}`,
       priority: 'NORMAL',
       channels: ['IN_APP'],
-      deepLink: `#staff-loans-advances`,
+      deepLink: '#staff-loans-advances',
       sourceModule: 'LOANS_ADVANCES',
       sourceEntityType: 'LOAN_ADVANCE',
       sourceEntityId: loanAdvanceId,
+      deduplicationKey: `${loan.employeeUserId}:LOAN_REJECTED:${loanAdvanceId}`,
+      correlationId: request.correlationId || `CORR-LN-REJECT-${loanAdvanceId}`,
+      status: 'DELIVERED',
+      deliveredAt: new Date(),
       createdBy: userId,
     });
-  } catch (_) {}
+  } catch (err) {
+    console.warn(`[LOAN_NOTIFICATION_WARN] ${err.message}`);
+  }
 
   return response.status(200).json({
     success: true,
