@@ -54,6 +54,13 @@ async function authenticate(
 ) {
   try {
     if (request.auth) {
+      if (String(request.auth.role || '').toUpperCase() === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+        return sendAuthenticationError(
+          response,
+          'NORMAL_MASTER_RUNTIME_DISABLED',
+          'Normal Master runtime access is retired.'
+        );
+      }
       return next();
     }
 
@@ -82,6 +89,7 @@ async function authenticate(
         }) || await User.findOne({
           organisationId: 'ZAMORIN',
           role: 'MASTER',
+          isPrimaryMaster: true,
           accountStatus: 'ACTIVE',
         });
 
@@ -103,7 +111,7 @@ async function authenticate(
             vendorId: devUser.vendorId || null,
             isPrimaryMaster: Boolean(devUser.isPrimaryMaster),
             assignedCafeIds,
-            primaryCafeId: devUser.primaryCafeId || 'ZC-0001',
+            primaryCafeId: devUser.primaryCafeId || assignedCafeIds[0] || null,
             sessionId: 'DEV-LOCAL-SESSION',
             capabilities: Array.isArray(devUser.capabilities)
               ? devUser.capabilities.map((c) => String(c).trim().toUpperCase()).filter(Boolean)
@@ -153,6 +161,14 @@ async function authenticate(
         response,
         'USER_UNAVAILABLE',
         'The authenticated user is unavailable.'
+      );
+    }
+
+    if (String(user.role || '').toUpperCase() === 'MASTER' && user.isPrimaryMaster !== true) {
+      return sendAuthenticationError(
+        response,
+        'NORMAL_MASTER_RUNTIME_DISABLED',
+        'Normal Master runtime access is retired. Sign in with the Primary Master account.'
       );
     }
 
