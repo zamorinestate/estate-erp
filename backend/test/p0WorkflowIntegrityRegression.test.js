@@ -16,6 +16,10 @@ const loanAdvanceController = read('backend/src/controllers/loanAdvanceControlle
 const settingsController = read('backend/src/controllers/settingsController.js');
 const attendanceController = read('backend/src/modules/attendance/attendanceController.js');
 const companyIdentityService = read('backend/src/services/companyIdentityService.js');
+const notificationService = read('backend/src/services/NotificationService.js');
+const outboxWorker = read('backend/src/services/notificationOutboxWorker.js');
+const outboxModel = read('backend/src/models/NotificationOutbox.js');
+const serverSource = read('backend/src/server.js');
 
 test('P0-WF-001: approval notification outbox is queued, never pre-marked SENT', () => {
   const helperStart = approvalController.indexOf('async function sendNotificationAndOutbox');
@@ -81,4 +85,50 @@ test('P0-WF-008: outlet branding lookup cannot resolve a cafe from another organ
   assert.ok(companyIdentityService.includes("Cafe.findOne({ organisationId: normalizedOrganisationId, cafeId })"));
   assert.equal(companyIdentityService.includes("Cafe.findOne({ cafeId })"), false);
   assert.ok(companyIdentityService.includes("'ORGANISATION_REQUIRED'"));
+});
+
+
+test('P0-WF-009: approval decision and target entity execute inside one transaction', () => {
+  const start = approvalController.indexOf('const decideApproval');
+  const block = approvalController.slice(start);
+  assert.ok(block.includes('session.withTransaction'));
+  assert.ok(block.includes('applyApprovalEntityDecision'));
+  assert.ok(block.includes('await approval.save({ session })'));
+  assert.equal(block.includes('[EXPENSE_SYNC_WARN]'), false);
+  assert.equal(block.includes('[SHIFT_SYNC_WARN]'), false);
+  assert.equal(block.includes('[PROFILE_SYNC_WARN]'), false);
+});
+
+test('P0-WF-010: profile change request persists proposed values and Approval atomically', () => {
+  assert.ok(settingsController.includes('session.withTransaction'));
+  assert.ok(settingsController.includes('proposedValues: newValues || {}'));
+  assert.ok(settingsController.includes('await pcr.save({ session })'));
+  assert.ok(settingsController.includes('await approval.save({ session })'));
+  assert.equal(settingsController.includes('APP-344807-'), false);
+});
+
+test('P0-WF-011: attendance correction create/review paths are transactionally coupled to Approval', () => {
+  assert.ok(attendanceController.includes('const requestStaffCorrection = asyncHandler'));
+  assert.ok(attendanceController.includes('const reviewStaffCorrection = asyncHandler'));
+  assert.ok(attendanceController.includes('session.withTransaction'));
+  assert.ok(attendanceController.includes("'PRIMARY_MASTER_AUTHORITY_REQUIRED'"));
+  assert.equal(attendanceController.includes("|| 'ZC-0001'"), false);
+  assert.equal(attendanceController.includes('[ATTENDANCE_APPROVAL_SYNC_WARN]'), false);
+});
+
+test('P0-WF-012: outbox has durable lease fields and atomic claim processing', () => {
+  assert.ok(outboxModel.includes('lockedBy'));
+  assert.ok(outboxModel.includes('lockedUntil'));
+  assert.ok(outboxModel.includes('leaseVersion'));
+  assert.ok(notificationService.includes('findOneAndUpdate'));
+  assert.ok(notificationService.includes("status: 'PROCESSING'"));
+  assert.ok(notificationService.includes('processDueOutbox'));
+  assert.ok(notificationService.includes('quarantineExpiredProcessingLeases'));
+});
+
+test('P0-WF-013: production server lifecycle starts and stops the outbox worker', () => {
+  assert.ok(serverSource.includes('startNotificationOutboxWorker();'));
+  assert.ok(serverSource.includes('await stopNotificationOutboxWorker();'));
+  assert.ok(outboxWorker.includes("JOB-NOTIFICATION-OUTBOX-DISPATCH"));
+  assert.ok(outboxWorker.includes('setInterval'));
 });
