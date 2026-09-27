@@ -20,6 +20,8 @@ class DistributedEventBus extends EventEmitter {
     this.redisSubscriber = options.redisSubscriber || null;
     this.isDistributed = Boolean(this.redisPublisher && this.redisSubscriber);
     this.subscribers = new Map(); // topic -> Set(callbacks)
+    this.redisSubscriptions = new Set();
+    this.instanceId = process.env.INSTANCE_ID || `inst-${process.pid}`;
     this.checkpointService = options.checkpointService || changeStreamCheckpointService;
     this.metrics = {
       publishedEvents: 0,
@@ -32,16 +34,26 @@ class DistributedEventBus extends EventEmitter {
     this.redisPublisher = publisher;
     this.redisSubscriber = subscriber;
     this.isDistributed = Boolean(publisher && subscriber);
+    this.redisSubscriptions.clear();
 
-    if (this.isDistributed && this.redisSubscriber) {
-      this.redisSubscriber.on('message', (channel, messageStr) => {
-        try {
-          const payload = JSON.parse(messageStr);
-          this.metrics.crossInstanceEvents++;
-          this.emitLocal(channel, payload);
-        } catch (_) {}
-      });
+    if (this.isDistributed) {
+      for (const topic of this.subscribers.keys()) {
+        this.subscribeRedisTopic(topic).catch(() => {});
+      }
     }
+  }
+
+  async subscribeRedisTopic(topic) {
+    if (!this.isDistributed || !this.redisSubscriber || this.redisSubscriptions.has(topic)) return;
+    await this.redisSubscriber.subscribe(topic, (messageStr) => {
+      try {
+        const eventEnvelope = typeof messageStr === 'string' ? JSON.parse(messageStr) : messageStr;
+        if (eventEnvelope?.sourceInstanceId === this.instanceId) return;
+        this.metrics.crossInstanceEvents++;
+        this.emitLocal(topic, eventEnvelope);
+      } catch (_) {}
+    });
+    this.redisSubscriptions.add(topic);
   }
 
   /**
@@ -53,7 +65,7 @@ class DistributedEventBus extends EventEmitter {
       topic,
       payload,
       timestamp: new Date().toISOString(),
-      sourceInstanceId: process.env.INSTANCE_ID || `inst-${process.pid}`,
+      sourceInstanceId: this.instanceId,
     };
 
     // Deliver locally
@@ -82,7 +94,7 @@ class DistributedEventBus extends EventEmitter {
     if (!this.subscribers.has(topic)) {
       this.subscribers.set(topic, new Set());
       if (this.isDistributed && this.redisSubscriber) {
-        this.redisSubscriber.subscribe(topic).catch(() => {});
+        this.subscribeRedisTopic(topic).catch(() => {});
       }
     }
     this.subscribers.get(topic).add(callback);
@@ -99,6 +111,7 @@ class DistributedEventBus extends EventEmitter {
       if (this.subscribers.get(topic).size === 0) {
         this.subscribers.delete(topic);
         if (this.isDistributed && this.redisSubscriber) {
+          this.redisSubscriptions.delete(topic);
           this.redisSubscriber.unsubscribe(topic).catch(() => {});
         }
       }
