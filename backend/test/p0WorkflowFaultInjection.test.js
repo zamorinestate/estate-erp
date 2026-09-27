@@ -126,7 +126,6 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       SequenceCounter,
       Notification,
       NotificationOutbox,
-      AuditEvent,
     ]) {
       await model.deleteMany({});
     }
