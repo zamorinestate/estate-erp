@@ -7,6 +7,8 @@ try {
   bcrypt = require('bcryptjs');
 }
 
+const crypto = require('crypto');
+
 const PIN_LENGTH = 6;
 
 // Curated blocklist of trivial, sequential, repetitive, and common 6-digit PINs
@@ -70,6 +72,22 @@ function validateSixDigitPinPolicy(pin) {
   }
 }
 
+/**
+ * Generates a cryptographically random, non-trivial 6-digit numeric PIN.
+ * Rejects repeated digits, sequences, alternating patterns, and blocklisted values.
+ * @returns {string} 6-digit numeric PIN
+ */
+function generateStrongSixDigitPin() {
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const num = crypto.randomInt(100000, 1000000);
+    const pin = String(num);
+    if (!isWeakPin(pin)) {
+      return pin;
+    }
+  }
+  throw new Error('Failed to generate secure non-trivial PIN after multiple attempts.');
+}
+
 // Precomputed runtime dummy hash for constant-time comparisons when entity is not found
 const DUMMY_HASH = bcrypt.hashSync('__zamorin_dummy_pin_hash_precomputed__', 12);
 
@@ -78,5 +96,6 @@ module.exports = {
   TRIVIAL_SIX_DIGIT_PINS,
   isWeakPin,
   validateSixDigitPinPolicy,
+  generateStrongSixDigitPin,
   DUMMY_HASH,
 };

@@ -1036,10 +1036,12 @@ async function boot() {
       cleanHash === "cafe-operator-signin";
 
     if (isCafeOpsLogin) {
+      const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
+      const preselectedCafeId = urlParams.get('cafe') || '';
       const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
       const appEl = document.getElementById("app");
       if (appEl) {
-        appEl.innerHTML = renderCafeOperationsLogin2();
+        appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
         wireCafeOperationsLogin2(appEl, {
           onSignIn: async (authData) => {
             const userRole = (authData?.user?.role || state.user?.role || "").toUpperCase();
@@ -1155,10 +1157,12 @@ async function boot() {
       urlHash === "cafe-operations-login" ||
       urlHash === "cafe-operator-signin"
     ) {
+      const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
+      const preselectedCafeId = urlParams.get('cafe') || '';
       const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
       const appEl = document.getElementById("app");
       if (appEl) {
-        appEl.innerHTML = renderCafeOperationsLogin2();
+        appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
         wireCafeOperationsLogin2(appEl, {
           onSignIn: () => {
             window.location.hash = "dashboard";
@@ -1298,10 +1302,12 @@ if (typeof window !== "undefined") {
       rawHash === "cafe-operations-login" ||
       rawHash === "cafe-operator-signin"
     ) {
+      const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
+      const preselectedCafeId = urlParams.get('cafe') || '';
       const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
       const appEl = document.getElementById("app");
       if (appEl) {
-        appEl.innerHTML = renderCafeOperationsLogin2();
+        appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
         wireCafeOperationsLogin2(appEl, {
           onSignIn: async (authData) => {
             const userRole = (authData?.user?.role || state.user?.role || "").toUpperCase();

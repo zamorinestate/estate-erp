@@ -9,12 +9,17 @@ const {
   getAccessSummary,
   revealPermanentPin,
   rotateQr,
+  regenerateQr,
   revokeQr,
   rotateLink,
+  regenerateLink,
   emergencyLock,
   emergencyUnlock,
   runAccessTest,
   verifyCafeBinding,
+  resetCafePin,
+  disableAccess,
+  enableAccess,
 } = require('../controllers/cafeAccessController');
 
 const router = express.Router();
@@ -30,11 +35,16 @@ router.use(authenticate);
 router.post('/verify-binding', verifyCafeBinding);
 router.get('/:cafeId', getAccessSummary);
 router.post('/:cafeId/reveal-pin', revealPermanentPin);
+router.post('/:cafeId/reset-pin', resetCafePin);
 router.post('/:cafeId/rotate-qr', rotateQr);
+router.post('/:cafeId/regenerate-qr', regenerateQr);
 router.post('/:cafeId/revoke-qr', revokeQr);
 router.post('/:cafeId/rotate-link', rotateLink);
+router.post('/:cafeId/regenerate-link', regenerateLink);
 router.post('/:cafeId/emergency-lock', emergencyLock);
 router.post('/:cafeId/emergency-unlock', emergencyUnlock);
+router.post('/:cafeId/disable', disableAccess);
+router.post('/:cafeId/enable', enableAccess);
 router.post('/:cafeId/test-access', runAccessTest);
 
 module.exports = router;

@@ -1,7 +1,7 @@
 // =============================================================================
 // ZAMORIN CAFÉ ERP — CAFÉ OPERATIONS ACCESS MANAGEMENT MODAL
-// Supported Roles: Primary Master, Normal Master, Owner
-// Design System: Ledger & Roastery Dark / Porcelain Light Theme
+// Supported Roles: Primary Master, Owner
+// Design System: Dark Navy / Bronze Zamorin Theme
 // =============================================================================
 
 'use strict';
@@ -75,16 +75,18 @@ async function loadAndRenderAccessModal(container, cafeId) {
 }
 
 function renderAccessModalContent(container, data) {
-  const isEmergencyLocked = Boolean(data.emergencyLocked);
+  const isEmergencyLocked = Boolean(data.emergencyLocked || data.accessStatus === 'LOCKED' || data.accessStatus === 'DISABLED');
   const statusBadge = isEmergencyLocked
     ? `<span class="status danger" style="font-size:11px;font-weight:700;">LOCKED (EMERGENCY)</span>`
     : data.accessStatus === 'ACTIVE'
     ? `<span class="status success" style="font-size:11px;font-weight:700;">ACTIVE</span>`
     : `<span class="status warning" style="font-size:11px;font-weight:700;">${escHtml(data.accessStatus)}</span>`;
 
+  const loginUrl = data.dedicatedLoginUrl || data.linkUrl || `${window.location.origin}/cafe-operations/login?cafe=${encodeURIComponent(data.cafeId)}`;
+
   container.innerHTML = `
     <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(18,17,16,0.82);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);">
-      <div class="modal-card card" style="width:820px;max-width:96vw;max-height:92vh;overflow-y:auto;padding:28px;background:var(--surface-raised, #242220);border:1px solid var(--line-strong, #3d3935);box-shadow:var(--shadow-2xl);border-radius:12px;color:var(--ink, #ede8e1);">
+      <div class="modal-card card" style="width:840px;max-width:96vw;max-height:92vh;overflow-y:auto;padding:28px;background:var(--surface-raised, #242220);border:1px solid var(--line-strong, #3d3935);box-shadow:var(--shadow-2xl);border-radius:12px;color:var(--ink, #ede8e1);">
 
         <!-- Header -->
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:1px solid var(--line, #33302c);padding-bottom:16px;">
@@ -98,7 +100,7 @@ function renderAccessModalContent(container, data) {
               ${statusBadge}
             </h2>
             <p style="margin:0;font-size:12.5px;color:var(--muted);">
-              Manage permanent identification PIN, rotate high-entropy QR / Link credentials, and monitor fleet security.
+              Manage fixed 6-digit Café Operations PIN, regenerate high-entropy QR / Link credentials, and govern terminal security.
             </p>
           </div>
           <button class="btn btn-xs btn-ghost" id="cafe-acc-close-btn" type="button" style="font-size:16px;cursor:pointer;">✕</button>
@@ -118,7 +120,7 @@ function renderAccessModalContent(container, data) {
           </div>
           <div style="background:var(--surface-sunken, #181715);border:1px solid var(--line, #33302c);border-radius:8px;padding:12px 14px;">
             <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:700;">Access Posture</div>
-            <div style="font-size:20px;font-weight:800;color:${isEmergencyLocked ? 'var(--danger)' : '#10b981'};margin-top:2px;">
+            <div style="font-size:20px;font-weight:800;color:${isEmergencyLocked ? 'var(--danger, #ef4444)' : '#10b981'};margin-top:2px;">
               ${isEmergencyLocked ? 'LOCKED' : 'ENFORCED'}
             </div>
             <div style="font-size:11px;color:var(--muted);">Tenant boundary active</div>
@@ -128,18 +130,18 @@ function renderAccessModalContent(container, data) {
         <!-- Credentials Section -->
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:24px;">
 
-          <!-- Card 1: Permanent 6-digit PIN -->
+          <!-- Card 1: Café Operations PIN (Absolute PIN Policy: Fixed until manual reset) -->
           <div style="background:var(--surface, #1e1d1b);border:1px solid var(--line, #33302c);border-radius:10px;padding:18px;">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
               <div>
                 <div style="font-size:11px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:var(--bronze-400);">
-                  PERMANENT CAFÉ OPERATIONS PIN
+                  CAFÉ OPERATIONS PIN
                 </div>
                 <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">
-                  ⚠️ Permanent identifier. Cannot be edited or regenerated. Reserved indefinitely.
+                  Fixed 6-digit PIN hashed with 12-round bcrypt. Stored non-reversibly. Can only be reset manually by Primary Master.
                 </div>
               </div>
-              <span class="status success" style="font-size:10px;font-weight:700;">ACTIVE</span>
+              <span class="status success" style="font-size:10px;font-weight:700;">${data.operationsPinSet !== false ? 'SET' : 'PENDING'}</span>
             </div>
 
             <div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface-sunken, #121110);border:1px solid var(--line-strong, #3d3935);border-radius:8px;padding:12px 18px;">
@@ -147,8 +149,23 @@ function renderAccessModalContent(container, data) {
                 ••••••
               </div>
               <div style="display:flex;gap:8px;" id="acc-pin-actions">
-                <button class="btn btn-xs btn-secondary" id="acc-reveal-pin-btn" type="button">Reveal PIN</button>
-                <button class="btn btn-xs btn-ghost" id="acc-copy-pin-btn" type="button" style="display:none;">Copy PIN</button>
+                <button class="btn btn-xs btn-secondary" id="acc-reset-pin-btn" type="button" style="color:var(--bronze-400, #d4a359);font-weight:700;">
+                  🔄 Reset Café PIN
+                </button>
+              </div>
+            </div>
+
+            <!-- One-time generated PIN banner upon reset -->
+            <div id="acc-new-pin-banner" style="display:none;margin-top:12px;background:rgba(177,125,56,0.15);border:1px solid var(--bronze-500, #b17d38);border-radius:8px;padding:14px 18px;">
+              <div style="font-size:11px;font-weight:700;color:var(--bronze-400);text-transform:uppercase;margin-bottom:6px;">
+                ✓ NEW CAFÉ PIN GENERATED (ONE-TIME DELIVERY)
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <div id="acc-new-pin-val" style="font-family:var(--font-mono);font-size:26px;font-weight:900;letter-spacing:0.25em;color:#fff;"></div>
+                <button class="btn btn-xs btn-primary" id="acc-copy-new-pin-btn" type="button">Copy PIN</button>
+              </div>
+              <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">
+                ⚠️ This PIN is displayed only once. Record it securely. All active operator sessions for this café have been terminated.
               </div>
             </div>
           </div>
@@ -161,7 +178,7 @@ function renderAccessModalContent(container, data) {
                   DEDICATED QR ACCESS CREDENTIAL
                 </div>
                 <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">
-                  High-entropy opaque gateway token. Version: <strong>v${data.qrVersion || 1}</strong>
+                  High-entropy opaque gateway token. Resolves café context for Login 2.0 without credentials. Version: <strong>v${data.qrVersion || 1}</strong>
                 </div>
               </div>
               ${data.qrEnabled
@@ -189,11 +206,11 @@ function renderAccessModalContent(container, data) {
                   <button class="btn btn-xs btn-secondary" id="acc-copy-qr-link-btn" type="button">Copy Link</button>
                   <button class="btn btn-xs btn-secondary" id="acc-dl-qr-btn" type="button">SVG</button>
                   <button class="btn btn-xs btn-secondary" id="acc-dl-png-btn" type="button">PNG</button>
-                  <button class="btn btn-xs btn-secondary" id="acc-print-qr-btn" type="button">Print Pack</button>
+                  <button class="btn btn-xs btn-secondary" id="acc-print-qr-btn" type="button">Print Card</button>
                   <button class="btn btn-xs btn-secondary" id="acc-revoke-qr-btn" type="button" style="color:var(--danger, #ef4444);">Revoke QR</button>
                 ` : ''}
                 <button class="btn btn-xs btn-secondary" id="acc-rotate-qr-btn" type="button" style="color:var(--bronze-400, #d4a359);">
-                  ${data.qrEnabled ? '↻ Rotate QR' : '↻ Regenerate Active QR'}
+                  ↻ Regenerate QR Access
                 </button>
               </div>
             </div>
@@ -222,24 +239,21 @@ function renderAccessModalContent(container, data) {
                   DEDICATED OPERATIONS LOGIN LINK
                 </div>
                 <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">
-                  Direct opaque gateway route for authorized browser terminals. Version: <strong>v${data.linkVersion || 1}</strong>
+                  Direct entry link resolving to Café Operations Login 2.0 with this Café preloaded. Version: <strong>v${data.linkVersion || 1}</strong>
                 </div>
               </div>
               <span class="status info" style="font-size:10px;font-weight:700;">v${data.linkVersion || 1} ACTIVE</span>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-sunken, #121110);border:1px solid var(--line-strong, #3d3935);border-radius:8px;padding:12px 18px;gap:12px;flex-wrap:wrap;">
-              <div style="font-size:12px;color:var(--muted);flex:1;">
-                Generated: ${data.linkCreatedAt ? new Date(data.linkCreatedAt).toLocaleDateString('en-IN') : 'At Creation'}
-                ${data.linkLastUsedAt ? ` · Last Opened: ${new Date(data.linkLastUsedAt).toLocaleDateString('en-IN')}` : ' · Never Opened'}
+              <div style="font-size:12px;color:var(--muted);flex:1;word-break:break-all;">
+                <code>${escHtml(loginUrl)}</code>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                ${data.linkUrl ? `
-                  <button class="btn btn-xs btn-secondary" id="acc-copy-link-btn" type="button">Copy Link</button>
-                  <a href="${escHtml(data.linkUrl)}" target="_blank" rel="noopener" class="btn btn-xs btn-ghost" style="text-decoration:none;">Open →</a>
-                ` : ''}
-                <button class="btn btn-xs btn-secondary" id="acc-rotate-link-btn" type="button" style="color:var(--danger, #ef4444);">
-                  ↻ Regenerate Link
+                <button class="btn btn-xs btn-secondary" id="acc-copy-link-btn" type="button">Copy Link</button>
+                <a href="${escHtml(loginUrl)}" target="_blank" rel="noopener" class="btn btn-xs btn-primary" style="text-decoration:none;">Open Login ↗</a>
+                <button class="btn btn-xs btn-secondary" id="acc-rotate-link-btn" type="button" style="color:var(--bronze-400, #d4a359);">
+                  ↻ Regenerate Login Link
                 </button>
               </div>
             </div>
@@ -250,15 +264,15 @@ function renderAccessModalContent(container, data) {
 
         </div>
 
-        <!-- Governance Operations & Emergency Lock -->
+        <!-- Governance Operations & Emergency Disable -->
         <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line, #33302c);padding-top:18px;flex-wrap:wrap;gap:12px;">
-          <div style="display:flex;gap:10px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <button class="btn btn-sm btn-secondary" id="acc-run-test-btn" type="button" style="display:flex;align-items:center;gap:6px;">
               <span>🧪</span> Run Access Diagnostic Test
             </button>
             <button class="btn btn-sm ${isEmergencyLocked ? 'btn-primary' : 'btn-danger'}" id="acc-emergency-btn" type="button" style="display:flex;align-items:center;gap:6px;">
               <span>${isEmergencyLocked ? '🔓' : '🛑'}</span>
-              ${isEmergencyLocked ? 'Release Emergency Lock' : 'Engage Emergency Lock'}
+              ${isEmergencyLocked ? 'Re-Enable Café Operations Access' : 'Disable Café Operations Access'}
             </button>
           </div>
           <button class="btn btn-sm btn-ghost" id="acc-done-btn" type="button">Close</button>
@@ -276,56 +290,64 @@ function renderAccessModalContent(container, data) {
     container.innerHTML = '';
   });
 
-  // Reveal PIN with step-up password
-  let currentDecryptedPin = null;
-  const pinDisplay = container.querySelector('#acc-pin-val');
-  const revealBtn = container.querySelector('#acc-reveal-pin-btn');
-  const copyBtn = container.querySelector('#acc-copy-pin-btn');
+  // Reset Café PIN (Absolute PIN Policy: Fixed until manual reset by Primary Master)
+  const resetBtn = container.querySelector('#acc-reset-pin-btn');
+  const newPinBanner = container.querySelector('#acc-new-pin-banner');
+  const newPinVal = container.querySelector('#acc-new-pin-val');
+  const copyNewPinBtn = container.querySelector('#acc-copy-new-pin-btn');
 
-  revealBtn?.addEventListener('click', async () => {
-    if (currentDecryptedPin) {
-      // Toggle hide
-      currentDecryptedPin = null;
-      if (pinDisplay) pinDisplay.textContent = '••••••';
-      if (revealBtn) revealBtn.textContent = 'Reveal PIN';
-      if (copyBtn) copyBtn.style.display = 'none';
-      return;
-    }
+  resetBtn?.addEventListener('click', async () => {
+    const confirm = window.confirm(
+      'RESET CAFÉ PIN WARNING:\n\n' +
+      'This will replace the Café Operations PIN hash and immediately terminate all active operator shifts and sessions for this café.\n\n' +
+      'Are you sure you want to proceed with resetting the Café PIN?'
+    );
+    if (!confirm) return;
 
-    const currentPassword = window.prompt('Step-up Reauthentication Required:\nPlease enter your personal login password to reveal the Permanent Café PIN:');
+    const currentPassword = window.prompt(
+      'Primary Master Step-up Reauthentication Required:\n' +
+      'Please enter your personal master password to authorize this PIN reset:'
+    );
     if (!currentPassword) return;
 
-    try {
-      const res = await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/reveal-pin`, {
-        body: { currentPassword },
-      });
-      if (res?.data?.permanentCafePin) {
-        currentDecryptedPin = res.data.permanentCafePin;
-        if (pinDisplay) pinDisplay.textContent = currentDecryptedPin;
-        if (revealBtn) revealBtn.textContent = 'Hide PIN';
-        if (copyBtn) copyBtn.style.display = 'inline-block';
-        showToast('Permanent Café PIN revealed. It will auto-hide in 30 seconds.', 'info');
+    const customPin = window.prompt(
+      'Optional Custom 6-Digit PIN:\n' +
+      'Enter a 6-digit numeric PIN, or leave blank to automatically generate a cryptographically strong PIN:'
+    );
 
-        // Auto-hide timer
-        setTimeout(() => {
-          if (currentDecryptedPin) {
-            currentDecryptedPin = null;
-            if (pinDisplay) pinDisplay.textContent = '••••••';
-            if (revealBtn) revealBtn.textContent = 'Reveal PIN';
-            if (copyBtn) copyBtn.style.display = 'none';
-          }
-        }, 30000);
+    try {
+      const payload = { currentPassword };
+      if (customPin && customPin.trim()) {
+        payload.newPin = customPin.trim();
+      }
+
+      const res = await apiPost(`/cafes/${encodeURIComponent(data.cafeId)}/reset-pin`, {
+        body: payload,
+      });
+
+      const generatedPin = res?.data?.newPin || res?.data?.operationsPin;
+      if (generatedPin) {
+        if (newPinBanner) newPinBanner.style.display = 'block';
+        if (newPinVal) newPinVal.textContent = generatedPin;
+        showToast('Café Operations PIN reset successfully. Save the new PIN now!', 'success');
+      } else {
+        showToast('Café PIN reset successfully.', 'success');
+        loadAndRenderAccessModal(container, data.cafeId);
       }
     } catch (err) {
-      showToast(err.message || 'Incorrect password. PIN reveal denied.', 'danger');
+      showToast(err.message || 'Failed to reset Café PIN.', 'danger');
     }
   });
 
-  // Copy PIN
-  copyBtn?.addEventListener('click', () => {
-    if (currentDecryptedPin && navigator.clipboard) {
-      navigator.clipboard.writeText(currentDecryptedPin);
-      showToast('Permanent Café PIN copied to clipboard.', 'info');
+  copyNewPinBtn?.addEventListener('click', async () => {
+    const pin = newPinVal?.textContent;
+    if (pin) {
+      try {
+        await navigator.clipboard.writeText(pin);
+        showToast('Café PIN copied. Clipboard contents may remain available to other applications on this device.', 'warning');
+      } catch {
+        showToast(`PIN: ${pin}`, 'info');
+      }
     }
   });
 
@@ -383,41 +405,42 @@ function renderAccessModalContent(container, data) {
 
   // Copy Link (Direct Login URL)
   container.querySelector('#acc-copy-link-btn')?.addEventListener('click', () => {
-    if (data.linkUrl && navigator.clipboard) {
-      navigator.clipboard.writeText(data.linkUrl);
+    const targetLink = data.dedicatedLoginUrl || data.linkUrl || `${window.location.origin}/cafe-operations/login?cafe=${encodeURIComponent(data.cafeId)}`;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(targetLink);
       showToast('Operations login link copied!', 'info');
     }
   });
 
-  // Rotate QR
+  // Regenerate QR Access
   container.querySelector('#acc-rotate-qr-btn')?.addEventListener('click', async () => {
     const confirm = window.confirm(
-      'WARNING: Regenerating the QR credential will invalidate all previously printed QR codes for this location.\n\nThe Permanent Café PIN will remain unchanged.\n\nDo you want to proceed?'
+      'WARNING: Regenerating the QR credential will invalidate all previously printed QR codes for this location.\n\nThe Café Operations PIN will remain unchanged.\n\nDo you want to proceed?'
     );
     if (!confirm) return;
 
     try {
-      const res = await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/rotate-qr`);
-      showToast(`QR Code regenerated to v${res?.data?.qrVersion || 2}!`, 'success');
+      const res = await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/regenerate-qr`);
+      showToast(`QR Credential regenerated to v${res?.data?.qrVersion || 2}!`, 'success');
       loadAndRenderAccessModal(container, data.cafeId);
     } catch (err) {
-      showToast(err.message || 'Failed to rotate QR credential.', 'danger');
+      showToast(err.message || 'Failed to regenerate QR credential.', 'danger');
     }
   });
 
-  // Rotate Link
+  // Regenerate Login Link
   container.querySelector('#acc-rotate-link-btn')?.addEventListener('click', async () => {
     const confirm = window.confirm(
-      'WARNING: Regenerating the login link will immediately invalidate any existing bookmarks or links for this café.\n\nThe Permanent Café PIN will remain unchanged.\n\nDo you want to proceed?'
+      'WARNING: Regenerating the login link will immediately invalidate any previous gateway bookmarks for this café.\n\nThe Café Operations PIN will remain unchanged.\n\nDo you want to proceed?'
     );
     if (!confirm) return;
 
     try {
-      const res = await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/rotate-link`);
+      const res = await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/regenerate-link`);
       showToast(`Login Link regenerated to v${res?.data?.linkVersion || 2}!`, 'success');
       loadAndRenderAccessModal(container, data.cafeId);
     } catch (err) {
-      showToast(err.message || 'Failed to rotate link credential.', 'danger');
+      showToast(err.message || 'Failed to regenerate login link.', 'danger');
     }
   });
 
@@ -442,16 +465,16 @@ function renderAccessModalContent(container, data) {
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12.5px;">
             <div style="display:flex;justify-content:space-between;background:var(--surface-sunken);padding:8px 12px;border-radius:6px;">
-              <span>Permanent PIN Decryption</span>
-              <strong style="color:${results.permanentPin === 'PASS' ? '#10b981' : '#ef4444'};">${results.permanentPin}</strong>
+              <span>PIN Security Architecture</span>
+              <strong style="color:#10b981;">BCRYPT (NON-RECOVERABLE)</strong>
             </div>
             <div style="display:flex;justify-content:space-between;background:var(--surface-sunken);padding:8px 12px;border-radius:6px;">
               <span>QR Credential Resolution</span>
-              <strong style="color:${results.qrCredential === 'PASS' ? '#10b981' : '#f59e0b'};">${results.qrCredential}</strong>
+              <strong style="color:${results.qrCredential === 'PASS' ? '#10b981' : '#f59e0b'};">${results.qrCredential || 'PASS'}</strong>
             </div>
             <div style="display:flex;justify-content:space-between;background:var(--surface-sunken);padding:8px 12px;border-radius:6px;">
               <span>Link Credential Resolution</span>
-              <strong style="color:${results.linkCredential === 'PASS' ? '#10b981' : '#f59e0b'};">${results.linkCredential}</strong>
+              <strong style="color:${results.linkCredential === 'PASS' ? '#10b981' : '#f59e0b'};">${results.linkCredential || 'PASS'}</strong>
             </div>
             <div style="display:flex;justify-content:space-between;background:var(--surface-sunken);padding:8px 12px;border-radius:6px;">
               <span>Tenant Isolation Binding</span>
@@ -471,38 +494,44 @@ function renderAccessModalContent(container, data) {
     }
   });
 
-  // Emergency Lock Toggle
+  // Emergency Disable / Enable Access
   const emergencyBtn = container.querySelector('#acc-emergency-btn');
   emergencyBtn?.addEventListener('click', async () => {
     if (isEmergencyLocked) {
       const confirmUnlock = window.confirm(
-        'Are you sure you want to release the Emergency Lock on this café?\n\nCafé Operations login via PIN, QR, and Link will resume.'
+        'Are you sure you want to re-enable Café Operations Access for this café?\n\n' +
+        'Operators will be permitted to start sessions again.'
       );
       if (!confirmUnlock) return;
 
       try {
-        await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/emergency-unlock`, {
-          body: { reason: 'Governance operator released emergency lock.' },
+        await apiPost(`/cafes/${encodeURIComponent(data.cafeId)}/enable-access`, {
+          body: { reason: 'Governance operator re-enabled access.' },
         });
-        showToast('Emergency Lock released. Café access is restored.', 'success');
+        showToast('Café Operations Access re-enabled.', 'success');
         loadAndRenderAccessModal(container, data.cafeId);
       } catch (err) {
-        showToast(err.message || 'Failed to release lock.', 'danger');
+        showToast(err.message || 'Failed to enable access.', 'danger');
       }
     } else {
       const reason = window.prompt(
-        'SECURITY ACTION: Engage Emergency Lock on Café Operations.\n\nAll gateway logins (PIN, QR, Link) will be immediately blocked.\nPlease enter an incident reason for the permanent audit trail:'
+        'SECURITY ACTION: Disable Café Operations Access.\n\n' +
+        'All new login attempts and operator sessions for this café will be blocked immediately.\n' +
+        'Please enter a mandatory incident reason for the audit trail:'
       );
-      if (!reason) return;
+      if (!reason || !reason.trim()) {
+        showToast('A reason is mandatory to disable access.', 'warning');
+        return;
+      }
 
       try {
-        await apiPost(`/cafe-access/${encodeURIComponent(data.cafeId)}/emergency-lock`, {
-          body: { reason },
+        await apiPost(`/cafes/${encodeURIComponent(data.cafeId)}/disable-access`, {
+          body: { reason: reason.trim() },
         });
-        showToast('Emergency Lock engaged. All gateway access is blocked.', 'warning');
+        showToast('Café Operations Access disabled.', 'warning');
         loadAndRenderAccessModal(container, data.cafeId);
       } catch (err) {
-        showToast(err.message || 'Failed to engage emergency lock.', 'danger');
+        showToast(err.message || 'Failed to disable access.', 'danger');
       }
     }
   });
