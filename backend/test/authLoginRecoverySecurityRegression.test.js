@@ -11,6 +11,7 @@ const loginSource = fs.readFileSync(path.join(root, 'frontend/src/js/pages/login
 const apiClientSource = fs.readFileSync(path.join(root, 'frontend/src/js/apiClient.js'), 'utf8');
 const authControllerSource = fs.readFileSync(path.join(root, 'backend/src/controllers/authController.js'), 'utf8');
 const authServiceSource = fs.readFileSync(path.join(root, 'backend/src/services/authService.js'), 'utf8');
+const passwordResetServiceSource = fs.readFileSync(path.join(root, 'backend/src/services/passwordResetService.js'), 'utf8');
 
 test('AUTH-REC-001: frontend contains no embedded DEV_CREDENTIALS login secret map', () => {
   assert.equal(mainSource.includes('DEV_CREDENTIALS'), false);
@@ -47,4 +48,10 @@ test('AUTH-REC-005: password reset clears failed-attempt lock state and invalida
 test('AUTH-REC-006: password authentication retains bounded lockout policy', () => {
   assert.ok(authServiceSource.includes('MAX_FAILED_LOGIN_ATTEMPTS = 5'));
   assert.ok(authServiceSource.includes('TEMPORARY_LOCK_MINUTES = 15'));
+});
+
+
+test('AUTH-REC-007: expired temporary locks remain eligible for password recovery', () => {
+  assert.ok(passwordResetServiceSource.includes("user.accountStatus === 'LOCKED' && user.lockedUntil instanceof Date"));
+  assert.equal(passwordResetServiceSource.includes("user.lockedUntil > now"), false);
 });
