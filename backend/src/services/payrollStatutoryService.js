@@ -431,7 +431,7 @@ async function renderZamorinCorporatePayslipPdf(payslipData, cafeBranding = {}) 
   const department = p.department || 'Café Operations';
   const periodKey = p.periodKey || '2026-09';
   const cafeName = cafeBranding.tradeName || cafeBranding.name || 'Zamorin Café';
-  const cafeId = p.cafeId || 'ZC-0001';
+  const cafeId = p.cafeId || 'UNASSIGNED';
 
   const earnings = p.earnings || {};
   const deductions = p.deductions || {};
