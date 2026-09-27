@@ -952,8 +952,8 @@ const decideRepaymentPause = asyncHandler(async (request, response) => {
         subject: `Repayment Deferment ${targetDecision === 'APPROVE' ? 'Approved' : 'Rejected'} (${loanAdvanceId})`,
         renderedSubject: `Repayment Deferment ${targetDecision === 'APPROVE' ? 'Approved' : 'Rejected'} (${loanAdvanceId})`,
         renderedBody: `Your request to pause loan repayment from ${loan.pauseDetails.pauseFromPeriod} has been ${targetDecision === 'APPROVE' ? 'approved' : 'rejected'}.${decisionNotes ? ' Notes: ' + decisionNotes : ''}`,
-        status: 'SENT',
-        sentAt: new Date(),
+        status: 'QUEUED',
+        nextAttemptAt: new Date(),
       });
 
       const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
