@@ -6,13 +6,15 @@
  * Durable outbox and reconciliation engine for mandatory post-commit side effects:
  *  - BOM / Inventory lot depletion
  *  - Cash Ledger transactions
- * Guarantees zero silent accounting or inventory divergence.
+ *  - Register-session financial counters
+ * Guarantees zero silent accounting, register, or inventory divergence.
  */
 
 const mongoose = require('mongoose');
 const { PosReconciliationJob } = require('../models/PosReconciliationJob');
 const { OperationalAlert } = require('../models/OperationalAlert');
 const { CashTransaction } = require('../models/CashTransaction');
+const { RegisterSession } = require('../models/RegisterSession');
 const { Bill } = require('../models/Bill');
 const { BomDepletionService } = require('./bomDepletionService');
 const { SequenceCounter } = require('../models/SequenceCounter');
@@ -218,6 +220,92 @@ class PosReconciliationService {
           effectType: 'CASH_LEDGER',
           job,
           alreadyExisted: Boolean(existingCt),
+        };
+      }
+
+      if (job.effectType === 'REGISTER_SESSION') {
+        const payload = job.payloadSnapshot || {};
+        const registerSessionId = normalizeId(payload.registerSessionId);
+        const registerId = normalizeId(payload.registerId || 'REG-01');
+        if (!registerSessionId) {
+          throw new ApiError(400, 'REGISTER_SESSION_ID_REQUIRED', 'Register reconciliation requires registerSessionId.');
+        }
+
+        const scope = {
+          registerSessionId,
+          organisationId: normalizeId(job.organisationId),
+          cafeId: normalizeId(job.cafeId),
+          registerId,
+          status: 'OPEN',
+        };
+
+        const existing = await RegisterSession.findOne(scope);
+        if (!existing) {
+          throw new ApiError(
+            409,
+            'REGISTER_SESSION_SCOPE_MISMATCH',
+            'The original POS register session is no longer open in the expected organisation/café/register scope.'
+          );
+        }
+
+        const cashPaidPaisa = Math.max(0, Math.round(Number(payload.cashPaidPaisa || 0)));
+        const upiPaidPaisa = Math.max(0, Math.round(Number(payload.upiPaidPaisa || 0)));
+        const cardPaidPaisa = Math.max(0, Math.round(Number(payload.cardPaidPaisa || 0)));
+        const totalSalesPaisa = Math.max(0, Math.round(Number(payload.totalSalesPaisa || 0)));
+
+        const update = {
+          $inc: {
+            orderCount: 1,
+            totalSalesPaisa,
+            totalCashSalesPaisa: cashPaidPaisa,
+            totalUpiSalesPaisa: upiPaidPaisa,
+            totalCardSalesPaisa: cardPaidPaisa,
+          },
+          $addToSet: { settledBillIds: job.billId },
+        };
+        if (cashPaidPaisa > 0) {
+          update.$push = {
+            cashEvents: {
+              eventType: 'CASH_SALE',
+              amountPaisa: cashPaidPaisa,
+              reason: `Bill ${job.billId}`,
+              actorId: payload.cashierUserId || authContext.userId || 'RECONCILIATION_WORKER',
+              reference: job.billId,
+              timestamp: new Date(),
+            },
+          };
+        }
+
+        const updated = await RegisterSession.findOneAndUpdate(
+          { ...scope, settledBillIds: { $ne: job.billId } },
+          update,
+          { new: true }
+        );
+
+        if (!updated) {
+          const alreadyApplied = await RegisterSession.findOne({
+            ...scope,
+            settledBillIds: job.billId,
+          });
+          if (!alreadyApplied) {
+            throw new ApiError(
+              409,
+              'REGISTER_SESSION_SETTLEMENT_CONFLICT',
+              'Register settlement could not be applied safely.'
+            );
+          }
+        }
+
+        job.status = 'RESOLVED';
+        job.resolvedAt = new Date();
+        await job.save();
+
+        return {
+          success: true,
+          action: 'RESOLVED',
+          effectType: 'REGISTER_SESSION',
+          job,
+          alreadyExisted: !updated,
         };
       }
 
