@@ -179,8 +179,8 @@ describe('NOTIFICATION OUTBOX WORKER FAULT INJECTION', () => {
 
     const record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0004' }).lean();
     assert.equal(record.status, 'SEND_STATE_UNKNOWN');
-    assert.equal(record.lockedBy, null);
-    assert.equal(record.lockedUntil, null);
+    assert.equal(record.lockedBy == null, true);
+    assert.equal(record.lockedUntil == null, true);
   });
 
   it('OUTBOX-FI-005: registered worker cycle is executable without a separate manual poller', async () => {
