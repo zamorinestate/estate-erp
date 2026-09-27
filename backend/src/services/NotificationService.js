@@ -384,9 +384,11 @@ class NotificationService {
 
     const attemptNumber = Number(record.attemptCount || 1);
     const attemptedAt = new Date();
+    let providerAccepted = false;
+    let sendResult = null;
 
     try {
-      const sendResult = await this.activeProvider.sendEmail({
+      sendResult = await this.activeProvider.sendEmail({
         to: record.recipientEmail,
         from: record.from,
         replyTo: record.replyTo,
@@ -395,6 +397,7 @@ class NotificationService {
         text: record.textBody || record.renderedBodyPlain,
         isDraft: record.isDraftFirst,
       });
+      providerAccepted = true;
 
       const update = await NotificationOutbox.updateOne(
         {
@@ -430,10 +433,64 @@ class NotificationService {
       );
 
       if (update.modifiedCount !== 1) {
-        return { processed: false, reason: 'LEASE_LOST_AFTER_SEND' };
+        return {
+          processed: false,
+          status: 'SEND_STATE_UNKNOWN',
+          reason: 'LEASE_LOST_AFTER_SEND',
+        };
       }
       return { processed: true, status: 'SENT' };
     } catch (err) {
+      // Once the provider has accepted the email, the system MUST NOT schedule
+      // a blind retry merely because persistence of SENT failed. Delivery is
+      // now ambiguous. Quarantine the record so a later reconciliation can
+      // verify provider state without sending the message twice.
+      if (providerAccepted) {
+        const safeMessage = String(err?.message || 'Post-send persistence error').substring(0, 400);
+        try {
+          await NotificationOutbox.updateOne(
+            {
+              _id: record._id,
+              status: 'PROCESSING',
+              lockedBy: this.workerId,
+            },
+            {
+              $set: {
+                status: 'SEND_STATE_UNKNOWN',
+                providerMessageId: sendResult?.providerMessageId || null,
+                providerDraftId: sendResult?.providerDraftId || null,
+                lastError: safeMessage,
+                lastErrorCode: 'POST_SEND_PERSISTENCE_FAILED',
+                lastErrorSafeMessage: 'Provider accepted delivery but durable send-state persistence failed; provider reconciliation is required before any replay.',
+              },
+              $push: {
+                attemptHistory: {
+                  attemptNumber,
+                  attemptedAt,
+                  resultStatus: 'SEND_STATE_UNKNOWN',
+                  errorMessage: safeMessage,
+                  providerResponseCode: sendResult?.providerMessageId ? 'PROVIDER_ACCEPTED' : 'UNKNOWN',
+                },
+              },
+              $unset: {
+                lockedBy: '',
+                lockedUntil: '',
+              },
+            }
+          );
+        } catch (_) {
+          // Keep PROCESSING + lease if the database is still unavailable.
+          // Expired-lease quarantine will later move it to SEND_STATE_UNKNOWN.
+        }
+
+        return {
+          processed: false,
+          status: 'SEND_STATE_UNKNOWN',
+          reason: 'POST_SEND_PERSISTENCE_FAILED',
+          error: safeMessage,
+        };
+      }
+
       const maxAttempts = Number(record.maxAttempts || record.maxRetries || 5);
       const exhausted = attemptNumber >= maxAttempts;
       const baseSeconds = Math.min(3600, Math.pow(2, attemptNumber) * 10);
