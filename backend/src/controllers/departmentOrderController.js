@@ -297,7 +297,10 @@ const createDepartmentOrder = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_ORDER_PAYLOAD', 'Institution, department, and at least one item are required.');
   }
 
-  const normCafeId = normalizeId(cafeId) || 'ZC-0001';
+  const normCafeId = normalizeId(cafeId);
+  if (!normCafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
+  }
   assertCafeAccess(request, normCafeId);
 
   const businessDate = orderDate || getIstBusinessDate();
@@ -675,7 +678,10 @@ const createQuote = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_QUOTE_DATA', 'Institution, department, contact, validity date, and items are required.');
   }
 
-  const normCafeId = normalizeId(cafeId) || 'ZC-0001';
+  const normCafeId = normalizeId(cafeId);
+  if (!normCafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
+  }
   assertCafeAccess(request, normCafeId);
 
   let subtotalPaisa = 0;
