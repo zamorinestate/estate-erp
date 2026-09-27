@@ -39,6 +39,7 @@ const { Notification } = require('../models/Notification');
 const { NotificationOutbox } = require('../models/NotificationOutbox');
 const { User } = require('../models/User');
 const { reconcileLeaveToAttendance } = require('../services/leaveReconciliationService');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 
 async function sendNotificationAndOutbox({
   organisationId,
@@ -594,44 +595,39 @@ const decideApproval = asyncHandler(async (request, response) => {
 
   let decidedApproval = null;
   let notifications = [];
-  const session = await mongoose.startSession();
 
-  try {
-    await session.withTransaction(async () => {
-      const approval = await Approval.findOne({
-        approvalId,
-        organisationId: request.auth.organisationId,
-      }).session(session);
-
-      if (!approval) throw new ApiError(404, 'NOT_FOUND', 'Approval request not found.');
-      if (approval.status !== 'PENDING') {
-        throw new ApiError(409, 'ALREADY_DECIDED', `Approval request is already ${approval.status}.`);
-      }
-
-      approval.status = targetDecision;
-      approval.decidedByUserId = request.auth.userId;
-      approval.decisionReason = reasonText;
-      approval.decidedAt = new Date();
-
-      notifications = await applyApprovalEntityDecision({
-        approval,
-        targetDecision,
-        reasonText,
-        auth: request.auth,
-        session,
-      });
-
-      await approval.save({ session });
-      decidedApproval = approval.toObject();
-    }, {
-      readPreference: 'primary',
-      readConcern: { level: 'snapshot' },
-      writeConcern: { w: 'majority' },
-      maxCommitTimeMS: 10000,
+  await executeTransactionWithRetry(async (session) => {
+    const approvalQuery = Approval.findOne({
+      approvalId,
+      organisationId: request.auth.organisationId,
     });
-  } finally {
-    await session.endSession();
-  }
+    if (session) approvalQuery.session(session);
+    const approval = await approvalQuery;
+
+    if (!approval) throw new ApiError(404, 'NOT_FOUND', 'Approval request not found.');
+    if (approval.status !== 'PENDING') {
+      throw new ApiError(409, 'ALREADY_DECIDED', `Approval request is already ${approval.status}.`);
+    }
+
+    approval.status = targetDecision;
+    approval.decidedByUserId = request.auth.userId;
+    approval.decisionReason = reasonText;
+    approval.decidedAt = new Date();
+
+    notifications = await applyApprovalEntityDecision({
+      approval,
+      targetDecision,
+      reasonText,
+      auth: request.auth,
+      session,
+    });
+
+    await approval.save(session ? { session } : undefined);
+    decidedApproval = approval.toObject();
+  }, {
+    maxTransientRetries: 5,
+    maxCommitRetries: 3,
+  });
 
   for (const notification of notifications) {
     await sendNotificationAndOutbox({
