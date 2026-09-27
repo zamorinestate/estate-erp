@@ -282,6 +282,19 @@ const updateCafe = asyncHandler(
     updates.updatedBy =
       request.auth.userId;
 
+    if (updates.city) {
+      if (typeof updates.address === 'object' && updates.address !== null) {
+        updates.address.city = updates.city;
+      } else {
+        updates['address.city'] = updates.city;
+      }
+    }
+    if (typeof updates.address === 'string') {
+      const street = updates.address.trim();
+      delete updates.address;
+      updates['address.street'] = street;
+    }
+
     const cafe = await Cafe.findOneAndUpdate(
       {
         organisationId:
