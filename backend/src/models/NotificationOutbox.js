@@ -80,6 +80,31 @@ const notificationOutboxSchema = new mongoose.Schema(
       default: 0,
     },
 
+    processingAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    lockedBy: {
+      type: String,
+      trim: true,
+      maxlength: 160,
+      default: null,
+      index: true,
+    },
+
+    lockedUntil: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    leaseVersion: {
+      type: Number,
+      default: 0,
+    },
+
     eventType: {
       type: String,
       required: true,
@@ -322,6 +347,7 @@ const notificationOutboxSchema = new mongoose.Schema(
 
 notificationOutboxSchema.index({ outboxId: 1 }, { unique: true });
 notificationOutboxSchema.index({ organisationId: 1, status: 1, nextAttemptAt: 1 });
+notificationOutboxSchema.index({ status: 1, nextAttemptAt: 1, lockedUntil: 1 }, { name: 'outbox_dispatch_claim' });
 notificationOutboxSchema.index({ organisationId: 1, correlationId: 1 });
 
 const NotificationOutbox =
