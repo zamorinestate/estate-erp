@@ -1,5 +1,8 @@
 'use strict';
 
+const os = require('node:os');
+const crypto = require('node:crypto');
+
 /**
  * CENTRAL NOTIFICATION SERVICE
  *
@@ -30,6 +33,8 @@ class NotificationService {
     this.testProvider = new ConsoleTestEmailProvider();
     this.gmailProvider = new GmailEmailProvider();
     this.activeProvider = process.env.NODE_ENV === 'test' ? this.testProvider : this.gmailProvider;
+    this.workerId = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
+    this.defaultLeaseMs = 120000;
   }
 
   setProvider(provider) {
@@ -295,57 +300,239 @@ class NotificationService {
   }
 
   /**
-   * Processes a batch of outbox records with exponential backoff on failure.
+   * Marks expired processing leases as SEND_STATE_UNKNOWN instead of blindly
+   * retrying them. This avoids duplicate provider delivery after a worker dies
+   * after sending but before persisting SENT.
    */
-  async processOutboxBatch(records) {
-    for (const record of records) {
-      if (record.status !== 'QUEUED' && record.status !== 'RETRY' && record.status !== 'PROCESSING') {
-        continue;
+  async quarantineExpiredProcessingLeases(now = new Date()) {
+    const result = await NotificationOutbox.updateMany(
+      {
+        status: 'PROCESSING',
+        lockedUntil: { $ne: null, $lte: now },
+      },
+      {
+        $set: {
+          status: 'SEND_STATE_UNKNOWN',
+          lastErrorCode: 'PROCESSING_LEASE_EXPIRED',
+          lastErrorSafeMessage: 'Delivery state is unknown after worker lease expiry; manual/provider reconciliation required.',
+          lastError: 'Delivery state unknown after processing lease expiry.',
+        },
+        $unset: {
+          lockedBy: '',
+          lockedUntil: '',
+        },
       }
+    );
+    return result.modifiedCount || 0;
+  }
 
-      record.status = 'PROCESSING';
-      record.processingAt = new Date();
-      record.attemptCount += 1;
-      await record.save();
+  _dueOutboxFilter(now = new Date()) {
+    return {
+      $or: [
+        {
+          status: 'QUEUED',
+          $or: [
+            { nextAttemptAt: { $lte: now } },
+            { nextAttemptAt: null },
+          ],
+        },
+        {
+          status: { $in: ['RETRY', 'RETRY_SCHEDULED'] },
+          $or: [
+            { nextRetryAt: { $lte: now } },
+            {
+              nextRetryAt: null,
+              nextAttemptAt: { $lte: now },
+            },
+          ],
+        },
+      ],
+    };
+  }
 
-      try {
-        const sendResult = await this.activeProvider.sendEmail({
-          to: record.recipientEmail,
-          from: record.from,
-          replyTo: record.replyTo,
-          subject: record.subject,
-          html: record.htmlBody,
-          text: record.textBody,
-          isDraft: record.isDraftFirst,
-        });
+  async claimNextOutbox({ now = new Date(), leaseMs = this.defaultLeaseMs, outboxId = null } = {}) {
+    const filter = this._dueOutboxFilter(now);
+    if (outboxId) {
+      filter.outboxId = String(outboxId).trim().toUpperCase();
+    }
 
-        record.status = 'SENT';
-        record.sentAt = new Date();
-        record.providerMessageId = sendResult.providerMessageId;
-        if (sendResult.providerDraftId) {
-          record.providerDraftId = sendResult.providerDraftId;
-          record.draftStatus = 'AWAITING_REVIEW';
-        }
-        await record.save();
-      } catch (err) {
-        record.lastErrorCode = err.code || 'PROVIDER_ERROR';
-        record.lastErrorSafeMessage = String(err.message || 'Delivery error').substring(0, 400);
-
-        if (record.attemptCount >= record.maxAttempts) {
-          record.status = 'FAILED';
-          record.failedAt = new Date();
-        } else {
-          record.status = 'RETRY';
-          // Exponential backoff + jitter: min(3600, 2^attempt * 10s + jitter)
-          const baseSeconds = Math.min(3600, Math.pow(2, record.attemptCount) * 10);
-          const jitterSeconds = Math.floor(Math.random() * 5);
-          record.nextRetryAt = new Date(Date.now() + (baseSeconds + jitterSeconds) * 1000);
-        }
-
-        await record.save();
+    return NotificationOutbox.findOneAndUpdate(
+      filter,
+      {
+        $set: {
+          status: 'PROCESSING',
+          processingAt: now,
+          lockedBy: this.workerId,
+          lockedUntil: new Date(now.getTime() + leaseMs),
+        },
+        $inc: {
+          attemptCount: 1,
+          leaseVersion: 1,
+        },
+      },
+      {
+        new: true,
+        sort: { nextAttemptAt: 1, createdAt: 1 },
       }
+    );
+  }
+
+  async processClaimedOutbox(record) {
+    if (!record || record.status !== 'PROCESSING' || record.lockedBy !== this.workerId) {
+      return { processed: false, reason: 'NOT_OWNED' };
+    }
+
+    const attemptNumber = Number(record.attemptCount || 1);
+    const attemptedAt = new Date();
+
+    try {
+      const sendResult = await this.activeProvider.sendEmail({
+        to: record.recipientEmail,
+        from: record.from,
+        replyTo: record.replyTo,
+        subject: record.subject,
+        html: record.htmlBody || record.renderedBody,
+        text: record.textBody || record.renderedBodyPlain,
+        isDraft: record.isDraftFirst,
+      });
+
+      const update = await NotificationOutbox.updateOne(
+        {
+          _id: record._id,
+          status: 'PROCESSING',
+          lockedBy: this.workerId,
+        },
+        {
+          $set: {
+            status: 'SENT',
+            sentAt: new Date(),
+            providerMessageId: sendResult?.providerMessageId || null,
+            providerDraftId: sendResult?.providerDraftId || null,
+            draftStatus: sendResult?.providerDraftId ? 'AWAITING_REVIEW' : record.draftStatus,
+            lastError: null,
+            lastErrorCode: null,
+            lastErrorSafeMessage: null,
+          },
+          $push: {
+            attemptHistory: {
+              attemptNumber,
+              attemptedAt,
+              resultStatus: 'SENT',
+              providerResponseCode: sendResult?.providerMessageId ? 'PROVIDER_ACCEPTED' : 'SENT',
+            },
+          },
+          $unset: {
+            lockedBy: '',
+            lockedUntil: '',
+            nextRetryAt: '',
+          },
+        }
+      );
+
+      if (update.modifiedCount !== 1) {
+        return { processed: false, reason: 'LEASE_LOST_AFTER_SEND' };
+      }
+      return { processed: true, status: 'SENT' };
+    } catch (err) {
+      const maxAttempts = Number(record.maxAttempts || record.maxRetries || 5);
+      const exhausted = attemptNumber >= maxAttempts;
+      const baseSeconds = Math.min(3600, Math.pow(2, attemptNumber) * 10);
+      const jitterSeconds = Math.floor(Math.random() * 5);
+      const nextRetryAt = new Date(Date.now() + (baseSeconds + jitterSeconds) * 1000);
+      const safeMessage = String(err?.message || 'Delivery error').substring(0, 400);
+
+      const update = {
+        $set: {
+          status: exhausted ? 'DEAD_LETTER' : 'RETRY',
+          failedAt: exhausted ? new Date() : null,
+          deadLetterReason: exhausted ? safeMessage : null,
+          lastError: safeMessage,
+          lastErrorCode: err?.code || 'PROVIDER_ERROR',
+          lastErrorSafeMessage: safeMessage,
+          nextAttemptAt: exhausted ? null : nextRetryAt,
+          nextRetryAt: exhausted ? null : nextRetryAt,
+        },
+        $push: {
+          attemptHistory: {
+            attemptNumber,
+            attemptedAt,
+            resultStatus: exhausted ? 'DEAD_LETTER' : 'RETRY',
+            errorMessage: safeMessage,
+            providerResponseCode: err?.code || 'PROVIDER_ERROR',
+          },
+        },
+        $unset: {
+          lockedBy: '',
+          lockedUntil: '',
+        },
+      };
+
+      const result = await NotificationOutbox.updateOne(
+        {
+          _id: record._id,
+          status: 'PROCESSING',
+          lockedBy: this.workerId,
+        },
+        update
+      );
+
+      return {
+        processed: result.modifiedCount === 1,
+        status: exhausted ? 'DEAD_LETTER' : 'RETRY',
+        error: safeMessage,
+      };
     }
   }
+
+  /**
+   * Claims and processes due outbox records using database leases. Multiple
+   * service instances may run this safely: only one instance can claim a row.
+   */
+  async processDueOutbox({ limit = 25, leaseMs = this.defaultLeaseMs } = {}) {
+    const startedAt = Date.now();
+    const summary = {
+      claimed: 0,
+      sent: 0,
+      retry: 0,
+      deadLetter: 0,
+      unknownQuarantined: 0,
+      durationMs: 0,
+    };
+
+    summary.unknownQuarantined = await this.quarantineExpiredProcessingLeases();
+
+    for (let index = 0; index < Math.max(1, limit); index += 1) {
+      const record = await this.claimNextOutbox({ leaseMs });
+      if (!record) break;
+
+      summary.claimed += 1;
+      const result = await this.processClaimedOutbox(record);
+      if (result.status === 'SENT') summary.sent += 1;
+      if (result.status === 'RETRY') summary.retry += 1;
+      if (result.status === 'DEAD_LETTER') summary.deadLetter += 1;
+    }
+
+    summary.durationMs = Date.now() - startedAt;
+    return summary;
+  }
+
+  /**
+   * Immediate-dispatch compatibility path. Records are still atomically claimed
+   * before provider delivery, so the same outbox row cannot be sent twice by
+   * concurrent application instances.
+   */
+  async processOutboxBatch(records) {
+    const results = [];
+    for (const record of records || []) {
+      const outboxId = record?.outboxId;
+      if (!outboxId) continue;
+      const claimed = await this.claimNextOutbox({ outboxId });
+      if (!claimed) continue;
+      results.push(await this.processClaimedOutbox(claimed));
+    }
+    return results;
+  }
+
 }
 
 // Singleton instance
