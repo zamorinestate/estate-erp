@@ -52,6 +52,13 @@ const CAFE_ADMIN_AUTH = {
   primaryCafeId: CAFE,
   assignedCafeIds: [CAFE],
 };
+const OWNER_AUTH = {
+  organisationId: ORG,
+  userId: 'OW-0001',
+  fullName: 'Test Owner',
+  role: 'OWNER',
+  assignedCafeIds: [CAFE],
+};
 
 let replSet;
 
@@ -967,6 +974,55 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
     } finally {
       Attendance.prototype.save = originalSave;
     }
+  });
+
+
+  it('P0-FI-018: Owner cannot decide employee approval through generic workbench', async () => {
+    await seedLeaveApproval({ approvalId: 'APP-10126', leaveId: 'LR-20260927-018' });
+
+    const { error } = await invoke(approvalController.decideApproval, {
+      auth: OWNER_AUTH,
+      params: { approvalId: 'APP-10126' },
+      body: { decision: 'APPROVED', reason: 'Unauthorized owner decision attempt' },
+      correlationId: 'FI-OWNER-APPROVAL',
+      method: 'POST',
+      originalUrl: '/api/v1/approvals/APP-10126/decide',
+    });
+
+    assert.ok(error);
+    assert.equal(error.code, 'PROTECTED_ENTITY_TYPE');
+
+    const approval = await Approval.findOne({ approvalId: 'APP-10126' }).lean();
+    const leave = await LeaveRequest.findOne({ leaveId: 'LR-20260927-018' }).lean();
+    assert.equal(approval.status, 'PENDING');
+    assert.equal(leave.status, 'PENDING');
+  });
+
+  it('P0-FI-019: non-primary MASTER cannot decide protected approval', async () => {
+    await seedLeaveApproval({ approvalId: 'APP-10127', leaveId: 'LR-20260927-019' });
+
+    const { error } = await invoke(approvalController.decideApproval, {
+      auth: {
+        organisationId: ORG,
+        userId: 'MU-0999',
+        role: 'MASTER',
+        isPrimaryMaster: false,
+        assignedCafeIds: [CAFE],
+      },
+      params: { approvalId: 'APP-10127' },
+      body: { decision: 'APPROVED', reason: 'Unauthorized non-primary master decision attempt' },
+      correlationId: 'FI-NONPRIMARY-APPROVAL',
+      method: 'POST',
+      originalUrl: '/api/v1/approvals/APP-10127/decide',
+    });
+
+    assert.ok(error);
+    assert.equal(error.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+
+    const approval = await Approval.findOne({ approvalId: 'APP-10127' }).lean();
+    const leave = await LeaveRequest.findOne({ leaveId: 'LR-20260927-019' }).lean();
+    assert.equal(approval.status, 'PENDING');
+    assert.equal(leave.status, 'PENDING');
   });
 
 });
