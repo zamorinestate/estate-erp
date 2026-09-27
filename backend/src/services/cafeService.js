@@ -721,7 +721,7 @@ class CafeService {
             },
           },
           { upsert: true, session: session || undefined }
-        ).catch(() => {});
+        );
       } catch (sequenceProvisionError) {
         throw sequenceProvisionError;
       }
