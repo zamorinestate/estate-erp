@@ -424,8 +424,8 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     designation = 'Junior Barista',
     employmentType = 'Full Time',
     workerType = 'PERMANENT',
-    primaryCafeId = 'ZC-0001',
-    assignedCafeIds = ['ZC-0001'],
+    primaryCafeId = null,
+    assignedCafeIds = [],
     positionId = null,
     managerUserId = null,
     joiningDate = new Date().toISOString().split('T')[0],
@@ -459,12 +459,15 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   };
 
   const effectiveWorkerType = normalizeWorkerType(workerType);
+  const normalizedAssignedCafeIds = (Array.isArray(assignedCafeIds) ? assignedCafeIds : [])
+    .map(c => String(c || '').trim().toUpperCase())
+    .filter(Boolean);
   const effectivePrimaryCafeId = (primaryCafeId && String(primaryCafeId).trim())
     ? String(primaryCafeId).trim().toUpperCase()
-    : 'ZC-0001';
-  const effectiveAssignedCafeIds = (Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0)
-    ? assignedCafeIds.map(c => String(c).trim().toUpperCase()).filter(Boolean)
-    : [effectivePrimaryCafeId];
+    : (normalizedAssignedCafeIds[0] || null);
+  const effectiveAssignedCafeIds = normalizedAssignedCafeIds.length > 0
+    ? normalizedAssignedCafeIds
+    : (effectivePrimaryCafeId ? [effectivePrimaryCafeId] : []);
 
   // Reject assigning MASTER role to any new employee
   const candidateRole = String(rawRole || 'STAFF').trim().toUpperCase();
@@ -476,6 +479,14 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     );
   }
   const effectiveRole = ['STAFF', 'CAFE_ADMIN', 'OWNER'].includes(candidateRole) ? candidateRole : 'STAFF';
+
+  if (['STAFF', 'CAFE_ADMIN'].includes(effectiveRole) && !effectivePrimaryCafeId) {
+    throw new ApiError(
+      400,
+      'CAFE_ASSIGNMENT_REQUIRED',
+      'Staff and Café Operations employees require an explicit primary café assignment.'
+    );
+  }
 
   // Duplicate check - strictly query non-empty values
   const orConditions = [{ email: effectiveEmail }];
