@@ -1094,40 +1094,8 @@ async function boot() {
 
       renderShell();
 
-      // Automatically acquire authentic JWT session for this persona
-      const DEV_CREDENTIALS = {
-        master: { email: "pradeeshk331@gmail.com", password: "PRADEESHK@94309" },
-        owner: { email: "owner@example.com", password: "PK@NilaVega_8427!Cedar" },
-        cafe_admin: { email: "admin@example.com", password: "PK@NilaVega_8427!Cedar" },
-        admin: { email: "admin@example.com", password: "PK@NilaVega_8427!Cedar" },
-        staff: { email: "staff@example.com", password: "PK@NilaVega_8427!Cedar" },
-      };
-      const creds = DEV_CREDENTIALS[devKey] || DEV_CREDENTIALS.master;
-      apiPost("/auth/login", {
-        email: creds.email,
-        password: creds.password,
-        organisationId: "ZAMORIN",
-        device: {
-          deviceId: getOrCreateDeviceId(),
-          deviceName: "Browser Dev Client",
-          deviceType: "DESKTOP",
-        },
-      }).then((res) => {
-        const token = res?.data?.accessToken || res?.data?.token;
-        if (token) {
-          setAccessToken(token);
-        }
-        if (res?.data?.user) {
-          setState({
-            auth: { authenticated: true, loading: false, user: res.data.user, authentication: null, error: null },
-            user: res.data.user,
-          });
-        }
-        loadAvailableCafes().catch(() => {});
-      }).catch((err) => {
-        console.warn("[Dev Auth] Background token acquisition:", err.message);
-      });
-
+      // Local preview never embeds or submits real credentials.
+      // Backend-authenticated development sessions must be obtained through the normal login flow.
       loadAvailableCafes().catch(() => {});
       registerServiceWorker().catch(() => {});
       return;
