@@ -608,6 +608,12 @@ async function authenticatePassword({
     );
   }
 
+  if (String(user.role || '').toUpperCase() === 'MASTER' && user.isPrimaryMaster !== true) {
+    throw new Error(
+      'This account is not available for sign-in.'
+    );
+  }
+
   // Transparent opportunistic upgrade to canonical scrypt KDF on successful login
   if (needsPasswordRehash(user.passwordHash)) {
     try {
