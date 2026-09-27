@@ -267,6 +267,15 @@ class CafeService {
     const pinLookupHash = null;
     const encryptedPin = null;
 
+    // 2b. Operations PIN setup for Café Operations (bcrypt 12 rounds)
+    const rawInitialPin = sanitized.cafePin || sanitized.operationsPin || cafeData.cafePin || cafeData.operationsPin;
+    let operationsPinHash = null;
+    let operationsPinSetAt = null;
+    if (rawInitialPin && /^\d{6}$/.test(String(rawInitialPin).trim())) {
+      operationsPinHash = await bcrypt.hash(String(rawInitialPin).trim(), 12);
+      operationsPinSetAt = new Date();
+    }
+
     // 3. Generate high-entropy, independent QR and Link tokens
     const qrToken = generateOpaqueToken();
     let linkToken = generateOpaqueToken();
@@ -354,6 +363,10 @@ class CafeService {
             parentOrganisationId: sanitized.parentOrganisationId || organisationId,
             cafeType,
             status: initialStatus,
+            operationsPinHash,
+            operationsPinSetAt,
+            operationsPinFailedAttempts: 0,
+            operationsPinLockedUntil: null,
             legalConstitution: {
               constitution: sanitized.constitution || sanitized.legalConstitution?.constitution || 'PROPRIETORSHIP',
               legalOwnerName: sanitized.legalOwnerName || sanitized.ownerName || sanitized.legalConstitution?.legalOwnerName || '',
@@ -552,6 +565,7 @@ class CafeService {
               qrRecordId: universalQr ? universalQr.qrId : null,
               securePublicCafeReference,
               loginUrl: `https://zamorin.app/cafe/${securePublicCafeReference}/login`,
+              cafeOperationsLoginUrl: `${getPublicAppOrigin()}/cafe-operations/login?cafe=${cafeId}`,
               status: 'ACTIVE',
               lastScannedAt: null,
               scanCount: 0,

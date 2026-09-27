@@ -877,54 +877,16 @@ async function renderPage() {
       break;
     }
 
+    case "cafe-operations/login":
+    case "cafe-operations-login":
     case "cafe-operator-signin":
       // Stop inactivity timer while sign-in UI is visible
       stopCafeOpsInactivityTimer();
       content.innerHTML = renderCafeOperatorSignIn();
       wireCafeOperatorSignIn(content, {
-        onSignIn: async ({ employeeId, pin }) => {
-          const deviceId = getCanonicalDeviceId();
-          const gatewayContextToken = getActiveGatewayContextToken();
-          const res = await apiPost('/cafe-operations/operator/signin', {
-            deviceId,
-            operatorUserId: employeeId,
-            pin,
-            gatewayContextToken,
-          });
-          const sessionToken = res?.sessionToken || res?.operatorSession?.sessionToken;
-          if (sessionToken) {
-            setCafeOpsSessionToken(sessionToken);
-          }
-          if (res?.trustedDeviceToken) {
-            setCafeOpsDeviceToken(res.trustedDeviceToken);
-          }
-          if (res?.operatorSession) {
-            if (res.operatorSession.operatorSessionId) {
-              setSessionId(res.operatorSession.operatorSessionId);
-            }
-            if (res.operatorSession.cafeId) {
-              // DISPLAY CACHE ONLY — NEVER AUTHORIZATION AUTHORITY
-              try { localStorage.setItem('zamorin_bound_cafe_id', res.operatorSession.cafeId); } catch {}
-            }
-            if (res.operatorSession.operatorName) {
-              // DISPLAY CACHE ONLY — NEVER AUTHORIZATION AUTHORITY
-              try { localStorage.setItem('zamorin_bound_cafe_name', res.operatorSession.operatorName); } catch {}
-            }
-            // Update state with new operator
-            setState({
-              user: {
-                ...state.user,
-                userId: res.operatorSession.operatorUserId,
-                name: res.operatorSession.operatorName,
-              },
-              route: 'dashboard',
-            });
-            // Start inactivity auto-lock after successful sign-in
-            startCafeOpsInactivityTimer();
-            renderShell();
-          }
+        onSignIn: () => {
+          navigate("dashboard");
         },
-        onReturnKiosk: () => navigate('kiosk-attendance'),
       });
       break;
 

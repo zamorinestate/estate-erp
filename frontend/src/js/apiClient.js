@@ -951,6 +951,8 @@ export async function refreshAuthenticatedSession() {
 
 const NON_REFRESHABLE_AUTH_PATHS = new Set([
   "/auth/login",
+  "/auth/cafe-operations/login",
+  "/cafe-operations/login",
   "/auth/refresh",
   "/auth/mfa/setup",
   "/auth/mfa/confirm",

@@ -241,7 +241,9 @@ const IMPLICIT_ROUTES_CAFE_ADMIN = new Set([
 ]);
 
 // ─── Route allowlist check ─────────────────────────────────────────────────────
-export function isRouteAllowed(role, rawRoute, isPrimaryMaster = false) {
+export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
+  const cleanRole = String(rawRole || '').toLowerCase();
+  const role = (cleanRole === 'admin' || cleanRole === 'cafe_admin') ? ROLES.CAFE_ADMIN : cleanRole;
   const cleanRoute = (rawRoute || '').replace(/^#/, '');
   const route = cleanRoute.split('?')[0];
 

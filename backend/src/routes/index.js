@@ -518,6 +518,16 @@ router.use(
   operatorSessionRoutes
 );
 
+// Canonical Café Operations Login 2.0 Aliases
+router.get('/cafe-operations/cafes', (req, res, next) => {
+  req.url = '/cafe-operations/cafes' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : '');
+  return authRoutes(req, res, next);
+});
+router.post('/cafe-operations/login', (req, res, next) => {
+  req.url = '/cafe-operations/login';
+  return authRoutes(req, res, next);
+});
+
 router.use(
   '/operator',
   operatorSessionRoutes
