@@ -196,4 +196,49 @@ describe('NOTIFICATION OUTBOX WORKER FAULT INJECTION', () => {
     const record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0005' }).lean();
     assert.ok(['SENT', 'RETRY', 'DEAD_LETTER'].includes(record.status));
   });
+
+  it('OUTBOX-FI-006: provider success with lost lease is quarantined and never blindly resent', async () => {
+    await NotificationOutbox.create(dueRecord({
+      outboxId: 'OUT-20260927-0006',
+      idempotencyKey: 'IDEMP-LEASE-LOSS',
+    }));
+
+    let sends = 0;
+    const worker = new NotificationService();
+    worker.setProvider({
+      async sendEmail() {
+        sends += 1;
+
+        // Simulate the worker losing its database lease after the provider
+        // accepted the message but before SENT could be persisted.
+        await NotificationOutbox.updateOne(
+          { outboxId: 'OUT-20260927-0006' },
+          {
+            $set: {
+              lockedBy: 'simulated-dead-worker',
+              lockedUntil: new Date(Date.now() - 1000),
+            },
+          }
+        );
+
+        return { providerMessageId: 'MSG-ACCEPTED-BUT-LEASE-LOST' };
+      },
+    });
+
+    const first = await worker.processDueOutbox({ limit: 1 });
+    assert.equal(first.claimed, 1);
+    assert.equal(sends, 1);
+
+    let record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0006' }).lean();
+    assert.equal(record.status, 'PROCESSING', 'Uncertain post-send state must not be lied about as SENT');
+
+    const second = await worker.processDueOutbox({ limit: 1 });
+    assert.equal(second.unknownQuarantined, 1);
+    assert.equal(sends, 1, 'Uncertain provider delivery must never be blindly sent again');
+
+    record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0006' }).lean();
+    assert.equal(record.status, 'SEND_STATE_UNKNOWN');
+    assert.equal(record.providerMessageId || null, null);
+  });
+
 });
