@@ -15,6 +15,7 @@ const payrollQueryController = read('backend/src/controllers/payrollQueryControl
 const loanAdvanceController = read('backend/src/controllers/loanAdvanceController.js');
 const settingsController = read('backend/src/controllers/settingsController.js');
 const attendanceController = read('backend/src/modules/attendance/attendanceController.js');
+const companyIdentityService = read('backend/src/services/companyIdentityService.js');
 
 test('P0-WF-001: approval notification outbox is queued, never pre-marked SENT', () => {
   const helperStart = approvalController.indexOf('async function sendNotificationAndOutbox');
@@ -67,4 +68,17 @@ test('P0-WF-006: shift-change cafe scope is fail-closed', () => {
   const block = shiftController.slice(start, end);
   assert.ok(block.includes('CAFE_ACCESS_DENIED'));
   assert.ok(block.includes('CAFE_SCOPE_REQUIRED'));
+});
+
+
+test('P0-WF-007: company identity lookup is strictly organisation scoped', () => {
+  assert.ok(companyIdentityService.includes("organisationId: normalizedOrganisationId"));
+  assert.ok(companyIdentityService.includes("status: 'CURRENT'"));
+  assert.equal(companyIdentityService.includes("$or: [{ organisationId }, { status: 'CURRENT' }]"), false);
+});
+
+test('P0-WF-008: outlet branding lookup cannot resolve a cafe from another organisation', () => {
+  assert.ok(companyIdentityService.includes("Cafe.findOne({ organisationId: normalizedOrganisationId, cafeId })"));
+  assert.equal(companyIdentityService.includes("Cafe.findOne({ cafeId })"), false);
+  assert.ok(companyIdentityService.includes("'ORGANISATION_REQUIRED'"));
 });
