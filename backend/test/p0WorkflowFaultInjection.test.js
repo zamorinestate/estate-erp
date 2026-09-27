@@ -16,11 +16,15 @@ const { NotificationOutbox } = require('../src/models/NotificationOutbox');
 const { AuditEvent } = require('../src/models/AuditEvent');
 const { Expense } = require('../src/models/Expense');
 const { StaffLoanAdvance } = require('../src/models/StaffLoanAdvance');
+const { ProfileChangeRequest } = require('../src/models/ProfileChangeRequest');
+const { AttendanceCorrectionRequest } = require('../src/models/AttendanceCorrectionRequest');
 
 const approvalController = require('../src/controllers/approvalController');
 const leaveController = require('../src/controllers/leaveController');
 const expenseController = require('../src/controllers/expenseController');
 const loanAdvanceController = require('../src/controllers/loanAdvanceController');
+const settingsController = require('../src/controllers/settingsController');
+const attendanceController = require('../src/modules/attendance/attendanceController');
 
 const ORG = 'ORG-ZAMORIN';
 const CAFE = 'CAFE-001';
@@ -120,6 +124,8 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       AuditEvent,
       Expense,
       StaffLoanAdvance,
+      ProfileChangeRequest,
+      AttendanceCorrectionRequest,
     ];
     for (const model of models) {
       try { await model.createCollection(); } catch {}
@@ -143,6 +149,8 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       NotificationOutbox,
       Expense,
       StaffLoanAdvance,
+      ProfileChangeRequest,
+      AttendanceCorrectionRequest,
     ]) {
       await model.deleteMany({});
     }
@@ -496,6 +504,99 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       assert.equal(afterExpense.status, 'SUBMITTED');
     } finally {
       Expense.prototype.save = originalSave;
+    }
+  });
+
+
+  it('P0-FI-010: ProfileChangeRequest Approval failure rolls back the profile request', async () => {
+    const originalSave = Approval.prototype.save;
+    Approval.prototype.save = async function injectedProfileApprovalFailure() {
+      const err = new Error('INJECTED_PROFILE_APPROVAL_FAILURE');
+      err.code = 'INJECTED_PROFILE_APPROVAL_FAILURE';
+      throw err;
+    };
+
+    try {
+      const { error } = await invoke(settingsController.submitProfileChangeRequest, {
+        user: {
+          organisationId: ORG,
+          userId: 'ST-0001',
+          role: 'STAFF',
+        },
+        auth: {
+          organisationId: ORG,
+          userId: 'ST-0001',
+          role: 'STAFF',
+          assignedCafeIds: [CAFE],
+        },
+        body: {
+          requestType: 'LEGAL_NAME',
+          title: 'Correct legal name',
+          reason: 'Fault injection profile request',
+          oldValues: { legalName: 'Old Name' },
+          newValues: { legalName: 'New Name' },
+        },
+        correlationId: 'FI-PROFILE-CREATE',
+        method: 'POST',
+        originalUrl: '/api/v1/settings/profile/change-request',
+      });
+
+      assert.ok(error, 'Injected Approval failure must propagate');
+      assert.equal(await ProfileChangeRequest.countDocuments({ organisationId: ORG }), 0);
+      assert.equal(await Approval.countDocuments({ organisationId: ORG, entityType: 'PROFILE_CHANGE' }), 0);
+    } finally {
+      Approval.prototype.save = originalSave;
+    }
+  });
+
+  it('P0-FI-011: AttendanceCorrection Approval failure rolls back correction request and attendance mutation', async () => {
+    const attendance = await Attendance.create({
+      attendanceId: 'ATT-FI-0001',
+      organisationId: ORG,
+      cafeId: CAFE,
+      userId: 'ST-0001',
+      businessDate: '2026-10-04',
+      checkInAt: new Date('2026-10-04T04:00:00.000Z'),
+      status: 'CHECKED_IN',
+      correctionRequired: false,
+    });
+
+    const originalSave = Approval.prototype.save;
+    Approval.prototype.save = async function injectedAttendanceApprovalFailure() {
+      const err = new Error('INJECTED_ATTENDANCE_APPROVAL_FAILURE');
+      err.code = 'INJECTED_ATTENDANCE_APPROVAL_FAILURE';
+      throw err;
+    };
+
+    try {
+      const { error } = await invoke(attendanceController.requestStaffCorrection, {
+        auth: {
+          organisationId: ORG,
+          userId: 'ST-0001',
+          role: 'STAFF',
+          primaryCafeId: CAFE,
+          assignedCafeIds: [CAFE],
+        },
+        body: {
+          attendanceId: attendance.attendanceId,
+          businessDate: attendance.businessDate,
+          issueType: 'MISSED_CHECKOUT',
+          requestedCheckOut: '2026-10-04T12:30:00.000Z',
+          reason: 'Fault injection attendance correction',
+        },
+        correlationId: 'FI-ATTENDANCE-CREATE',
+        method: 'POST',
+        originalUrl: '/api/v1/attendance/corrections',
+      });
+
+      assert.ok(error, 'Injected Approval failure must propagate');
+      assert.equal(await AttendanceCorrectionRequest.countDocuments({ organisationId: ORG }), 0);
+      assert.equal(await Approval.countDocuments({ organisationId: ORG, entityType: 'ATTENDANCE_CORRECTION' }), 0);
+
+      const reloaded = await Attendance.findOne({ attendanceId: attendance.attendanceId }).lean();
+      assert.equal(Boolean(reloaded.correctionRequired), false, 'Attendance record mutation must roll back');
+    } finally {
+      Approval.prototype.save = originalSave;
     }
   });
 
