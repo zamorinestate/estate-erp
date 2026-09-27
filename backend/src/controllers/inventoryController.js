@@ -275,7 +275,7 @@ const createGlobalItem = asyncHandler(async (request, response) => {
 
   // Stage 007 Non-Negotiable: Auto-provision item to all active cafés at 0 quantity
   const cafes = await Cafe.find({ organisationId, status: 'ACTIVE' }).lean();
-  const targetCafes = cafes.length > 0 ? cafes : [{ cafeId: 'ZC-0001' }, { cafeId: 'ZC-0002' }];
+  const targetCafes = cafes;
 
   const configDocs = targetCafes.map((c) => ({
     organisationId,
