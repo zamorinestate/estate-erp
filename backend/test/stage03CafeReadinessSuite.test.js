@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const { Cafe, READINESS_CHECKLIST_KEYS } = require('../src/models/Cafe');
 const { CafeAccess } = require('../src/models/CafeAccess');
@@ -31,7 +31,7 @@ test('STAGE 03 — Café Registration, 12-Section Onboarding & Store Readiness S
   };
 
   t.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri());
 
     await User.create({
