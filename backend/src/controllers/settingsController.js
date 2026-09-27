@@ -1443,8 +1443,8 @@ async function updateManageSupportTicket(req, res) {
             subject: `Support Case ${ticket.caseId} updated: ${status}`,
             renderedSubject: `Support Case ${ticket.caseId} updated: ${status}`,
             renderedBody: `Your support ticket "${ticket.summary}" has been updated to ${status}.${resolutionSummary ? ' Resolution: ' + resolutionSummary : ''}`,
-            status: 'SENT',
-            sentAt: new Date(),
+            status: 'QUEUED',
+            nextAttemptAt: new Date(),
           });
 
           const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -1578,8 +1578,8 @@ async function addSupportTicketReply(req, res) {
           subject: `New message on Support Case ${ticket.caseId}`,
           renderedSubject: `New message on Support Case ${ticket.caseId}`,
           renderedBody: `Support team replied to your case "${ticket.summary}":\n\n${message.trim()}`,
-          status: 'SENT',
-          sentAt: new Date(),
+          status: 'QUEUED',
+          nextAttemptAt: new Date(),
         });
 
         const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
