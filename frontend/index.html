@@ -12,11 +12,8 @@
   <link rel="manifest" href="/manifest.json" />
 
   <script>
-    // Text direction (LTR/RTL) initialization to avoid FOUC
-    try {
-      const savedDir = localStorage.getItem('zamorin-dir') || 'ltr';
-      document.documentElement.setAttribute('dir', savedDir);
-    } catch (e) {}
+    // App shell direction is fixed to LTR. Remove obsolete saved direction state.
+    try { localStorage.removeItem('zamorin-dir'); } catch (e) {}
 
     // On page load or when changing themes, best to add inline in `head` to avoid FOUC
     if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -1104,7 +1101,7 @@ body:has(#app.auth-screen) {
   <!-- Critical assets preload for immediate zero-latency first paint -->
   <link rel="preload" as="image" href="/src/assets/zamorin-logo-horizontal.svg" fetchpriority="high" />
   <link rel="preload" as="image" href="/src/assets/estate-bg-1.jpg" />
-  <link rel="modulepreload" href="/src/js/main.js?v=3.9.1" />
+  <link rel="modulepreload" href="/src/js/main.js?v=3.9.2" />
   <link rel="modulepreload" href="/src/js/pages/login2.js?v=3.5.4" />
   <link rel="modulepreload" href="/src/js/apiClient.js?v=3.5.4" />
   <link rel="modulepreload" href="/src/js/state.js?v=3.5.4" />
@@ -1351,6 +1348,6 @@ body:has(#app.auth-screen) {
     });
   </script>
 
-  <script type="module" src="/src/js/main.js?v=3.9.1"></script>
+  <script type="module" src="/src/js/main.js?v=3.9.2"></script>
 </body>
 </html>
