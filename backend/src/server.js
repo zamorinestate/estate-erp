@@ -33,6 +33,10 @@ const {
 
 const apiRouter = require('./routes');
 const { documentStorageAdapter } = require('./services/documentStorageAdapter');
+const {
+  startNotificationOutboxWorker,
+  stopNotificationOutboxWorker,
+} = require('./services/notificationOutboxWorker');
 const { getTrustedClientIp, getTrustedProxies } = require('./utils/clientIp');
 
 const SERVICE_NAME =
@@ -510,6 +514,8 @@ async function startServer() {
       port: environment.port,
     });
 
+  startNotificationOutboxWorker();
+
   console.log(
     `Zamorin Cafe ERP API running on ${environment.host}:${environment.port} in ${environment.nodeEnvironment} mode.`
   );
@@ -576,6 +582,7 @@ function registerShutdownHandlers(
         `${signal} received; shutting down safely.`
       );
 
+      await stopNotificationOutboxWorker();
       await closeHttpServer(server);
       await disconnectDatabase();
 
