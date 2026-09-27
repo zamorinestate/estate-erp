@@ -88,12 +88,14 @@ test('P0-WF-008: outlet branding lookup cannot resolve a cafe from another organ
 });
 
 
-test('P0-WF-009: approval decision and target entity execute inside one transaction', () => {
+test('P0-WF-009: approval decision and target entity use canonical retryable transaction wrapper', () => {
   const start = approvalController.indexOf('const decideApproval');
   const block = approvalController.slice(start);
-  assert.ok(block.includes('session.withTransaction'));
+  assert.ok(approvalController.includes("executeTransactionWithRetry"));
+  assert.ok(block.includes('executeTransactionWithRetry'));
   assert.ok(block.includes('applyApprovalEntityDecision'));
-  assert.ok(block.includes('await approval.save({ session })'));
+  assert.ok(block.includes("maxTransientRetries: 5"));
+  assert.ok(block.includes("maxCommitRetries: 3"));
   assert.equal(block.includes('[EXPENSE_SYNC_WARN]'), false);
   assert.equal(block.includes('[SHIFT_SYNC_WARN]'), false);
   assert.equal(block.includes('[PROFILE_SYNC_WARN]'), false);
