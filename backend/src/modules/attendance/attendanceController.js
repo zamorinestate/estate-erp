@@ -667,8 +667,8 @@ const publishRoster = asyncHandler(async (request, response) => {
           subject: `Weekly Shift Schedule Published (${roster.weekStartDate})`,
           renderedSubject: `Weekly Shift Schedule Published (${roster.weekStartDate})`,
           renderedBody: `Your weekly duty roster commencing ${roster.weekStartDate} at café ${roster.cafeId} has been published.`,
-          status: 'SENT',
-          sentAt: new Date(),
+          status: 'QUEUED',
+          nextAttemptAt: new Date(),
         });
 
         const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
