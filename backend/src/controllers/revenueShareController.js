@@ -487,7 +487,10 @@ const submitSales = asyncHandler(async (request, response) => {
   }
 
   const outlet = await LeasedOutlet.findOne({ organisationId, outletId: outletId.toUpperCase() }).lean();
-  const cafeId = outlet?.cafeId || 'ZC-0001';
+  if (!outlet || !outlet.cafeId) {
+    throw new ApiError(404, 'OUTLET_CAFE_SCOPE_NOT_FOUND', 'The outlet is not linked to an authoritative café.');
+  }
+  const cafeId = outlet.cafeId;
   const authorizedCafes = getOwnerAuthorizedCafes(request);
   if (authorizedCafes && !authorizedCafes.includes(cafeId)) {
     throw new ApiError(403, 'CROSS_CAFE_RESOURCE_DENIED', 'You do not have access to this café.');
@@ -602,7 +605,10 @@ const simulateSettlement = asyncHandler(async (request, response) => {
   }
 
   const outlet = await LeasedOutlet.findOne({ organisationId, outletId: outletId.toUpperCase() }).lean();
-  const cafeId = outlet?.cafeId || 'ZC-0001';
+  if (!outlet || !outlet.cafeId) {
+    throw new ApiError(404, 'OUTLET_CAFE_SCOPE_NOT_FOUND', 'The outlet is not linked to an authoritative café.');
+  }
+  const cafeId = outlet.cafeId;
   const authorizedCafes = getOwnerAuthorizedCafes(request);
   if (authorizedCafes && !authorizedCafes.includes(cafeId)) {
     throw new ApiError(403, 'CROSS_CAFE_RESOURCE_DENIED', 'You do not have access to this café.');
@@ -728,7 +734,10 @@ const createSettlement = asyncHandler(async (request, response) => {
     organisationId,
     outletId: outletId.toUpperCase(),
   }).lean();
-  const cafeId = outlet?.cafeId || 'ZC-0001';
+  if (!outlet || !outlet.cafeId) {
+    throw new ApiError(404, 'OUTLET_CAFE_SCOPE_NOT_FOUND', 'The outlet is not linked to an authoritative café.');
+  }
+  const cafeId = outlet.cafeId;
   const authorizedCafes = getOwnerAuthorizedCafes(request);
   if (authorizedCafes && !authorizedCafes.includes(cafeId)) {
     throw new ApiError(403, 'CROSS_CAFE_RESOURCE_DENIED', 'You do not have access to this café.');
