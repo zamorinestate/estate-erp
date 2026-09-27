@@ -740,7 +740,7 @@ function generateTaxInvoicePdf(bill, cafeBranding = {}) {
   // Standard Footer
   streamOps += `q\n0.8 0.83 0.88 rg\n20 50 555 1 re\nf\nQ\n`;
   streamOps += `BT\n/F1 8 Tf\n0.4 0.45 0.55 rg\n`;
-  streamOps += `1 0 0 1 20 38 Tm\n(Zamorin Cafe ERP • Cafe ID: ${escapePdf(bill.cafeId || 'ZC-0001')} • Generated ${escapePdf(dateStr)} • Page 1 of 1 • Official Retail Record) Tj\n`;
+  streamOps += `1 0 0 1 20 38 Tm\n(Zamorin Cafe ERP • Cafe ID: ${escapePdf(bill.cafeId || 'UNASSIGNED')} • Generated ${escapePdf(dateStr)} • Page 1 of 1 • Official Retail Record) Tj\n`;
   streamOps += `ET\n`;
 
   const streamBuf = Buffer.from(streamOps, 'utf8');
