@@ -9,7 +9,7 @@
  * 3. Ephemeral Device Presence (TTL-based presence tracking with O(1) reads)
  * 4. Distributed Job Mutex & Fencing (Safe owner release via Lua, monotonic fencing counter, lease renewal)
  * 
- * Peer Dependency: ioredis / redis client (when deployed to production cluster).
+ * Peer Dependency: official node-redis client (when deployed to production cluster).
  */
 
 const LUA_SCRIPTS = {
@@ -99,11 +99,10 @@ class RedisAdapterService {
 
     const [allowed, remaining, resetAfterSeconds] = await this.client.eval(
       LUA_SCRIPTS.SLIDING_WINDOW_LIMITER,
-      1,
-      key,
-      now,
-      windowMs,
-      limit
+      {
+        keys: [key],
+        arguments: [String(now), String(windowMs), String(limit)],
+      }
     );
 
     return {
@@ -130,14 +129,11 @@ class RedisAdapterService {
       throw new Error('REDIS_SUBSCRIBER_NOT_INITIALIZED');
     }
     const channel = `${this.keyPrefix}events:${topic}`;
-    await this.subscriberClient.subscribe(channel);
-    this.subscriberClient.on('message', (chan, msg) => {
-      if (chan === channel) {
-        try {
-          callback(JSON.parse(msg));
-        } catch (_) {
-          callback(msg);
-        }
+    await this.subscriberClient.subscribe(channel, (msg) => {
+      try {
+        callback(JSON.parse(msg));
+      } catch (_) {
+        callback(msg);
       }
     });
   }
@@ -147,19 +143,34 @@ class RedisAdapterService {
     if (!this.client) {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
-    const key = `${this.keyPrefix}presence:${deviceId}`;
+    const organisationId = String(payload.organisationId || '').trim().toUpperCase();
+    const cafeId = String(payload.cafeId || 'GLOBAL').trim().toUpperCase() || 'GLOBAL';
+    const normalizedDeviceId = String(deviceId || '').trim().toUpperCase();
+    if (!organisationId || !normalizedDeviceId) {
+      throw new Error('REDIS_PRESENCE_SCOPE_REQUIRED');
+    }
+    const key = `${this.keyPrefix}presence:${organisationId}:${cafeId}:${normalizedDeviceId}`;
     const data = {
       ...payload,
+      organisationId,
+      cafeId,
+      deviceId: normalizedDeviceId,
       lastHeartbeat: new Date().toISOString(),
     };
-    return this.client.set(key, JSON.stringify(data), 'EX', ttlSeconds);
+    return this.client.set(key, JSON.stringify(data), { EX: ttlSeconds });
   }
 
-  async getDevicePresence(deviceId) {
+  async getDevicePresence(deviceId, { organisationId, cafeId = 'GLOBAL' } = {}) {
     if (!this.client) {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
-    const key = `${this.keyPrefix}presence:${deviceId}`;
+    const org = String(organisationId || '').trim().toUpperCase();
+    const cafe = String(cafeId || 'GLOBAL').trim().toUpperCase() || 'GLOBAL';
+    const normalizedDeviceId = String(deviceId || '').trim().toUpperCase();
+    if (!org || !normalizedDeviceId) {
+      throw new Error('REDIS_PRESENCE_SCOPE_REQUIRED');
+    }
+    const key = `${this.keyPrefix}presence:${org}:${cafe}:${normalizedDeviceId}`;
     const raw = await this.client.get(key);
     if (!raw) return { isOnline: false };
     return {
@@ -180,7 +191,7 @@ class RedisAdapterService {
     const fencingToken = await this.client.incr(fenceKey);
 
     // Atomically acquire mutex with ownerId
-    const acquired = await this.client.set(lockKey, ownerId, 'PX', ttlMs, 'NX');
+    const acquired = await this.client.set(lockKey, ownerId, { PX: ttlMs, NX: true });
 
     if (acquired === 'OK' || acquired === true) {
       return {
@@ -206,7 +217,7 @@ class RedisAdapterService {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
     const lockKey = `${this.keyPrefix}locks:${jobName}`;
-    const released = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_RELEASE, 1, lockKey, ownerId);
+    const released = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_RELEASE, { keys: [lockKey], arguments: [String(ownerId)] });
     return Boolean(released === 1);
   }
 
@@ -215,7 +226,7 @@ class RedisAdapterService {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
     const lockKey = `${this.keyPrefix}locks:${jobName}`;
-    const extended = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_EXTEND, 1, lockKey, ownerId, ttlMs);
+    const extended = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_EXTEND, { keys: [lockKey], arguments: [String(ownerId), String(ttlMs)] });
     return Boolean(extended === 1);
   }
 
