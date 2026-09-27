@@ -407,30 +407,14 @@ export function renderTopbar({ scopeChip } = {}) {
   );
 
   if (isPrimaryMasterUser) {
-    const currentWs = state.activeWorkspace || (state.role === 'master' ? 'master-primary' : state.role);
     const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
-    const empOptions = (state.employees || []).map(emp => `<option value="${emp.id || emp.employeeId || emp.userId}" ${(state.supervisedEmployeeId === (emp.id || emp.employeeId || emp.userId)) ? 'selected' : ''}>👤 ${emp.name || emp.fullName || emp.userId} (${emp.employeeId || emp.id || ''})</option>`).join('');
 
     cafeScopeHtml = `
-      <div class="primary-master-topbar-controls" style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
-        <div class="workspace-scope-dropdown">
-          <select id="global-workspace-selector" class="select-scope" aria-label="Selected Workspace Window" style="font-weight:700;">
-            <option value="master-primary" ${currentWs === 'master-primary' ? 'selected' : ''}>🛡️ Primary Master</option>
-            <option value="owner" ${currentWs === 'owner' ? 'selected' : ''}>👑 Owner Portal</option>
-            <option value="cafe_admin" ${currentWs === 'cafe_admin' ? 'selected' : ''}>☕ Café Operations</option>
-            <option value="staff" ${currentWs === 'staff' ? 'selected' : ''}>👤 Employee / Staff Window</option>
-          </select>
-        </div>
+      <div class="primary-master-topbar-controls" style="display:inline-flex; align-items:center;">
         <div class="cafe-scope-dropdown">
-          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Cafe Scope" style="font-weight:600;">
-            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === 'ALL') ? 'selected' : ''}>🏠 All Cafés (Global Portfolio)</option>
+          <select id="global-cafe-selector" class="select-scope" aria-label="Selected Café Scope" title="Café scope" style="font-weight:600; max-width:230px;">
+            <option value="ALL" ${(!state.selectedCafeId || state.selectedCafeId === 'ALL') ? 'selected' : ''}>🏠 All Cafés</option>
             ${cafeOptions}
-          </select>
-        </div>
-        <div class="supervised-employee-dropdown">
-          <select id="global-supervised-employee-selector" class="select-scope" aria-label="Supervised Employee Scope">
-            <option value="NONE" ${!state.supervisedEmployeeId ? 'selected' : ''}>👥 Supervise: None (Self)</option>
-            ${empOptions}
           </select>
         </div>
       </div>
@@ -470,7 +454,7 @@ export function renderTopbar({ scopeChip } = {}) {
   } else {
     const isOwner = role === ROLES.OWNER || role === 'owner';
     const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
-    const allLabel = isOwner ? '🏠 All Assigned Cafés (Portfolio)' : '🏠 All Cafés (Global Portfolio)';
+    const allLabel = isOwner ? '🏠 All Cafés' : '🏠 All Cafés';
     cafeScopeHtml = `
       <div class="owner-topbar-controls" style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <div class="cafe-scope-dropdown">
@@ -483,37 +467,18 @@ export function renderTopbar({ scopeChip } = {}) {
     `;
   }
 
+  const currentWorkspaceValue = state.activeWorkspace || (state.role === 'master' ? 'master-primary' : state.role);
+  const supervisedEmployeeOptions = (state.employees || []).map(emp => `<option value="${emp.id || emp.employeeId || emp.userId}" ${(state.supervisedEmployeeId === (emp.id || emp.employeeId || emp.userId)) ? 'selected' : ''}>👤 ${emp.name || emp.fullName || emp.userId} (${emp.employeeId || emp.id || ''})</option>`).join('');
+
   const searchPlaceholder = isStaff
     ? "Search attendance, payslips, requests..."
     : isCafeOps
     ? "Search this café…"
     : isVendor
     ? "Search purchase orders, invoices, payments..."
-    : "Search modules, records, employees...";
+    : "Search…";
 
-  const megaMenuHtml = isVendor ? '' : `
-    <div class="mega-menu-wrap" style="position:relative; display:inline-flex; align-items:center; margin-left:4px;">
-      <button class="topbar-action-btn mega-menu-btn" id="mega-menu-btn" type="button" aria-expanded="false" title="Flowbite Mega Menu — Quick Hub & QR" style="display:inline-flex; align-items:center; gap:5px; padding:0 12px; height:38px; min-height:38px; font-weight:700; font-size:12px; border-radius:var(--radius-control); background:var(--surface); border:1px solid var(--line-strong); color:var(--ink); cursor:pointer;">
-        <span style="font-size:13px; line-height:1;">⚡</span>
-        <span class="mega-menu-btn-label" style="letter-spacing:0.02em;">Quick Hub</span>
-        <span id="mega-menu-arrow" style="display:inline-flex; align-items:center; transition:transform 0.2s;">${flowbiteIcon('caretDown', 'w-3 h-3 text-gray-500 dark:text-gray-400')}</span>
-      </button>
-      <div id="megaMenuDropdown" class="mega-menu-dropdown popover">
-        <div class="mega-menu-header" style="padding:10px 14px 8px; border-bottom:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:space-between; width:100%; box-sizing:border-box;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            ${flowbiteIcon('briefcase', 'w-5 h-5 text-gray-800 dark:text-white')}
-            <div>
-              <p class="text-lg font-medium text-gray-900 dark:text-white" style="margin:0;">Quick Navigation Hub</p>
-            </div>
-          </div>
-          ${flowbiteIcon('badgeCheck', 'w-5 h-5 text-emerald-600 dark:text-emerald-400')}
-        </div>
-        <div class="mega-menu-grid" style="display:contents;">
-          ${renderMegaMenuContent(role, isPrimaryMasterUser)}
-        </div>
-      </div>
-    </div>
-  `;
+  const megaMenuHtml = '';
 
   return `
     <div class="topbar-inner">
@@ -547,23 +512,10 @@ export function renderTopbar({ scopeChip } = {}) {
           </div>
         ` : ''}
 
-        <!-- Live System Status Indicator -->
-        <div class="system-status-indicator online" id="topbar-system-status" title="System Connected & Synced">
-          <span style="font-size:10px;">●</span> Online
+        <!-- Connectivity warning: hidden while healthy, visible only when offline -->
+        <div class="system-status-indicator offline" id="topbar-system-status" title="Network disconnected" style="display:${navigator.onLine ? 'none' : 'inline-flex'};">
+          <span style="font-size:10px;">●</span> Offline
         </div>
-
-        <!-- Flowbite Quick UPI QR Modal Action -->
-        ${!isVendor ? `
-        <button class="topbar-action-btn" id="topbar-qr-quick-btn" title="Quick UPI QR Payment" type="button" aria-label="Quick UPI QR">
-          ${flowbiteIcon("cameraPhoto", "w-5 h-5 text-gray-700 dark:text-gray-200")}
-        </button>
-        ` : ''}
-
-        <!-- Flowbite Dark Mode Switcher Button -->
-        <button id="theme-toggle" type="button" class="text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-700 rounded-lg text-sm p-2.5" title="Toggle theme mode" aria-label="Toggle theme mode">
-            <svg id="theme-toggle-dark-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path></svg>
-            <svg id="theme-toggle-light-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 0 0 2h1z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
-        </button>
 
         <!-- Theme Switcher Button -->
         <button class="topbar-action-btn" id="theme-btn" title="Change Appearance & Theme" type="button">
@@ -673,6 +625,22 @@ export function renderTopbar({ scopeChip } = {}) {
           <div class="user-email">${user.email || ""}</div>
         </div>
       </div>
+      ${isPrimaryMasterUser ? `
+        <div class="profile-context-settings" style="padding:10px 14px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); display:grid; gap:8px;">
+          <label style="font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em;">Workspace</label>
+          <select id="global-workspace-selector" class="select-scope" aria-label="Selected Workspace Window" style="width:100%; max-width:none;">
+            <option value="master-primary" ${currentWorkspaceValue === 'master-primary' ? 'selected' : ''}>Primary Master</option>
+            <option value="owner" ${currentWorkspaceValue === 'owner' ? 'selected' : ''}>Owner Portal</option>
+            <option value="cafe_admin" ${currentWorkspaceValue === 'cafe_admin' ? 'selected' : ''}>Café Operations</option>
+            <option value="staff" ${currentWorkspaceValue === 'staff' ? 'selected' : ''}>Employee / Staff Window</option>
+          </select>
+          <label style="font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em;">Employee preview</label>
+          <select id="global-supervised-employee-selector" class="select-scope" aria-label="Supervised Employee Scope" style="width:100%; max-width:none;">
+            <option value="NONE" ${!state.supervisedEmployeeId ? 'selected' : ''}>None (Self)</option>
+            ${supervisedEmployeeOptions}
+          </select>
+        </div>
+      ` : ''}
       <div class="popover-menu">
         ${isVendor ? `
           <button class="popover-menu-item" data-profile-action="vendor-dashboard">
@@ -735,47 +703,6 @@ export function wireBell(root) {
       } else {
         setSidebarCollapsed(!isSidebarCollapsed());
       }
-    });
-  }
-
-  // Flowbite Mega Menu interaction
-  const megaBtn = root.querySelector("#mega-menu-btn");
-  const megaMenu = root.querySelector("#megaMenuDropdown");
-  if (megaBtn && megaMenu) {
-    megaBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const isVisible = megaMenu.classList.contains("open") || megaMenu.style.display === "grid";
-      closeAllPopovers();
-      if (!isVisible) {
-        megaMenu.style.display = "grid";
-        megaMenu.classList.add("open");
-        megaBtn.setAttribute("aria-expanded", "true");
-        const arrow = root.querySelector("#mega-menu-arrow");
-        if (arrow) arrow.style.transform = "rotate(180deg)";
-      }
-    });
-
-    megaMenu.querySelectorAll(".mega-menu-link").forEach((link) => {
-      link.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const route = link.dataset.route;
-        const action = link.dataset.action;
-        closeAllPopovers();
-
-        if (action === "pos-qr") {
-          openPosQrModal();
-        } else if (action === "attendance-qr") {
-          import("./modules/attendance/attendanceShifts.js")
-            .then(m => m.openAttendanceQrModal({ cafeId: state.currentCafeId || state.selectedCafeId }))
-            .catch(() => showToast("Attendance QR module loading...", "info"));
-        } else if (action === "menu-qr") {
-          openMenuQrModal();
-        } else if (action === "switch-op") {
-          openSwitchOperatorModal();
-        } else if (route) {
-          navigate(route);
-        }
-      });
     });
   }
 
@@ -1019,53 +946,6 @@ export function wireBell(root) {
         themePop.classList.remove("open");
         showToast(`Theme updated to ${theme.toUpperCase()}`);
       });
-    });
-  }
-
-  // Flowbite Dark Mode Switcher
-  var themeToggleDarkIcon = root.querySelector('#theme-toggle-dark-icon') || document.getElementById('theme-toggle-dark-icon');
-  var themeToggleLightIcon = root.querySelector('#theme-toggle-light-icon') || document.getElementById('theme-toggle-light-icon');
-
-  // Change the icons inside the button based on previous settings
-  if (themeToggleDarkIcon && themeToggleLightIcon) {
-    if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      themeToggleLightIcon.classList.remove('hidden');
-      themeToggleDarkIcon.classList.add('hidden');
-    } else {
-      themeToggleDarkIcon.classList.remove('hidden');
-      themeToggleLightIcon.classList.add('hidden');
-    }
-  }
-
-  var themeToggleBtn = root.querySelector('#theme-toggle') || document.getElementById('theme-toggle');
-
-  if (themeToggleBtn && !themeToggleBtn.dataset.wired) {
-    themeToggleBtn.dataset.wired = "true";
-    themeToggleBtn.addEventListener('click', function() {
-      // toggle icons inside button
-      if (themeToggleDarkIcon) themeToggleDarkIcon.classList.toggle('hidden');
-      if (themeToggleLightIcon) themeToggleLightIcon.classList.toggle('hidden');
-
-      // if set via local storage previously
-      if (localStorage.getItem('color-theme')) {
-        if (localStorage.getItem('color-theme') === 'light') {
-          document.documentElement.classList.add('dark');
-          localStorage.setItem('color-theme', 'dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-          localStorage.setItem('color-theme', 'light');
-        }
-
-      // if NOT set via local storage previously
-      } else {
-        if (document.documentElement.classList.contains('dark')) {
-          document.documentElement.classList.remove('dark');
-          localStorage.setItem('color-theme', 'light');
-        } else {
-          document.documentElement.classList.add('dark');
-          localStorage.setItem('color-theme', 'dark');
-        }
-      }
     });
   }
 
@@ -1322,26 +1202,17 @@ export function wireBell(root) {
   if (statusBadge) {
     const syncStatus = () => {
       if (navigator.onLine) {
-        statusBadge.className = "system-status-indicator online";
-        statusBadge.innerHTML = `<span style="font-size:10px;">●</span> Online`;
-        statusBadge.title = "Backend API & Active Session Connected";
+        statusBadge.style.display = "none";
       } else {
+        statusBadge.style.display = "inline-flex";
         statusBadge.className = "system-status-indicator offline";
         statusBadge.innerHTML = `<span style="font-size:10px;">●</span> Offline`;
         statusBadge.title = "Network Disconnected — Retrying Connection";
       }
     };
+    syncStatus();
     window.addEventListener("online", syncStatus);
     window.addEventListener("offline", syncStatus);
-  }
-
-  // Quick UPI QR Payment Modal Trigger
-  const qrQuickBtn = root.querySelector("#topbar-qr-quick-btn");
-  if (qrQuickBtn) {
-    qrQuickBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openPosQrModal();
-    });
   }
 
   document.addEventListener("click", (e) => {
