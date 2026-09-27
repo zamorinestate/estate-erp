@@ -144,6 +144,14 @@ const registerSessionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Idempotency ledger for POS settlement application. A bill may be committed
+    // once and reconciliation may retry many times; this set prevents any retry
+    // from incrementing register totals twice.
+    settledBillIds: {
+      type: [String],
+      default: [],
+      index: false,
+    },
     cashEvents: {
       type: [cashEventSchema],
       default: [],
@@ -157,6 +165,11 @@ const registerSessionSchema = new mongoose.Schema(
   {
     timestamps: true,
   }
+);
+
+registerSessionSchema.index(
+  { organisationId: 1, cafeId: 1, registerId: 1, status: 1, businessDate: 1 },
+  { name: 'register_session_scope_lookup' }
 );
 
 const RegisterSession = mongoose.model('RegisterSession', registerSessionSchema);
