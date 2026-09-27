@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 /**
  * settingsController.js â€” SCR-023
  *
@@ -278,46 +280,41 @@ async function submitProfileChangeRequest(req, res) {
 
   const now = new Date();
   const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
-  let seqDigits = 10001;
+  let pcr = null;
+
+  const session = await mongoose.startSession();
   try {
-    const rawSeq = await SequenceCounter.generateId({ prefix: 'PCR', sequenceKey: `profile_change_request_${yearMonth}`, organisationId, minimumDigits: 5 });
-    const numPart = parseInt(rawSeq.replace(/\D/g, ''), 10) || 10001;
-    seqDigits = String(numPart).slice(-5).padStart(5, '0');
-  } catch {
-    seqDigits = String(Math.floor(10000 + Math.random() * 90000));
-  }
-  const requestId = `PCR-${yearMonth}-${seqDigits}`;
+    await session.withTransaction(async () => {
+      const requestId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `PROFILE_CHANGE_REQUEST_${yearMonth}`,
+        prefix: `PCR-${yearMonth}`,
+        minimumDigits: 5,
+        session,
+      });
 
-  const pcr = await ProfileChangeRequest.create({
-    requestId,
-    organisationId,
-    userId,
-    requestType,
-    title: safeStr(title).slice(0, 200),
-    reason: safeStr(reason).slice(0, 1000),
-    oldValues: oldValues || {},
-    newValues: newValues || {},
-    status: 'SUBMITTED',
-  });
+      pcr = new ProfileChangeRequest({
+        requestId,
+        organisationId,
+        userId,
+        requestType,
+        title: safeStr(title).slice(0, 200),
+        reason: safeStr(reason).slice(0, 1000),
+        oldValues: oldValues || {},
+        proposedValues: newValues || {},
+        status: 'SUBMITTED',
+      });
+      await pcr.save({ session });
 
-  await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: req.user.role, module: 'SETTINGS', action: 'PROFILE_CHANGE_REQUEST_SUBMITTED', entityType: 'PROFILE_CHANGE_REQUEST', entityId: pcr.requestId, metadata: { requestType, title } });
+      const approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+        session,
+      });
 
-  try {
-    let approval = await Approval.findOne({
-      organisationId,
-      entityType: 'PROFILE_CHANGE',
-      entityId: pcr.requestId,
-    });
-
-    if (!approval) {
-      let approvalId;
-      try {
-        approvalId = await SequenceCounter.generateId({ organisationId, sequenceKey: 'APPROVAL', prefix: 'APP', minimumDigits: 5 });
-      } catch {
-        const approvalCount = await Approval.countDocuments({ organisationId });
-        approvalId = `APP-${Date.now().toString().slice(-6)}-${String(approvalCount + 1).padStart(3, '0')}`;
-      }
-      approval = await Approval.create({
+      const approval = new Approval({
         approvalId,
         organisationId,
         cafeId: null,
@@ -328,35 +325,69 @@ async function submitProfileChangeRequest(req, res) {
         amountPaisa: 0,
         status: 'PENDING',
       });
-    }
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+  await auditService.recordAuditEvent({
+    organisationId,
+    actorUserId: userId,
+    actorRole: req.user.role,
+    module: 'SETTINGS',
+    action: 'PROFILE_CHANGE_REQUEST_SUBMITTED',
+    entityType: 'PROFILE_CHANGE_REQUEST',
+    entityId: pcr.requestId,
+    metadata: { requestType, title },
+  });
+
+  try {
+    const masterUsers = await User.find({
+      organisationId,
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
+
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${dateStr}`,
+        prefix: `NT-${dateStr}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
         eventType: 'PROFILE_CHANGE_REQUESTED',
         category: 'OPERATIONS',
-        recipientUserId: m.userId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
+        recipientEmail: master.email,
         title: `👤 Profile Change Request: ${userId}`,
         message: `${userId} requested a profile update (${requestType}). Reason: ${reason}`,
         priority: 'NORMAL',
         channels: ['IN_APP'],
-        deepLink: `#approvals`,
+        deepLink: '#approvals',
         sourceModule: 'EMPLOYEES',
         sourceEntityType: 'PROFILE_CHANGE',
         sourceEntityId: pcr.requestId,
-        deduplicationKey: `PCR_${pcr.requestId}_${m.userId}`,
-        correlationId: req.correlationId || notifId,
+        deduplicationKey: `PCR_${pcr.requestId}_${master.userId}`,
+        correlationId: req.correlationId || `CORR-PCR-${pcr.requestId}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
         createdBy: userId,
       });
     }
   } catch (err) {
-    console.warn(`[SETTINGS_PROFILE_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
+    console.warn(`[SETTINGS_PROFILE_CHANGE_NOTIFICATION_WARN] ${err.message}`);
   }
 
   res.status(201).json({
