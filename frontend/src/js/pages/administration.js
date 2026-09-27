@@ -24,6 +24,9 @@ import { icon } from "../icons.js";
 import { renderTrashBin, wireTrashBin } from "./trashBin.js";
 import { openCafeCreateModal } from "./cafeCreateModal.js";
 import { openCafeAccessManagementModal } from "./cafeAccessManagementModal.js";
+import { formatCafeAddress, getCafeCity } from "../utils/addressFormatter.js";
+
+export { formatCafeAddress, getCafeCity };
 
 function escHtml(str) {
   if (str === null || str === undefined) return '';
@@ -62,6 +65,9 @@ let adminState = {
   selectedUser: null,
   selectedAuditEvent: null,
   searchQuery: "",
+  cafeSearchQuery: "",
+  cafeStatusFilter: "",
+  cafeCityFilter: "",
   loading: false,
 };
 
@@ -404,7 +410,35 @@ function renderOverviewTab() {
 // ─── 2. CAFÉS TAB ─────────────────────────────────────────────────────────────
 
 function renderCafesTab() {
-  const cafes = adminState.cafes || [];
+  const allCafes = adminState.cafes || [];
+
+  // Filter cafes by search query, status, and city
+  const filteredCafes = allCafes.filter((c) => {
+    if (adminState.cafeStatusFilter && c.status !== adminState.cafeStatusFilter) return false;
+    const cafeCity = getCafeCity(c);
+    if (adminState.cafeCityFilter && cafeCity.toLowerCase() !== adminState.cafeCityFilter.toLowerCase()) return false;
+    if (adminState.cafeSearchQuery) {
+      const q = adminState.cafeSearchQuery.toLowerCase();
+      const addrStr = formatCafeAddress(c).toLowerCase();
+      const match =
+        (c.name || "").toLowerCase().includes(q) ||
+        (c.cafeId || "").toLowerCase().includes(q) ||
+        (c.code || "").toLowerCase().includes(q) ||
+        cafeCity.toLowerCase().includes(q) ||
+        addrStr.includes(q) ||
+        (c.managerName || "").toLowerCase().includes(q);
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  const knownCities = ["Bengaluru", "Kozhikode"];
+  allCafes.forEach((c) => {
+    const ct = getCafeCity(c);
+    if (ct && !knownCities.some((k) => k.toLowerCase() === ct.toLowerCase())) {
+      knownCities.push(ct);
+    }
+  });
 
   return `
     <div class="card" style="padding:24px;">
@@ -424,22 +458,21 @@ function renderCafesTab() {
       <!-- Filters & Search Toolbar -->
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
         <div style="display:flex;gap:10px;flex-wrap:wrap;flex:1;">
-          <input type="text" id="admin-cafe-search" class="form-control form-control-sm" placeholder="Search by name, code, city, admin..." style="max-width:280px;" />
+          <input type="text" id="admin-cafe-search" class="form-control form-control-sm" placeholder="Search by name, code, city, admin..." value="${escHtml(adminState.cafeSearchQuery || '')}" style="max-width:280px;" />
           <select id="admin-cafe-filter-status" class="form-control form-control-sm" style="width:140px;">
             <option value="">All Statuses</option>
-            <option value="ACTIVE">Active</option>
-            <option value="SETUP">Setup</option>
-            <option value="TEMPORARILY_CLOSED">Temporarily Closed</option>
-            <option value="DEACTIVATED">Deactivated</option>
+            <option value="ACTIVE" ${adminState.cafeStatusFilter === 'ACTIVE' ? 'selected' : ''}>Active</option>
+            <option value="SETUP" ${adminState.cafeStatusFilter === 'SETUP' ? 'selected' : ''}>Setup</option>
+            <option value="TEMPORARILY_CLOSED" ${adminState.cafeStatusFilter === 'TEMPORARILY_CLOSED' ? 'selected' : ''}>Temporarily Closed</option>
+            <option value="DEACTIVATED" ${adminState.cafeStatusFilter === 'DEACTIVATED' ? 'selected' : ''}>Deactivated</option>
           </select>
           <select id="admin-cafe-filter-city" class="form-control form-control-sm" style="width:130px;">
             <option value="">All Cities</option>
-            <option value="Bengaluru">Bengaluru</option>
-            <option value="Kozhikode">Kozhikode</option>
+            ${knownCities.map((ct) => `<option value="${escHtml(ct)}" ${adminState.cafeCityFilter.toLowerCase() === ct.toLowerCase() ? 'selected' : ''}>${escHtml(ct)}</option>`).join('')}
           </select>
         </div>
         <div style="font-size:12px;color:var(--muted);">
-          Showing <strong>${cafes.length}</strong> Locations
+          Showing <strong>${filteredCafes.length}</strong> of <strong>${allCafes.length}</strong> Locations
         </div>
       </div>
 
@@ -459,13 +492,15 @@ function renderCafesTab() {
             </tr>
           </thead>
           <tbody>
-            ${cafes.length === 0 ? `
+            ${filteredCafes.length === 0 ? `
               <tr>
                 <td colspan="8" style="text-align:center; padding:32px; color:var(--muted); font-size:13px;">
-                  No café locations found in registry. Click "+ Add New Café" to initialize an operational branch.
+                  ${allCafes.length === 0
+                    ? 'No café locations found in registry. Click "+ Add New Café" to initialize an operational branch.'
+                    : 'No café locations match the selected filters.'}
                 </td>
               </tr>
-            ` : cafes
+            ` : filteredCafes
               .map((c) => {
                 const statusBadge =
                   c.status === "ACTIVE"
@@ -476,14 +511,17 @@ function renderCafesTab() {
                     ? `<span class="status info" style="font-size:10px;">SETUP</span>`
                     : `<span class="status danger" style="font-size:10px;">DEACTIVATED</span>`;
 
+                const formattedAddr = formatCafeAddress(c);
+                const cityStr = getCafeCity(c);
+
                 return `
                 <tr>
                   <td style="font-family:var(--font-mono);font-weight:700;color:var(--bronze-600);">${escHtml(c.cafeId)}</td>
                   <td>
                     <strong style="color:var(--ink);">${escHtml(c.name)}</strong>
-                    <div style="font-size:11px;color:var(--muted);">${escHtml(c.address || "")}</div>
+                    <div style="font-size:11px;color:var(--muted);">${escHtml(formattedAddr || "—")}</div>
                   </td>
-                  <td style="color:var(--ink);">${escHtml(c.city || "")}</td>
+                  <td style="color:var(--ink);">${escHtml(cityStr || "—")}</td>
                   <td>
                     <strong style="color:var(--ink);">${escHtml(c.managerName || "Unassigned")}</strong>
                     <div style="font-size:11px;color:var(--muted);">${escHtml(c.phone || "")}</div>
@@ -1273,42 +1311,166 @@ function renderAuditTab() {
 
 // ─── Hydration & Wiring ───────────────────────────────────────────────────────
 
+function ensureAdminDelegation(root) {
+  if (!root || root.dataset.adminDelegationActive === "true") return;
+  root.dataset.adminDelegationActive = "true";
+
+  root.addEventListener("click", async (event) => {
+    // 1. View Café Modal
+    const viewCafeBtn = event.target.closest("[data-view-cafe]");
+    if (viewCafeBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const cafeId = viewCafeBtn.dataset.viewCafe;
+      if (cafeId) openCafeViewModal(root, cafeId);
+      return;
+    }
+
+    // 2. Access Café (Operations Access Management Modal)
+    const accessCafeBtn = event.target.closest("[data-access-cafe]");
+    if (accessCafeBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const cafeId = accessCafeBtn.dataset.accessCafe;
+      if (cafeId) openCafeAccessManagementModal(root, cafeId);
+      return;
+    }
+
+    // 3. Edit Café Modal
+    const editCafeBtn = event.target.closest("[data-edit-cafe]");
+    if (editCafeBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const cafeId = editCafeBtn.dataset.editCafe;
+      if (cafeId) openCafeEditModal(root, cafeId);
+      return;
+    }
+
+    // 4. Café Actions Menu (More ▾)
+    const menuCafeBtn = event.target.closest("[data-cafe-actions-menu]");
+    if (menuCafeBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const cafeId = menuCafeBtn.dataset.cafeActionsMenu;
+      if (cafeId) openCafeActionsMenu(root, cafeId);
+      return;
+    }
+
+    // 5. Refresh Cafés Button
+    const refreshCafesBtn = event.target.closest("#admin-refresh-cafes-btn");
+    if (refreshCafesBtn) {
+      event.preventDefault();
+      refreshCafesBtn.disabled = true;
+      try {
+        await loadAdminData(root);
+        showToast("Café portfolio refreshed.", "info");
+      } catch (err) {
+        showToast(err.message || "Failed to refresh cafés.", "danger");
+      } finally {
+        refreshCafesBtn.disabled = false;
+      }
+      return;
+    }
+
+    // 6. Add Café Buttons
+    const addCafeBtn = event.target.closest("#admin-add-cafe-btn, #btn-child-add-cafe");
+    if (addCafeBtn) {
+      event.preventDefault();
+      openCafeCreateModal(root, { onSuccess: () => loadAdminData(root) });
+      return;
+    }
+
+    // 7. View User Modal
+    const viewUserBtn = event.target.closest("[data-view-user]");
+    if (viewUserBtn) {
+      event.preventDefault();
+      const userId = viewUserBtn.dataset.viewUser;
+      if (userId) openUserViewModal(root, userId);
+      return;
+    }
+
+    // 8. User Impact Modal
+    const userImpactBtn = event.target.closest("[data-user-impact]");
+    if (userImpactBtn) {
+      event.preventDefault();
+      const userId = userImpactBtn.dataset.userImpact;
+      if (userId) openUserRoleImpactModal(root, userId);
+      return;
+    }
+
+    // 9. User More Actions Modal
+    const userMoreBtn = event.target.closest("[data-user-more]");
+    if (userMoreBtn) {
+      event.preventDefault();
+      const userId = userMoreBtn.dataset.userMore;
+      if (userId) openUserMoreActionsModal(root, userId);
+      return;
+    }
+
+    // 10. Decide Request
+    const decideBtn = event.target.closest("[data-decide-request]");
+    if (decideBtn) {
+      event.preventDefault();
+      const requestId = decideBtn.dataset.decideRequest;
+      const decision = decideBtn.dataset.decision;
+      confirmAction(`${decision === "APPROVED" ? "Approve" : "Reject"} administrative request ${requestId}?`, async () => {
+        try {
+          await apiPatch(`/admin/requests/${requestId}/decision`, {
+            body: { decision, comment: `Decided via Governance Panel by ${state.user?.name || "Master"}` },
+          });
+          showToast(`Request ${requestId} ${decision.toLowerCase()}.`, "success");
+          await loadAdminData(root);
+        } catch (err) {
+          showToast(err.message || "Failed to record decision.", "danger");
+        }
+      });
+      return;
+    }
+
+    // 11. Queue Navigation
+    const queueNavBtn = event.target.closest("[data-queue-nav]");
+    if (queueNavBtn) {
+      event.preventDefault();
+      const route = queueNavBtn.dataset.queueNav;
+      if (route) navigate(route);
+      return;
+    }
+
+    // 12. Admin Hub Tiles
+    const hubTileBtn = event.target.closest("[data-admin-hub-tile]");
+    if (hubTileBtn) {
+      event.preventDefault();
+      const tileId = hubTileBtn.dataset.adminHubTile;
+      const directRoute = hubTileBtn.dataset.route;
+      if (directRoute) {
+        navigate(directRoute);
+      } else {
+        navigate("admin/" + tileId);
+      }
+      return;
+    }
+
+    // 13. Back to Hub Button
+    const backBtn = event.target.closest("#admin-back-to-hub-btn, [data-admin-back-to-hub]");
+    if (backBtn) {
+      event.preventDefault();
+      navigate("admin");
+      return;
+    }
+  });
+}
+
 export async function hydrateAdmin(root, subroute) {
   if (!root) return;
   if (subroute !== undefined) {
     adminState.activeTab = subroute || "overview";
   }
 
-  // Wire Admin Hub Tiles
-  root.querySelectorAll("[data-admin-hub-tile]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tileId = btn.dataset.adminHubTile;
-      navigate("admin/" + tileId);
-    });
-  });
+  ensureAdminDelegation(root);
 
-  // Wire Back to Admin Hub Button
-  root.querySelector("#admin-back-to-hub-btn")?.addEventListener("click", () => {
-    navigate("admin");
-  });
-
-  // Wire Main Tab Buttons (legacy)
-  root.querySelectorAll("[data-admin-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tab = btn.dataset.adminTab;
-      adminState.activeTab = tab;
-
-      const mount = root.querySelector("#admin-main-tab-content");
-      if (mount) {
-        mount.innerHTML = renderActiveTabContent();
-        wireActiveTab(root);
-      }
-    });
-  });
-
-  // Wire Refresh button
-  root.querySelector("#admin-live-refresh-btn")?.addEventListener("click", () => {
-    loadAdminData(root);
+  // Wire Refresh button in top header
+  root.querySelector("#admin-live-refresh-btn")?.addEventListener("click", async () => {
+    await loadAdminData(root);
     showToast("Refreshed Administration data.", "info");
   });
 
@@ -1322,24 +1484,49 @@ export async function hydrateAdmin(root, subroute) {
 }
 
 function wireActiveTab(root) {
-  // Wire Hub Tiles when re-rendering overview
-  root.querySelectorAll('[data-admin-hub-tile]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const tileId = btn.dataset.adminHubTile;
-      const directRoute = btn.dataset.route;
-      if (directRoute) {
-        // External-routed tiles (e.g. org-identity) navigate to their own page
-        navigate(directRoute);
-      } else {
-        navigate('admin/' + tileId);
+  ensureAdminDelegation(root);
+
+  // Wire Café Search & Filters
+  const searchInput = root.querySelector("#admin-cafe-search");
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      adminState.cafeSearchQuery = e.target.value;
+      const mount = root.querySelector("#admin-main-tab-content");
+      if (mount) {
+        mount.innerHTML = renderActiveTabContent();
+        wireActiveTab(root);
+        const reSearch = root.querySelector("#admin-cafe-search");
+        if (reSearch) {
+          reSearch.focus();
+          reSearch.setSelectionRange(reSearch.value.length, reSearch.value.length);
+        }
       }
     });
-  });
+  }
 
-  // Wire Back to Admin Hub Button
-  root.querySelector("#admin-back-to-hub-btn")?.addEventListener("click", () => {
-    navigate("admin");
-  });
+  const statusFilter = root.querySelector("#admin-cafe-filter-status");
+  if (statusFilter) {
+    statusFilter.addEventListener("change", (e) => {
+      adminState.cafeStatusFilter = e.target.value;
+      const mount = root.querySelector("#admin-main-tab-content");
+      if (mount) {
+        mount.innerHTML = renderActiveTabContent();
+        wireActiveTab(root);
+      }
+    });
+  }
+
+  const cityFilter = root.querySelector("#admin-cafe-filter-city");
+  if (cityFilter) {
+    cityFilter.addEventListener("change", (e) => {
+      adminState.cafeCityFilter = e.target.value;
+      const mount = root.querySelector("#admin-main-tab-content");
+      if (mount) {
+        mount.innerHTML = renderActiveTabContent();
+        wireActiveTab(root);
+      }
+    });
+  }
 
   if (adminState.activeTab === "data_management") {
     wireTrashBin(root);
@@ -1389,138 +1576,54 @@ function wireActiveTab(root) {
     showToast("Trash bin refreshed.", "info");
   });
 
-  // Wire Add Café Modal Button
-  root.querySelector("#admin-add-cafe-btn")?.addEventListener("click", () => {
-    openCafeCreateModal(root, { onSuccess: () => loadAdminData(root) });
-  });
-
-  // Wire Add User Modal Button
+  // Wire User & Audit Buttons
   root.querySelector("#admin-add-user-btn")?.addEventListener("click", () => {
     openAddUserWizard(root);
   });
-
-  // Wire Create Custom Field Modal Button
-  root.querySelector('#admin-create-custom-field-btn')?.addEventListener('click', () => {
+  root.querySelector("#admin-create-custom-field-btn")?.addEventListener("click", () => {
     openCreateCustomFieldModal(root);
   });
-
-  // Wire Open Organisation Identity Master button (Configuration > Org Profile)
-  root.querySelector('#admin-go-org-identity-btn')?.addEventListener('click', () => {
-    navigate('org-identity');
+  root.querySelector("#admin-go-org-identity-btn")?.addEventListener("click", () => {
+    navigate("org-identity");
   });
-
-  // Wire Table Actions & Refresh Buttons
-  root.querySelector("#admin-refresh-cafes-btn")?.addEventListener("click", async () => {
-    await loadAdminData(root);
-    showToast("Café portfolio refreshed.", "info");
-  });
-
   root.querySelector("#admin-refresh-users-btn")?.addEventListener("click", async () => {
     await loadAdminData(root);
     showToast("User identities refreshed.", "info");
   });
-
   root.querySelector("#admin-refresh-audit-btn")?.addEventListener("click", async () => {
     await loadAdminData(root);
     showToast("Audit ledger refreshed.", "info");
   });
-
   root.querySelector("#admin-export-audit-btn")?.addEventListener("click", () => exportAdminAuditLogCsv());
   root.querySelector("#admin-enrol-device-btn")?.addEventListener("click", () => navigate("cafe-operations/devices"));
   root.querySelector("#admin-new-request-btn")?.addEventListener("click", () => openAdminRequestModal(root));
-
-  root.querySelectorAll("[data-decide-request]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const requestId = btn.dataset.decideRequest;
-      const decision = btn.dataset.decision;
-      confirmAction(`${decision === "APPROVED" ? "Approve" : "Reject"} administrative request ${requestId}?`, async () => {
-        try {
-          await apiPatch(`/admin/requests/${requestId}/decision`, {
-            body: { decision, comment: `Decided via Governance Panel by ${state.user?.name || "Master"}` },
-          });
-          showToast(`Request ${requestId} ${decision.toLowerCase()}.`, "success");
-          await loadAdminData(root);
-        } catch (err) {
-          showToast(err.message || "Failed to record decision.", "danger");
-        }
-      });
-    });
-  });
-
-  root.querySelectorAll("[data-view-cafe]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const cafeId = btn.dataset.viewCafe;
-      if (cafeId) openCafeViewModal(root, cafeId);
-    });
-  });
-
-  root.querySelectorAll("[data-access-cafe]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const cafeId = btn.dataset.accessCafe;
-      if (cafeId) openCafeAccessManagementModal(root, cafeId);
-    });
-  });
-
-  root.querySelectorAll("[data-edit-cafe]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const cafeId = btn.dataset.editCafe;
-      if (cafeId) openCafeEditModal(root, cafeId);
-    });
-  });
-
-  root.querySelectorAll("[data-cafe-actions-menu]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const cafeId = btn.dataset.cafeActionsMenu;
-      if (cafeId) openCafeActionsMenu(root, cafeId);
-    });
-  });
-
-  root.querySelectorAll("[data-view-user]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const userId = btn.dataset.viewUser;
-      if (userId) openUserViewModal(root, userId);
-    });
-  });
-
-  root.querySelectorAll("[data-user-impact]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const userId = btn.dataset.userImpact;
-      if (userId) openUserRoleImpactModal(root, userId);
-    });
-  });
-
-  root.querySelectorAll("[data-user-more]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const userId = btn.dataset.userMore;
-      if (userId) openUserMoreActionsModal(root, userId);
-    });
-  });
-
-  root.querySelectorAll("[data-queue-nav]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const route = btn.dataset.queueNav;
-      if (route) navigate(route);
-    });
-  });
 }
 
 async function openCafeViewModal(root, cafeId) {
-  const mount = root.querySelector("#admin-modals-mount");
-  if (!mount) return;
+  const mount = root.querySelector("#admin-modals-mount") || document.body;
   let cafe = (adminState.cafes || []).find((c) => c.cafeId === cafeId);
   try {
-    const res = await apiGet(`/cafes/${cafeId}`);
+    const res = await apiGet(`/cafes/${encodeURIComponent(cafeId)}`);
     if (res?.data?.cafe) cafe = res.data.cafe;
-  } catch (_e) {}
+  } catch (err) {
+    console.warn("View modal failed to fetch latest cafe details:", err);
+    if (!cafe) {
+      showToast(err.message || "Unable to load Café details.", "danger");
+      return;
+    }
+  }
 
   if (!cafe) {
     showToast("Café details not found.", "warning");
     return;
   }
 
+  const formattedAddress = formatCafeAddress(cafe);
+  const city = getCafeCity(cafe);
+
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:680px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:680px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px;">
           <div>
             <span class="badge" style="font-family:var(--font-mono);font-size:11px;">${escHtml(cafe.cafeId)}</span>
@@ -1531,11 +1634,11 @@ async function openCafeViewModal(root, cafeId) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:13px;margin-bottom:16px;">
           <div><strong style="color:var(--muted);font-size:11px;display:block;">DISPLAY NAME</strong>${escHtml(cafe.displayName || cafe.name)}</div>
           <div><strong style="color:var(--muted);font-size:11px;display:block;">STATUS</strong><span class="status ${cafe.status === 'ACTIVE' ? 'success' : 'warning'}">${escHtml(cafe.status)}</span></div>
-          <div><strong style="color:var(--muted);font-size:11px;display:block;">CITY</strong>${escHtml(cafe.city || '—')}</div>
+          <div><strong style="color:var(--muted);font-size:11px;display:block;">CITY</strong>${escHtml(city || '—')}</div>
           <div><strong style="color:var(--muted);font-size:11px;display:block;">CAFE TYPE</strong>${escHtml(cafe.cafeType || 'STANDARD_CAFE')}</div>
           <div><strong style="color:var(--muted);font-size:11px;display:block;">MANAGER</strong>${escHtml(cafe.managerName || 'Unassigned')}</div>
           <div><strong style="color:var(--muted);font-size:11px;display:block;">PHONE</strong>${escHtml(cafe.phone || '—')}</div>
-          <div style="grid-column:1 / -1;"><strong style="color:var(--muted);font-size:11px;display:block;">ADDRESS</strong>${escHtml(cafe.address || '—')}</div>
+          <div style="grid-column:1 / -1;"><strong style="color:var(--muted);font-size:11px;display:block;">ADDRESS</strong>${escHtml(formattedAddress || '—')}</div>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--line);padding-top:14px;">
           <button class="btn btn-sm btn-ghost" data-close-modal type="button">Close</button>
@@ -1557,22 +1660,30 @@ async function openCafeViewModal(root, cafeId) {
 }
 
 async function openCafeEditModal(root, cafeId) {
-  const mount = root.querySelector("#admin-modals-mount");
-  if (!mount) return;
+  const mount = root.querySelector("#admin-modals-mount") || document.body;
   let cafe = (adminState.cafes || []).find((c) => c.cafeId === cafeId);
   try {
-    const res = await apiGet(`/cafes/${cafeId}`);
+    const res = await apiGet(`/cafes/${encodeURIComponent(cafeId)}`);
     if (res?.data?.cafe) cafe = res.data.cafe;
-  } catch (_e) {}
+  } catch (err) {
+    console.warn("Edit modal failed to fetch latest cafe details:", err);
+    if (!cafe) {
+      showToast(err.message || "Unable to load Café details.", "danger");
+      return;
+    }
+  }
 
   if (!cafe) {
     showToast("Café not found.", "warning");
     return;
   }
 
+  const formattedAddress = formatCafeAddress(cafe);
+  const city = getCafeCity(cafe);
+
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:720px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:720px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px;">
           <div>
             <h3 style="margin:0;font-size:18px;font-weight:700;color:var(--ink);">Edit Café: ${escHtml(cafe.name)}</h3>
@@ -1603,7 +1714,7 @@ async function openCafeEditModal(root, cafeId) {
             </div>
             <div class="form-group">
               <label class="form-label" style="font-size:12px;font-weight:700;">City</label>
-              <input type="text" id="edit-cafe-city" class="form-control" value="${escHtml(cafe.city || '')}" />
+              <input type="text" id="edit-cafe-city" class="form-control" value="${escHtml(city || '')}" />
             </div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
@@ -1618,11 +1729,11 @@ async function openCafeEditModal(root, cafeId) {
           </div>
           <div class="form-group" style="margin-bottom:18px;">
             <label class="form-label" style="font-size:12px;font-weight:700;">Address</label>
-            <input type="text" id="edit-cafe-address" class="form-control" value="${escHtml(cafe.address || '')}" />
+            <input type="text" id="edit-cafe-address" class="form-control" value="${escHtml(formattedAddress || '')}" />
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--line);padding-top:14px;">
             <button class="btn btn-sm btn-ghost" data-close-modal type="button">Cancel</button>
-            <button class="btn btn-sm btn-primary" type="submit">Save Changes</button>
+            <button class="btn btn-sm btn-primary" id="edit-cafe-save-btn" type="submit">Save Changes</button>
           </div>
         </form>
       </div>
@@ -1631,36 +1742,64 @@ async function openCafeEditModal(root, cafeId) {
   mount.querySelectorAll("[data-close-modal]").forEach((b) => b.addEventListener("click", () => mount.innerHTML = ""));
   mount.querySelector("#edit-cafe-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const saveBtn = mount.querySelector("#edit-cafe-save-btn");
+    if (saveBtn) saveBtn.disabled = true;
+
     const name = mount.querySelector("#edit-cafe-name")?.value?.trim();
     const displayName = mount.querySelector("#edit-cafe-display")?.value?.trim();
     const status = mount.querySelector("#edit-cafe-status")?.value;
-    const city = mount.querySelector("#edit-cafe-city")?.value?.trim();
+    const newCity = mount.querySelector("#edit-cafe-city")?.value?.trim();
     const managerName = mount.querySelector("#edit-cafe-manager")?.value?.trim();
     const phone = mount.querySelector("#edit-cafe-phone")?.value?.trim();
-    const address = mount.querySelector("#edit-cafe-address")?.value?.trim();
+    const newAddress = mount.querySelector("#edit-cafe-address")?.value?.trim();
+
+    const payload = {
+      name,
+      displayName,
+      status,
+      managerName,
+      phone,
+      reason: "Updated via Administration",
+    };
+    if (newCity) payload.city = newCity;
+    if (typeof cafe.address === "object" && cafe.address !== null) {
+      payload.address = {
+        ...cafe.address,
+        street: newAddress,
+        city: newCity || cafe.address.city || "",
+      };
+    } else {
+      payload.address = newAddress;
+    }
 
     try {
-      await apiPatch(`/cafes/${cafeId}`, {
-        body: { name, displayName, status, city, managerName, phone, address, reason: "Updated via Administration" },
+      await apiPatch(`/cafes/${encodeURIComponent(cafeId)}`, {
+        body: payload,
       });
       showToast(`Café "${name}" updated successfully.`, "success");
       mount.innerHTML = "";
       await loadAdminData(root);
     } catch (err) {
-      showToast(err.message || "Failed to update café.", "danger");
+      showToast(err.message || "Unable to save Café changes.", "danger");
+      if (saveBtn) saveBtn.disabled = false;
     }
   });
 }
 
-function openCafeActionsMenu(root, cafeId) {
-  const mount = root.querySelector("#admin-modals-mount");
-  if (!mount) return;
-  const cafe = (adminState.cafes || []).find((c) => c.cafeId === cafeId);
+async function openCafeActionsMenu(root, cafeId) {
+  const mount = root.querySelector("#admin-modals-mount") || document.body;
+  let cafe = (adminState.cafes || []).find((c) => c.cafeId === cafeId);
+  if (!cafe) {
+    try {
+      const res = await apiGet(`/cafes/${encodeURIComponent(cafeId)}`);
+      if (res?.data?.cafe) cafe = res.data.cafe;
+    } catch (_e) {}
+  }
   const name = cafe?.name || cafeId;
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:480px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:480px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:10px;">
           <h3 style="margin:0;font-size:16px;font-weight:700;color:var(--ink);">Actions: ${escHtml(name)} (${escHtml(cafeId)})</h3>
           <button class="btn btn-xs btn-ghost" data-close-modal type="button">✕</button>
@@ -1719,8 +1858,8 @@ async function openUserViewModal(root, userId) {
   }
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:680px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:680px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px;">
           <div>
             <span class="badge" style="font-family:var(--font-mono);font-size:11px;">${escHtml(user.userId)}</span>
@@ -1761,8 +1900,8 @@ async function openUserRoleImpactModal(root, userId) {
   const user = (adminState.users || []).find((u) => u.userId === userId) || { userId, role: "STAFF" };
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:720px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:720px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:10px;">
           <div>
             <h3 style="margin:0;font-size:18px;font-weight:700;color:var(--ink);">Role Impact Analysis: ${escHtml(user.fullName || user.userId)}</h3>
@@ -1836,8 +1975,8 @@ function openUserMoreActionsModal(root, userId) {
   const name = user.fullName || user.name || userId;
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:480px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:480px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:10px;">
           <h3 style="margin:0;font-size:16px;font-weight:700;color:var(--ink);">Manage User: ${escHtml(name)}</h3>
           <button class="btn btn-xs btn-ghost" data-close-modal type="button">✕</button>
@@ -1908,8 +2047,8 @@ function openSecurityPolicyModal(root) {
   const mount = root.querySelector("#admin-modals-mount");
   if (!mount) return;
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:640px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:640px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px;">
           <div>
             <h3 style="margin:0;font-size:18px;font-weight:700;color:var(--ink);">Active Security Policies & Governance Rules</h3>
@@ -2035,8 +2174,8 @@ function openAddCafeWizard(root) {
   if (!mount) return;
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:800px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:28px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:800px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:28px;background:var(--surface-raised);border:1px solid var(--line-strong);">
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px;">
           <div>
@@ -2144,8 +2283,8 @@ function openAddUserWizard(root) {
   const isPrimary = Boolean(state.user?.isPrimaryMaster);
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:800px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:28px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:800px;max-width:95vw;max-height:85vh;overflow-y:auto;padding:28px;background:var(--surface-raised);border:1px solid var(--line-strong);">
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px;">
           <div>
@@ -2240,8 +2379,8 @@ function openCreateCustomFieldModal(root) {
   if (!mount) return;
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:650px;max-width:95vw;padding:24px;background:var(--surface-raised);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:650px;max-width:95vw;padding:24px;background:var(--surface-raised);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <h3 style="margin:0;font-size:17px;font-weight:700;color:var(--ink);">+ Create Custom Metadata Field</h3>
           <button class="btn btn-xs btn-ghost" id="admin-close-field-modal-btn" type="button">✕</button>
@@ -2306,8 +2445,8 @@ function openAdminRequestModal(root) {
   if (!mount) return;
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:600px;max-width:95vw;padding:24px;background:var(--surface-raised);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:600px;max-width:95vw;padding:24px;background:var(--surface-raised);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <h3 style="margin:0;font-size:17px;font-weight:700;color:var(--ink);">Request Primary Master Action</h3>
           <button class="btn btn-xs btn-ghost" id="admin-close-req-modal-btn" type="button">✕</button>

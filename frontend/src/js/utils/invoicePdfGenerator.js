@@ -9,6 +9,8 @@
  * - Official file naming: INV-[NUMBER].pdf
  */
 
+import { formatCafeAddress } from './addressFormatter.js';
+
 function escapePdfText(str) {
   return String(str ?? '')
     .replace(/\\/g, '\\\\')
@@ -22,7 +24,8 @@ export function generateInvoicePdf(bill, cafeBranding = {}) {
   const timeStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   const cafeName = cafeBranding.tradeName || bill.cafeName || 'Zamorin Café';
   const gstin = cafeBranding.gstin || '32AABCT1332L1ZV';
-  const address = cafeBranding.address || 'Koramangala, Bengaluru, Karnataka — 560095';
+  const rawAddress = cafeBranding.address || cafeBranding;
+  const address = formatCafeAddress(rawAddress) || (typeof cafeBranding.address === 'string' && cafeBranding.address) || 'Koramangala, Bengaluru, Karnataka — 560095';
 
   const subtotal = bill.subtotalPaisa ? bill.subtotalPaisa / 100 : (bill.totalPaisa ? bill.totalPaisa / 100 : 0);
   const gst = bill.taxPaisa ? bill.taxPaisa / 100 : Math.round(subtotal * 0.05);
