@@ -78,13 +78,18 @@ class CompanyIdentityService {
    * Retrieves the current authoritative Company Identity.
    * Auto-provisions baseline version 1 if none exists.
    */
-  static async getCurrentIdentity(organisationId = 'ORG-ZAMORIN-01') {
+  static async getCurrentIdentity(organisationId) {
+    const normalizedOrganisationId = String(organisationId || '').trim().toUpperCase();
+    if (!normalizedOrganisationId) {
+      throw new ApiError(400, 'ORGANISATION_REQUIRED', 'organisationId is required to resolve company identity.');
+    }
+
     let identity = null;
     const logos = loadOfficialAppLogos();
 
     const fallbackIdentity = {
       _id: 'default-identity-01',
-      organisationId,
+      organisationId: normalizedOrganisationId,
       legalName: 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.',
       brandName: 'Zamorin Café',
       tagline: 'Speciality Coffee & Estate Kitchens',
@@ -160,7 +165,8 @@ class CompanyIdentityService {
 
     try {
       identity = await CompanyIdentity.findOne({
-        $or: [{ organisationId }, { status: 'CURRENT' }],
+        organisationId: normalizedOrganisationId,
+        status: 'CURRENT',
       }).lean();
 
       if (!identity) {
@@ -179,8 +185,12 @@ class CompanyIdentityService {
    * Resolves authoritative export branding for any export generator (PDF/XLSX/CSV).
    * Implements two-tier resolution (Organisation vs Outlet) per Section 368.
    */
-  static async resolveExportBranding({ cafeId = null, sensitivityLevel = 'INTERNAL', organisationId = 'ORG-ZAMORIN-01' } = {}) {
-    const master = (await this.getCurrentIdentity(organisationId)) || {};
+  static async resolveExportBranding({ cafeId = null, sensitivityLevel = 'INTERNAL', organisationId } = {}) {
+    const normalizedOrganisationId = String(organisationId || '').trim().toUpperCase();
+    if (!normalizedOrganisationId) {
+      throw new ApiError(400, 'ORGANISATION_REQUIRED', 'organisationId is required to resolve export branding.');
+    }
+    const master = (await this.getCurrentIdentity(normalizedOrganisationId)) || {};
     const logos = loadOfficialAppLogos();
 
     const isOutletScoped = Boolean(cafeId && cafeId !== 'ALL' && cafeId !== 'GLOBAL');
@@ -188,7 +198,7 @@ class CompanyIdentityService {
 
     if (isOutletScoped && mongoose.connection.readyState === 1) {
       try {
-        outletInfo = await Cafe.findOne({ cafeId }).lean();
+        outletInfo = await Cafe.findOne({ organisationId: normalizedOrganisationId, cafeId }).lean();
       } catch (err) {
         outletInfo = null;
       }
