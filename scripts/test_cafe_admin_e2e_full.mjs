@@ -3,6 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const BASE_URL = 'http://localhost:3000';
+const MASTER_EMAIL = String(process.env.E2E_MASTER_EMAIL || '').trim();
+const MASTER_PASSWORD = String(process.env.E2E_MASTER_PASSWORD || '');
+
+if (!MASTER_EMAIL || !MASTER_PASSWORD) {
+  throw new Error('E2E_MASTER_CREDENTIALS_NOT_CONFIGURED');
+}
 const CHROME_PATH = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 const consoleLogs = [];
@@ -53,14 +59,14 @@ async function runE2E() {
     await new Promise(r => setTimeout(r, 1000));
 
     // Fill credentials
-    console.log('2. Entering Primary Master credentials (pradeeshk331@gmail.com)...');
+    console.log('2. Entering configured Primary Master credentials...');
     await page.waitForSelector('#l2-email', { timeout: 10000 });
     await page.click('#l2-email', { clickCount: 3 });
-    await page.type('#l2-email', 'pradeeshk331@gmail.com');
+    await page.type('#l2-email', MASTER_EMAIL);
 
     await page.waitForSelector('#l2-password', { timeout: 10000 });
     await page.click('#l2-password', { clickCount: 3 });
-    await page.type('#l2-password', 'PRADEESHK@94309');
+    await page.type('#l2-password', MASTER_PASSWORD);
 
     // Click Login
     console.log('3. Submitting login form...');
