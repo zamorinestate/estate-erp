@@ -186,7 +186,19 @@ const listApprovals = asyncHandler(async (request, response) => {
  * with these types would create an audit-trail pollution risk.
  */
 const PROTECTED_ENTITY_TYPES = new Set([
+  'LEAVE',
+  'LEAVE_REQUEST',
+  'LEAVE_CANCELLATION',
   'EXPENSE',
+  'PURCHASE_ORDER',
+  'PROCUREMENT',
+  'LOAN_ADVANCE',
+  'LOAN',
+  'SALARY_ADVANCE',
+  'SHIFT_CHANGE',
+  'SHIFT_CHANGE_REQUEST',
+  'PROFILE_CHANGE',
+  'ATTENDANCE_CORRECTION',
   'OVERTIME',
   'OVERTIME_DECISION',
   'PAYROLL',
