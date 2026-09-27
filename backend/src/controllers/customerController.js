@@ -122,7 +122,7 @@ const getCustomersOverview = asyncHandler(async (request, response) => {
       }
     }
 
-    const cId = cust.preferredCafeId || 'ZC-0001';
+    const cId = cust.preferredCafeId || null;
     if (cafeMap[cId]) {
       cafeMap[cId].customerCount++;
       cafeMap[cId].memberSales += ((cust.totalSpendPaisa || 0) / 100);
@@ -297,7 +297,7 @@ const createCustomer = asyncHandler(async (request, response) => {
     customerType = 'INDIVIDUAL',
     b2bLegalName,
     b2bGstin,
-    preferredCafeId = 'ZC-0001',
+    preferredCafeId = '',
     preferredLanguage = 'English',
     consent,
     allowDuplicate = false,
@@ -592,10 +592,13 @@ const listCustomerFeedback = asyncHandler(async (request, response) => {
  * POST /api/v1/customers/feedback
  */
 const createFeedback = asyncHandler(async (request, response) => {
-  const { customerId, cafeId = 'ZC-0001', billId, rating = 5, category = 'SERVICE', comment } = request.body;
+  const { customerId, cafeId, billId, rating = 5, category = 'SERVICE', comment } = request.body;
 
   if (!comment || typeof comment !== 'string' || !comment.trim()) {
     throw new ApiError(400, 'COMMENT_REQUIRED', 'Feedback comment is required.');
+  }
+  if (!cafeId || !normalizeId(cafeId)) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required for customer feedback.');
   }
 
   const seqId = await SequenceCounter.generateId({
