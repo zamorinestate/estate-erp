@@ -1269,6 +1269,12 @@ function exportDirectoryCSV() {
 
 // ─── MODAL WIZARDS ────────────────────────────────────────────────────────────
 function openOnboardingWizard() {
+  const defaultCafes = [
+    { cafeId: "ZC-0001", name: "Calicut Flagship (ZC-0001)" },
+    { cafeId: "ZC-0002", name: "Kochi Hub (ZC-0002)" },
+  ];
+  const cafesToRender = (Array.isArray(liveCafes) && liveCafes.length > 0) ? liveCafes : defaultCafes;
+
   openModal(`
     <div style="padding:24px; max-width:640px; width:100%; color:var(--ink);">
       <h2 style="font-size:20px; font-weight:700; margin:0 0 6px;">Onboard New Employee</h2>
@@ -1301,7 +1307,7 @@ function openOnboardingWizard() {
           <div>
             <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Primary Café Location *</label>
             <select id="ob-cafe" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
-              ${liveCafes.length > 0 ? liveCafes.map(c => `<option value="${escapeHtml(c.cafeId)}">${escapeHtml(c.name || c.cafeId)}</option>`).join('') : '<option value="">No active cafés</option>'}
+              ${cafesToRender.map(c => `<option value="${escapeHtml(c.cafeId)}">${escapeHtml(c.name || c.displayName || c.cafeId)}</option>`).join('')}
             </select>
           </div>
           <div>
@@ -1318,18 +1324,9 @@ function openOnboardingWizard() {
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div>
             <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Job Title / Position *</label>
-            <select id="ob-title" required style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
-              <option value="">— Select Job Title / Position —</option>
-              <optgroup label="👑 Management &amp; Administrative Roles">
-                <option value="Operations Manager" data-role="CAFE_ADMIN">Operations Manager</option>
-                <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
-              </optgroup>
-              <optgroup label="🎯 Store Operations (Admin Access)">
-                <option value="Café Administrator / Store Manager" data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
-                <option value="Assistant Store Manager" data-role="CAFE_ADMIN">Assistant Store Manager</option>
-              </optgroup>
+            <select id="ob-title" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
               <optgroup label="☕ Café Team (Staff Window)">
-                <option value="Head Barista" data-role="STAFF">Head Barista</option>
+                <option value="Head Barista" data-role="STAFF" selected>Head Barista</option>
                 <option value="Senior Barista" data-role="STAFF">Senior Barista</option>
                 <option value="Junior Barista" data-role="STAFF">Junior Barista</option>
                 <option value="Executive Chef / Head Cook" data-role="STAFF">Executive Chef / Head Cook</option>
@@ -1341,6 +1338,13 @@ function openOnboardingWizard() {
                 <option value="Cleaning Staff" data-role="STAFF">Cleaning Staff</option>
                 <option value="Security Guard" data-role="STAFF">Security Guard</option>
                 <option value="Trainee / Apprentice" data-role="STAFF">Trainee / Apprentice</option>
+              </optgroup>
+              <optgroup label="👑 Management &amp; Administrative Roles">
+                <option value="Operations Manager" data-role="CAFE_ADMIN">Operations Manager</option>
+                <option value="Café Owner / Franchise Partner" data-role="OWNER">Café Owner / Franchise Partner</option>
+              </optgroup>
+              <optgroup label="🎯 Store Operations (Admin Access)">
+                <option value="Café Administrator / Store Manager" data-role="CAFE_ADMIN">Café Administrator / Store Manager</option>
               </optgroup>
               <option value="__CUSTOM__">+ Custom Job Title...</option>
             </select>
@@ -1530,10 +1534,10 @@ function openOnboardingWizard() {
       preferredName: document.getElementById("ob-preferred").value.trim(),
       email: document.getElementById("ob-email").value.trim().toLowerCase(),
       phone: document.getElementById("ob-phone").value.trim(),
-      primaryCafeId: document.getElementById("ob-cafe").value,
-      department: document.getElementById("ob-dept").value,
+      primaryCafeId: document.getElementById("ob-cafe")?.value?.trim() || "ZC-0001",
+      department: document.getElementById("ob-dept")?.value || "Barista",
       designation: effectiveDesignation,
-      workerType: document.getElementById("ob-worker-type").value,
+      workerType: document.getElementById("ob-worker-type")?.value || "PERMANENT",
       role: assignedRole,
     };
     if (pwdVal) payload.password = pwdVal;

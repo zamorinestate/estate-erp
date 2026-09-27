@@ -261,7 +261,32 @@ async function submitProfileChangeRequest(req, res) {
     throw new ApiError(400, 'MISSING_FIELDS', 'requestType, title and reason are required.');
   }
 
-  const requestId = await SequenceCounter.generateId({ prefix: 'PCR', sequenceKey: 'profile_change_request', organisationId });
+  const existingPending = await ProfileChangeRequest.findOne({
+    organisationId,
+    userId,
+    requestType,
+    status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'PENDING'] },
+  });
+  if (existingPending) {
+    return res.status(409).json({
+      success: false,
+      code: 'DUPLICATE_PROFILE_REQUEST',
+      message: `A profile change request for ${requestType} is already pending review (${existingPending.requestId}).`,
+      data: { request: existingPending },
+    });
+  }
+
+  const now = new Date();
+  const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
+  let seqDigits = 10001;
+  try {
+    const rawSeq = await SequenceCounter.generateId({ prefix: 'PCR', sequenceKey: `profile_change_request_${yearMonth}`, organisationId, minimumDigits: 5 });
+    const numPart = parseInt(rawSeq.replace(/\D/g, ''), 10) || 10001;
+    seqDigits = String(numPart).slice(-5).padStart(5, '0');
+  } catch {
+    seqDigits = String(Math.floor(10000 + Math.random() * 90000));
+  }
+  const requestId = `PCR-${yearMonth}-${seqDigits}`;
 
   const pcr = await ProfileChangeRequest.create({
     requestId,
@@ -278,19 +303,32 @@ async function submitProfileChangeRequest(req, res) {
   await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: req.user.role, module: 'SETTINGS', action: 'PROFILE_CHANGE_REQUEST_SUBMITTED', entityType: 'PROFILE_CHANGE_REQUEST', entityId: pcr.requestId, metadata: { requestType, title } });
 
   try {
-    const approvalCount = await Approval.countDocuments({ organisationId });
-    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-    await Approval.create({
-      approvalId,
+    let approval = await Approval.findOne({
       organisationId,
-      cafeId: null,
       entityType: 'PROFILE_CHANGE',
       entityId: pcr.requestId,
-      requestingUserId: userId,
-      actionRequired: `Profile Change: ${requestType}`,
-      amountPaisa: 0,
-      status: 'PENDING',
     });
+
+    if (!approval) {
+      let approvalId;
+      try {
+        approvalId = await SequenceCounter.generateId({ organisationId, sequenceKey: 'APPROVAL', prefix: 'APP', minimumDigits: 5 });
+      } catch {
+        const approvalCount = await Approval.countDocuments({ organisationId });
+        approvalId = `APP-${Date.now().toString().slice(-6)}-${String(approvalCount + 1).padStart(3, '0')}`;
+      }
+      approval = await Approval.create({
+        approvalId,
+        organisationId,
+        cafeId: null,
+        entityType: 'PROFILE_CHANGE',
+        entityId: pcr.requestId,
+        requestingUserId: userId,
+        actionRequired: `Profile Change: ${requestType}`,
+        amountPaisa: 0,
+        status: 'PENDING',
+      });
+    }
 
     const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -312,6 +350,8 @@ async function submitProfileChangeRequest(req, res) {
         sourceModule: 'EMPLOYEES',
         sourceEntityType: 'PROFILE_CHANGE',
         sourceEntityId: pcr.requestId,
+        deduplicationKey: `PCR_${pcr.requestId}_${m.userId}`,
+        correlationId: req.correlationId || notifId,
         createdBy: userId,
       });
     }

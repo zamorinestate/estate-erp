@@ -139,6 +139,13 @@ const leaveRequestSchema = new mongoose.Schema(
       default: null,
     },
 
+    idempotencyKey: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+
     status: {
       type: String,
       enum: LEAVE_STATUSES,

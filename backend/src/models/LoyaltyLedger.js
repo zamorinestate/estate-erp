@@ -32,7 +32,7 @@ const loyaltyLedgerSchema = new mongoose.Schema(
       immutable: true,
       trim: true,
       uppercase: true,
-      match: /^LOY-\d{8}-\d{4,}$/,
+      match: /^LOY(?:-\d{8})?-\d{4,}$/,
       index: true,
     },
 

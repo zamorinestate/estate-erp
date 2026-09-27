@@ -5,7 +5,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "https://zamorin-cafe-erp-staging.onrender.com/api/$1"
+      "dest": "https://zamorin-cafe-erp-backend.onrender.com/api/$1"
     },
     {
       "src": "/sw.js",

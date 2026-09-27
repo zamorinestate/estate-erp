@@ -347,17 +347,25 @@ const createVendor = asyncHandler(async (request, response) => {
     fssaiLicense = '',
   } = request.body;
 
-  if (!name || typeof name !== 'string' || !name.trim()) {
+  const effectiveName = (
+    (typeof name === 'string' && name.trim()) ||
+    (typeof request.body?.vendorName === 'string' && request.body.vendorName.trim()) ||
+    (typeof request.body?.legalName === 'string' && request.body.legalName.trim()) ||
+    ''
+  ).trim();
+
+  if (!effectiveName) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'Vendor legal name is required.');
   }
 
-  if (!category || !VENDOR_CATEGORIES.includes(category.toUpperCase())) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `Invalid category. Must be one of: ${VENDOR_CATEGORIES.join(', ')}`);
-  }
+  const rawCat = String(category || request.body?.vendorCategory || 'FOOD_BEVERAGE').trim().toUpperCase();
+  const effectiveCategory = VENDOR_CATEGORIES.includes(rawCat)
+    ? rawCat
+    : (rawCat.includes('COFFEE') || rawCat.includes('BEVERAGE') || rawCat.includes('FOOD') ? 'FOOD_BEVERAGE' : 'OTHER');
 
   const normGst = gstNumber.trim().toUpperCase();
   const normPan = panNumber.trim().toUpperCase();
-  const normNameLower = name.trim().toLowerCase();
+  const normNameLower = effectiveName.toLowerCase();
 
   // Duplicate Vendor Detection (P1)
   const duplicateConditions = [{ nameLower: normNameLower }];
@@ -397,10 +405,10 @@ const createVendor = asyncHandler(async (request, response) => {
   const vendor = await Vendor.create({
     vendorId,
     organisationId: request.auth.organisationId,
-    name: name.trim(),
+    name: effectiveName,
     nameLower: normNameLower,
-    tradeName: tradeName?.trim() || '',
-    category: category.toUpperCase(),
+    tradeName: tradeName?.trim() || effectiveName,
+    category: effectiveCategory,
     supplierType: supplierType.toUpperCase(),
     gstNumber: normGst,
     panNumber: normPan,

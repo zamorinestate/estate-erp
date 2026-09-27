@@ -22,7 +22,18 @@
     if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
         document.documentElement.classList.add('dark');
     } else {
-        document.documentElement.classList.remove('dark')
+        document.documentElement.classList.remove('dark');
+    }
+    // Unregister any active PWA service workers on localhost to ensure zero stale cache
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      try {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(regs => { for (const r of regs) r.unregister(); });
+        }
+        if ('caches' in window) {
+          caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+        }
+      } catch (e) {}
     }
   </script>
 
@@ -1270,7 +1281,7 @@ body:has(#app.auth-screen) {
   <link rel="stylesheet" href="/src/styles/components.css?v=3.6.0" />
   <link rel="stylesheet" href="/src/styles/zamorin.css?v=3.6.0" />
   <link rel="stylesheet" href="/src/styles/login2.css?v=3.6.0" />
-  <link rel="stylesheet" href="/src/styles/zamorin-blue-theme.css?v=3.6.0" />
+  <link rel="stylesheet" href="/src/styles/zamorin-blue-theme.css?v=3.7.0" />
 
   <!-- ============================================================
        PHASE 1 — FLOWBITE ECOSYSTEM CDN INTEGRATION
@@ -1339,6 +1350,6 @@ body:has(#app.auth-screen) {
     });
   </script>
 
-  <script type="module" src="/src/js/main.js?v=3.6.0"></script>
+  <script type="module" src="/src/js/main.js?v=3.9.0"></script>
 </body>
 </html>

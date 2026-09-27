@@ -65,6 +65,9 @@ const inventoryRoutes =
 const vendorRoutes =
   require('./vendorRoutes');
 
+const vendorWorkspaceRoutes =
+  require('./vendorWorkspaceRoutes');
+
 const procurementRoutes =
   require('./procurementRoutes');
 
@@ -322,6 +325,11 @@ router.use(
 );
 
 router.use(
+  '/vendor',
+  vendorWorkspaceRoutes
+);
+
+router.use(
   '/procurement',
   procurementRoutes
 );
@@ -432,6 +440,7 @@ router.use(
 );
 
 // Strategic Portfolio /owner/* mounts
+router.use('/owner/risk-audit', ownerRiskAuditRoutes);
 router.use('/owner/complaints', ownerComplaintsRoutes);
 router.use('/owner/menu-pricing', ownerMenuPricingRoutes);
 router.use('/owner/customer-loyalty', ownerCustomerLoyaltyRoutes);

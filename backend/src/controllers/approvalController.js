@@ -4,6 +4,8 @@
  * APPROVAL CONTROLLER
  */
 
+const mongoose = require('mongoose');
+
 const {
   Approval,
   APPROVAL_STATUSES,
@@ -49,6 +51,10 @@ async function sendNotificationAndOutbox({
   deepLink = '',
   correlationId = null,
   actorUserId = 'SYSTEM',
+  sourceModule = 'APPROVALS',
+  sourceEntityType = 'APPROVAL',
+  sourceEntityId = null,
+  deduplicationKey = null,
 }) {
   try {
     const user = await User.findOne({ organisationId, userId: recipientUserId }).select('email name role').lean();
@@ -58,6 +64,9 @@ async function sendNotificationAndOutbox({
 
     const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const finalCorrelationId = correlationId || notifId;
+    const finalEntityId = sourceEntityId || notifId;
+    const finalDedupKey = deduplicationKey || `${recipientUserId}:${eventType}:${finalEntityId}`;
 
     await Notification.create({
       notificationId: notifId,
@@ -72,8 +81,11 @@ async function sendNotificationAndOutbox({
       priority: 'NORMAL',
       channels: ['IN_APP'],
       deepLink,
-      sourceModule: 'APPROVALS',
-      correlationId: correlationId || notifId,
+      sourceModule,
+      sourceEntityType,
+      sourceEntityId: finalEntityId,
+      deduplicationKey: finalDedupKey,
+      correlationId: finalCorrelationId,
       createdBy: actorUserId,
     });
 
@@ -274,52 +286,22 @@ const decideApproval = asyncHandler(async (request, response) => {
           ? (targetDecision === 'APPROVED' ? 'LEAVE_CANCELLATION_APPROVED' : 'LEAVE_CANCELLATION_REJECTED')
           : (targetDecision === 'APPROVED' ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED');
 
-        const empUser = await User.findOne({
+        const resolvedEntityId = leaveRequest.leaveId || approval.entityId;
+        await sendNotificationAndOutbox({
           organisationId: request.auth.organisationId,
-          userId: leaveRequest.userId,
-        }).select('email name').lean();
-
-        const recipientEmail = empUser?.email || `${String(leaveRequest.userId).toLowerCase()}@zamorincafe.com`;
-        const recipientName = empUser?.name || leaveRequest.userId;
-
-        const outboxId = `OUT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-        await NotificationOutbox.create({
-          outboxId,
-          organisationId: request.auth.organisationId,
-          eventType,
           recipientUserId: leaveRequest.userId,
-          recipientEmail,
-          recipientName,
           recipientRole: 'STAFF',
-          templateId: 'LEAVE_STATUS_UPDATE',
-          subject: `Leave Request ${leaveRequest.leaveId || approval.entityId}: ${isCancellation ? 'Cancellation ' + targetDecision : targetDecision}`,
-          renderedSubject: `Leave Request ${leaveRequest.leaveId || approval.entityId}: ${isCancellation ? 'Cancellation ' + targetDecision : targetDecision}`,
-          renderedBody: `Your leave request (${leaveRequest.startDate} to ${leaveRequest.endDate}) has been updated: ${targetDecision}.${leaveRequest.decisionReason ? ' Reason: ' + leaveRequest.decisionReason : ''}`,
-          status: 'SENT',
-          sentAt: new Date(),
-        });
-
-        const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
-        await Notification.create({
-          notificationId: notifId,
-          organisationId: request.auth.organisationId,
           eventType,
           category: 'OPERATIONS',
-          recipientUserId: leaveRequest.userId,
-          recipientRole: 'STAFF',
-          recipientEmail,
           title: `Leave ${isCancellation ? 'Cancellation ' : ''}${targetDecision}`,
-          message: `Your leave request for ${leaveRequest.startDate} to ${leaveRequest.endDate} was ${targetDecision.toLowerCase()}.`,
-          priority: 'NORMAL',
-          channels: ['IN_APP'],
-          deepLink: `#staff-leave?requestId=${leaveRequest.leaveId || approval.entityId}`,
+          message: `Your leave request for ${leaveRequest.startDate} to ${leaveRequest.endDate} was ${targetDecision.toLowerCase()}.${leaveRequest.decisionReason ? ' Reason: ' + leaveRequest.decisionReason : ''}`,
+          deepLink: `#staff-leave?requestId=${resolvedEntityId}`,
+          correlationId: request.correlationId,
+          actorUserId: request.auth.userId,
           sourceModule: 'LEAVE',
-          sourceEntityType: approval.entityType,
-          sourceEntityId: leaveRequest.leaveId || approval.entityId,
-          deduplicationKey: `${leaveRequest.leaveId || approval.entityId}:${targetDecision}:${Date.now()}`,
-          correlationId: request.correlationId || outboxId,
-          createdBy: request.auth.userId || 'SYSTEM',
+          sourceEntityType: 'LEAVE_REQUEST',
+          sourceEntityId: resolvedEntityId,
+          deduplicationKey: `${leaveRequest.userId}:${eventType}:${resolvedEntityId}`,
         });
       }
     } catch (_) {}
@@ -328,10 +310,14 @@ const decideApproval = asyncHandler(async (request, response) => {
   // 2. EXPENSE APPROVAL DISPATCHER
   if (approval.entityType === 'EXPENSE') {
     try {
-      const expense = await Expense.findOne({
-        organisationId: request.auth.organisationId,
-        $or: [{ expenseId: approval.entityId }, { _id: approval.entityId }],
-      });
+      const isObjectId = mongoose.Types.ObjectId.isValid(approval.entityId) && /^[0-9a-fA-F]{24}$/.test(approval.entityId);
+      const expenseFilter = { organisationId: request.auth.organisationId };
+      if (isObjectId) {
+        expenseFilter.$or = [{ expenseId: approval.entityId }, { _id: approval.entityId }];
+      } else {
+        expenseFilter.expenseId = approval.entityId;
+      }
+      const expense = await Expense.findOne(expenseFilter);
       if (expense) {
         expense.status = targetDecision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
         expense.decisionAt = new Date();
@@ -355,17 +341,22 @@ const decideApproval = asyncHandler(async (request, response) => {
         await expense.save();
 
         const recipientId = expense.preparerUserId || expense.ownerUserId || approval.requestingUserId;
+        const expEvent = targetDecision === 'APPROVED' ? 'EXPENSE_APPROVED' : 'EXPENSE_REJECTED';
         await sendNotificationAndOutbox({
           organisationId: request.auth.organisationId,
           recipientUserId: recipientId,
           recipientRole: 'CAFE_ADMIN',
-          eventType: targetDecision === 'APPROVED' ? 'EXPENSE_APPROVED' : 'EXPENSE_REJECTED',
+          eventType: expEvent,
           category: 'FINANCE',
           title: `Expense ${expense.expenseId} ${targetDecision}`,
           message: `Your expense claim for ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category}) was ${targetDecision.toLowerCase()}.${expense.decisionReason ? ' Reason: ' + expense.decisionReason : ''}`,
           deepLink: `#expenses?expenseId=${expense.expenseId}`,
           correlationId: request.correlationId,
           actorUserId: request.auth.userId,
+          sourceModule: 'EXPENSE',
+          sourceEntityType: 'EXPENSE',
+          sourceEntityId: expense.expenseId,
+          deduplicationKey: `${recipientId}:${expEvent}:${expense.expenseId}`,
         });
       }
     } catch (err) {
@@ -406,17 +397,22 @@ const decideApproval = asyncHandler(async (request, response) => {
         await order.save();
 
         const recipientId = order.createdByUserId || order.lastModifiedByUserId || approval.requestingUserId;
+        const poEvent = targetDecision === 'APPROVED' ? 'PURCHASE_ORDER_APPROVED' : 'PURCHASE_ORDER_REJECTED';
         await sendNotificationAndOutbox({
           organisationId: request.auth.organisationId,
           recipientUserId: recipientId,
           recipientRole: 'CAFE_ADMIN',
-          eventType: targetDecision === 'APPROVED' ? 'PURCHASE_ORDER_APPROVED' : 'PURCHASE_ORDER_REJECTED',
+          eventType: poEvent,
           category: 'OPERATIONS',
           title: `Purchase Order ${order.purchaseOrderId} ${targetDecision}`,
           message: `Purchase Order ${order.purchaseOrderId} (${order.cafeId}) was ${targetDecision.toLowerCase()} by Master.${reason ? ' Note: ' + reason : ''}`,
           deepLink: `#procurement?orderId=${order.purchaseOrderId}`,
           correlationId: request.correlationId,
           actorUserId: request.auth.userId,
+          sourceModule: 'PROCUREMENT',
+          sourceEntityType: 'PURCHASE_ORDER',
+          sourceEntityId: order.purchaseOrderId,
+          deduplicationKey: `${recipientId}:${poEvent}:${order.purchaseOrderId}`,
         });
       }
     } catch (err) {
@@ -445,17 +441,26 @@ const decideApproval = asyncHandler(async (request, response) => {
         }
         await loan.save();
 
+        const advType = loan.requestType === 'SALARY_ADVANCE' ? 'SALARY_ADVANCE' : 'LOAN';
+        const advEvent = advType === 'SALARY_ADVANCE'
+          ? (targetDecision === 'APPROVED' ? 'SALARY_ADVANCE_APPROVED' : 'SALARY_ADVANCE_REJECTED')
+          : (targetDecision === 'APPROVED' ? 'LOAN_APPROVED' : 'LOAN_REJECTED');
+        const loanRecipient = loan.employeeUserId || approval.requestingUserId;
         await sendNotificationAndOutbox({
           organisationId: request.auth.organisationId,
-          recipientUserId: loan.employeeUserId || approval.requestingUserId,
+          recipientUserId: loanRecipient,
           recipientRole: 'STAFF',
-          eventType: targetDecision === 'APPROVED' ? 'LOAN_APPROVED' : 'LOAN_REJECTED',
+          eventType: advEvent,
           category: 'PAYROLL',
           title: `Loan/Advance Request ${loan.loanAdvanceId} ${targetDecision}`,
           message: `Your ${loan.requestType || 'Loan'} request for ₹${(((loan.requestedAmountPaise || loan.principalPaise) || 0) / 100).toFixed(2)} was ${targetDecision.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
           deepLink: `#staff-loans-advances?id=${loan.loanAdvanceId}`,
           correlationId: request.correlationId,
           actorUserId: request.auth.userId,
+          sourceModule: 'LOANS_ADVANCES',
+          sourceEntityType: advType,
+          sourceEntityId: loan.loanAdvanceId,
+          deduplicationKey: `${loanRecipient}:${advEvent}:${loan.loanAdvanceId}`,
         });
       }
     } catch (err) {
@@ -477,17 +482,23 @@ const decideApproval = asyncHandler(async (request, response) => {
         shiftRequest.reviewNotes = typeof reason === 'string' ? reason.trim() : '';
         await shiftRequest.save();
 
+        const shiftEvent = targetDecision === 'APPROVED' ? 'SHIFT_CHANGE_APPROVED' : 'SHIFT_CHANGE_REJECTED';
+        const shiftRecipient = shiftRequest.employeeUserId || approval.requestingUserId;
         await sendNotificationAndOutbox({
           organisationId: request.auth.organisationId,
-          recipientUserId: shiftRequest.employeeUserId || approval.requestingUserId,
+          recipientUserId: shiftRecipient,
           recipientRole: 'STAFF',
-          eventType: targetDecision === 'APPROVED' ? 'SHIFT_CHANGE_APPROVED' : 'SHIFT_CHANGE_REJECTED',
+          eventType: shiftEvent,
           category: 'OPERATIONS',
           title: `Shift Change Request ${shiftRequest.requestId} ${targetDecision}`,
           message: `Your shift change request for ${shiftRequest.requestedDate} was ${targetDecision.toLowerCase()}.${reason ? ' Notes: ' + reason : ''}`,
           deepLink: `#staff-attendance`,
           correlationId: request.correlationId,
           actorUserId: request.auth.userId,
+          sourceModule: 'OPERATIONS',
+          sourceEntityType: 'SHIFT_CHANGE_REQUEST',
+          sourceEntityId: shiftRequest.requestId,
+          deduplicationKey: `${shiftRecipient}:${shiftEvent}:${shiftRequest.requestId}`,
         });
       }
     } catch (err) {
@@ -518,17 +529,23 @@ const decideApproval = asyncHandler(async (request, response) => {
           }
         }
 
+        const pcrEvent = targetDecision === 'APPROVED' ? 'PROFILE_CHANGE_APPROVED' : 'PROFILE_CHANGE_REJECTED';
+        const pcrRecipient = pcr.userId || approval.requestingUserId;
         await sendNotificationAndOutbox({
           organisationId: request.auth.organisationId,
-          recipientUserId: pcr.userId || approval.requestingUserId,
+          recipientUserId: pcrRecipient,
           recipientRole: 'STAFF',
-          eventType: targetDecision === 'APPROVED' ? 'PROFILE_CHANGE_APPROVED' : 'PROFILE_CHANGE_REJECTED',
+          eventType: pcrEvent,
           category: 'OPERATIONS',
           title: `Profile Change Request ${pcr.requestId} ${targetDecision}`,
           message: `Your profile change request (${pcr.requestType}) was ${targetDecision.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
           deepLink: `#employee-profile`,
           correlationId: request.correlationId,
           actorUserId: request.auth.userId,
+          sourceModule: 'SETTINGS',
+          sourceEntityType: 'PROFILE_CHANGE_REQUEST',
+          sourceEntityId: pcr.requestId,
+          deduplicationKey: `${pcrRecipient}:${pcrEvent}:${pcr.requestId}`,
         });
       }
     } catch (err) {
@@ -583,17 +600,24 @@ const decideApproval = asyncHandler(async (request, response) => {
           }
         }
 
+        const corrEvent = targetDecision === 'APPROVED' ? 'ATTENDANCE_CORRECTION_APPROVED' : 'ATTENDANCE_CORRECTION_REJECTED';
+        const corrRecipient = correctionRequest.userId || approval.requestingUserId;
+        const corrId = correctionRequest.requestId || correctionRequest.correctionRequestId || approval.entityId;
         await sendNotificationAndOutbox({
           organisationId: request.auth.organisationId,
-          recipientUserId: correctionRequest.userId || approval.requestingUserId,
+          recipientUserId: corrRecipient,
           recipientRole: 'STAFF',
-          eventType: targetDecision === 'APPROVED' ? 'ATTENDANCE_CORRECTION_APPROVED' : 'ATTENDANCE_CORRECTION_REJECTED',
+          eventType: corrEvent,
           category: 'OPERATIONS',
-          title: `Attendance Correction ${correctionRequest.requestId} ${targetDecision}`,
+          title: `Attendance Correction ${corrId} ${targetDecision}`,
           message: `Your attendance correction request for ${correctionRequest.businessDate} was ${targetDecision.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
           deepLink: `#staff-attendance`,
           correlationId: request.correlationId,
           actorUserId: request.auth.userId,
+          sourceModule: 'ATTENDANCE',
+          sourceEntityType: 'ATTENDANCE_CORRECTION',
+          sourceEntityId: corrId,
+          deduplicationKey: `${corrRecipient}:${corrEvent}:${corrId}`,
         });
       }
     } catch (err) {

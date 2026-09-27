@@ -8,7 +8,7 @@ const {
   normalizePreviousNames,
 } = require('../services/employeeReadService');
 
-const USER_ROLES = ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'];
+const USER_ROLES = ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF', 'VENDOR'];
 
 const ACCOUNT_STATUSES = [
   'PENDING_ACTIVATION',
@@ -365,7 +365,7 @@ const userSchema = new mongoose.Schema(
       immutable: true,
       trim: true,
       uppercase: true,
-      match: /^((MU|OW|AD|ST)-\d{4,}|EMP-ZC-\d{4,})$/,
+      match: /^((MU|OW|AD|ST|VU|VN)-\d{4,}|EMP-ZC-\d{4,})$/,
     },
 
     organisationId: {
@@ -618,6 +618,14 @@ const userSchema = new mongoose.Schema(
         uppercase: true,
       },
     ],
+
+    vendorId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+      index: true,
+    },
 
     workerType: {
       type: String,

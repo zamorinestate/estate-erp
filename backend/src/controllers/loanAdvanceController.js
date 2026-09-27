@@ -23,6 +23,7 @@ const { User } = require('../models/User');
 const { LoanAdvanceService } = require('../services/loanAdvanceService');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { extractIdempotencyKey, acquireLock } = require('../utils/idempotencyHelper');
 
 function assertNotNormalMaster(request) {
   const { role, isPrimaryMaster } = request.auth;
@@ -159,74 +160,118 @@ const requestLoan = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'VALIDATION_FAILED', 'Requested amount must be greater than 0.');
   }
 
-  const count = await StaffLoanAdvance.countDocuments({ organisationId });
-  const loanAdvanceId = `LN-2026-${String(count + 1).padStart(4, '0')}`;
-  const cafeId = assignedCafeIds?.[0] || 'ZC-0001';
+  const idempotencyKey = extractIdempotencyKey(request);
+  const lockKey = `LOAN:${organisationId}:${userId}:${amountPaise}`;
+  const releaseLock = acquireLock(lockKey);
 
-  const monthlyInstalmentPaise = Math.floor(amountPaise / Math.max(1, parseInt(tenureMonths, 10)));
-
-  const loan = await StaffLoanAdvance.create({
-    loanAdvanceId,
-    organisationId,
-    cafeId,
-    employeeUserId: userId,
-    employeeName: fullName || userId,
-    requestType: 'LOAN',
-    loanCategory,
-    requestedAmountPaise: amountPaise,
-    principalPaise: amountPaise,
-    outstandingPrincipalPaise: amountPaise,
-    monthlyInstalmentPaise,
-    tenureMonths: parseInt(tenureMonths, 10),
-    requestReason: reason,
-    status: 'SUBMITTED',
-    policyVersion: 'POL-LOAN-2026-V1',
-    deductionReference: `DED-${loanAdvanceId}`,
-    requestedAt: new Date(),
-    createdByUserId: userId,
-  });
-
+  let loan;
   try {
-    const approvalCount = await Approval.countDocuments({ organisationId });
-    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-    await Approval.create({
-      approvalId,
+    const existingPending = await StaffLoanAdvance.findOne({
       organisationId,
-      cafeId,
-      entityType: 'LOAN_ADVANCE',
-      entityId: loan.loanAdvanceId,
-      requestingUserId: userId,
-      actionRequired: `Loan Request: ₹${(amountPaise / 100).toFixed(2)} (${loanCategory}, ${tenureMonths} mos)`,
-      amountPaisa: amountPaise,
-      status: 'PENDING',
-    });
+      employeeUserId: userId,
+      requestType: 'LOAN',
+      status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFO_REQUIRED', 'APPROVED'] },
+      $or: [
+        ...(idempotencyKey ? [{ idempotencyKey }] : []),
+        {
+          requestedAmountPaise: amountPaise,
+          createdAt: { $gte: new Date(Date.now() - 60000) },
+        },
+      ],
+    }).sort({ createdAt: -1 });
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
-      await Notification.create({
-        notificationId: notifId,
-        organisationId,
-        cafeId,
-        eventType: 'LOAN_REQUESTED',
-        category: 'FINANCE',
-        recipientUserId: m.userId,
-        recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
-        title: `💰 Loan Request: ${userId}`,
-        message: `${fullName || userId} requested a loan of ₹${(amountPaise / 100).toFixed(2)} (${loanCategory}). Reason: ${reason || 'N/A'}`,
-        priority: 'NORMAL',
-        channels: ['IN_APP'],
-        deepLink: `#approvals`,
-        sourceModule: 'LOANS_ADVANCES',
-        sourceEntityType: 'LOAN_ADVANCE',
-        sourceEntityId: loan.loanAdvanceId,
-        createdBy: userId,
+    if (existingPending) {
+      return response.status(409).json({
+        success: false,
+        code: 'DUPLICATE_LOAN_REQUEST',
+        message: 'A duplicate loan request was detected. Your previous submission is already pending review.',
+        data: { loan: existingPending },
+        correlationId: request.correlationId || null,
       });
     }
-  } catch (err) {
-    console.warn(`[LOAN_APPROVAL_HOOK_WARN] ${err.message}`);
+
+    const count = await StaffLoanAdvance.countDocuments({ organisationId });
+    const loanAdvanceId = `LN-2026-${String(count + 1).padStart(4, '0')}`;
+    const cafeId = assignedCafeIds?.[0] || 'ZC-0001';
+
+    const monthlyInstalmentPaise = Math.floor(amountPaise / Math.max(1, parseInt(tenureMonths, 10)));
+
+    loan = await StaffLoanAdvance.create({
+      loanAdvanceId,
+      organisationId,
+      cafeId,
+      employeeUserId: userId,
+      employeeName: fullName || userId,
+      requestType: 'LOAN',
+      loanCategory,
+      requestedAmountPaise: amountPaise,
+      principalPaise: amountPaise,
+      outstandingPrincipalPaise: amountPaise,
+      monthlyInstalmentPaise,
+      tenureMonths: parseInt(tenureMonths, 10),
+      requestReason: reason,
+      idempotencyKey: idempotencyKey || null,
+      status: 'SUBMITTED',
+      policyVersion: 'POL-LOAN-2026-V1',
+      deductionReference: `DED-${loanAdvanceId}`,
+      requestedAt: new Date(),
+      createdByUserId: userId,
+    });
+
+    try {
+      let approval = await Approval.findOne({
+        organisationId,
+        entityType: 'LOAN_ADVANCE',
+        entityId: loan.loanAdvanceId,
+      });
+
+      if (!approval) {
+        const approvalCount = await Approval.countDocuments({ organisationId });
+        const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+        await Approval.create({
+          approvalId,
+          organisationId,
+          cafeId,
+          entityType: 'LOAN_ADVANCE',
+          entityId: loan.loanAdvanceId,
+          requestingUserId: userId,
+          actionRequired: `Loan Request: ₹${(amountPaise / 100).toFixed(2)} (${loanCategory}, ${tenureMonths} mos)`,
+          amountPaisa: amountPaise,
+          status: 'PENDING',
+        });
+      }
+
+      const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      for (const m of masterUsers) {
+        const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+        await Notification.create({
+          notificationId: notifId,
+          organisationId,
+          cafeId,
+          eventType: 'LOAN_REQUESTED',
+          category: 'FINANCE',
+          recipientUserId: m.userId,
+          recipientRole: 'MASTER',
+          recipientEmail: m.email || 'master@zamorincafe.com',
+          title: `💰 Loan Request: ${userId}`,
+          message: `${fullName || userId} requested a loan of ₹${(amountPaise / 100).toFixed(2)} (${loanCategory}). Reason: ${reason || 'N/A'}`,
+          priority: 'NORMAL',
+          channels: ['IN_APP'],
+          deepLink: `#approvals`,
+          sourceModule: 'LOANS_ADVANCES',
+          sourceEntityType: 'LOAN_ADVANCE',
+          sourceEntityId: loan.loanAdvanceId,
+          deduplicationKey: `LN_${loan.loanAdvanceId}_${m.userId}`,
+          correlationId: request.correlationId || notifId,
+          createdBy: userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[LOAN_APPROVAL_HOOK_WARN] ${err.message}`);
+    }
+  } finally {
+    releaseLock();
   }
 
   return response.status(201).json({
@@ -246,72 +291,116 @@ const requestSalaryAdvance = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'VALIDATION_FAILED', 'Requested advance amount must be greater than 0.');
   }
 
-  const count = await StaffLoanAdvance.countDocuments({ organisationId });
-  const loanAdvanceId = `ADV-2026-${String(count + 1).padStart(4, '0')}`;
-  const cafeId = assignedCafeIds?.[0] || 'ZC-0001';
+  const idempotencyKey = extractIdempotencyKey(request);
+  const lockKey = `ADVANCE:${organisationId}:${userId}:${amountPaise}`;
+  const releaseLock = acquireLock(lockKey);
 
-  const advance = await StaffLoanAdvance.create({
-    loanAdvanceId,
-    organisationId,
-    cafeId,
-    employeeUserId: userId,
-    employeeName: fullName || userId,
-    requestType: 'SALARY_ADVANCE',
-    loanCategory: 'SALARY_ADVANCE',
-    requestedAmountPaise: amountPaise,
-    principalPaise: amountPaise,
-    outstandingPrincipalPaise: amountPaise,
-    monthlyInstalmentPaise: amountPaise,
-    tenureMonths: 1,
-    requestReason: reason,
-    status: 'SUBMITTED',
-    policyVersion: 'POL-ADV-2026-V1',
-    deductionReference: `DED-${loanAdvanceId}`,
-    requestedAt: new Date(),
-    createdByUserId: userId,
-  });
-
+  let advance;
   try {
-    const approvalCount = await Approval.countDocuments({ organisationId });
-    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-    await Approval.create({
-      approvalId,
+    const existingPending = await StaffLoanAdvance.findOne({
       organisationId,
-      cafeId,
-      entityType: 'SALARY_ADVANCE',
-      entityId: advance.loanAdvanceId,
-      requestingUserId: userId,
-      actionRequired: `Salary Advance: ₹${(amountPaise / 100).toFixed(2)}`,
-      amountPaisa: amountPaise,
-      status: 'PENDING',
-    });
+      employeeUserId: userId,
+      requestType: 'SALARY_ADVANCE',
+      status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFO_REQUIRED', 'APPROVED'] },
+      $or: [
+        ...(idempotencyKey ? [{ idempotencyKey }] : []),
+        {
+          requestedAmountPaise: amountPaise,
+          createdAt: { $gte: new Date(Date.now() - 60000) },
+        },
+      ],
+    }).sort({ createdAt: -1 });
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
-      await Notification.create({
-        notificationId: notifId,
-        organisationId,
-        cafeId,
-        eventType: 'SALARY_ADVANCE_REQUESTED',
-        category: 'FINANCE',
-        recipientUserId: m.userId,
-        recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
-        title: `💵 Salary Advance Request: ${userId}`,
-        message: `${fullName || userId} requested a salary advance of ₹${(amountPaise / 100).toFixed(2)}. Reason: ${reason || 'N/A'}`,
-        priority: 'NORMAL',
-        channels: ['IN_APP'],
-        deepLink: `#approvals`,
-        sourceModule: 'LOANS_ADVANCES',
-        sourceEntityType: 'SALARY_ADVANCE',
-        sourceEntityId: advance.loanAdvanceId,
-        createdBy: userId,
+    if (existingPending) {
+      return response.status(409).json({
+        success: false,
+        code: 'DUPLICATE_ADVANCE_REQUEST',
+        message: 'A duplicate salary advance request was detected. Your previous submission is already pending review.',
+        data: { advance: existingPending },
+        correlationId: request.correlationId || null,
       });
     }
-  } catch (err) {
-    console.warn(`[ADVANCE_APPROVAL_HOOK_WARN] ${err.message}`);
+
+    const count = await StaffLoanAdvance.countDocuments({ organisationId });
+    const loanAdvanceId = `ADV-2026-${String(count + 1).padStart(4, '0')}`;
+    const cafeId = assignedCafeIds?.[0] || 'ZC-0001';
+
+    advance = await StaffLoanAdvance.create({
+      loanAdvanceId,
+      organisationId,
+      cafeId,
+      employeeUserId: userId,
+      employeeName: fullName || userId,
+      requestType: 'SALARY_ADVANCE',
+      loanCategory: 'SALARY_ADVANCE',
+      requestedAmountPaise: amountPaise,
+      principalPaise: amountPaise,
+      outstandingPrincipalPaise: amountPaise,
+      monthlyInstalmentPaise: amountPaise,
+      tenureMonths: 1,
+      requestReason: reason,
+      idempotencyKey: idempotencyKey || null,
+      status: 'SUBMITTED',
+      policyVersion: 'POL-ADV-2026-V1',
+      deductionReference: `DED-${loanAdvanceId}`,
+      requestedAt: new Date(),
+      createdByUserId: userId,
+    });
+
+    try {
+      let approval = await Approval.findOne({
+        organisationId,
+        entityType: 'SALARY_ADVANCE',
+        entityId: advance.loanAdvanceId,
+      });
+
+      if (!approval) {
+        const approvalCount = await Approval.countDocuments({ organisationId });
+        const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
+        await Approval.create({
+          approvalId,
+          organisationId,
+          cafeId,
+          entityType: 'SALARY_ADVANCE',
+          entityId: advance.loanAdvanceId,
+          requestingUserId: userId,
+          actionRequired: `Salary Advance: ₹${(amountPaise / 100).toFixed(2)}`,
+          amountPaisa: amountPaise,
+          status: 'PENDING',
+        });
+      }
+
+      const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      for (const m of masterUsers) {
+        const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+        await Notification.create({
+          notificationId: notifId,
+          organisationId,
+          cafeId,
+          eventType: 'SALARY_ADVANCE_REQUESTED',
+          category: 'FINANCE',
+          recipientUserId: m.userId,
+          recipientRole: 'MASTER',
+          recipientEmail: m.email || 'master@zamorincafe.com',
+          title: `💵 Salary Advance Request: ${userId}`,
+          message: `${fullName || userId} requested a salary advance of ₹${(amountPaise / 100).toFixed(2)}. Reason: ${reason || 'N/A'}`,
+          priority: 'NORMAL',
+          channels: ['IN_APP'],
+          deepLink: `#approvals`,
+          sourceModule: 'LOANS_ADVANCES',
+          sourceEntityType: 'SALARY_ADVANCE',
+          sourceEntityId: advance.loanAdvanceId,
+          deduplicationKey: `ADV_${advance.loanAdvanceId}_${m.userId}`,
+          correlationId: request.correlationId || notifId,
+          createdBy: userId,
+        });
+      }
+    } catch (err) {
+      console.warn(`[ADVANCE_APPROVAL_HOOK_WARN] ${err.message}`);
+    }
+  } finally {
+    releaseLock();
   }
 
   return response.status(201).json({

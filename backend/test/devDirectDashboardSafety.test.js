@@ -35,11 +35,13 @@ test('Security Guard: No 5th RBAC role created for preview', () => {
   assert.ok(rolesMatch, 'ROLES catalog must be defined');
   
   const roleKeys = rolesMatch[1].split(',').map(s => s.trim().split(':')[0]).filter(Boolean);
+  const internalRoles = roleKeys.filter(r => r !== 'VENDOR');
   assert.deepEqual(
-    roleKeys.sort(),
+    internalRoles.sort(),
     ['CAFE_ADMIN', 'MASTER', 'OWNER', 'STAFF'].sort(),
-    'Exactly 4 canonical roles must be present (no DEV, PREVIEW, or BYPASS role)'
+    'Exactly 4 canonical internal roles must be present (no DEV, PREVIEW, or BYPASS role)'
   );
+  assert.ok(!roleKeys.includes('DEV') && !roleKeys.includes('PREVIEW') && !roleKeys.includes('BYPASS'), 'No preview or bypass role allowed');
 });
 
 test('Security Guard: Backend protected endpoints strictly reject unauthenticated calls', async () => {

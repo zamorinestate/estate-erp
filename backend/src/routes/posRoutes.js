@@ -26,6 +26,17 @@ const {
 const router = express.Router();
 
 router.use(authenticate);
+router.use((req, res, next) => {
+  if (req.auth?.role === 'VENDOR') {
+    return res.status(403).json({
+      error: {
+        code: 'FORBIDDEN_VENDOR_ACCESS',
+        message: 'Vendor accounts cannot access POS operations.',
+      },
+    });
+  }
+  next();
+});
 router.use(attachDeviceContext);
 
 // POS Order pipeline actions

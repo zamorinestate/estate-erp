@@ -105,9 +105,14 @@ router.get(
   searchEmployees
 );
 
-// 6. Onboard New Employee
+// 6. Onboard New Employee (supports / and /onboard)
 router.post(
   '/',
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  onboardEmployee
+);
+router.post(
+  '/onboard',
   authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
   onboardEmployee
 );

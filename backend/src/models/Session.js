@@ -60,8 +60,15 @@ const sessionSchema = new mongoose.Schema(
       type: String,
       required: true,
       immutable: true,
-      enum: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'],
+      enum: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF', 'VENDOR'],
       index: true,
+    },
+
+    vendorIdSnapshot: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
     },
 
     assignedCafeIdsSnapshot: [

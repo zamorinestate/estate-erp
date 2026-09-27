@@ -12,7 +12,13 @@ const DEFAULT_API_BASE_URL =
   typeof globalThis.location !== "undefined" &&
   (globalThis.location.hostname === "localhost" ||
    globalThis.location.hostname === "127.0.0.1" ||
-   globalThis.location.hostname.includes("vercel.app"))
+   globalThis.location.hostname.startsWith("10.") ||
+   globalThis.location.hostname.startsWith("192.168.") ||
+   /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(globalThis.location.hostname) ||
+   globalThis.location.hostname.endsWith(".local") ||
+   globalThis.location.port === "3000" ||
+   globalThis.location.hostname.includes("vercel.app") ||
+   (globalThis.location.protocol && globalThis.location.protocol.startsWith("http")))
     ? "/api/v1"
     : VERCEL_API_BASE_URL;
 
@@ -813,6 +819,12 @@ export async function performRequest(
     requestHeaders["x-cafe-id"] = activeCafeScope.trim();
   }
 
+  // Active persona propagation for local development
+  const devRole = state?.role || (typeof localStorage !== "undefined" ? localStorage.getItem("zamorin-dev-role") : null);
+  if (devRole && typeof devRole === "string") {
+    requestHeaders["x-dev-role"] = devRole.trim().toUpperCase();
+  }
+
   if (headers) {
     if (headers instanceof Headers) {
       for (const [k, v] of headers.entries()) {
@@ -1215,6 +1227,10 @@ export async function downloadFile({
       message: err?.message || "File download failed.",
     });
   }
+}
+
+export async function downloadBlob(url, filename = "zamorin_export.pdf") {
+  return downloadFile({ url, filename });
 }
 
 export async function apiUpload(path, formData, { signal, headers = {} } = {}) {

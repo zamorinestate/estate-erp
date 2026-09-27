@@ -16,6 +16,7 @@ const ROLE_LABELS = {
   [ROLES.OWNER]: "Cafe Owner",
   [ROLES.CAFE_ADMIN]: "Cafe Operations",
   [ROLES.STAFF]: "Staff",
+  [ROLES.VENDOR]: "Vendor (Read-Only)",
 };
 
 const ROLE_INITIALS = {
@@ -23,6 +24,7 @@ const ROLE_INITIALS = {
   [ROLES.OWNER]: "BO",
   [ROLES.CAFE_ADMIN]: "OP",
   [ROLES.STAFF]: "SA",
+  [ROLES.VENDOR]: "VN",
 };
 
 const SIDEBAR_COLLAPSED_KEY = "zamorin-sidebar-collapsed";
@@ -383,6 +385,7 @@ export function renderTopbar({ scopeChip } = {}) {
     : (ROLE_INITIALS[role] || "ZU");
   const isStaff = role === ROLES.STAFF;
   const isCafeOps = role === ROLES.CAFE_ADMIN;
+  const isVendor = role === ROLES.VENDOR || role === 'vendor';
 
   // Dynamic online/offline badge for Cafe Operations Context Bar
   function getConnectivityBadge() {
@@ -457,6 +460,13 @@ export function renderTopbar({ scopeChip } = {}) {
         <span style="font-size:13px;">📍</span>
         <span>${user.primaryCafeName || (user.primaryCafeId ? `Outlet ${user.primaryCafeId}` : "Assigned Outlet")}</span>
       </div>`;
+  } else if (isVendor) {
+    cafeScopeHtml = `
+      <div class="vendor-scope-context" style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:var(--radius-md); background:rgba(217, 119, 6, 0.12); border:1px solid rgba(217, 119, 6, 0.3); font-size:12px; font-weight:700; color:#d97706;">
+        <span>🔒</span>
+        <span>Vendor Portal (Read-Only)</span>
+      </div>
+    `;
   } else {
     const isOwner = role === ROLES.OWNER || role === 'owner';
     const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
@@ -477,9 +487,11 @@ export function renderTopbar({ scopeChip } = {}) {
     ? "Search attendance, payslips, requests..."
     : isCafeOps
     ? "Search this café…"
+    : isVendor
+    ? "Search purchase orders, invoices, payments..."
     : "Search modules, records, employees...";
 
-  const megaMenuHtml = `
+  const megaMenuHtml = isVendor ? '' : `
     <div class="mega-menu-wrap" style="position:relative; display:inline-flex; align-items:center; margin-left:4px;">
       <button class="topbar-action-btn mega-menu-btn" id="mega-menu-btn" type="button" aria-expanded="false" title="Flowbite Mega Menu — Quick Hub & QR" style="display:inline-flex; align-items:center; gap:5px; padding:0 12px; height:38px; min-height:38px; font-weight:700; font-size:12px; border-radius:var(--radius-control); background:var(--surface); border:1px solid var(--line-strong); color:var(--ink); cursor:pointer;">
         <span style="font-size:13px; line-height:1;">⚡</span>
@@ -541,9 +553,11 @@ export function renderTopbar({ scopeChip } = {}) {
         </div>
 
         <!-- Flowbite Quick UPI QR Modal Action -->
+        ${!isVendor ? `
         <button class="topbar-action-btn" id="topbar-qr-quick-btn" title="Quick UPI QR Payment" type="button" aria-label="Quick UPI QR">
           ${flowbiteIcon("cameraPhoto", "w-5 h-5 text-gray-700 dark:text-gray-200")}
         </button>
+        ` : ''}
 
         <!-- Flowbite Dark Mode Switcher Button -->
         <button id="theme-toggle" type="button" class="text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-700 rounded-lg text-sm p-2.5" title="Toggle theme mode" aria-label="Toggle theme mode">
@@ -665,21 +679,27 @@ export function renderTopbar({ scopeChip } = {}) {
         </div>
       </div>
       <div class="popover-menu">
-        <button class="popover-menu-item" data-profile-action="my-profile">
-          ${icon("user")} My Profile
-        </button>
-        <button class="popover-menu-item" data-profile-action="my-employment">
-          ${icon("payslip")} My Employment
-        </button>
-        <button class="popover-menu-item" data-profile-action="settings">
-          ${icon("settings")} Preferences &amp; Settings
-        </button>
-        <button class="popover-menu-item" data-profile-action="security">
-          ${icon("shield")} Security &amp; MFA
-        </button>
-        <button class="popover-menu-item" data-profile-action="lock-screen">
-          ${icon("lock")} Lock Application
-        </button>
+        ${isVendor ? `
+          <button class="popover-menu-item" data-profile-action="vendor-dashboard">
+            ${icon("home")} Vendor Overview
+          </button>
+        ` : `
+          <button class="popover-menu-item" data-profile-action="my-profile">
+            ${icon("user")} My Profile
+          </button>
+          <button class="popover-menu-item" data-profile-action="my-employment">
+            ${icon("payslip")} My Employment
+          </button>
+          <button class="popover-menu-item" data-profile-action="settings">
+            ${icon("settings")} Preferences &amp; Settings
+          </button>
+          <button class="popover-menu-item" data-profile-action="security">
+            ${icon("shield")} Security &amp; MFA
+          </button>
+          <button class="popover-menu-item" data-profile-action="lock-screen">
+            ${icon("lock")} Lock Application
+          </button>
+        `}
         <div class="popover-divider"></div>
         <button class="popover-menu-item logout" data-profile-action="logout">
           ${icon("logout")} Sign Out
@@ -1153,6 +1173,8 @@ export function wireBell(root) {
         } else if (action === "settings") {
           setSettingsActiveSection("overview");
           navigate(state.role === ROLES.STAFF ? "staff-settings" : "settings");
+        } else if (action === "vendor-dashboard") {
+          navigate("vendor-dashboard");
         } else if (action === "lock-screen") {
           openApplicationLockModal();
         }

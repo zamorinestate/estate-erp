@@ -17,6 +17,7 @@ const { SequenceCounter } = require('../models/SequenceCounter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { recordRequestAudit } = require('../services/auditService');
+const { extractIdempotencyKey, acquireLock } = require('../utils/idempotencyHelper');
 
 function normalizeIdentifier(val) {
   return typeof val === 'string' ? val.trim().toUpperCase() : '';
@@ -426,92 +427,150 @@ const applyLeave = asyncHandler(async (request, response) => {
     diffDays = 0.5;
   }
 
-  const dateKey = startDate.replace(/-/g, '');
-  const leaveId = await SequenceCounter.generateId({
-    organisationId,
-    sequenceKey: 'LEAVE_REQUEST',
-    prefix: `LR-${dateKey}`,
-    minimumDigits: 3,
-  });
+  const idempotencyKey = extractIdempotencyKey(request);
+  const lockKey = `LEAVE:${organisationId}:${userId}:${startDate}:${endDate}`;
+  const releaseLock = acquireLock(lockKey);
 
-  const leave = new LeaveRequest({
-    leaveId,
-    organisationId,
-    cafeId,
-    userId,
-    leaveType,
-    startDate,
-    endDate,
-    durationUnit,
-    requestedDays: diffDays,
-    reason: reason.trim(),
-    attachmentUrl,
-    attachmentName,
-    status: 'PENDING',
-  });
-
-  await leave.save();
-
+  let leave;
   try {
-    let approvalId;
-    try {
-      approvalId = await SequenceCounter.generateId({
-        organisationId,
-        sequenceKey: 'APPROVAL',
-        prefix: 'APP',
-        minimumDigits: 5,
-      });
-    } catch {
-      const approvalCount = await Approval.countDocuments({ organisationId });
-      approvalId = `APP-${String(approvalCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
+    // Deduplication check: check if an identical or overlapping pending/active request exists
+    const existingDuplicate = await LeaveRequest.findOne({
+      organisationId,
+      userId,
+      status: { $in: ['PENDING', 'UNDER_REVIEW', 'RECOMMENDED', 'APPROVED'] },
+      $or: [
+        ...(idempotencyKey ? [{ idempotencyKey }] : []),
+        {
+          leaveType,
+          startDate,
+          endDate,
+        },
+        {
+          startDate: { $lte: endDate },
+          endDate: { $gte: startDate },
+        },
+      ],
+    }).sort({ createdAt: -1 });
+
+    if (existingDuplicate) {
+      if (
+        (idempotencyKey && existingDuplicate.idempotencyKey === idempotencyKey) ||
+        (existingDuplicate.leaveType === leaveType && existingDuplicate.startDate === startDate && existingDuplicate.endDate === endDate)
+      ) {
+        return response.status(409).json({
+          success: false,
+          code: 'DUPLICATE_LEAVE_REQUEST',
+          message: 'A duplicate leave request was detected. Your previous submission is already pending review.',
+          data: { leave: existingDuplicate },
+          correlationId: request.correlationId || null,
+        });
+      }
+
+      throw new ApiError(
+        409,
+        'OVERLAPPING_LEAVE_REQUEST',
+        `You already have an active leave request (${existingDuplicate.leaveId}) covering ${existingDuplicate.startDate} to ${existingDuplicate.endDate}.`
+      );
     }
 
-    await Approval.create({
-      approvalId,
+    const dateKey = startDate.replace(/-/g, '');
+    const leaveId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: 'LEAVE_REQUEST',
+      prefix: `LR-${dateKey}`,
+      minimumDigits: 3,
+    });
+
+    leave = new LeaveRequest({
+      leaveId,
       organisationId,
       cafeId,
-      entityType: 'LEAVE_REQUEST',
-      entityId: leave.leaveId,
-      requestingUserId: userId,
-      actionRequired: `Leave Request: ${diffDays} day(s) (${leaveType})`,
-      amountPaisa: 0,
+      userId,
+      leaveType,
+      startDate,
+      endDate,
+      durationUnit,
+      requestedDays: diffDays,
+      reason: reason.trim(),
+      attachmentUrl,
+      attachmentName,
+      idempotencyKey: idempotencyKey || null,
       status: 'PENDING',
     });
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
-    const recipientIds = new Set(masterUsers.map((m) => m.userId));
-    recipientIds.add('MU-0001');
+    await leave.save();
 
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const masterId of recipientIds) {
-      const mUser = masterUsers.find((m) => m.userId === masterId);
-      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
-      await Notification.create({
-        notificationId: notifId,
+    try {
+      let approval = await Approval.findOne({
         organisationId,
-        cafeId: cafeId || 'ALL',
-        eventType: 'LEAVE_REQUESTED',
-        category: 'OPERATIONS',
-        recipientUserId: masterId,
-        recipientRole: 'MASTER',
-        recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
-        title: `🌴 Leave Request: ${userId}`,
-        message: `${userId} applied for ${diffDays} day(s) of ${leaveType} leave (${startDate} to ${endDate}). Reason: ${reason.trim()}`,
-        priority: 'NORMAL',
-        channels: ['IN_APP'],
-        deepLink: `#approvals`,
-        sourceModule: 'LEAVE',
-        sourceEntityType: 'LEAVE_REQUEST',
-        sourceEntityId: leave.leaveId,
-        deduplicationKey: `LR_${leave.leaveId}_${Date.now()}_${masterId}`,
-        correlationId: request.correlationId || `CORR-LR-${leave.leaveId}-${Math.floor(1000 + Math.random() * 9000)}`,
-        status: 'DELIVERED',
-        deliveredAt: new Date(),
-        createdBy: userId,
+        entityType: 'LEAVE_REQUEST',
+        entityId: leave.leaveId,
       });
+
+      if (!approval) {
+        let approvalId;
+        try {
+          approvalId = await SequenceCounter.generateId({
+            organisationId,
+            sequenceKey: 'APPROVAL',
+            prefix: 'APP',
+            minimumDigits: 5,
+          });
+        } catch {
+          const approvalCount = await Approval.countDocuments({ organisationId });
+          approvalId = `APP-${String(approvalCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
+        }
+
+        approval = await Approval.create({
+          approvalId,
+          organisationId,
+          cafeId,
+          entityType: 'LEAVE_REQUEST',
+          entityId: leave.leaveId,
+          requestingUserId: userId,
+          actionRequired: `Leave Request: ${diffDays} day(s) (${leaveType})`,
+          amountPaisa: 0,
+          status: 'PENDING',
+        });
+      }
+
+      const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+      const recipientIds = new Set(masterUsers.map((m) => m.userId));
+      recipientIds.add('MU-0001');
+
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      for (const masterId of recipientIds) {
+        const mUser = masterUsers.find((m) => m.userId === masterId);
+        const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+        await Notification.create({
+          notificationId: notifId,
+          organisationId,
+          cafeId: cafeId || 'ALL',
+          eventType: 'LEAVE_REQUESTED',
+          category: 'OPERATIONS',
+          recipientUserId: masterId,
+          recipientRole: 'MASTER',
+          recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
+          title: `🌴 Leave Request: ${userId}`,
+          message: `${userId} applied for ${diffDays} day(s) of ${leaveType} leave (${startDate} to ${endDate}). Reason: ${reason.trim()}`,
+          priority: 'NORMAL',
+          channels: ['IN_APP'],
+          deepLink: `#approvals`,
+          sourceModule: 'LEAVE',
+          sourceEntityType: 'LEAVE_REQUEST',
+          sourceEntityId: leave.leaveId,
+          deduplicationKey: `LR_${leave.leaveId}_${masterId}`,
+          correlationId: request.correlationId || `CORR-LR-${leave.leaveId}`,
+          status: 'DELIVERED',
+          deliveredAt: new Date(),
+          createdBy: userId,
+        });
+      }
+    } catch (notifErr) {
+      console.warn(`[LEAVE_APPROVAL_HOOK_WARN] ${notifErr.message}`);
     }
-  } catch (notifErr) {
-    console.warn(`[LEAVE_APPROVAL_HOOK_WARN] ${notifErr.message}`);
+  } finally {
+    releaseLock();
   }
 
   await recordRequestAudit({
@@ -520,7 +579,7 @@ const applyLeave = asyncHandler(async (request, response) => {
     action: 'LEAVE_REQUESTED',
     entityType: 'LeaveRequest',
     entityId: leave.leaveId,
-    metadata: { userId, leaveId, leaveType, startDate, endDate, requestedDays: diffDays },
+    metadata: { userId, leaveId: leave.leaveId, leaveType, startDate, endDate, requestedDays: diffDays },
   });
 
   return response.status(201).json({

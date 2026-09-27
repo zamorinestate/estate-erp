@@ -468,6 +468,7 @@ function createAccessToken({
       sid: sessionId,
       org: user.organisationId,
       role: user.role,
+      vid: user.vendorId || null,
       cafes: user.assignedCafeIds || [],
       sv: sessionVersion,
       usv: user.sessionVersion,
@@ -729,6 +730,7 @@ async function createSession({
     organisationId: user.organisationId,
     userId: user.userId,
     roleSnapshot: user.role,
+    vendorIdSnapshot: user.vendorId || null,
     assignedCafeIdsSnapshot:
       user.assignedCafeIds || [],
     tokenFamilyId,

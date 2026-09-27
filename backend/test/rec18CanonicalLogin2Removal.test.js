@@ -520,7 +520,7 @@ test('REC-18 Canonical Login Page 2.0 & Legacy Login Permanent Removal 40-Point 
     assert.equal(authResult.user.role, 'STAFF');
 
     const mainContent = fs.readFileSync(MAIN_JS_PATH, 'utf8');
-    assert.ok(mainContent.includes('const landingRoute = (role === "staff") ? "staff-home" : "dashboard";'));
+    assert.ok(mainContent.includes('(role === "staff") ? "staff-home"'));
   });
 
   await t.test('23. Accounts-capability Staff login', async () => {

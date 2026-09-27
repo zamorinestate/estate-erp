@@ -133,6 +133,7 @@ export const DEFAULT_MASTER_DASHBOARD_DATA = {
 // ─── Component State ──────────────────────────────────────────────────────────
 
 let dashboardState = {
+  currentPage: 1,
   period: "today",
   comparison: "previous_period",
   customFrom: null,
@@ -149,7 +150,7 @@ let dashboardState = {
 
 // ─── Pure HTML Template Helpers ──────────────────────────────────────────────
 
-export function renderKpisHtml(kpis = {}) {
+export function renderPrimaryKpisHtml(kpis = {}) {
   const salesCard = kpiCard({
     label: "Gross Sales Total ⓘ",
     value: fmtInr(kpis.salesTotal?.valuePaisa),
@@ -186,6 +187,10 @@ export function renderKpisHtml(kpis = {}) {
     trendType: "neutral",
   });
 
+  return [salesCard, ordersCard, aovCard, expenseCard].join("");
+}
+
+export function renderSecondaryKpisHtml(kpis = {}) {
   const staffCard = kpiCard({
     label: "Active Floor Staff ⓘ",
     value: `${kpis.staffPresent?.value || 0}/${kpis.staffPresent?.scheduled || 0}`,
@@ -214,7 +219,11 @@ export function renderKpisHtml(kpis = {}) {
     trendType: (kpis.openActions?.value || 0) === 0 ? "up" : "down",
   });
 
-  return [salesCard, ordersCard, aovCard, expenseCard, staffCard, attCard, stockCard, actionsCard].join("");
+  return [staffCard, attCard, stockCard, actionsCard].join("");
+}
+
+export function renderKpisHtml(kpis = {}) {
+  return renderPrimaryKpisHtml(kpis) + renderSecondaryKpisHtml(kpis);
 }
 
 export function renderRevenueTrendChartHtml(trendData = [], viewMode = "chart") {
@@ -541,8 +550,8 @@ export function renderMasterDashboard({ roleLabel = "Master Administrator" } = {
   return `
     <div class="page-enter cc-container command-centre-wrap">
 
-      <!-- Page Header & Context Strip matching reference HRIS standard -->
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom:20px; border-bottom:1px solid var(--line); padding-bottom:16px;">
+      <!-- Clean Executive Header -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:14px;">
         <div>
           <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:4px;">
             <h1 class="page-title" style="font-size:24px; font-weight:800; margin:0; color:var(--ink); letter-spacing:-0.3px;">
@@ -557,20 +566,9 @@ export function renderMasterDashboard({ roleLabel = "Master Administrator" } = {
                 : `<span class="status success" style="font-size:10px; font-weight:800;">OWNER PORTAL</span>`
             }
           </div>
-          <p style="font-size:13px; color:var(--muted); margin:0 0 10px;">
-            Multi-Location Portfolio Oversight · Real-Time Operations, Revenue &amp; Exception Stream
+          <p style="font-size:13px; color:var(--muted); margin:0;">
+            Multi-Location Portfolio Oversight · Real-Time Stream · <span id="cc-live-clock" style="font-family:var(--font-mono);font-weight:600;color:var(--ink);">${getIstClockString()}</span>
           </p>
-
-          <!-- Context Strip -->
-          <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:12px; color:var(--ink);">
-            <div style="display:inline-flex; align-items:center; gap:6px; background:var(--surface-sunken); padding:4px 10px; border-radius:6px; border:1px solid var(--line);">
-              <span style="font-weight:700; color:var(--bronze-600);">📍 All Outlets (Portfolio)</span>
-            </div>
-            <div style="display:inline-flex; align-items:center; gap:5px; background:var(--surface-sunken); padding:4px 10px; border-radius:6px; border:1px solid var(--line); font-family:var(--font-mono); font-size:11.5px;">
-              <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--color-success, #2E7D32);"></span>
-              <span>Server Time: <strong id="cc-live-clock">${getIstClockString()}</strong> · Online · Synced</span>
-            </div>
-          </div>
         </div>
 
         <!-- Controls: Saved Views & Live Refresh -->
@@ -592,309 +590,369 @@ export function renderMasterDashboard({ roleLabel = "Master Administrator" } = {
         </div>
       </div>
 
-      <!-- Filter Bar: Date Range & Comparison Selector Toolbar -->
-      <div class="card" style="padding:14px 18px; margin-bottom:18px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-          <!-- Period Pills -->
-          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-            <span style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--muted); letter-spacing:0.06em; margin-right:4px;">Period:</span>
-            <button class="btn btn-xs ${dashboardState.period === "today" ? "btn-primary" : "btn-ghost"}" data-period="today" type="button">Today</button>
-            <button class="btn btn-xs ${dashboardState.period === "yesterday" ? "btn-primary" : "btn-ghost"}" data-period="yesterday" type="button">Yesterday</button>
-            <button class="btn btn-xs ${dashboardState.period === "7d" ? "btn-primary" : "btn-ghost"}" data-period="7d" type="button">Last 7D</button>
-            <button class="btn btn-xs ${dashboardState.period === "30d" ? "btn-primary" : "btn-ghost"}" data-period="30d" type="button">Last 30D</button>
-            <button class="btn btn-xs ${dashboardState.period === "this_month" ? "btn-primary" : "btn-ghost"}" data-period="this_month" type="button">This Month</button>
-            <button class="btn btn-xs ${dashboardState.period === "custom" ? "btn-primary" : "btn-ghost"}" data-period="custom" type="button">Custom</button>
-          </div>
-
-          <!-- Custom Date Inputs (shown when Custom is active) -->
-          <div id="cc-custom-date-wrap" style="display:${dashboardState.period === "custom" ? "flex" : "none"}; align-items:center; gap:8px;">
-            <input type="date" id="cc-custom-from" class="form-control form-control-sm" style="font-size:12px; width:130px;" />
-            <span style="color:var(--muted); font-size:12px;">to</span>
-            <input type="date" id="cc-custom-to" class="form-control form-control-sm" style="font-size:12px; width:130px;" />
-            <button class="btn btn-xs btn-primary" id="cc-apply-custom-btn" type="button">Apply</button>
-          </div>
-
-          <!-- Comparison Toggle -->
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--muted); letter-spacing:0.06em;">Compare:</span>
-            <select id="cc-comparison-select" class="form-control form-control-sm" style="font-size:12px; width:160px;">
-              <option value="previous_period" ${dashboardState.comparison === "previous_period" ? "selected" : ""}>vs Prev Period</option>
-              <option value="previous_month" ${dashboardState.comparison === "previous_month" ? "selected" : ""}>vs Prev Month</option>
-              <option value="target" ${dashboardState.comparison === "target" ? "selected" : ""}>vs Budget / Target</option>
-              <option value="none" ${dashboardState.comparison === "none" ? "selected" : ""}>No Comparison</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tier 1c: Global Operational Status Strip (Section 28) -->
-      <div id="cc-global-status-strip" class="card" style="padding:10px 18px;margin-bottom:16px;background:var(--surface-sunken);border:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:12px;">
-        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-          <span style="display:flex;align-items:center;gap:5px;cursor:pointer;" data-strip-drill="cafes">
-            <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
-            <strong id="strip-cafes-count" style="color:var(--ink);">${cafes.length} Cafés Active</strong>
-          </span>
-          <span style="color:var(--line-strong);">|</span>
-          <span style="cursor:pointer;" data-strip-drill="workforce">
-            👥 <strong id="strip-staff-count" style="color:var(--ink);">${kpis.staffPresent?.value || 18}/${kpis.staffPresent?.scheduled || 21} Staff Present</strong>
-          </span>
-          <span style="color:var(--line-strong);">|</span>
-          <span style="cursor:pointer;" data-strip-drill="attention">
-            ⚠️ <strong id="strip-actions-count" style="color:var(--ink);">${attention.length} Action Items</strong>
-          </span>
-          <span style="color:var(--line-strong);">|</span>
-          <span style="cursor:pointer;" data-strip-drill="stock">
-            📦 <strong id="strip-stock-count" style="color:var(--ink);">${kpis.stockRisk?.critical || 1} Critical Stock Risks</strong>
-          </span>
-          <span style="color:var(--line-strong);">|</span>
-          <span>
-            💻 <strong style="#10b981;">All POS Online</strong>
-          </span>
-        </div>
-        <div style="font-size:11.5px;color:var(--muted);">
-          Data Freshness: <span id="strip-last-sync" style="color:var(--ink);font-weight:600;">LIVE</span>
-        </div>
-      </div>
-
-      <!-- Tier 2: Authority Status Banner -->
-      <div id="cc-authority-banner" style="margin-bottom:16px;">
-        ${
-          isMaster && isPrimary
-            ? `
-          <div class="card" style="padding:10px 18px;background:var(--surface-raised);border-left:4px solid #c99a5c;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-size:11px;font-weight:800;letter-spacing:0.08em;padding:3px 8px;border-radius:3px;background:rgba(201,154,92,0.2);color:#c99a5c;border:1px solid #c99a5c;">
-                PRIMARY MASTER
-              </span>
-              <span style="font-size:12.5px;color:var(--ink);">
-                <strong>Full Authority Active:</strong> Unrestricted access to Personal Ledger, Financial Accounts, Organizational Payroll, and Target Management.
-              </span>
+      <!-- NEW: Premium 4-Step Executive Pagination Bar (Top) -->
+      <div class="cc-pagination-bar">
+        <div class="cc-page-tabs" role="tablist">
+          <button class="cc-page-tab ${dashboardState.currentPage === 1 ? 'active' : ''}" data-page="1" type="button" role="tab" aria-selected="${dashboardState.currentPage === 1}">
+            <span class="cc-tab-num">1</span>
+            <div class="cc-tab-info">
+              <span class="cc-tab-title">Executive Essentials</span>
+              <span class="cc-tab-desc">Fast Actions &amp; Core KPIs</span>
             </div>
-            <button class="btn btn-xs btn-ghost" id="cc-open-target-modal-btn" type="button">
-              🎯 Set Location Targets
+            <span class="cc-tab-badge">Most Used</span>
+          </button>
+          <button class="cc-page-tab ${dashboardState.currentPage === 2 ? 'active' : ''}" data-page="2" type="button" role="tab" aria-selected="${dashboardState.currentPage === 2}">
+            <span class="cc-tab-num">2</span>
+            <div class="cc-tab-info">
+              <span class="cc-tab-title">Branch Operations</span>
+              <span class="cc-tab-desc">7 Outlets Performance</span>
+            </div>
+          </button>
+          <button class="cc-page-tab ${dashboardState.currentPage === 3 ? 'active' : ''}" data-page="3" type="button" role="tab" aria-selected="${dashboardState.currentPage === 3}">
+            <span class="cc-tab-num">3</span>
+            <div class="cc-tab-info">
+              <span class="cc-tab-title">Revenue &amp; Trends</span>
+              <span class="cc-tab-desc">Commercial Velocity</span>
+            </div>
+          </button>
+          <button class="cc-page-tab ${dashboardState.currentPage === 4 ? 'active' : ''}" data-page="4" type="button" role="tab" aria-selected="${dashboardState.currentPage === 4}">
+            <span class="cc-tab-num">4</span>
+            <div class="cc-tab-info">
+              <span class="cc-tab-title">Workforce &amp; Audit</span>
+              <span class="cc-tab-desc">Shifts &amp; Inventory</span>
+            </div>
+          </button>
+        </div>
+
+        <div class="cc-pagination-nav">
+          <button class="btn btn-xs btn-outline cc-prev-page-btn" type="button" ${dashboardState.currentPage === 1 ? 'disabled' : ''}>
+            &larr; Prev
+          </button>
+          <span class="cc-page-indicator">Page <strong class="cc-current-page-text">${dashboardState.currentPage}</strong> of 4</span>
+          <button class="btn btn-xs btn-primary cc-next-page-btn" type="button" ${dashboardState.currentPage === 4 ? 'disabled' : ''}>
+            Next &rarr;
+          </button>
+        </div>
+      </div>
+
+      <!-- Backward compatibility invisible mount -->
+      <div id="cc-kpi-grid" style="display:none;"></div>
+
+      <!-- ============================================================== -->
+      <!-- PAGE 1: EXECUTIVE ESSENTIALS (MOST FREQUENTLY USED OPERATIONS) -->
+      <!-- ============================================================== -->
+      <div id="cc-page-1" class="cc-page-view" style="display:${dashboardState.currentPage === 1 ? 'block' : 'none'};">
+
+        <!-- Executive Fast Actions Toolbar (Dark Sky Blue Filled) -->
+        <div class="card" style="padding:16px 20px;margin-bottom:20px;border-radius:var(--radius-card, 12px);border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow-xs);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);">Executive Fast Actions &amp; Workflows</span>
+              <span class="status success" style="font-size:9.5px;font-weight:800;padding:2px 6px;">HIGH PRIORITY</span>
+            </div>
+            <span style="font-size:11px;color:var(--muted);">Single-click quick jump</span>
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+            <button class="exec-action-btn" data-quick-action="pos" type="button">
+              <span class="exec-icon-box">${icon('pos', 14)}</span>
+              <span>New POS Bill</span>
+            </button>
+            <button class="exec-action-btn" data-quick-action="expenses" type="button">
+              <span class="exec-icon-box">${icon('expenses', 14)}</span>
+              <span>Record Expense</span>
+            </button>
+            <button class="exec-action-btn" data-quick-action="inventory" type="button">
+              <span class="exec-icon-box">${icon('inventory', 14)}</span>
+              <span>Adjust Stock</span>
+            </button>
+            <button class="exec-action-btn" data-quick-action="employees" type="button">
+              <span class="exec-icon-box">${icon('employees', 14)}</span>
+              <span>Onboard Employee</span>
+            </button>
+            <button class="exec-action-btn" data-quick-action="department-orders" type="button">
+              <span class="exec-icon-box">${icon('deptOrders', 14)}</span>
+              <span>Dept Order</span>
+            </button>
+            ${
+              isMaster && isPrimary
+                ? `<button class="exec-action-btn" data-quick-action="personal-ledger" type="button">
+                    <span class="exec-icon-box">${icon('ledger', 14)}</span>
+                    <span>Personal Ledger</span>
+                  </button>`
+                : ""
+            }
+            <button class="exec-action-btn" data-quick-action="reports" type="button">
+              <span class="exec-icon-box">${icon('reports', 14)}</span>
+              <span>Financial Reports</span>
+            </button>
+            <button class="exec-action-btn" data-quick-action="tasks" type="button">
+              <span class="exec-icon-box">${icon('tasks', 14)}</span>
+              <span>Task Centre</span>
+            </button>
+            <button class="exec-action-btn" data-quick-action="design-system" type="button" title="View Flowbite UI Component Suite">
+              <span class="exec-icon-box">${icon('integrations', 14) || '⚡'}</span>
+              <span>UI Components Suite</span>
             </button>
           </div>
-        `
-            : isMaster && !isPrimary
-            ? `
-          <div class="card" style="padding:10px 18px;background:var(--surface-raised);border-left:4px solid var(--muted);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-size:11px;font-weight:800;letter-spacing:0.08em;padding:3px 8px;border-radius:3px;background:var(--surface-sunken);color:var(--muted);border:1px solid var(--line);">
-                MASTER (OPERATIONAL)
-              </span>
-              <span style="font-size:12.5px;color:var(--ink);">
-                <strong>Operational Portfolio View:</strong> Full operational command across all locations. Personal Ledger &amp; sensitive payroll metrics are restricted to Primary Master.
-              </span>
-            </div>
-          </div>
-        `
-            : isOwner
-            ? `
-          <div class="card" style="padding:10px 18px;background:var(--surface-raised);border-left:4px solid #10b981;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-size:11px;font-weight:800;letter-spacing:0.08em;padding:3px 8px;border-radius:3px;background:rgba(16,185,129,0.2);color:#10b981;border:1px solid #10b981;">
-                OWNER PORTAL
-              </span>
-              <span style="font-size:12.5px;color:var(--ink);">
-                <strong>Executive Oversight:</strong> Cross-location strategic KPI tracking, commercial mix, and approvals queue.
-              </span>
-            </div>
-            <button class="btn btn-xs btn-ghost" id="cc-open-target-modal-btn" type="button">
-              🎯 Set Location Targets
-            </button>
-          </div>
-        `
-            : ""
-        }
-      </div>
-
-      <!-- Tier 3: Executive Quick Action Shortcuts -->
-      <div class="card" style="padding:16px 20px;margin-bottom:24px;border-radius:var(--radius-card, 12px);border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow-xs);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);">Executive Fast Actions &amp; Workflows</span>
-          </div>
-          <span style="font-size:11px;color:var(--muted);">Single-click quick jump</span>
         </div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-          <button class="exec-action-btn" data-quick-action="pos" type="button">
-            <span class="exec-icon-box">${icon('pos', 14)}</span>
-            <span>New POS Bill</span>
-          </button>
-          <button class="exec-action-btn" data-quick-action="expenses" type="button">
-            <span class="exec-icon-box">${icon('expenses', 14)}</span>
-            <span>Record Expense</span>
-          </button>
-          <button class="exec-action-btn" data-quick-action="inventory" type="button">
-            <span class="exec-icon-box">${icon('inventory', 14)}</span>
-            <span>Adjust Stock</span>
-          </button>
-          <button class="exec-action-btn" data-quick-action="employees" type="button">
-            <span class="exec-icon-box">${icon('employees', 14)}</span>
-            <span>Onboard Employee</span>
-          </button>
-          <button class="exec-action-btn" data-quick-action="department-orders" type="button">
-            <span class="exec-icon-box">${icon('deptOrders', 14)}</span>
-            <span>Dept Order</span>
-          </button>
-          ${
-            isMaster && isPrimary
-              ? `<button class="exec-action-btn" data-quick-action="personal-ledger" type="button">
-                  <span class="exec-icon-box">${icon('ledger', 14)}</span>
-                  <span>Personal Ledger</span>
-                </button>`
-              : ""
-          }
-          <button class="exec-action-btn" data-quick-action="reports" type="button">
-            <span class="exec-icon-box">${icon('reports', 14)}</span>
-            <span>Financial Reports</span>
-          </button>
-          <button class="exec-action-btn" data-quick-action="tasks" type="button">
-            <span class="exec-icon-box">${icon('tasks', 14)}</span>
-            <span>Task Centre</span>
-          </button>
-          <button class="exec-action-btn" data-quick-action="design-system" type="button" title="View Flowbite UI Component Suite">
-            <span class="exec-icon-box">${icon('integrations', 14) || '⚡'}</span>
-            <span>UI Components Suite</span>
-          </button>
+
+        <!-- 4 Vital Executive Core KPIs in Orderly 4-Column Grid -->
+        <div id="cc-kpi-primary-grid" class="cc-kpi-quad-grid">
+          ${renderPrimaryKpisHtml(kpis)}
         </div>
-      </div>
 
-      <!-- Tier 4: Portfolio Pulse KPI Grid (8 Cards with Definition tooltips) -->
-      <div id="cc-kpi-grid" class="cc-kpi-grid">
-        ${renderKpisHtml(kpis)}
-      </div>
-
-      <!-- Tier 5 & 6: Revenue Trend Visualizer (Dual Series + Chart/Data Switch) + Attention Queue -->
-      <div class="cc-trend-attention-grid">
-
-        <!-- Left: Revenue & Margin Trend Visualizer -->
-        <div class="card" style="padding:22px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
-          <div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
-              <div style="min-width:0;">
-                <h2 style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--ink);">
-                  Portfolio Revenue &amp; Trend Visualizer
-                </h2>
-                <p style="font-size:12px;color:var(--muted);margin:0;">
-                  Daily completed gross billings across all operating locations.
-                </p>
-              </div>
-              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-                <!-- Chart / Data Switch (Section 45) -->
-                <div class="btn-group" style="display:inline-flex;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--line);">
-                  <button class="btn btn-xs ${dashboardState.trendViewMode === "chart" ? "btn-primary" : "btn-ghost"}" id="cc-toggle-trend-chart" type="button">Chart</button>
-                  <button class="btn btn-xs ${dashboardState.trendViewMode === "data" ? "btn-primary" : "btn-ghost"}" id="cc-toggle-trend-data" type="button">Data</button>
+        <!-- Orderly 2-Column Split: Attention Queue + Executive Operational Radar -->
+        <div class="cc-two-col-balanced">
+          <!-- Left: Urgent Attention Queue -->
+          <div class="card" style="padding:22px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <div>
+                  <h2 style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--ink);">
+                    Needs Your Attention
+                  </h2>
+                  <p style="font-size:12px;color:var(--muted);margin:0;">
+                    Live exception queue ranked by urgency.
+                  </p>
                 </div>
-
-                <div id="cc-trend-legend" style="display:flex;align-items:center;gap:10px;font-size:11.5px;flex-wrap:nowrap;">
-                  <span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">
-                    <span style="width:8px;height:8px;background:var(--bronze-500);border-radius:2px;display:inline-block;"></span>
-                    <strong style="color:var(--ink);">Actual</strong>
-                  </span>
-                  <span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">
-                    <span style="width:10px;height:2px;background:var(--muted-2);display:inline-block;border-top:2px dashed var(--line-strong);"></span>
-                    <span style="color:var(--muted);">Budget</span>
-                  </span>
-                </div>
+                <span id="cc-attention-total-badge" class="badge" style="font-size:11px;background:var(--surface-sunken);">
+                  ${attention.length} Items
+                </span>
+              </div>
+              <div id="cc-attention-queue-mount">
+                ${renderAttentionQueueHtml(attention)}
               </div>
             </div>
+            <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;">
+              <button class="btn btn-sm btn-ghost cc-card-bottom-btn" data-quick-action="tasks" type="button">
+                Open Full Operational Task Centre →
+              </button>
+            </div>
+          </div>
 
-            <!-- Trend Display Mount (Chart or Data Table) -->
-            <div id="cc-trend-chart-mount" style="height:210px;width:100%;position:relative;">
-              ${renderRevenueTrendChartHtml(initialData.revenueTrend, dashboardState.trendViewMode)}
+          <!-- Right: Executive Operations & Branch Fast Links -->
+          <div class="card" style="padding:22px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <div>
+                  <h2 style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--ink);">
+                    Operational &amp; Risk Radar
+                  </h2>
+                  <p style="font-size:12px;color:var(--muted);margin:0;">
+                    Vital status across attendance, stock risk, and action items.
+                  </p>
+                </div>
+                <span class="status info" style="font-size:10px;font-weight:700;">LIVE PULSE</span>
+              </div>
+              <div id="cc-kpi-secondary-grid" class="cc-kpi-quad-grid" style="grid-template-columns:repeat(2, 1fr);gap:12px;margin-bottom:14px;">
+                ${renderSecondaryKpisHtml(kpis)}
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:12px;color:var(--muted);">Want detailed branch analysis?</span>
+              <button class="btn btn-sm btn-primary" data-jump-page="2" type="button" style="font-size:12px;">
+                Explore All 7 Outlets on Page 2 &rarr;
+              </button>
             </div>
           </div>
         </div>
 
-        <!-- Right: Needs Your Attention Queue -->
-        <div class="card" style="padding:22px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
-          <div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-              <div>
-                <h2 style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--ink);">
-                  Needs Your Attention
-                </h2>
-                <p style="font-size:12px;color:var(--muted);margin:0;">
-                  Live exception queue ranked by urgency.
-                </p>
-              </div>
-              <span id="cc-attention-total-badge" class="badge" style="font-size:11px;background:var(--surface-sunken);">
-                ${attention.length} Items
-              </span>
-            </div>
+      </div>
 
-            <!-- Attention List Mount -->
-            <div id="cc-attention-queue-mount">
-              ${renderAttentionQueueHtml(attention)}
+      <!-- ============================================================== -->
+      <!-- PAGE 2: MULTI-LOCATION & BRANCH PERFORMANCE                    -->
+      <!-- ============================================================== -->
+      <div id="cc-page-2" class="cc-page-view" style="display:${dashboardState.currentPage === 2 ? 'block' : 'none'};">
+        <div class="card" style="padding:22px;margin-bottom:24px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <h2 style="font-size:17px;font-weight:700;margin:0 0 4px;color:var(--ink);">
+                Multi-Location Performance Breakdown
+              </h2>
+              <p style="font-size:12.5px;color:var(--muted);margin:0;">
+                Live health, sales velocity, target pacing, and stock posture across all 7 café branch outlets.
+              </p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:11.5px;color:var(--muted);font-weight:600;">Status Matrix:</span>
+                <span class="status success" style="font-size:10px;font-weight:700;">HEALTHY</span>
+                <span class="status warning" style="font-size:10px;font-weight:700;">ATTENTION</span>
+                <span class="status danger" style="font-size:10px;font-weight:700;">CRITICAL</span>
+              </div>
+              <button class="btn btn-xs btn-outline" id="cc-open-target-modal-btn-page2" data-jump-action="set-targets" type="button">
+                🎯 Target Settings
+              </button>
             </div>
           </div>
 
-          <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;">
-            <button class="btn btn-sm btn-ghost cc-card-bottom-btn" data-quick-action="tasks" type="button">
-              Open Full Operational Task Centre →
-            </button>
+          <div id="cc-cafes-grid-mount" class="cc-cafes-grid">
+            ${renderCafePerformanceCardsHtml(cafes)}
           </div>
         </div>
       </div>
 
-      <!-- Tier 7: Multi-Café Performance Breakdown Grid (with Pace to Target) -->
-      <div class="card" style="padding:22px;margin-bottom:24px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:gap;gap:10px;">
-          <div>
-            <h2 style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--ink);">
-              Multi-Location Performance Breakdown
-            </h2>
-            <p style="font-size:12px;color:var(--muted);margin:0;">
-              Live health, sales velocity, target pacing, and stock posture per café branch.
+      <!-- ============================================================== -->
+      <!-- PAGE 3: REVENUE & COMMERCIAL ANALYTICS                         -->
+      <!-- ============================================================== -->
+      <div id="cc-page-3" class="cc-page-view" style="display:${dashboardState.currentPage === 3 ? 'block' : 'none'};">
+        <div class="cc-trend-attention-grid" style="grid-template-columns: 1.25fr 0.75fr; margin-bottom: 24px;">
+          <!-- Left: Revenue & Margin Trend Visualizer -->
+          <div class="card" style="padding:22px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+                <div style="min-width:0;">
+                  <h2 style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--ink);">
+                    Portfolio Revenue &amp; Trend Visualizer
+                  </h2>
+                  <p style="font-size:12px;color:var(--muted);margin:0;">
+                    Daily completed gross billings across all operating locations.
+                  </p>
+                </div>
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+                  <div class="btn-group" style="display:inline-flex;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--line);">
+                    <button class="btn btn-xs ${dashboardState.trendViewMode === "chart" ? "btn-primary" : "btn-ghost"}" id="cc-toggle-trend-chart" type="button">Chart</button>
+                    <button class="btn btn-xs ${dashboardState.trendViewMode === "data" ? "btn-primary" : "btn-ghost"}" id="cc-toggle-trend-data" type="button">Data</button>
+                  </div>
+
+                  <div id="cc-trend-legend" style="display:flex;align-items:center;gap:10px;font-size:11.5px;flex-wrap:nowrap;">
+                    <span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">
+                      <span style="width:8px;height:8px;background:var(--bronze-500, #0284c7);border-radius:2px;display:inline-block;"></span>
+                      <strong style="color:var(--ink);">Actual</strong>
+                    </span>
+                    <span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">
+                      <span style="width:10px;height:2px;background:var(--muted-2);display:inline-block;border-top:2px dashed var(--line-strong);"></span>
+                      <span style="color:var(--muted);">Budget</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Trend Display Mount -->
+              <div id="cc-trend-chart-mount" style="height:250px;width:100%;position:relative;">
+                ${renderRevenueTrendChartHtml(initialData.revenueTrend, dashboardState.trendViewMode)}
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Commercial Velocity (Top 5 Menu Items) -->
+          <div class="card" style="padding:22px;min-width:0;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <h2 style="font-size:16px;font-weight:700;margin:0;color:var(--ink);">
+                  Commercial Velocity (Top Items)
+                </h2>
+                <button class="btn btn-xs btn-ghost" data-quick-action="menu" type="button">Full Menu →</button>
+              </div>
+              <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">
+                Top revenue contributors for the selected date range.
+              </p>
+
+              <div id="cc-top-menu-mount">
+                ${renderCommercialMixHtml(commercial?.topMenuItems || [])}
+              </div>
+            </div>
+            <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;text-align:right;">
+              <span style="font-size:11.5px;color:var(--muted);">Updated every 60s from POS bills</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- PAGE 4: WORKFORCE & OPERATIONAL GOVERNANCE                     -->
+      <!-- ============================================================== -->
+      <div id="cc-page-4" class="cc-page-view" style="display:${dashboardState.currentPage === 4 ? 'block' : 'none'};">
+        <div class="cc-ops-commercial-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 24px;">
+          <!-- Left: Operational & Workforce Pulse -->
+          <div class="card" style="padding:22px;min-width:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+              <h2 style="font-size:16px;font-weight:700;margin:0;color:var(--ink);">
+                Operational &amp; Workforce Pulse
+              </h2>
+              <button class="btn btn-xs btn-ghost" data-quick-action="attendance" type="button">Attendance →</button>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">
+              Daily shift compliance, procurement triggers, and maintenance status.
             </p>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:11.5px;color:var(--muted);">Health Matrix:</span>
-            <span class="status success" style="font-size:10px;">HEALTHY</span>
-            <span class="status warning" style="font-size:10px;">ATTENTION</span>
-            <span class="status danger" style="font-size:10px;">CRITICAL</span>
-          </div>
-        </div>
 
-        <!-- Cards Mount -->
-        <div id="cc-cafes-grid-mount" class="cc-cafes-grid">
-          ${renderCafePerformanceCardsHtml(cafes)}
+            <div id="cc-ops-snapshot-mount">
+              ${renderOperationalSnapshotHtml(ops)}
+            </div>
+          </div>
+
+          <!-- Right: Stock & Compliance Watchlist -->
+          <div class="card" style="padding:22px;min-width:0;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <h2 style="font-size:16px;font-weight:700;margin:0;color:var(--ink);">
+                  Inventory &amp; Audit Governance
+                </h2>
+                <button class="btn btn-xs btn-ghost" data-quick-action="inventory" type="button">Stock Ledger →</button>
+              </div>
+              <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">
+                Par thresholds, critical shortages, and vendor order intake queues.
+              </p>
+
+              <div style="display:flex;flex-direction:column;gap:12px;">
+                <div style="padding:14px;border-radius:10px;background:var(--surface-sunken);border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;">
+                  <div>
+                    <strong style="font-size:13px;color:var(--ink);">Critical Stock Shortages</strong>
+                    <div style="font-size:11.5px;color:var(--muted);">Zero or negative stock items</div>
+                  </div>
+                  <span class="badge ${kpis.stockRisk?.critical > 0 ? 'badge-danger' : 'badge-success'}" style="font-size:12px;font-weight:700;">
+                    ${kpis.stockRisk?.critical || 0} SKUs
+                  </span>
+                </div>
+
+                <div style="padding:14px;border-radius:10px;background:var(--surface-sunken);border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;">
+                  <div>
+                    <strong style="font-size:13px;color:var(--ink);">Below Reorder Par Levels</strong>
+                    <div style="font-size:11.5px;color:var(--muted);">Automated replenishment triggered</div>
+                  </div>
+                  <span class="badge badge-warning" style="font-size:12px;font-weight:700;">
+                    ${kpis.stockRisk?.belowPar || 0} SKUs
+                  </span>
+                </div>
+
+                <div style="padding:14px;border-radius:10px;background:var(--surface-sunken);border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;">
+                  <div>
+                    <strong style="font-size:13px;color:var(--ink);">Vendor Deliveries &amp; GRN Intake</strong>
+                    <div style="font-size:11.5px;color:var(--muted);">Dual automatic inventory addition lifecycle</div>
+                  </div>
+                  <button class="btn btn-xs btn-outline" data-quick-action="procurement" type="button">
+                    View Orders
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:12px;display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:11.5px;color:var(--muted);">Rule: GRN order verification frozen per AGENTS.md</span>
+              <button class="btn btn-xs btn-ghost" data-quick-action="quality" type="button">Audit Checklists →</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Tier 8 & 9: Operational Snapshots + Commercial Mix (Top Menu Items) -->
-      <div class="cc-ops-commercial-grid">
-
-        <!-- Operational Snapshots -->
-        <div class="card" style="padding:22px;min-width:0;">
-          <h2 style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--ink);">
-            Operational &amp; Workforce Pulse
-          </h2>
-          <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">
-            Daily shift compliance, procurement triggers, and maintenance status.
-          </p>
-
-          <div id="cc-ops-snapshot-mount">
-            ${renderOperationalSnapshotHtml(ops)}
-          </div>
+      <!-- NEW: Flowbite Style Bottom Pagination Bar -->
+      <div class="cc-pagination-bottom">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:12.5px;color:var(--muted);">
+            Active View: <strong class="cc-page-name-text" style="color:var(--ink);">Executive Essentials &amp; Fast Actions</strong> (Page <span class="cc-current-page-text">${dashboardState.currentPage}</span> of 4)
+          </span>
         </div>
-
-        <!-- Commercial Mix: Top 5 Menu Items -->
-        <div class="card" style="padding:22px;min-width:0;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-            <h2 style="font-size:16px;font-weight:700;margin:0;color:var(--ink);">
-              Commercial Velocity (Top 5 Menu Items)
-            </h2>
-            <button class="btn btn-xs btn-ghost" data-quick-action="menu" type="button">Full Menu →</button>
-          </div>
-          <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">
-            Top revenue contributors for the selected date range.
-          </p>
-
-          <div id="cc-top-menu-mount">
-            ${renderCommercialMixHtml(commercial?.topMenuItems || [])}
-          </div>
+        <div class="cc-page-numbers-group">
+          <button class="btn btn-xs btn-outline cc-prev-page-btn" type="button" ${dashboardState.currentPage === 1 ? 'disabled' : ''}>
+            &larr; Prev
+          </button>
+          <button class="cc-page-num-btn btn btn-xs ${dashboardState.currentPage === 1 ? 'btn-primary active' : 'btn-ghost'}" data-page="1" type="button">1</button>
+          <button class="cc-page-num-btn btn btn-xs ${dashboardState.currentPage === 2 ? 'btn-primary active' : 'btn-ghost'}" data-page="2" type="button">2</button>
+          <button class="cc-page-num-btn btn btn-xs ${dashboardState.currentPage === 3 ? 'btn-primary active' : 'btn-ghost'}" data-page="3" type="button">3</button>
+          <button class="cc-page-num-btn btn btn-xs ${dashboardState.currentPage === 4 ? 'btn-primary active' : 'btn-ghost'}" data-page="4" type="button">4</button>
+          <button class="btn btn-xs btn-primary cc-next-page-btn" type="button" ${dashboardState.currentPage === 4 ? 'disabled' : ''}>
+            Next &rarr;
+          </button>
         </div>
       </div>
 
@@ -903,6 +961,78 @@ export function renderMasterDashboard({ roleLabel = "Master Administrator" } = {
     <!-- Modals Mount Root -->
     <div id="cc-modals-mount"></div>
   `;
+}
+
+// ─── Executive Pagination View Switcher ────────────────────────────────────────
+
+export function switchDashboardPage(pageNum, root) {
+  if (!root) return;
+  const targetPage = Math.max(1, Math.min(4, parseInt(pageNum, 10) || 1));
+  dashboardState.currentPage = targetPage;
+
+  // 1. Toggle Page View Containers
+  for (let i = 1; i <= 4; i++) {
+    const pageEl = root.querySelector(`#cc-page-${i}`);
+    if (pageEl) {
+      pageEl.style.display = i === targetPage ? "block" : "none";
+    }
+  }
+
+  // 2. Update Top Navigation Tabs
+  root.querySelectorAll(".cc-page-tab").forEach((tab) => {
+    const p = parseInt(tab.dataset.page, 10);
+    const isActive = p === targetPage;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+
+  // 3. Update Prev / Next Buttons (Top & Bottom)
+  root.querySelectorAll(".cc-prev-page-btn").forEach((btn) => {
+    btn.disabled = targetPage <= 1;
+  });
+  root.querySelectorAll(".cc-next-page-btn").forEach((btn) => {
+    btn.disabled = targetPage >= 4;
+  });
+
+  // 4. Update Current Page Number Display
+  root.querySelectorAll(".cc-current-page-text").forEach((el) => {
+    el.textContent = targetPage;
+  });
+
+  // 5. Update Bottom Active View Description
+  const pageNames = {
+    1: "Executive Essentials & Fast Actions",
+    2: "Multi-Location & Branch Operations",
+    3: "Portfolio Revenue & Commercial Velocity",
+    4: "Workforce & Inventory Governance",
+  };
+  const nameEl = root.querySelector(".cc-page-name-text");
+  if (nameEl) {
+    nameEl.textContent = pageNames[targetPage] || "Executive Essentials & Fast Actions";
+  }
+
+  // 6. Update Bottom Flowbite-Styled Number Buttons
+  root.querySelectorAll(".cc-page-num-btn").forEach((btn) => {
+    const p = parseInt(btn.dataset.page, 10);
+    if (p === targetPage) {
+      btn.classList.add("btn-primary", "active");
+      btn.classList.remove("btn-ghost");
+    } else {
+      btn.classList.remove("btn-primary", "active");
+      btn.classList.add("btn-ghost");
+    }
+  });
+
+  // 7. Ensure SVG Revenue Trend Chart is properly measured & rendered if entering Page 3
+  if (targetPage === 3) {
+    renderRevenueTrendChart(root, dashboardState.data?.revenueTrend || []);
+  }
+
+  // 8. Smoothly anchor viewport to top of Command Centre
+  const paginationBar = root.querySelector(".cc-pagination-bar");
+  if (paginationBar) {
+    paginationBar.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 // ─── Hydration & Live Event Wiring ───────────────────────────────────────────
@@ -942,13 +1072,14 @@ export async function hydrateMasterDashboard(root) {
     el.addEventListener("click", () => {
       const target = el.dataset.stripDrill;
       if (target === "cafes") {
-        root.querySelector("#cc-cafes-grid-mount")?.scrollIntoView({ behavior: "smooth" });
+        switchDashboardPage(2, root);
       } else if (target === "workforce") {
-        navigate("attendance");
+        switchDashboardPage(4, root);
       } else if (target === "attention") {
+        switchDashboardPage(1, root);
         root.querySelector("#cc-attention-queue-mount")?.scrollIntoView({ behavior: "smooth" });
       } else if (target === "stock") {
-        navigate("inventory");
+        switchDashboardPage(4, root);
       }
     });
   });
@@ -1064,6 +1195,45 @@ export async function hydrateMasterDashboard(root) {
     });
   }
 
+  // Wire 4-Step Executive Pagination Navigation Controls
+  root.querySelectorAll(".cc-page-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const p = parseInt(tab.dataset.page, 10);
+      switchDashboardPage(p, root);
+    });
+  });
+
+  root.querySelectorAll(".cc-prev-page-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      switchDashboardPage(dashboardState.currentPage - 1, root);
+    });
+  });
+
+  root.querySelectorAll(".cc-next-page-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      switchDashboardPage(dashboardState.currentPage + 1, root);
+    });
+  });
+
+  root.querySelectorAll(".cc-page-num-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = parseInt(btn.dataset.page, 10);
+      switchDashboardPage(p, root);
+    });
+  });
+
+  root.querySelectorAll("[data-jump-page]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = parseInt(btn.dataset.jumpPage, 10);
+      switchDashboardPage(p, root);
+    });
+  });
+
+  const targetModalBtnPage2 = root.querySelector("#cc-open-target-modal-btn-page2");
+  if (targetModalBtnPage2) {
+    targetModalBtnPage2.addEventListener("click", () => openTargetModal(root));
+  }
+
   // Immediately render baseline state on initial mount to prevent empty skeleton layout shifts
   const isNormalMaster = state.role === "master" && !state.user?.isPrimaryMaster;
   if (!dashboardState.data) {
@@ -1149,84 +1319,20 @@ function renderDashboardContent(root, data) {
   const stripStock = root.querySelector("#strip-stock-count");
   if (stripStock) stripStock.textContent = `${kpis.stockRisk?.critical || 0} Critical Stock Risk`;
 
-  // 1. Render 8 Portfolio Pulse KPI Cards with Metric Definition Tooltips
+  // 1. Render Portfolio Pulse KPI Cards across Primary (Page 1) and Secondary Grids
+  const kpiPrimaryGrid = root.querySelector("#cc-kpi-primary-grid");
+  if (kpiPrimaryGrid) {
+    kpiPrimaryGrid.innerHTML = renderPrimaryKpisHtml(kpis);
+  }
+
+  const kpiSecondaryGrid = root.querySelector("#cc-kpi-secondary-grid");
+  if (kpiSecondaryGrid) {
+    kpiSecondaryGrid.innerHTML = renderSecondaryKpisHtml(kpis);
+  }
+
   const kpiGrid = root.querySelector("#cc-kpi-grid");
   if (kpiGrid) {
-    const salesCard = kpiCard({
-      label: "Gross Sales Total ⓘ",
-      value: fmtInr(kpis.salesTotal?.valuePaisa),
-      trend: kpis.salesTotal?.deltaPercent !== null ? `${kpis.salesTotal.deltaPercent >= 0 ? "+" : ""}${kpis.salesTotal.deltaPercent}% vs comparison` : "Current Period",
-      trendType: (kpis.salesTotal?.deltaPercent ?? 0) >= 0 ? "up" : "down",
-    });
-
-    const ordersCard = kpiCard({
-      label: "Total Orders Completed ⓘ",
-      value: fmtNum(kpis.totalOrders?.value),
-      trend: kpis.totalOrders?.deltaPercent !== null ? `${kpis.totalOrders.deltaPercent >= 0 ? "+" : ""}${kpis.totalOrders.deltaPercent}% vs comparison` : "Completed Bills",
-      trendType: (kpis.totalOrders?.deltaPercent ?? 0) >= 0 ? "up" : "down",
-    });
-
-    const aovCard = kpiCard({
-      label: "Average Order Value ⓘ",
-      value: fmtInr(kpis.aov?.valuePaisa),
-      trend: kpis.aov?.deltaPercent !== null ? `${kpis.aov.deltaPercent >= 0 ? "+" : ""}${kpis.aov.deltaPercent}% vs comparison` : "Per Bill Average",
-      trendType: (kpis.aov?.deltaPercent ?? 0) >= 0 ? "up" : "down",
-    });
-
-    // Expenses card: show value for Primary Master / Owner; show Restricted for Normal Master
-    let expenseValueStr = "—";
-    let expenseTrendStr = "Operating Outflows";
-    if (kpis.expenses?.restricted) {
-      expenseValueStr = "Restricted";
-      expenseTrendStr = "Primary Master Only";
-    } else {
-      expenseValueStr = fmtInr(kpis.expenses?.valuePaisa);
-    }
-    const expenseCard = kpiCard({
-      label: "Operating Expenses ⓘ",
-      value: expenseValueStr,
-      trend: expenseTrendStr,
-      trendType: "neutral",
-    });
-
-    const staffCard = kpiCard({
-      label: "Active Staff on Duty ⓘ",
-      value: `${fmtNum(kpis.staffPresent?.value)} / ${fmtNum(kpis.staffPresent?.scheduled)}`,
-      trend: "Live Shift Coverage",
-      trendType: "up",
-    });
-
-    const exceptionsCard = kpiCard({
-      label: "Attendance Exceptions ⓘ",
-      value: fmtNum(kpis.attendanceExceptions?.value),
-      trend: kpis.attendanceExceptions?.value > 0 ? "Review Required" : "Zero Exceptions",
-      trendType: kpis.attendanceExceptions?.value > 0 ? "down" : "up",
-    });
-
-    const stockCard = kpiCard({
-      label: "Inventory Stock Risk ⓘ",
-      value: `${fmtNum(kpis.stockRisk?.critical)} Critical`,
-      trend: `${fmtNum(kpis.stockRisk?.belowPar)} Below Reorder Par`,
-      trendType: kpis.stockRisk?.critical > 0 ? "down" : "up",
-    });
-
-    const actionsCard = kpiCard({
-      label: "Open Action Items ⓘ",
-      value: fmtNum(kpis.openActions?.value),
-      trend: "Pending Master Decisions",
-      trendType: kpis.openActions?.value > 0 ? "down" : "up",
-    });
-
-    kpiGrid.innerHTML = `
-      ${salesCard}
-      ${ordersCard}
-      ${aovCard}
-      ${expenseCard}
-      ${staffCard}
-      ${exceptionsCard}
-      ${stockCard}
-      ${actionsCard}
-    `;
+    kpiGrid.innerHTML = renderKpisHtml(kpis);
   }
 
   // 2. Render Revenue Trend Chart or Data Table (Section 36, 45)

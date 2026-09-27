@@ -216,6 +216,13 @@ const expenseSchema = new mongoose.Schema(
       index: true,
     },
 
+    idempotencyKey: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+
     expenseType: {
       type: String,
       enum: EXPENSE_TYPES,
