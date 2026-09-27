@@ -1,12 +1,12 @@
+/* input.css file */
 @import "tailwindcss";
 
 @plugin "flowbite/plugin";
 @source "../node_modules/flowbite";
-@source "../../node_modules/flowbite";
-@source "../js/**/*.{js,mjs}";
-@source "../../index.html";
-@source "../../cafe-operations/**/*.html";
-@import "flowbite/dist/flowbite.css";
+@source "./node_modules/flowbite";
+@source "./src/**/*.{html,js}";
+@source "./index.html";
+@source "./cafe-operations/**/*.html";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -196,7 +196,6 @@
     --color-neutral-quaternary: var(--color-gray-200);
     --color-neutral-quaternary-medium: var(--color-gray-200);
     --color-gray: var(--color-gray-300);
-    --color-base: var(--color-gray-800);
 
     /* used for brand colors */
     --color-brand-softer: var(--color-blue-50);

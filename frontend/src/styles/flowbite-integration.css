@@ -1,0 +1,1993 @@
+/* =============================================================================
+   ZAMORIN CAFÉ ERP — FLOWBITE INTEGRATION CSS (Complete Overhaul v4)
+   Tailwind CSS v4 + Flowbite Component Architecture
+   Desktop + Tablet + Mobile Responsive Parity
+   ============================================================================= */
+
+/* ============================================================
+   1. NAVBAR / TOPBAR — Flowbite Navbar Makeover
+   ============================================================ */
+#topbar,
+.topbar,
+.fb-navbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--layer-header, 60);
+  width: 100%;
+  height: var(--topbar, 68px);
+  background: color-mix(in srgb, var(--surface, #101a30) 88%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  transition: background-color var(--motion-fast, 150ms) var(--ease, ease), border-color var(--motion-fast, 150ms) var(--ease, ease);
+}
+
+.topbar-inner,
+.fb-navbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 100%;
+  gap: 12px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.topbar-left,
+.fb-navbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Sidebar Toggle / Hamburger */
+.sidebar-topbar-toggle,
+.fb-navbar-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface, #ffffff);
+  color: var(--ink, #1f2937);
+  cursor: pointer;
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  flex-shrink: 0;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0,0,0,0.05));
+}
+.sidebar-topbar-toggle:hover,
+.fb-navbar-toggle:hover {
+  background: var(--surface-sunken, #f3f4f6);
+  border-color: var(--line-strong, #d1d5db);
+  transform: translateY(-1px);
+}
+.sidebar-topbar-toggle svg,
+.fb-navbar-toggle svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  fill: none;
+}
+
+/* Scope Select in Topbar */
+.select-scope {
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface, #ffffff);
+  color: var(--ink, #1f2937);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0,0,0,0.05));
+  font-family: var(--font-ui, system-ui, sans-serif);
+}
+.select-scope:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  outline: none;
+}
+
+/* Global Search in Topbar */
+.topbar-centre,
+.fb-navbar-centre {
+  flex: 1;
+  max-width: 520px;
+  min-width: 180px;
+}
+.global-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.global-search-wrap .search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--muted, #6b7280);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+.global-search-wrap .search-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+}
+.global-search-wrap input,
+#topbar-search-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 72px 0 38px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface, #ffffff);
+  color: var(--ink, #1f2937);
+  font-size: 13px;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0,0,0,0.05));
+  box-sizing: border-box;
+}
+.global-search-wrap input:focus,
+#topbar-search-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  outline: none;
+}
+.global-search-wrap input::placeholder,
+#topbar-search-input::placeholder {
+  color: var(--muted, #9ca3af);
+}
+.search-kbd {
+  position: absolute;
+  right: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+  background: var(--surface-sunken, #f3f4f6);
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+/* Topbar Right Actions */
+.topbar-right,
+.fb-navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.topbar-action-btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface, #ffffff);
+  color: var(--ink, #374151);
+  cursor: pointer;
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0,0,0,0.05));
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.topbar-action-btn:hover {
+  background: var(--surface-sunken, #f3f4f6);
+  border-color: var(--line-strong, #d1d5db);
+  color: var(--ink, #111827);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.1));
+}
+.topbar-action-btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+.topbar-action-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  pointer-events: none;
+}
+
+/* Live Status Indicator */
+.system-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill, 9999px);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  white-space: nowrap;
+}
+.system-status-indicator.online {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.system-status-indicator.offline {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Notification Dot */
+.badge-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px var(--surface, #ffffff);
+  animation: pulseBadge 2s infinite;
+}
+@keyframes pulseBadge {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.8; }
+}
+
+/* Profile Avatar */
+.profile-avatar-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--ink-900, #111827);
+  color: #ffffff;
+  border: 2px solid var(--line, #e5e7eb);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  flex-shrink: 0;
+}
+.profile-avatar-btn:hover {
+  transform: scale(1.05);
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+/* ============================================================
+   2. MEGA MENU — Flowbite pattern
+   ============================================================ */
+.mega-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.mega-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  height: 38px;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+  color: var(--ink, #1f2937);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  white-space: nowrap;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0,0,0,0.05));
+}
+.mega-menu-btn:hover {
+  background: var(--surface-sunken, #f3f4f6);
+  border-color: #3b82f6;
+  color: #2563eb;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.1));
+}
+.mega-menu-btn[aria-expanded="true"] {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: #3b82f6;
+  color: #2563eb;
+}
+
+.mega-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: min(780px, calc(100vw - 32px));
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: var(--radius-md, 12px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.08);
+  z-index: var(--layer-dropdown, 100);
+  padding: 20px;
+  display: none;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  box-sizing: border-box;
+}
+.mega-menu-dropdown.open {
+  display: grid;
+  animation: mmFadeIn 0.18s var(--ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+}
+@keyframes mmFadeIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.mega-menu-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mega-menu-col:not(:last-child) {
+  border-right: 1px solid var(--line, #e5e7eb);
+  padding-right: 16px;
+}
+.mega-menu-col-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #6b7280);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line, #e5e7eb);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mega-menu-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 8px);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink, #1f2937);
+  text-decoration: none;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  transition: all var(--motion-fast, 150ms) var(--ease, ease);
+  line-height: 1.3;
+}
+.mega-menu-link:hover {
+  background: rgba(59, 130, 246, 0.08);
+  color: #2563eb;
+}
+
+/* ============================================================
+   3. BUTTONS & BUTTON GROUPS — Flowbite Style
+   ============================================================ */
+.btn,
+button.btn,
+input[type="button"].btn,
+input[type="submit"].btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-weight: 500;
+  font-size: 13.5px;
+  line-height: 1.25;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  white-space: nowrap;
+  user-select: none;
+  box-sizing: border-box;
+}
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.08);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
+}
+
+/* Sizes */
+.btn-xs { padding: 4px 8px; font-size: 11.5px; border-radius: 6px; }
+.btn-sm { padding: 6px 12px; font-size: 12.5px; border-radius: 6px; }
+.btn-md { padding: 8px 16px; font-size: 13.5px; border-radius: 8px; }
+.btn-lg { padding: 10px 20px; font-size: 15px; border-radius: 10px; }
+.btn-xl { padding: 12px 24px; font-size: 16px; border-radius: 12px; }
+
+/* Colors */
+.btn-primary {
+  background-color: #1a56db;
+  color: #ffffff;
+  border-color: #1a56db;
+}
+.btn-primary:hover {
+  background-color: #1e429f;
+  border-color: #1e429f;
+}
+.btn-primary:focus {
+  box-shadow: 0 0 0 4px rgba(30, 66, 159, 0.35);
+}
+
+.btn-secondary,
+.btn-alternative {
+  background-color: var(--surface, #ffffff);
+  color: var(--ink, #1f2937);
+  border-color: var(--line-strong, #d1d5db);
+}
+.btn-secondary:hover,
+.btn-alternative:hover {
+  background-color: var(--surface-sunken, #f3f4f6);
+  border-color: var(--ink, #111827);
+  color: #1a56db;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink, #374151);
+  border-color: transparent;
+  box-shadow: none;
+}
+.btn-ghost:hover {
+  background: var(--surface-sunken, #f3f4f6);
+  color: var(--ink, #111827);
+}
+
+.btn-danger {
+  background-color: #e02424;
+  color: #ffffff;
+  border-color: #e02424;
+}
+.btn-danger:hover {
+  background-color: #c81e1e;
+  border-color: #c81e1e;
+}
+.btn-danger:focus {
+  box-shadow: 0 0 0 4px rgba(224, 36, 36, 0.35);
+}
+
+.btn-success {
+  background-color: #0e9f6e;
+  color: #ffffff;
+  border-color: #0e9f6e;
+}
+.btn-success:hover {
+  background-color: #057a55;
+  border-color: #057a55;
+}
+.btn-success:focus {
+  box-shadow: 0 0 0 4px rgba(14, 159, 110, 0.35);
+}
+
+/* Button Group */
+.btn-group,
+.fb-btn-group {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+.btn-group .btn:not(:first-child),
+.fb-btn-group .btn:not(:first-child) {
+  border-left: none;
+  border-radius: 0;
+}
+.btn-group .btn:first-child,
+.fb-btn-group .btn:first-child {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.btn-group .btn:last-child,
+.fb-btn-group .btn:last-child {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.btn-group .btn:only-child,
+.fb-btn-group .btn:only-child {
+  border-radius: 8px;
+}
+
+/* Icon Buttons */
+.btn-icon {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 8px;
+}
+.btn-icon.btn-icon-sm { width: 32px; height: 32px; }
+.btn-icon.btn-icon-lg { width: 44px; height: 44px; }
+
+/* ============================================================
+   4. QR CODE COMPONENT & MODAL SPACING — Flowbite Standard
+   ============================================================ */
+.qr-panel,
+.fb-qr-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 20px;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 16px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  max-width: 340px;
+  width: 100%;
+  margin: 0 auto 16px auto;
+  box-sizing: border-box;
+}
+
+.qr-canvas-wrap,
+.fb-qr-canvas-wrap {
+  width: 210px;
+  height: 210px;
+  border-radius: 14px;
+  background: #ffffff !important;
+  border: 6px solid var(--line, #e5e7eb);
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.qr-canvas-wrap canvas,
+.qr-canvas-wrap svg,
+.qr-canvas-wrap img,
+.fb-qr-canvas-wrap canvas,
+.fb-qr-canvas-wrap svg,
+.fb-qr-canvas-wrap img {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+  object-fit: contain;
+}
+
+.qr-value-display,
+.fb-qr-value {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+  background: var(--surface-sunken, #f3f4f6);
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 8px;
+  padding: 8px 12px;
+  width: 100%;
+  text-align: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qr-actions,
+.fb-qr-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+.qr-actions .btn,
+.fb-qr-actions .btn {
+  flex: 1;
+}
+
+/* ============================================================
+   5. CLIPBOARD COMPONENT — Flowbite Standard
+   ============================================================ */
+.fb-clipboard-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.fb-clipboard-input {
+  flex: 1;
+  padding: 10px 48px 10px 14px;
+  border: 1px solid var(--line-strong, #d1d5db);
+  border-radius: 8px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12.5px;
+  color: var(--ink, #1f2937);
+  background: var(--surface-sunken, #f3f4f6);
+  height: 42px;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-clipboard-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.fb-clipboard-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted, #6b7280);
+  cursor: pointer;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.fb-clipboard-btn:hover {
+  background: var(--surface-hover, #e5e7eb);
+  color: var(--ink, #111827);
+}
+.fb-clipboard-btn.copied {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+}
+.fb-clipboard-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  pointer-events: none;
+}
+
+.clipboard-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted, #4b5563);
+  background: var(--surface-sunken, #f3f4f6);
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+}
+.clipboard-btn:hover {
+  background: var(--surface-hover, #e5e7eb);
+  color: var(--ink, #111827);
+  border-color: var(--line-strong, #d1d5db);
+}
+.clipboard-btn.copied {
+  color: #10b981;
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+/* ============================================================
+   6. SPEED DIAL — Flowbite FAB (POS Shortcuts)
+   ============================================================ */
+.fb-speed-dial {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: var(--layer-dropdown, 100);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 12px;
+}
+.fb-speed-dial-trigger {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: #1a56db;
+  color: #ffffff;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 10px 25px -5px rgba(26, 86, 219, 0.4);
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1), background 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.fb-speed-dial-trigger:hover {
+  background: #1e429f;
+  transform: scale(1.08);
+}
+.fb-speed-dial-trigger.open {
+  background: #e02424;
+  transform: rotate(45deg) scale(1.04);
+}
+.fb-speed-dial-trigger svg {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+  fill: none;
+  pointer-events: none;
+}
+.fb-speed-dial-actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(12px) scale(0.92);
+  transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.fb-speed-dial-actions.open {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.fb-speed-dial-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-direction: row-reverse;
+}
+.fb-speed-dial-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--line, #e5e7eb);
+  background: var(--surface, #ffffff);
+  color: var(--ink, #1f2937);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.fb-speed-dial-btn:hover {
+  background: #1a56db;
+  color: #ffffff;
+  border-color: #1a56db;
+  transform: scale(1.1);
+}
+
+/* ============================================================
+   7. STEPPER — Procurement & Workflow Lifecycle
+   ============================================================ */
+.fb-stepper {
+  display: flex;
+  align-items: flex-start;
+  position: relative;
+  overflow-x: auto;
+  padding: 8px 0 16px 0;
+  scrollbar-width: none;
+  width: 100%;
+}
+.fb-stepper::-webkit-scrollbar { display: none; }
+.fb-stepper-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 80px;
+  position: relative;
+  z-index: 1;
+}
+.fb-stepper-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  left: calc(50% + 20px);
+  right: calc(-50% + 20px);
+  height: 2px;
+  background: var(--line, #e5e7eb);
+  z-index: 0;
+}
+.fb-stepper-step.completed:not(:last-child)::after { background: #0e9f6e; }
+.fb-stepper-step.active:not(:last-child)::after { background: #3b82f6; }
+.fb-stepper-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong, #d1d5db);
+  background: var(--surface, #ffffff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted, #6b7280);
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.fb-stepper-step.active .fb-stepper-icon {
+  border-color: #1a56db;
+  background: #1a56db;
+  color: #ffffff;
+  box-shadow: 0 0 0 4px rgba(26, 86, 219, 0.25);
+}
+.fb-stepper-step.completed .fb-stepper-icon {
+  border-color: #0e9f6e;
+  background: #0e9f6e;
+  color: #ffffff;
+}
+.fb-stepper-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #6b7280);
+  text-align: center;
+  line-height: 1.3;
+}
+.fb-stepper-step.active .fb-stepper-label { color: #1a56db; font-weight: 700; }
+.fb-stepper-step.completed .fb-stepper-label { color: #0e9f6e; }
+
+/* ============================================================
+   8. RESPONSIVE BREAKPOINTS (Mobile, Tablet, Desktop)
+   ============================================================ */
+
+/* ─── Tablet Viewports (768px to 1024px) ─── */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .topbar-centre,
+  .fb-navbar-centre {
+    max-width: 220px;
+  }
+  .primary-master-topbar-controls {
+    flex-wrap: nowrap !important;
+    gap: 6px !important;
+  }
+  .primary-master-topbar-controls .select-scope {
+    max-width: 135px !important;
+    font-size: 11.5px !important;
+    height: 34px !important;
+    padding: 0 6px !important;
+  }
+  .mega-menu-dropdown {
+    min-width: min(600px, calc(100vw - 32px));
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .qr-panel,
+  .fb-qr-panel {
+    max-width: 320px;
+  }
+}
+
+/* ─── Mobile Viewports (<= 768px) ─── */
+@media (max-width: 768px) {
+  #topbar,
+  .topbar,
+  .fb-navbar {
+    height: 56px !important;
+  }
+  .topbar-inner,
+  .fb-navbar-inner {
+    padding: 0 10px !important;
+    gap: 6px !important;
+    flex-wrap: nowrap !important;
+  }
+  .sidebar-topbar-toggle,
+  .fb-navbar-toggle {
+    display: inline-flex !important;
+    width: 36px !important;
+    height: 36px !important;
+    padding: 0 !important;
+  }
+  .topbar-centre,
+  .fb-navbar-centre {
+    display: none !important;
+  }
+  .topbar-left,
+  .fb-navbar-left {
+    gap: 6px !important;
+    flex-shrink: 1 !important;
+    overflow: hidden !important;
+  }
+  .primary-master-topbar-controls {
+    display: inline-flex !important;
+    flex-wrap: nowrap !important;
+    gap: 4px !important;
+  }
+  .primary-master-topbar-controls .select-scope {
+    height: 32px !important;
+    font-size: 11px !important;
+    padding: 0 6px !important;
+    max-width: 100px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .primary-master-topbar-controls .supervised-employee-dropdown {
+    display: none !important;
+  }
+  .mega-menu-btn {
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 4px 8px !important;
+    font-size: 11.5px !important;
+  }
+  .mega-menu-btn-label {
+    display: none !important;
+  }
+  .topbar-right,
+  .fb-navbar-right {
+    gap: 4px !important;
+    flex-shrink: 0 !important;
+  }
+  .topbar-action-btn {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+  }
+  .profile-avatar-btn {
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 11.5px !important;
+  }
+  .system-status-indicator {
+    padding: 2px 6px !important;
+    font-size: 10px !important;
+  }
+  .mega-menu-dropdown {
+    position: fixed;
+    top: 56px;
+    left: 0;
+    right: 0;
+    width: 100%;
+    min-width: 100%;
+    transform: none;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    grid-template-columns: 1fr;
+    max-height: calc(100dvh - 56px);
+    overflow-y: auto;
+    padding: 12px;
+  }
+  .mega-menu-col:not(:last-child) {
+    border-right: none;
+    border-bottom: 1px solid var(--line, #e5e7eb);
+    padding-bottom: 12px;
+    margin-bottom: 8px;
+  }
+  .btn-mobile-full {
+    width: 100% !important;
+    justify-content: center !important;
+  }
+  .qr-panel,
+  .fb-qr-panel {
+    max-width: 100%;
+    padding: 16px;
+  }
+  .qr-canvas-wrap,
+  .fb-qr-canvas-wrap {
+    width: 180px;
+    height: 180px;
+    padding: 8px;
+  }
+  .fb-speed-dial {
+    bottom: 20px;
+    right: 16px;
+  }
+
+  /* Mobile Drawer Sidebar */
+  #sidebar.sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 85vw);
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.25);
+  }
+  #sidebar.sidebar.sidebar-open,
+  #sidebar.sidebar.open {
+    transform: translateX(0);
+  }
+  #sidebar-overlay.active,
+  .sidebar-overlay.open {
+    display: block !important;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 999;
+  }
+}
+
+/* ============================================================
+   10. RTL (RIGHT-TO-LEFT) BIDIRECTIONAL TEXT & COMPONENT SUPPORT
+   Tailwind CSS v4 + Flowbite RTL Variants & Logical Properties
+   ============================================================ */
+[dir="rtl"] {
+  direction: rtl;
+  text-align: right;
+}
+
+[dir="rtl"] .topbar-left,
+[dir="rtl"] .fb-navbar-left {
+  flex-direction: row;
+}
+
+[dir="rtl"] .topbar-right,
+[dir="rtl"] .fb-navbar-right {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .search-icon {
+  left: auto;
+  right: 12px;
+}
+
+[dir="rtl"] .global-search-wrap input {
+  padding-left: 12px;
+  padding-right: 36px;
+}
+
+[dir="rtl"] .search-kbd {
+  right: auto;
+  left: 8px;
+}
+
+[dir="rtl"] .sidebar {
+  border-right: none;
+  border-left: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+}
+
+[dir="rtl"] .mega-menu-dropdown {
+  left: auto;
+  right: 0;
+}
+
+[dir="rtl"] .notif-popover,
+[dir="rtl"] .profile-popover {
+  right: auto;
+  left: 12px;
+}
+
+[dir="rtl"] .fb-speed-dial {
+  right: auto;
+  left: 24px;
+}
+
+[dir="rtl"] .modal-close {
+  right: auto;
+  left: 16px;
+}
+
+[dir="rtl"] .table th,
+[dir="rtl"] .table td,
+[dir="rtl"] .fb-table th,
+[dir="rtl"] .fb-table td {
+  text-align: right;
+}
+
+@media (max-width: 1024px) {
+  [dir="rtl"] #sidebar.sidebar {
+    left: auto;
+    right: 0;
+    transform: translateX(100%);
+  }
+  [dir="rtl"] #sidebar.sidebar.sidebar-open,
+  [dir="rtl"] #sidebar.sidebar.open {
+    transform: translateX(0);
+  }
+}
+
+/* ============================================================
+   11. FLOWBITE ALERTS & AVATAR SIZING UTILITIES
+   ============================================================ */
+.w-4\.5 { width: 1.125rem !important; }
+.h-4\.5 { height: 1.125rem !important; }
+.w-11 { width: 2.75rem !important; }
+.h-11 { height: 2.75rem !important; }
+.w-14 { width: 3.5rem !important; }
+.h-14 { height: 3.5rem !important; }
+.rounded-base { border-radius: var(--radius-base, 12px) !important; }
+.shadow-xs { box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); }
+
+/* Avatar Tooltip Arrow */
+.tooltip-arrow,
+[data-popper-arrow] {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  visibility: hidden;
+}
+.tooltip-arrow::before,
+[data-popper-arrow]::before {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  visibility: visible;
+  content: '';
+  transform: rotate(45deg);
+}
+
+/* ============================================================
+   12. FLOWBITE BADGES UTILITIES
+   ============================================================ */
+.rounded-xs { border-radius: var(--radius-xs, 4px) !important; }
+.-end-2 { inset-inline-end: -0.5rem !important; }
+.-top-2 { top: -0.5rem !important; }
+.border-buffer { border-color: var(--color-buffer, #ffffff) !important; }
+.ring-inset { --tw-ring-inset: inset; }
+.ring-1 {
+  box-shadow: var(--tw-ring-inset, ) 0 0 0 1px var(--tw-ring-color, currentColor) !important;
+}
+.ring-brand-subtle { --tw-ring-color: var(--color-brand-subtle, #bfdbfe) !important; }
+.ring-default { --tw-ring-color: var(--color-default, #e5e7eb) !important; }
+.ring-default-medium { --tw-ring-color: var(--color-default-medium, #e5e7eb) !important; }
+.ring-danger-subtle { --tw-ring-color: var(--color-danger-subtle, #fecdd3) !important; }
+.ring-success-subtle { --tw-ring-color: var(--color-success-subtle, #a7f3d0) !important; }
+.ring-warning-subtle { --tw-ring-color: var(--color-warning-subtle, #fed7aa) !important; }
+
+/* Spin animation for loader badges */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 1s linear infinite !important;
+}
+
+/* Logical spacing utilities for chips & badges */
+.ps-1\.5 { padding-inline-start: 0.375rem !important; }
+.pe-0\.5 { padding-inline-end: 0.125rem !important; }
+.me-1 { margin-inline-end: 0.25rem !important; }
+.me-1\.5 { margin-inline-end: 0.375rem !important; }
+.ms-2 { margin-inline-start: 0.5rem !important; }
+.px-1\.5 { padding-left: 0.375rem !important; padding-right: 0.375rem !important; }
+.py-0\.5 { padding-top: 0.125rem !important; padding-bottom: 0.125rem !important; }
+.p-0\.5 { padding: 0.125rem !important; }
+.gap-1 { gap: 0.25rem !important; }
+
+/* Colors fallback for Flowbite Badges */
+.bg-brand-softer { background-color: var(--color-brand-softer, #eff6ff) !important; }
+.hover\:bg-brand-soft:hover { background-color: var(--color-brand-soft, #dbeafe) !important; }
+.border-brand-subtle { border-color: var(--color-brand-subtle, #bfdbfe) !important; }
+.text-fg-brand-strong { color: var(--color-fg-brand-strong, #1e3a8a) !important; }
+.text-fg-brand { color: var(--color-fg-brand, #1d4ed8) !important; }
+
+.bg-neutral-primary-soft { background-color: var(--color-neutral-primary-soft, #f9fafb) !important; }
+.bg-neutral-secondary-medium { background-color: var(--color-neutral-secondary-medium, #f3f4f6) !important; }
+.hover\:bg-neutral-tertiary:hover { background-color: var(--color-neutral-tertiary, #e5e7eb) !important; }
+.hover\:bg-neutral-quaternary:hover { background-color: var(--color-neutral-quaternary, #d1d5db) !important; }
+.border-default { border-color: var(--color-default, #e5e7eb) !important; }
+.border-default-medium { border-color: var(--color-default-medium, #d1d5db) !important; }
+.text-heading { color: var(--color-heading, #111827) !important; }
+.text-neutral-tertiary { color: var(--color-neutral-tertiary, #9ca3af) !important; }
+.text-neutral-quaternary { color: var(--color-neutral-quaternary, #6b7280) !important; }
+
+.bg-danger-soft { background-color: var(--color-danger-soft, #fff1f2) !important; }
+.hover\:bg-danger-medium:hover { background-color: var(--color-danger-medium, #ffe4e6) !important; }
+.border-danger-subtle { border-color: var(--color-danger-subtle, #fecdd3) !important; }
+.text-fg-danger-strong { color: var(--color-fg-danger-strong, #881337) !important; }
+.text-danger-medium { color: var(--color-danger-medium, #e11d48) !important; }
+
+.bg-success-soft { background-color: var(--color-success-soft, #ecfdf5) !important; }
+.hover\:bg-success-medium:hover { background-color: var(--color-success-medium, #d1fae5) !important; }
+.border-success-subtle { border-color: var(--color-success-subtle, #a7f3d0) !important; }
+.text-fg-success-strong { color: var(--color-fg-success-strong, #064e3b) !important; }
+.text-success-medium { color: var(--color-success-medium, #059669) !important; }
+
+.bg-warning-soft { background-color: var(--color-warning-soft, #fffbeb) !important; }
+.hover\:bg-warning-medium:hover { background-color: var(--color-warning-medium, #fef3c7) !important; }
+.border-warning-subtle { border-color: var(--color-warning-subtle, #fed7aa) !important; }
+.text-fg-warning { color: var(--color-fg-warning, #7c2d12) !important; }
+.text-warning-medium { color: var(--color-warning-medium, #d97706) !important; }
+
+.bg-brand { background-color: var(--color-brand, #1a56db) !important; }
+.hover\:bg-brand-strong:hover { background-color: var(--color-brand-strong, #1e429f) !important; }
+.focus\:ring-brand-medium:focus { --tw-ring-color: var(--color-brand-medium, #76a9fa) !important; }
+.bg-danger { background-color: var(--color-danger, #e02424) !important; }
+
+/* ============================================================
+   13. FLOWBITE STICKY BANNER & BOTTOM NAVIGATION UTILITIES
+   ============================================================ */
+/* Sticky Banner */
+.w-\[calc\(100\%-2rem\)\] { width: calc(100% - 2rem) !important; }
+.left-1\/2 { left: 50% !important; }
+.top-6 { top: 1.5rem !important; }
+.-translate-x-1\/2 { transform: translateX(-50%) !important; }
+.lg\:max-w-7xl { max-width: 80rem !important; }
+.w-7 { width: 1.75rem !important; }
+.h-7 { height: 1.75rem !important; }
+.rounded-sm { border-radius: var(--radius-sm, 6px) !important; }
+.focus\:ring-neutral-tertiary-soft:focus { --tw-ring-color: var(--color-neutral-tertiary-soft, #f3f4f6) !important; }
+
+@media (min-width: 768px) {
+  .md\:flex-row { flex-direction: row !important; }
+  .md\:items-center { align-items: center !important; }
+  .md\:mb-0 { margin-bottom: 0 !important; }
+  .md\:pe-4 { padding-inline-end: 1rem !important; }
+  .md\:me-4 { margin-inline-end: 1rem !important; }
+  .md\:border-e { border-inline-end: 1px solid var(--color-default, #e5e7eb) !important; }
+  .md\:inline-flex { display: inline-flex !important; }
+  .md\:hidden { display: none !important; }
+}
+
+/* Bottom Navigation */
+.bottom-0 { bottom: 0 !important; }
+.left-0 { left: 0 !important; }
+.h-16 { height: 4rem !important; }
+.border-t { border-top-width: 1px !important; }
+.grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+.max-w-lg { max-width: 32rem !important; }
+.mx-auto { margin-left: auto !important; margin-right: auto !important; }
+.group:hover .group-hover\:text-fg-brand { color: var(--color-fg-brand, #1d4ed8) !important; }
+
+/* Tablet & Mobile responsive bottom nav */
+@media (max-width: 1024px) {
+  .fb-bottom-nav {
+    display: block;
+  }
+}
+@media (min-width: 1025px) {
+  .fb-bottom-nav-mobile-only {
+    display: none !important;
+  }
+}
+
+/* ============================================================
+   14. FLOWBITE BUTTONS UTILITIES
+   ============================================================ */
+.box-border { box-sizing: border-box !important; }
+.leading-5 { line-height: 1.25rem !important; }
+
+/* Negative margins for button icons */
+.-ms-0\.5 { margin-inline-start: -0.125rem !important; }
+.-me-0\.5 { margin-inline-end: -0.125rem !important; }
+.ms-1\.5 { margin-inline-start: 0.375rem !important; }
+
+/* Icon button sizes */
+.w-8 { width: 2rem !important; }
+.h-8 { height: 2rem !important; }
+.w-9 { width: 2.25rem !important; }
+.h-9 { height: 2.25rem !important; }
+.w-10 { width: 2.5rem !important; }
+.h-10 { height: 2.5rem !important; }
+
+/* Focus ring-4 utility */
+.focus\:ring-4:focus {
+  outline: 2px solid transparent !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px var(--tw-ring-color, rgba(59, 130, 246, 0.5)) !important;
+}
+
+/* Ring colors */
+.focus\:ring-brand-subtle:focus { --tw-ring-color: var(--color-brand-subtle, #bfdbfe) !important; }
+.focus\:ring-brand-medium:focus { --tw-ring-color: var(--color-brand-medium, #76a9fa) !important; }
+.focus\:ring-success-medium:focus { --tw-ring-color: var(--color-success-medium, #84e1bc) !important; }
+.focus\:ring-danger-medium:focus { --tw-ring-color: var(--color-danger-medium, #f8b4b4) !important; }
+.focus\:ring-warning-medium:focus { --tw-ring-color: var(--color-warning-medium, #fdba8c) !important; }
+.focus\:ring-neutral-tertiary:focus { --tw-ring-color: var(--color-neutral-tertiary, #e5e7eb) !important; }
+
+/* Colors & Borders for buttons */
+.border-brand { border-color: var(--color-brand, #1a56db) !important; }
+.border-success { border-color: var(--color-success, #0e9f6e) !important; }
+.border-danger { border-color: var(--color-danger, #e02424) !important; }
+.border-warning { border-color: var(--color-warning, #ff5a1f) !important; }
+
+.text-success { color: var(--color-success, #0e9f6e) !important; }
+.text-danger { color: var(--color-danger, #e02424) !important; }
+.text-warning { color: var(--color-warning, #ff5a1f) !important; }
+.text-fg-disabled { color: var(--color-fg-disabled, #9ca3af) !important; }
+
+.bg-neutral-primary { background-color: var(--color-neutral-primary, #ffffff) !important; }
+.bg-dark { background-color: var(--color-dark, #1f2a37) !important; }
+.hover\:bg-dark-strong:hover { background-color: var(--color-dark-strong, #111928) !important; }
+.hover\:bg-neutral-secondary-soft:hover { background-color: var(--color-neutral-secondary-soft, #f9fafb) !important; }
+.hover\:bg-neutral-tertiary-medium:hover { background-color: var(--color-neutral-tertiary-medium, #f3f4f6) !important; }
+
+.bg-disabled { background-color: var(--color-disabled, #f3f4f6) !important; }
+
+/* Dark mode badge support inside button */
+.dark .dark\:text-fg-brand-subtle { color: var(--color-fg-brand-subtle, #dbeafe) !important; }
+
+/* ============================================================
+   15. FLOWBITE BUTTON GROUP UTILITIES
+   ============================================================ */
+.-space-x-px > :not([hidden]) ~ :not([hidden]) {
+  margin-inline-start: -1px !important;
+}
+.-space-y-px > :not([hidden]) ~ :not([hidden]) {
+  margin-top: -1px !important;
+}
+
+/* Logical corner radii for button groups */
+.rounded-s-base {
+  border-start-start-radius: var(--radius-base, 12px) !important;
+  border-end-start-radius: var(--radius-base, 12px) !important;
+  border-start-end-radius: 0 !important;
+  border-end-end-radius: 0 !important;
+}
+.rounded-e-base {
+  border-start-end-radius: var(--radius-base, 12px) !important;
+  border-end-end-radius: var(--radius-base, 12px) !important;
+  border-start-start-radius: 0 !important;
+  border-end-start-radius: 0 !important;
+}
+.rounded-t-base {
+  border-top-left-radius: var(--radius-base, 12px) !important;
+  border-top-right-radius: var(--radius-base, 12px) !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+}
+.rounded-b-base {
+  border-bottom-left-radius: var(--radius-base, 12px) !important;
+  border-bottom-right-radius: var(--radius-base, 12px) !important;
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+}
+
+/* Focus ring-3 utility */
+.focus\:ring-3:focus {
+  outline: 2px solid transparent !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 3px var(--tw-ring-color, rgba(59, 130, 246, 0.4)) !important;
+}
+
+/* Group widths and alignment */
+.w-56 { width: 14rem !important; }
+.w-36 { width: 9rem !important; }
+.w-40 { width: 10rem !important; }
+.h-full { height: 100% !important; }
+.leading-4 { line-height: 1rem !important; }
+.place-items-center { place-items: center !important; }
+
+/* Group borders & colors */
+.border-brand-strong { border-color: var(--color-brand-strong, #1e429f) !important; }
+.border-danger-strong { border-color: var(--color-danger-strong, #b91c1c) !important; }
+.border-success-strong { border-color: var(--color-success-strong, #047857) !important; }
+.border-dark-strong { border-color: var(--color-dark-strong, #111928) !important; }
+.hover\:bg-dark:hover { background-color: var(--color-dark, #1f2a37) !important; }
+
+.focus\:bg-neutral-secondary-medium:focus { background-color: var(--color-neutral-secondary-medium, #f3f4f6) !important; }
+.focus\:text-heading:focus { color: var(--color-heading, #111827) !important; }
+
+/* ============================================================
+   16. FLOWBITE COPY TO CLIPBOARD UTILITIES
+   ============================================================ */
+.grid-cols-8 { grid-template-columns: repeat(8, minmax(0, 1fr)) !important; }
+.col-span-6 { grid-column: span 6 / span 6 !important; }
+.col-span-2 { grid-column: span 2 / span 2 !important; }
+.max-w-\[23rem\] { max-width: 23rem !important; }
+.max-w-\[18rem\] { max-width: 18rem !important; }
+.end-1\.5 { inset-inline-end: 0.375rem !important; }
+.end-2 { inset-inline-end: 0.5rem !important; }
+.top-1\/2 { top: 50% !important; }
+.-translate-y-1\/2 { transform: translateY(-50%) !important; }
+.bg-neutral-primary-strong { background-color: var(--color-neutral-primary-strong, #ffffff) !important; }
+.border-default-strong { border-color: var(--color-default-strong, #9ca3af) !important; }
+.hover\:bg-neutral-secondary-strong\/70:hover { background-color: rgba(229, 231, 235, 0.7) !important; }
+.border-e-0 { border-inline-end-width: 0 !important; }
+.border-s-0 { border-inline-start-width: 0 !important; }
+.leading-loose { line-height: 2 !important; }
+.font-italic { font-style: italic !important; }
+.text-fg-brands { color: var(--color-fg-brand, #1d4ed8) !important; }
+.focus\:border-brand:focus { border-color: var(--color-brand, #1a56db) !important; }
+.focus\:ring-brand:focus { --tw-ring-color: var(--color-brand, #1a56db) !important; }
+
+@media (min-width: 640px) {
+  .sm\:w-auto { width: auto !important; }
+  .sm\:block { display: block !important; }
+}
+
+/* ============================================================
+   17. FLOWBITE DATEPICKER & TIMEPICKER UTILITIES
+   ============================================================ */
+.ps-9 { padding-inline-start: 2.25rem !important; }
+.pe-3 { padding-inline-end: 0.75rem !important; }
+.pe-3\.5 { padding-inline-end: 0.875rem !important; }
+.ps-3\.5 { padding-inline-start: 0.875rem !important; }
+.max-w-\[8rem\] { max-width: 8rem !important; }
+.inset-y-0 { top: 0 !important; bottom: 0 !important; }
+.start-0 { inset-inline-start: 0 !important; }
+.mx-4 { margin-left: 1rem !important; margin-right: 1rem !important; }
+
+/* Flowbite Datepicker Popover Component */
+.flowbite-datepicker-popover {
+  position: absolute;
+  z-index: 50;
+  width: 18rem;
+  background-color: var(--color-neutral-primary, #ffffff);
+  border: 1px solid var(--color-default-medium, #e5e7eb);
+  border-radius: var(--radius-base, 12px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  padding: 0.75rem;
+}
+.flowbite-datepicker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+}
+.flowbite-datepicker-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 2rem;
+  width: 2rem;
+  font-size: 0.8125rem;
+  border-radius: var(--radius-base, 10px);
+  cursor: pointer;
+  user-select: none;
+}
+.flowbite-datepicker-cell:hover:not(.disabled):not(.selected) {
+  background-color: var(--color-neutral-secondary-medium, #f3f4f6);
+}
+.flowbite-datepicker-cell.selected {
+  background-color: var(--color-brand, #1a56db) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+}
+.flowbite-datepicker-cell.today:not(.selected) {
+  color: var(--color-brand, #1a56db);
+  font-weight: 700;
+}
+.flowbite-datepicker-cell.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.flowbite-datepicker-cell.muted {
+  color: var(--color-neutral-quaternary, #9ca3af);
+}
+
+/* ============================================================
+   18. FLOWBITE DEVICE MOCKUPS UTILITIES
+   ============================================================ */
+.bg-base {
+  background-color: var(--color-base, #1f2937) !important;
+}
+.dark .dark\:bg-base,
+:where(.dark, .dark *) .dark\:bg-base {
+  background-color: var(--color-base, #111827) !important;
+}
+
+/* Border widths */
+.border-\[8px\] { border-width: 8px !important; }
+.border-\[10px\] { border-width: 10px !important; }
+.border-\[14px\] { border-width: 14px !important; }
+.border-\[16px\] { border-width: 16px !important; }
+
+/* Border radii */
+.rounded-\[2\.5rem\] { border-radius: 2.5rem !important; }
+.rounded-\[2rem\] { border-radius: 2rem !important; }
+.rounded-t-\[2\.5rem\] { border-top-left-radius: 2.5rem !important; border-top-right-radius: 2.5rem !important; }
+.rounded-b-\[2\.5rem\] { border-bottom-left-radius: 2.5rem !important; border-bottom-right-radius: 2.5rem !important; }
+.rounded-b-\[1rem\] { border-bottom-left-radius: 1rem !important; border-bottom-right-radius: 1rem !important; }
+.rounded-s-lg { border-start-start-radius: 0.5rem !important; border-end-start-radius: 0.5rem !important; }
+.rounded-e-lg { border-start-end-radius: 0.5rem !important; border-end-end-radius: 0.5rem !important; }
+
+/* Phone & Pixel dimensions */
+.h-\[600px\] { height: 600px !important; }
+.w-\[300px\] { width: 300px !important; }
+.w-\[272px\] { width: 272px !important; }
+.h-\[572px\] { height: 572px !important; }
+.h-\[32px\] { height: 32px !important; }
+.w-\[3px\] { width: 3px !important; }
+.h-\[46px\] { height: 46px !important; }
+.h-\[64px\] { height: 64px !important; }
+.-start-\[17px\] { inset-inline-start: -17px !important; }
+.-end-\[17px\] { inset-inline-end: -17px !important; }
+.top-\[72px\] { top: 72px !important; }
+.top-\[124px\] { top: 124px !important; }
+.top-\[178px\] { top: 178px !important; }
+.top-\[142px\] { top: 142px !important; }
+.w-\[148px\] { width: 148px !important; }
+.h-\[18px\] { height: 18px !important; }
+
+/* Tablet dimensions */
+.h-\[454px\] { height: 454px !important; }
+.max-w-\[341px\] { max-width: 341px !important; }
+.h-\[426px\] { height: 426px !important; }
+
+/* Laptop & Desktop dimensions */
+.h-\[172px\] { height: 172px !important; }
+.max-w-\[301px\] { max-width: 301px !important; }
+.h-\[156px\] { height: 156px !important; }
+.h-\[17px\] { height: 17px !important; }
+.max-w-\[351px\] { max-width: 351px !important; }
+.w-\[56px\] { width: 56px !important; }
+.h-\[5px\] { height: 5px !important; }
+.h-\[140px\] { height: 140px !important; }
+.h-\[24px\] { height: 24px !important; }
+.h-\[55px\] { height: 55px !important; }
+.max-w-\[83px\] { max-width: 83px !important; }
+
+/* Smartwatch dimensions */
+.h-\[63px\] { height: 63px !important; }
+.max-w-\[133px\] { max-width: 133px !important; }
+.h-\[213px\] { height: 213px !important; }
+.w-\[208px\] { width: 208px !important; }
+.h-\[41px\] { height: 41px !important; }
+.w-\[6px\] { width: 6px !important; }
+.-end-\[16px\] { inset-inline-end: -16px !important; }
+.top-\[40px\] { top: 40px !important; }
+.top-\[88px\] { top: 88px !important; }
+.h-\[193px\] { height: 193px !important; }
+.w-\[188px\] { width: 188px !important; }
+
+@media (min-width: 768px) {
+  .md\:h-\[682px\] { height: 682px !important; }
+  .md\:max-w-\[512px\] { max-width: 512px !important; }
+  .md\:h-\[654px\] { height: 654px !important; }
+  .md\:h-\[294px\] { height: 294px !important; }
+  .md\:h-\[278px\] { height: 278px !important; }
+  .md\:h-\[21px\] { height: 21px !important; }
+  .md\:max-w-\[597px\] { max-width: 597px !important; }
+  .md\:w-\[96px\] { width: 96px !important; }
+  .md\:h-\[8px\] { height: 8px !important; }
+  .md\:h-\[262px\] { height: 262px !important; }
+  .md\:h-\[42px\] { height: 42px !important; }
+  .md\:h-\[95px\] { height: 95px !important; }
+  .md\:max-w-\[142px\] { max-width: 142px !important; }
+}
+
+/* ============================================================
+   19. FLOWBITE DRAWER (OFFCANVAS) UTILITIES
+   ============================================================ */
+.w-96 { width: 24rem !important; }
+.w-80 { width: 20rem !important; }
+.h-screen { height: 100vh !important; }
+
+/* Drawer Transforms */
+.-translate-x-full { transform: translateX(-100%) !important; }
+.translate-x-full { transform: translateX(100%) !important; }
+.-translate-y-full { transform: translateY(-100%) !important; }
+.translate-y-full { transform: translateY(100%) !important; }
+.transform-none { transform: none !important; }
+
+/* Drawer Offsets & Transitions */
+.bottom-\[60px\] { bottom: 60px !important; }
+.transition-transform {
+  transition-property: transform !important;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition-duration: 300ms !important;
+}
+
+/* Drawer Backdrops */
+.bg-dark\/50 {
+  background-color: rgba(31, 42, 55, 0.5) !important;
+}
+.bg-gray-900\/50 {
+  background-color: rgba(17, 24, 39, 0.5) !important;
+}
+.dark .dark\:bg-gray-900\/80,
+:where(.dark, .dark *) .dark\:bg-gray-900\/80 {
+  background-color: rgba(17, 24, 39, 0.8) !important;
+}
+
+/* ============================================================
+   20. FLOWBITE DROPDOWN UTILITIES & PLACEMENTS
+   ============================================================ */
+/* Dropdown Widths */
+.w-44 { width: 11rem !important; }
+.w-52 { width: 13rem !important; }
+.w-54 { width: 13.5rem !important; }
+.w-56 { width: 14rem !important; }
+.w-60 { width: 15rem !important; }
+.w-72 { width: 18rem !important; }
+.max-w-sm { max-width: 24rem !important; }
+
+/* Dropdown Heights & Scroll */
+.h-48 { height: 12rem !important; }
+
+/* Shadows */
+.shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+.shadow-sm {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+}
+.shadow {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Dividers */
+.divide-y > :not([hidden]) ~ :not([hidden]) {
+  border-top-width: 1px !important;
+  border-top-style: solid !important;
+}
+.divide-default > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--line, rgba(255, 255, 255, 0.1)) !important;
+}
+.divide-default-medium > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--line-strong, rgba(255, 255, 255, 0.15)) !important;
+}
+.divide-gray-600 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #4b5563 !important;
+}
+
+/* Spacings */
+.space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 1rem !important;
+}
+.space-y-3 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.75rem !important;
+}
+.space-y-1 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.25rem !important;
+}
+
+/* Rounded Header/Footer corners */
+.rounded-b-base {
+  border-bottom-left-radius: var(--radius-md, 8px) !important;
+  border-bottom-right-radius: var(--radius-md, 8px) !important;
+}
+.rounded-t-base {
+  border-top-left-radius: var(--radius-md, 8px) !important;
+  border-top-right-radius: var(--radius-md, 8px) !important;
+}
+
+/* Dropdown Switch Peers */
+.peer:checked ~ div.peer-checked\:bg-brand {
+  background-color: var(--brand-primary, #6366f1) !important;
+}
+.peer:checked ~ div.peer-checked\:after\:translate-x-full:after {
+  transform: translateX(100%) !important;
+}
+[dir="rtl"] .peer:checked ~ div.rtl\:peer-checked\:after\:-translate-x-full:after,
+.rtl .peer:checked ~ div.rtl\:peer-checked\:after\:-translate-x-full:after {
+  transform: translateX(-100%) !important;
+}
+
+/* Focus Rings */
+.peer-focus\:ring-brand-soft:focus,
+.peer:focus ~ div {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25) !important;
+}
+
+/* ============================================================
+   21. FLOWBITE FOOTER & INDICATOR UTILITIES
+   ============================================================ */
+
+/* Footer max-widths */
+.max-w-screen-xl { max-width: 1280px !important; }
+.max-w-screen-lg { max-width: 1024px !important; }
+.max-w-screen-md { max-width: 768px !important; }
+
+/* Responsive footer layout */
+@media (min-width: 640px) {
+  .sm\:text-center { text-align: center !important; }
+  .sm\:mt-0 { margin-top: 0 !important; }
+  .sm\:py-4 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+  .sm\:justify-between { justify-content: space-between !important; }
+}
+
+@media (min-width: 768px) {
+  .md\:flex { display: flex !important; }
+  .md\:justify-between { justify-content: space-between !important; }
+  .md\:me-6 { margin-inline-end: 1.5rem !important; }
+  .md\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .md\:gap-8 { gap: 2rem !important; }
+  .md\:mt-0 { margin-top: 0 !important; }
+  .md\:grid { display: grid !important; }
+  .md\:order-1 { order: 1 !important; }
+  .md\:justify-end { justify-content: flex-end !important; }
+}
+
+@media (min-width: 1024px) {
+  .lg\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+  .lg\:col-span-2 { grid-column: span 2 / span 2 !important; }
+  .lg\:col-span-1 { grid-column: span 1 / span 1 !important; }
+}
+
+/* Grid */
+.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.gap-8 { gap: 2rem !important; }
+.mt-8 { margin-top: 2rem !important; }
+.pt-8 { padding-top: 2rem !important; }
+
+/* Spacing helpers */
+.me-4 { margin-inline-end: 1rem !important; }
+.me-6 { margin-inline-end: 1.5rem !important; }
+
+/* Indicator solid fills */
+.bg-success { background-color: var(--color-success, #10b981) !important; }
+.bg-danger  { background-color: var(--color-danger, #e02424) !important; }
+.bg-warning { background-color: var(--color-warning, #f59e0b) !important; }
+.bg-purple  { background-color: var(--color-purple, #7c3aed) !important; }
+.bg-indigo  { background-color: var(--color-indigo, #4338ca) !important; }
+.bg-teal    { background-color: var(--color-teal, #0d9488) !important; }
+.bg-pink    { background-color: var(--color-pink, #db2777) !important; }
+.bg-orange  { background-color: var(--color-orange, #ea580c) !important; }
+
+/* Border buffer (ring around status dots) */
+.border-buffer { border-color: var(--color-buffer, #ffffff) !important; }
+
+/* Indicator dot sizes */
+.w-2   { width: 0.5rem !important; }
+.h-2   { height: 0.5rem !important; }
+.w-2\.5 { width: 0.625rem !important; }
+.h-2\.5 { height: 0.625rem !important; }
+.w-3   { width: 0.75rem !important; }
+.h-3   { height: 0.75rem !important; }
+.w-3\.5 { width: 0.875rem !important; }
+.h-3\.5 { height: 0.875rem !important; }
+.w-6   { width: 1.5rem !important; }
+.h-6   { height: 1.5rem !important; }
+
+/* Shrink */
+.shrink-0 { flex-shrink: 0 !important; }
+
+/* Inset positioning helpers */
+.start-7 { inset-inline-start: 1.75rem !important; }
+.start-6 { inset-inline-start: 1.5rem !important; }
+.start-5 { inset-inline-start: 1.25rem !important; }
+.-top-2  { top: -0.5rem !important; }
+.-end-2  { inset-inline-end: -0.5rem !important; }
+
+/* Animate pulse */
+@keyframes fb-pulse {
+  50% { opacity: 0.5; }
+}
+.animate-pulse {
+  animation: fb-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite !important;
+}
+
+/* Loading indicator wrapper */
+.h-56 { height: 14rem !important; }
+.w-56 { width: 14rem !important; }
+
+/* Ring inset border utilities */
+.ring-brand-subtle {
+  box-shadow: 0 0 0 1px var(--color-brand-subtle, #bfdbfe) inset !important;
+}
+
+/* Footer link & social */
+.hover\:underline:hover { text-decoration: underline !important; }
+.max-w-md { max-width: 28rem !important; }
+.space-x-3 > :not([hidden]) ~ :not([hidden]) { margin-left: 0.75rem !important; }
+
+/* ============================================================
+   22. DESIGN SYSTEM SHELL UTILITIES
+   ============================================================ */
+
+/* Shell layout */
+#ds-shell { display: flex; min-height: 100%; }
+#ds-sidebar {
+  width: 14rem;
+  flex-shrink: 0;
+  background-color: var(--color-neutral-primary-soft, #f9fafb);
+  border-right: 1px solid var(--color-default, #e5e7eb);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+#ds-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background-color: var(--color-neutral-secondary-soft, #f3f4f6);
+}
+#ds-content { padding: 1.5rem; }
+
+/* Nav button active state */
+.ds-nav-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-base, 8px);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-body, #4b5563);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+.ds-nav-btn:hover {
+  background-color: var(--color-neutral-secondary-soft, #f3f4f6);
+  color: var(--color-heading, #111827);
+}
+.ds-nav-btn.bg-brand-softer {
+  background-color: var(--color-brand-softer, #eff6ff) !important;
+  color: var(--color-fg-brand-strong, #1d4ed8) !important;
+  font-weight: 600;
+  border-color: var(--color-brand-subtle, #bfdbfe);
+}
+
+/* Section content spacing */
+.ds-section > * + * { margin-top: 1.5rem; }
+
+/* Flowbite brand-softer bg used in showcase */
+.bg-brand-softer { background-color: var(--color-brand-softer, #eff6ff) !important; }
+.fg-brand-strong  { color: var(--color-fg-brand-strong, #1d4ed8) !important; }
+
+/* Tracking widest */
+.tracking-widest  { letter-spacing: 0.1em !important; }
+.tracking-wider   { letter-spacing: 0.05em !important; }
+
+/* space-y-8 / space-y-10 helpers */
+.space-y-8 > * + * { margin-top: 2rem !important; }
+.space-y-10 > * + * { margin-top: 2.5rem !important; }
+
+/* min-h-screen helper */
+.min-h-screen { min-height: 100vh !important; }
+
+/* whitespace-nowrap */
+.whitespace-nowrap { white-space: nowrap !important; }
+
+/* Leading tight */
+.leading-tight { line-height: 1.25 !important; }
+.leading-relaxed { line-height: 1.625 !important; }
+
+/* Responsive hidden for ds sidebar */
+@media (max-width: 768px) {
+  #ds-sidebar { display: none; }
+}
+
+/* Grid cols for welcome grid */
+.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.gap-3 { gap: 0.75rem !important; }
+
+/* ============================================================
+   FLOWBITE FOOTER COMPONENT SUITE
+   Supports Semantic Token classes & standard Tailwind classes
+   Desktop + Tablet + Mobile Responsive Parity
+   ============================================================ */
+.bg-neutral-primary-soft {
+  background-color: var(--surface, #ffffff);
+  transition: background-color var(--motion-fast, 150ms) ease, border-color var(--motion-fast, 150ms) ease;
+}
+
+.border-default {
+  border-color: var(--line, #e5e7eb);
+}
+
+.rounded-base {
+  border-radius: var(--radius-md, 12px) !important;
+}
+
+.shadow-xs {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+.text-body {
+  color: var(--ink-secondary, #6b7280);
+}
+
+/* Dark mode theme token overrides */
+.dark .bg-neutral-primary-soft,
+[data-theme="dark"] .bg-neutral-primary-soft,
+[data-theme="midnight"] .bg-neutral-primary-soft,
+[data-theme="noir"] .bg-neutral-primary-soft,
+body.dark .bg-neutral-primary-soft {
+  background-color: #10192c !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark .border-default,
+[data-theme="dark"] .border-default,
+[data-theme="midnight"] .border-default,
+[data-theme="noir"] .border-default,
+body.dark .border-default {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark .text-body,
+[data-theme="dark"] .text-body,
+[data-theme="midnight"] .text-body,
+[data-theme="noir"] .text-body,
+body.dark .text-body {
+  color: #94a3b8 !important;
+}
+
+/* Footer layout utilities */
+footer.bg-neutral-primary-soft {
+  border-width: 1px;
+  border-style: solid;
+}
+
+#app-footer-container {
+  margin-top: auto;
+  width: 100%;
+}
+
+.max-w-screen-xl {
+  max-width: 1280px !important;
+}
+
+.hover\:underline:hover {
+  text-decoration: underline !important;
+}
+
+.me-4 {
+  margin-inline-end: 1rem !important;
+}
+
+@media (min-width: 640px) {
+  .sm\:text-center {
+    text-align: center !important;
+  }
+  .sm\:mt-0 {
+    margin-top: 0 !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .md\:flex {
+    display: flex !important;
+  }
+  .md\:items-center {
+    align-items: center !important;
+  }
+  .md\:justify-between {
+    justify-content: space-between !important;
+  }
+  .md\:me-6 {
+    margin-inline-end: 1.5rem !important;
+  }
+}
+
+/* Interactive link transitions in Flowbite Footer */
+footer.bg-neutral-primary-soft a {
+  color: inherit;
+  transition: color var(--motion-fast, 150ms) ease;
+}
+
+footer.bg-neutral-primary-soft a:hover {
+  color: var(--accent, #d97706);
+}
+
+.dark footer.bg-neutral-primary-soft a,
+[data-theme="midnight"] footer.bg-neutral-primary-soft a,
+[data-theme="noir"] footer.bg-neutral-primary-soft a {
+  color: #e2e8f0;
+}
+
+.dark footer.bg-neutral-primary-soft a:hover,
+[data-theme="midnight"] footer.bg-neutral-primary-soft a:hover,
+[data-theme="noir"] footer.bg-neutral-primary-soft a:hover {
+  color: #60a5fa !important;
+}
