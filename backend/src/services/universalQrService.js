@@ -31,6 +31,8 @@ class UniversalQrService {
     metadata = {},
     ttlMinutes = null,
     actorUserId = 'SYSTEM',
+    session = null,
+    publicOrigin = null,
   }) {
     if (!QR_TYPES.includes(qrType)) {
       throw new ApiError(400, 'INVALID_QR_TYPE', `QR type must be one of: ${QR_TYPES.join(', ')}`);
@@ -43,14 +45,19 @@ class UniversalQrService {
     const hmacSignature = this.generateSignature(opaqueToken, targetEntityId);
     const qrId = `QR-${qrType}-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
 
-    // Construct canonical, secure URL or opaque string based on type
+    // Construct canonical, secure URL or opaque string based on type.
+    // Never hard-code a deployment host: production/staging/custom domains must
+    // produce QR payloads that resolve back to the active application origin.
+    const resolvedPublicOrigin = String(
+      publicOrigin || process.env.PUBLIC_APP_ORIGIN || process.env.FRONTEND_URL || 'https://zamorin.app'
+    ).replace(/\/$/, '');
     let payload;
     switch (qrType) {
       case 'CAFE_LOGIN':
-        payload = `https://zamorin.app/cafe/${encodeURIComponent(targetEntityId)}/login?t=${opaqueToken}`;
+        payload = `${resolvedPublicOrigin}/cafe/${encodeURIComponent(targetEntityId)}/login?t=${opaqueToken}`;
         break;
       case 'TABLE_ORDER':
-        payload = `https://zamorin.app/order/${encodeURIComponent(cafeId || targetEntityId)}?table=${encodeURIComponent(metadata.tableNumber || '1')}&t=${opaqueToken}`;
+        payload = `${resolvedPublicOrigin}/order/${encodeURIComponent(cafeId || targetEntityId)}?table=${encodeURIComponent(metadata.tableNumber || '1')}&t=${opaqueToken}`;
         break;
       case 'EMPLOYEE_BADGE':
         payload = `ZAMORIN:EMP:${encodeURIComponent(targetEntityId)}:${opaqueToken}`;
@@ -62,7 +69,7 @@ class UniversalQrService {
         payload = metadata.upiUri || `upi://pay?pa=ops@zamorin&pn=ZamorinCafe&am=${metadata.amount || '0'}&cu=INR&tn=${encodeURIComponent(targetEntityId)}`;
         break;
       case 'DOCUMENT_VERIFICATION':
-        payload = `https://zamorin.app/verify/doc/${encodeURIComponent(targetEntityId)}?t=${opaqueToken}`;
+        payload = `${resolvedPublicOrigin}/verify/doc/${encodeURIComponent(targetEntityId)}?t=${opaqueToken}`;
         break;
       case 'INVENTORY_BATCH':
       default:
@@ -75,23 +82,30 @@ class UniversalQrService {
       expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
     }
 
-    const qrRecord = await UniversalQrRecord.create({
-      qrId,
-      qrType,
-      organisationId,
-      cafeId,
-      targetEntityId,
-      title: title || `Zamorin ${qrType} QR`,
-      payload,
-      opaqueToken,
-      hmacSignature,
-      status: 'ACTIVE',
-      expiresAt,
-      metadata,
-      createdBy: actorUserId,
-    });
+    const qrDocs = await UniversalQrRecord.create(
+      [{
+        qrId,
+        qrType,
+        organisationId,
+        cafeId,
+        targetEntityId,
+        title: title || `Zamorin ${qrType} QR`,
+        payload,
+        opaqueToken,
+        hmacSignature,
+        status: 'ACTIVE',
+        expiresAt,
+        metadata,
+        createdBy: actorUserId,
+      }],
+      session ? { session } : {}
+    );
+    const qrRecord = qrDocs[0];
 
-    await auditService.recordAuditEvent({
+    // Audit only after standalone persistence. When participating in an outer
+    // Mongo transaction, the caller records the committed audit event after
+    // commit so an aborted transaction cannot leave a false QR_CREATED audit.
+    if (!session) await auditService.recordAuditEvent({
       organisationId,
       cafeId: cafeId || 'GLOBAL',
       actorUserId,
