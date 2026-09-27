@@ -63,7 +63,12 @@ async function sendNotificationAndOutbox({
     const finalRole = user?.role || recipientRole;
 
     const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${todayStr}`,
+      prefix: `NT-${todayStr}`,
+      minimumDigits: 4,
+    });
     const finalCorrelationId = correlationId || notifId;
     const finalEntityId = sourceEntityId || notifId;
     const finalDedupKey = deduplicationKey || `${recipientUserId}:${eventType}:${finalEntityId}`;
@@ -87,9 +92,16 @@ async function sendNotificationAndOutbox({
       deduplicationKey: finalDedupKey,
       correlationId: finalCorrelationId,
       createdBy: actorUserId,
+      status: 'DELIVERED',
+      deliveredAt: new Date(),
     });
 
-    const outboxId = `OUT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const outboxId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_OUTBOX_${todayStr}`,
+      prefix: `OUT-${todayStr}`,
+      minimumDigits: 4,
+    });
     await NotificationOutbox.create({
       outboxId,
       organisationId,
@@ -102,8 +114,12 @@ async function sendNotificationAndOutbox({
       subject: title,
       renderedSubject: title,
       renderedBody: message,
-      status: 'SENT',
-      sentAt: new Date(),
+      renderedBodyPlain: message,
+      correlationId: finalCorrelationId,
+      idempotencyKey: finalDedupKey,
+      channels: ['EMAIL'],
+      status: 'QUEUED',
+      nextAttemptAt: new Date(),
     });
   } catch (err) {
     console.warn(`[APPROVAL_NOTIF_WARN] Could not emit notification to ${recipientUserId}:`, err.message);
