@@ -922,4 +922,51 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
     }
   });
 
+
+  it('P0-FI-017: Leave attendance reconciliation failure rolls back Leave and Approval decision', async () => {
+    await seedLeaveApproval({ approvalId: 'APP-10125', leaveId: 'LR-20260927-017' });
+    await Attendance.create({
+      attendanceId: 'AT-20260928-017',
+      organisationId: ORG,
+      cafeId: CAFE,
+      userId: 'ST-0001',
+      businessDate: '2026-09-28',
+      status: 'ABSENT',
+      createdBy: 'SYSTEM',
+    });
+
+    const originalSave = Attendance.prototype.save;
+    Attendance.prototype.save = async function injectedLeaveReconciliationFailure() {
+      if (!this.isNew) {
+        const err = new Error('INJECTED_LEAVE_ATTENDANCE_RECONCILIATION_FAILURE');
+        err.code = 'INJECTED_LEAVE_ATTENDANCE_RECONCILIATION_FAILURE';
+        throw err;
+      }
+      return originalSave.apply(this, arguments);
+    };
+
+    try {
+      const { error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10125' },
+        body: { decision: 'APPROVED', reason: 'Leave reconciliation rollback test' },
+        correlationId: 'FI-LEAVE-ATTENDANCE-DECISION',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10125/decide',
+      });
+
+      assert.ok(error, 'Injected attendance reconciliation failure must propagate');
+
+      const approval = await Approval.findOne({ approvalId: 'APP-10125' }).lean();
+      const leave = await LeaveRequest.findOne({ leaveId: 'LR-20260927-017' }).lean();
+      const attendance = await Attendance.findOne({ attendanceId: 'AT-20260928-017' }).lean();
+
+      assert.equal(approval.status, 'PENDING');
+      assert.equal(leave.status, 'PENDING');
+      assert.equal(attendance.status, 'ABSENT');
+    } finally {
+      Attendance.prototype.save = originalSave;
+    }
+  });
+
 });
