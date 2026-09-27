@@ -500,7 +500,10 @@ const createBill = asyncHandler(async (request, response) => {
   const role = request.auth.role;
   let cafeId = normalizeId(rawCafeId);
   if (role === 'CAFE_ADMIN') {
-    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
+    if (!cafeId) {
+      throw new ApiError(400, 'CAFE_ID_REQUIRED', 'No café is assigned to this Café Operations account.');
+    }
   } else {
     const effectiveCafe = resolveEffectiveCafeScope(request);
     if (effectiveCafe) {
@@ -1459,7 +1462,10 @@ const openRegisterSession = asyncHandler(async (request, response) => {
   const role = request.auth.role;
   let cafeId = normalizeId(rawCafeId);
   if (role === 'CAFE_ADMIN') {
-    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
+    if (!cafeId) {
+      throw new ApiError(400, 'CAFE_ID_REQUIRED', 'No café is assigned to this Café Operations account.');
+    }
   } else {
     if (!cafeId) {
       throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
@@ -1651,9 +1657,9 @@ const closeRegisterSession = asyncHandler(async (request, response) => {
 const getRegisterSession = asyncHandler(async (request, response) => {
   const orgId = request.auth.organisationId;
   const role = request.auth.role;
-  let cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+  let cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
   if (role === 'CAFE_ADMIN') {
-    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
   } else if (role === 'OWNER') {
     const ownerCafes = (Array.isArray(request.auth.assignedCafeIds) ? request.auth.assignedCafeIds : [])
       .map((c) => normalizeId(c))
@@ -1671,6 +1677,9 @@ const getRegisterSession = asyncHandler(async (request, response) => {
     }
   }
 
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required to resolve the current register session.');
+  }
   assertCafeAccess(request, cafeId);
 
   const session = await RegisterSession.findOne({
