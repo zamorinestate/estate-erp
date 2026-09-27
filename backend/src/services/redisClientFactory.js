@@ -99,6 +99,13 @@ class RedisClientFactory {
         keyPrefix,
       });
 
+      const { defaultLimiter } = require('./distributedRateLimiter');
+      const { defaultEventBus } = require('./distributedEventBus');
+      const { defaultPresenceService } = require('./devicePresenceService');
+      defaultLimiter.setRedisClient(this.commandClient);
+      defaultEventBus.setRedisBrokers(this.commandClient, this.subscriberClient);
+      defaultPresenceService.setRedisClient(this.commandClient);
+
       this.status = 'READY';
       return {
         initialized: true,
@@ -157,6 +164,14 @@ class RedisClientFactory {
     }
 
     await Promise.all(closePromises);
+    try {
+      const { defaultLimiter } = require('./distributedRateLimiter');
+      const { defaultEventBus } = require('./distributedEventBus');
+      const { defaultPresenceService } = require('./devicePresenceService');
+      defaultLimiter.setRedisClient(null);
+      defaultEventBus.setRedisBrokers(null, null);
+      defaultPresenceService.setRedisClient(null);
+    } catch (_) {}
     this.commandClient = null;
     this.subscriberClient = null;
     this.adapterService = null;
