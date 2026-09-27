@@ -308,4 +308,49 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       LeaveRequest.prototype.save = originalSave;
     }
   });
+
+  it('P0-FI-006: UnknownTransactionCommitResult is retried without duplicating decision effects', async () => {
+    await seedLeaveApproval({ approvalId: 'APP-10005', leaveId: 'LR-20260927-005' });
+
+    const ClientSession = mongoose.mongo?.ClientSession;
+    assert.ok(ClientSession?.prototype?.commitTransaction, 'MongoDB ClientSession.commitTransaction must be available');
+
+    const originalCommit = ClientSession.prototype.commitTransaction;
+    let commitAttempts = 0;
+
+    ClientSession.prototype.commitTransaction = async function commitUnknownOnce() {
+      commitAttempts += 1;
+      if (commitAttempts === 1) {
+        const err = new Error('INJECTED_UNKNOWN_COMMIT_RESULT');
+        err.hasErrorLabel = (label) => label === 'UnknownTransactionCommitResult';
+        throw err;
+      }
+      return originalCommit.apply(this, arguments);
+    };
+
+    try {
+      const { res, error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10005' },
+        body: { decision: 'REJECTED', reason: 'Unknown commit retry test' },
+        correlationId: 'FI-UNKNOWN-COMMIT',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10005/decide',
+      });
+
+      assert.equal(error, null);
+      assert.equal(res.statusCode, 200);
+      assert.ok(commitAttempts >= 2, 'Commit should be retried after unknown commit result');
+
+      const approval = await Approval.findOne({ approvalId: 'APP-10005' }).lean();
+      const leave = await LeaveRequest.findOne({ leaveId: 'LR-20260927-005' }).lean();
+      assert.equal(approval.status, 'REJECTED');
+      assert.equal(leave.status, 'REJECTED');
+      assert.equal(await Approval.countDocuments({ approvalId: 'APP-10005' }), 1);
+      assert.equal(await LeaveRequest.countDocuments({ leaveId: 'LR-20260927-005' }), 1);
+    } finally {
+      ClientSession.prototype.commitTransaction = originalCommit;
+    }
+  });
+
 });
