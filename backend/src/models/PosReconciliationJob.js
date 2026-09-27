@@ -4,7 +4,7 @@
  * POS RECONCILIATION JOB — MONGOOSE MODEL (REC-04B)
  *
  * Persists durable reconciliation tasks for mandatory post-commit side effects
- * (BOM depletion, Cash ledger posting) when immediate processing fails.
+ * (BOM depletion, Cash ledger posting, register-session settlement) when immediate processing fails.
  * Guarantees zero silent accounting or inventory divergence with:
  *  - Configurable retries (maxAttempts)
  *  - Exactly-once guards preventing double deductions / double postings
@@ -14,7 +14,7 @@
 
 const mongoose = require('mongoose');
 
-const RECONCILIATION_EFFECT_TYPES = ['BOM_DEPLETION', 'CASH_LEDGER'];
+const RECONCILIATION_EFFECT_TYPES = ['BOM_DEPLETION', 'CASH_LEDGER', 'REGISTER_SESSION'];
 
 const RECONCILIATION_STATUSES = [
   'PENDING_RECONCILIATION',
