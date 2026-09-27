@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 /**
  * LEAVE CONTROLLER (EMP-SCR-004: MY LEAVE)
  *
@@ -405,7 +407,17 @@ const applyLeave = asyncHandler(async (request, response) => {
     attachmentName = null,
   } = request.body || {};
 
-  const cafeId = normalizeIdentifier(rawCafe) || (assignedCafeIds && assignedCafeIds[0]) || 'ZC-0001';
+  const allowedCafeIds = Array.isArray(assignedCafeIds)
+    ? assignedCafeIds.map(normalizeIdentifier).filter(Boolean)
+    : (assignedCafeIds ? [normalizeIdentifier(assignedCafeIds)].filter(Boolean) : []);
+  const requestedCafeId = normalizeIdentifier(rawCafe);
+  if (requestedCafeId && !allowedCafeIds.includes(requestedCafeId)) {
+    throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'You cannot submit leave against an unassigned Café.');
+  }
+  const cafeId = requestedCafeId || allowedCafeIds[0] || null;
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'An assigned Café is required before submitting leave.');
+  }
 
   if (!startDate || !endDate) {
     throw new ApiError(400, 'DATES_REQUIRED', 'startDate and endDate are required.');
@@ -421,7 +433,6 @@ const applyLeave = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_DATE_RANGE', 'startDate cannot be after endDate.');
   }
 
-  // Calculate requested days
   let diffDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
   if (durationUnit === 'FIRST_HALF' || durationUnit === 'SECOND_HALF') {
     diffDays = 0.5;
@@ -433,29 +444,23 @@ const applyLeave = asyncHandler(async (request, response) => {
 
   let leave;
   try {
-    // Deduplication check: check if an identical or overlapping pending/active request exists
     const existingDuplicate = await LeaveRequest.findOne({
       organisationId,
       userId,
       status: { $in: ['PENDING', 'UNDER_REVIEW', 'RECOMMENDED', 'APPROVED'] },
       $or: [
         ...(idempotencyKey ? [{ idempotencyKey }] : []),
-        {
-          leaveType,
-          startDate,
-          endDate,
-        },
-        {
-          startDate: { $lte: endDate },
-          endDate: { $gte: startDate },
-        },
+        { leaveType, startDate, endDate },
+        { startDate: { $lte: endDate }, endDate: { $gte: startDate } },
       ],
     }).sort({ createdAt: -1 });
 
     if (existingDuplicate) {
       if (
         (idempotencyKey && existingDuplicate.idempotencyKey === idempotencyKey) ||
-        (existingDuplicate.leaveType === leaveType && existingDuplicate.startDate === startDate && existingDuplicate.endDate === endDate)
+        (existingDuplicate.leaveType === leaveType &&
+          existingDuplicate.startDate === startDate &&
+          existingDuplicate.endDate === endDate)
       ) {
         return response.status(409).json({
           success: false,
@@ -473,55 +478,45 @@ const applyLeave = asyncHandler(async (request, response) => {
       );
     }
 
-    const dateKey = startDate.replace(/-/g, '');
-    const leaveId = await SequenceCounter.generateId({
-      organisationId,
-      sequenceKey: 'LEAVE_REQUEST',
-      prefix: `LR-${dateKey}`,
-      minimumDigits: 3,
-    });
-
-    leave = new LeaveRequest({
-      leaveId,
-      organisationId,
-      cafeId,
-      userId,
-      leaveType,
-      startDate,
-      endDate,
-      durationUnit,
-      requestedDays: diffDays,
-      reason: reason.trim(),
-      attachmentUrl,
-      attachmentName,
-      idempotencyKey: idempotencyKey || null,
-      status: 'PENDING',
-    });
-
-    await leave.save();
-
+    const session = await mongoose.startSession();
     try {
-      let approval = await Approval.findOne({
-        organisationId,
-        entityType: 'LEAVE_REQUEST',
-        entityId: leave.leaveId,
-      });
+      await session.withTransaction(async () => {
+        const dateKey = startDate.replace(/-/g, '');
+        const leaveId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: 'LEAVE_REQUEST',
+          prefix: `LR-${dateKey}`,
+          minimumDigits: 3,
+          session,
+        });
 
-      if (!approval) {
-        let approvalId;
-        try {
-          approvalId = await SequenceCounter.generateId({
-            organisationId,
-            sequenceKey: 'APPROVAL',
-            prefix: 'APP',
-            minimumDigits: 5,
-          });
-        } catch {
-          const approvalCount = await Approval.countDocuments({ organisationId });
-          approvalId = `APP-${String(approvalCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
-        }
+        leave = new LeaveRequest({
+          leaveId,
+          organisationId,
+          cafeId,
+          userId,
+          leaveType,
+          startDate,
+          endDate,
+          durationUnit,
+          requestedDays: diffDays,
+          reason: reason.trim(),
+          attachmentUrl,
+          attachmentName,
+          idempotencyKey: idempotencyKey || null,
+          status: 'PENDING',
+        });
+        await leave.save({ session });
 
-        approval = await Approval.create({
+        const approvalId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: 'APPROVAL',
+          prefix: 'APP',
+          minimumDigits: 5,
+          session,
+        });
+
+        const approval = new Approval({
           approvalId,
           organisationId,
           cafeId,
@@ -532,34 +527,48 @@ const applyLeave = asyncHandler(async (request, response) => {
           amountPaisa: 0,
           status: 'PENDING',
         });
-      }
+        await approval.save({ session });
+      });
+    } finally {
+      await session.endSession();
+    }
 
-      const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
-      const recipientIds = new Set(masterUsers.map((m) => m.userId));
-      recipientIds.add('MU-0001');
+    // Notification delivery is intentionally post-commit and non-blocking.
+    // The request/approval pair above is the authoritative atomic workflow.
+    try {
+      const masterUsers = await User.find({
+        organisationId,
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        accountStatus: 'ACTIVE',
+      }).select('userId email').lean();
 
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      for (const masterId of recipientIds) {
-        const mUser = masterUsers.find((m) => m.userId === masterId);
-        const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+      for (const master of masterUsers) {
+        const notifId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: `NOTIFICATION_${dateStr}`,
+          prefix: `NT-${dateStr}`,
+          minimumDigits: 4,
+        });
         await Notification.create({
           notificationId: notifId,
           organisationId,
-          cafeId: cafeId || 'ALL',
+          cafeId,
           eventType: 'LEAVE_REQUESTED',
           category: 'OPERATIONS',
-          recipientUserId: masterId,
+          recipientUserId: master.userId,
           recipientRole: 'MASTER',
-          recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
+          recipientEmail: master.email,
           title: `🌴 Leave Request: ${userId}`,
           message: `${userId} applied for ${diffDays} day(s) of ${leaveType} leave (${startDate} to ${endDate}). Reason: ${reason.trim()}`,
           priority: 'NORMAL',
           channels: ['IN_APP'],
-          deepLink: `#approvals`,
+          deepLink: '#approvals',
           sourceModule: 'LEAVE',
           sourceEntityType: 'LEAVE_REQUEST',
           sourceEntityId: leave.leaveId,
-          deduplicationKey: `LR_${leave.leaveId}_${masterId}`,
+          deduplicationKey: `LR_${leave.leaveId}_${master.userId}`,
           correlationId: request.correlationId || `CORR-LR-${leave.leaveId}`,
           status: 'DELIVERED',
           deliveredAt: new Date(),
@@ -567,7 +576,7 @@ const applyLeave = asyncHandler(async (request, response) => {
         });
       }
     } catch (notifErr) {
-      console.warn(`[LEAVE_APPROVAL_HOOK_WARN] ${notifErr.message}`);
+      console.warn(`[LEAVE_NOTIFICATION_WARN] ${notifErr.message}`);
     }
   } finally {
     releaseLock();
