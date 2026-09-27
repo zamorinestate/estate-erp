@@ -20,6 +20,7 @@ test('STAGE 03 — Café Registration, 12-Section Onboarding & Store Readiness S
     userId: 'MU-0001',
     role: 'MASTER',
     organisationId: 'ORG-ZAMORIN',
+    isPrimaryMaster: true,
   };
 
   const authOwner = {
@@ -39,6 +40,10 @@ test('STAGE 03 — Café Registration, 12-Section Onboarding & Store Readiness S
       name: 'Primary Master Admin',
       email: 'master@zamorin.test',
       role: 'MASTER',
+      isPrimaryMaster: true,
+      primaryMasterDesignatedAt: new Date(),
+      primaryMasterDesignatedBy: 'SYSTEM_BOOTSTRAP',
+      primaryMasterDesignationReason: 'Stage 03 test fixture',
       createdBy: 'SYSTEM',
       accountStatus: 'ACTIVE',
       passwordHash,
