@@ -271,8 +271,13 @@ class CafeService {
     const rawInitialPin = sanitized.cafePin || sanitized.operationsPin || cafeData.cafePin || cafeData.operationsPin;
     let operationsPinHash = null;
     let operationsPinSetAt = null;
-    if (rawInitialPin && /^\d{6}$/.test(String(rawInitialPin).trim())) {
-      operationsPinHash = await bcrypt.hash(String(rawInitialPin).trim(), 12);
+    if (rawInitialPin) {
+      const pinStr = String(rawInitialPin).trim();
+      const { isWeakPin } = require('../utils/pinPolicy');
+      if (isWeakPin(pinStr)) {
+        throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Café Operations PIN must be a strong, non-sequential 6-digit numeric PIN.');
+      }
+      operationsPinHash = await bcrypt.hash(pinStr, 12);
       operationsPinSetAt = new Date();
     }
 

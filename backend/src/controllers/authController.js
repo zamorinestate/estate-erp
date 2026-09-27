@@ -2365,22 +2365,68 @@ const getSelfPrivacySecurity = asyncHandler(
 
 const GENERIC_CAFE_OPS_LOGIN_ERROR = 'Unable to sign in. Please verify your Café, ID and PINs.';
 
+// Rolling in-memory attempt tracker for Café PIN brute-force protection
+// Key: `${cafeId}:${clientIp}`
+// Stores: { attempts: number, firstAttemptAt: number, throttledUntil: number | null }
+const cafePinAttemptMap = new Map();
+const CAFE_PIN_MAX_ATTEMPTS = 5;
+const CAFE_PIN_WINDOW_MS = 15 * 60 * 1000;
+const CAFE_PIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+function getCafePinTracker(cafeId, clientIp) {
+  const key = `${cafeId}:${clientIp}`;
+  const now = Date.now();
+  let entry = cafePinAttemptMap.get(key);
+  if (!entry) {
+    entry = { attempts: 0, firstAttemptAt: now, throttledUntil: null };
+    cafePinAttemptMap.set(key, entry);
+  } else {
+    if (entry.throttledUntil && entry.throttledUntil <= now) {
+      entry.attempts = 0;
+      entry.firstAttemptAt = now;
+      entry.throttledUntil = null;
+    } else if (!entry.throttledUntil && now - entry.firstAttemptAt > CAFE_PIN_WINDOW_MS) {
+      entry.attempts = 0;
+      entry.firstAttemptAt = now;
+    }
+  }
+  return entry;
+}
+
+function recordCafePinFailure(cafeId, clientIp) {
+  const entry = getCafePinTracker(cafeId, clientIp);
+  entry.attempts += 1;
+  if (entry.attempts >= CAFE_PIN_MAX_ATTEMPTS) {
+    entry.throttledUntil = Date.now() + CAFE_PIN_LOCKOUT_MS;
+  }
+}
+
+function resetCafePinAttempts(cafeId, clientIp) {
+  const key = `${cafeId}:${clientIp}`;
+  cafePinAttemptMap.delete(key);
+}
+
+/**
+ * Public Directory for Café Selection on Café Operations Login.
+ * Returns only safe, public fields for active cafés within the canonical tenant.
+ * Prevents arbitrary cross-tenant enumeration.
+ */
 const getPublicCafeOperationsCafes = asyncHandler(async (request, response) => {
-  const organisationId = String(request.query.organisationId || 'ZAMORIN').trim().toUpperCase();
+  // Strictly enforce canonical organisation context (no cross-tenant enumeration)
+  const organisationId = 'ZAMORIN';
 
   const cafes = await Cafe.find({
     organisationId,
     status: 'ACTIVE',
   })
-    .select('cafeId name displayName code address.city')
-    .sort({ name: 1 })
+    .select('code cafeId displayName name address.city -_id')
+    .sort({ displayName: 1 })
     .lean();
 
   const safeList = cafes.map((c) => ({
-    cafeId: c.cafeId,
-    name: c.name,
-    displayName: c.displayName || c.name,
+    cafeId: c.code || c.cafeId,
     code: c.code || c.cafeId,
+    displayName: c.displayName || c.name,
     city: c.address?.city || '',
   }));
 
@@ -2394,6 +2440,13 @@ const getPublicCafeOperationsCafes = asyncHandler(async (request, response) => {
   });
 });
 
+/**
+ * Café Operations 4-Part Authentication Contract:
+ * 1. Café Code
+ * 2. Employee / Staff ID
+ * 3. Café 6-Digit PIN
+ * 4. Employee 6-Digit PIN
+ */
 const loginCafeOperations = asyncHandler(async (request, response) => {
   let body = request.body || {};
   if (typeof body === 'string') {
@@ -2403,41 +2456,41 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
     body = body.body;
   }
 
-  const rawOrg = String(body.organisationId || body.orgId || body.organisation || '').trim();
-  const organisationId = rawOrg ? rawOrg.toUpperCase() : 'ZAMORIN';
+  // Strictly enforce canonical organisation context
+  const organisationId = 'ZAMORIN';
 
   const rawCafeId = String(body.cafeId || body.cafe || '').trim();
   const rawUserId = String(body.userId || body.employeeId || body.operatorUserId || body.identifier || '').trim();
   const rawCafePin = typeof body.cafePin !== 'undefined' ? String(body.cafePin).trim() : '';
   const rawEmployeePin = typeof body.employeePin !== 'undefined' ? String(body.employeePin).trim() : (typeof body.pin !== 'undefined' ? String(body.pin).trim() : '');
 
-  // 1. Format Validations
-  if (!rawCafeId || !rawUserId) {
+  const clientIp = request.ip || request.socket?.remoteAddress || '127.0.0.1';
+
+  // Import centralized DUMMY_HASH for constant-time comparisons
+  const { DUMMY_HASH } = require('../utils/pinPolicy');
+
+  // 1. Missing Fields Validation (Input level: 400 with generic required message)
+  if (!rawCafeId || !rawUserId || !rawCafePin || !rawEmployeePin) {
     return response.status(400).json({
       success: false,
       error: {
         code: 'MISSING_REQUIRED_FIELDS',
-        message: 'Café and ID are required.',
+        message: 'Café, ID, and 6-digit PINs are required.',
       },
     });
   }
 
-  if (!/^\d{6}$/.test(rawCafePin)) {
-    return response.status(400).json({
+  // 2. Strict 6-digit format validation:
+  // If either PIN is malformed, execute dummy constant-time comparisons and return generic 401 error.
+  // This prevents attackers from deducing formatting discrepancies or leaking partial credential validity.
+  if (!/^\d{6}$/.test(rawCafePin) || !/^\d{6}$/.test(rawEmployeePin)) {
+    await bcrypt.compare(String(rawCafePin), DUMMY_HASH);
+    await bcrypt.compare(String(rawEmployeePin), DUMMY_HASH);
+    return response.status(401).json({
       success: false,
       error: {
-        code: 'INVALID_CAFE_PIN_FORMAT',
-        message: 'Café PIN must be exactly 6 numeric digits.',
-      },
-    });
-  }
-
-  if (!/^\d{6}$/.test(rawEmployeePin)) {
-    return response.status(400).json({
-      success: false,
-      error: {
-        code: 'INVALID_EMPLOYEE_PIN_FORMAT',
-        message: 'Employee PIN must be exactly 6 numeric digits.',
+        code: 'INVALID_CREDENTIALS',
+        message: GENERIC_CAFE_OPS_LOGIN_ERROR,
       },
     });
   }
@@ -2445,13 +2498,11 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
   const targetCafeId = rawCafeId.toUpperCase();
   const targetUserId = rawUserId.toUpperCase();
 
-  // 2. Resolve Café (must exist, must be ACTIVE)
-  const cafe = await Cafe.findOne({
-    organisationId,
-    $or: [{ cafeId: targetCafeId }, { code: targetCafeId }],
-  }).select('+operationsPinHash');
-
-  if (!cafe || cafe.status !== 'ACTIVE') {
+  // 3. Check Source-Level Café PIN Throttling for this client IP
+  const cafeTracker = getCafePinTracker(targetCafeId, clientIp);
+  if (cafeTracker.throttledUntil && cafeTracker.throttledUntil > Date.now()) {
+    await bcrypt.compare(String(rawCafePin), DUMMY_HASH);
+    await bcrypt.compare(String(rawEmployeePin), DUMMY_HASH);
     try {
       await auditService.recordAuditEvent({
         organisationId,
@@ -2461,10 +2512,47 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
         action: 'CAFE_OPERATIONS_LOGIN_FAILED',
         entityType: 'CAFE',
         entityId: targetCafeId,
-        reason: 'Café not found or not active.',
+        reason: 'CAFE_IP_THROTTLED',
         result: 'FAILURE',
         riskClassification: 'HIGH',
-        ipAddress: request.ip || null,
+        ipAddress: clientIp,
+        userAgent: request.get('user-agent') || null,
+        correlationId: request.correlationId || null,
+      });
+    } catch {}
+    return response.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many sign-in attempts. Please try again later.',
+      },
+    });
+  }
+
+  // 4. Resolve Café (must exist, must be ACTIVE)
+  const cafe = await Cafe.findOne({
+    organisationId,
+    $or: [{ cafeId: targetCafeId }, { code: targetCafeId }],
+  }).select('+operationsPinHash');
+
+  if (!cafe || cafe.status !== 'ACTIVE') {
+    // Constant-time dummy comparisons to eliminate timing discrepancies
+    await bcrypt.compare(String(rawCafePin), DUMMY_HASH);
+    await bcrypt.compare(String(rawEmployeePin), DUMMY_HASH);
+
+    try {
+      await auditService.recordAuditEvent({
+        organisationId,
+        actorUserId: targetUserId,
+        actorRole: 'STAFF',
+        module: 'CAFE_OPERATIONS',
+        action: 'CAFE_OPERATIONS_LOGIN_FAILED',
+        entityType: 'CAFE',
+        entityId: targetCafeId,
+        reason: !cafe ? 'CAFE_NOT_FOUND' : 'CAFE_INACTIVE',
+        result: 'FAILURE',
+        riskClassification: 'HIGH',
+        ipAddress: clientIp,
         userAgent: request.get('user-agent') || null,
         correlationId: request.correlationId || null,
       });
@@ -2478,18 +2566,7 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
     });
   }
 
-  // Check Café PIN lockout
-  if (cafe.operationsPinLockedUntil && new Date(cafe.operationsPinLockedUntil) > new Date()) {
-    return response.status(423).json({
-      success: false,
-      error: {
-        code: 'CAFE_LOCKED',
-        message: 'Café operations temporarily locked due to repeated failed attempts. Please try again later.',
-      },
-    });
-  }
-
-  // 3. Resolve User / Employee
+  // 5. Resolve User / Employee
   const user = await User.findOne({
     organisationId,
     $or: [
@@ -2501,12 +2578,10 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
   }).select('+operatorPinHash +appPinHash');
 
   // Verify User existence & active status
+  // CRITICAL DOS FIX: Unknown or inactive employee NEVER increments Cafe failure counters!
   if (!user || (user.accountStatus && user.accountStatus !== 'ACTIVE') || (user.status && user.status !== 'ACTIVE')) {
-    cafe.operationsPinFailedAttempts = (cafe.operationsPinFailedAttempts || 0) + 1;
-    if (cafe.operationsPinFailedAttempts >= 5) {
-      cafe.operationsPinLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-    }
-    await cafe.save().catch(() => {});
+    await bcrypt.compare(String(rawCafePin), cafe.operationsPinHash || DUMMY_HASH);
+    await bcrypt.compare(String(rawEmployeePin), DUMMY_HASH);
 
     try {
       await auditService.recordAuditEvent({
@@ -2517,10 +2592,10 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
         action: 'CAFE_OPERATIONS_LOGIN_FAILED',
         entityType: 'USER',
         entityId: targetUserId,
-        reason: 'User not found or inactive.',
+        reason: !user ? 'USER_NOT_FOUND' : 'USER_INACTIVE',
         result: 'FAILURE',
         riskClassification: 'HIGH',
-        ipAddress: request.ip || null,
+        ipAddress: clientIp,
         userAgent: request.get('user-agent') || null,
         correlationId: request.correlationId || null,
       });
@@ -2534,9 +2609,30 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
     });
   }
 
-  // Role validation: Only CAFE_ADMIN and STAFF allowed in Café Operations
+  // Role validation: ONLY CAFE_ADMIN and STAFF allowed in Café Operations
+  // Dead Master condition permanently eliminated. Primary Master has exclusive Primary Master window.
   const allowedRoles = ['CAFE_ADMIN', 'STAFF'];
   if (!allowedRoles.includes(user.role)) {
+    await bcrypt.compare(String(rawCafePin), cafe.operationsPinHash || DUMMY_HASH);
+    await bcrypt.compare(String(rawEmployeePin), DUMMY_HASH);
+
+    try {
+      await auditService.recordAuditEvent({
+        organisationId,
+        actorUserId: user.userId,
+        actorRole: user.role,
+        module: 'CAFE_OPERATIONS',
+        action: 'CAFE_OPERATIONS_LOGIN_FAILED',
+        entityType: 'USER',
+        entityId: user.userId,
+        reason: 'ROLE_UNAUTHORIZED',
+        result: 'FAILURE',
+        riskClassification: 'HIGH',
+        ipAddress: clientIp,
+        userAgent: request.get('user-agent') || null,
+        correlationId: request.correlationId || null,
+      });
+    } catch {}
     return response.status(401).json({
       success: false,
       error: {
@@ -2546,19 +2642,42 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
     });
   }
 
-  // Check User PIN lockout
+  // Check Employee PIN Lockout:
+  // If employee account is locked, return generic 401 without leaking lock status externally.
   if (user.operatorPinLockedUntil && new Date(user.operatorPinLockedUntil) > new Date()) {
-    return response.status(423).json({
+    await bcrypt.compare(String(rawCafePin), cafe.operationsPinHash || DUMMY_HASH);
+    await bcrypt.compare(String(rawEmployeePin), DUMMY_HASH);
+
+    try {
+      await auditService.recordAuditEvent({
+        organisationId,
+        actorUserId: user.userId,
+        actorRole: user.role,
+        module: 'CAFE_OPERATIONS',
+        action: 'CAFE_OPERATIONS_LOGIN_FAILED',
+        entityType: 'USER',
+        entityId: user.userId,
+        reason: 'ACCOUNT_LOCKED',
+        result: 'FAILURE',
+        riskClassification: 'HIGH',
+        ipAddress: clientIp,
+        userAgent: request.get('user-agent') || null,
+        correlationId: request.correlationId || null,
+      });
+    } catch {}
+    return response.status(401).json({
       success: false,
       error: {
-        code: 'ACCOUNT_LOCKED',
-        message: 'Account temporarily locked due to repeated failed attempts. Please try again later.',
+        code: 'INVALID_CREDENTIALS',
+        message: GENERIC_CAFE_OPS_LOGIN_ERROR,
       },
     });
   }
 
-  // 4. Verify Café 6-digit PIN
+  // 6. Verify Café 6-digit PIN
   if (!cafe.operationsPinHash) {
+    await bcrypt.compare(String(rawCafePin), DUMMY_HASH);
+    await bcrypt.compare(String(rawEmployeePin), DUMMY_HASH);
     return response.status(401).json({
       success: false,
       error: {
@@ -2570,30 +2689,51 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
 
   const isCafePinValid = await bcrypt.compare(String(rawCafePin), cafe.operationsPinHash);
 
-  // 5. Verify Employee 6-digit PIN
-  const employeePinHash = user.operatorPinHash || user.appPinHash;
-  const isEmployeePinValid = employeePinHash ? await bcrypt.compare(String(rawEmployeePin), employeePinHash) : false;
+  // 7. Authoritative Employee PIN Resolution:
+  // Primary/Authoritative: operatorPinHash (store-floor cashier/till session credential)
+  // Fallback: appPinHash (migration-compatible fallback for 6-digit application PINs)
+  let employeePinHash = null;
+  let pinCredentialSource = null;
+  if (user.operatorPinHash) {
+    employeePinHash = user.operatorPinHash;
+    pinCredentialSource = 'OPERATOR_PIN';
+  } else if (user.appPinHash) {
+    employeePinHash = user.appPinHash;
+    pinCredentialSource = 'APP_PIN_MIGRATION_FALLBACK';
+  }
 
-  // 6. Verify Café Assignment
+  const isEmployeePinValid = employeePinHash
+    ? await bcrypt.compare(String(rawEmployeePin), employeePinHash)
+    : false;
+
+  // 8. Verify Café Assignment (Strict isolation: employee must be assigned to this café)
   const isAssigned =
-    user.role === 'MASTER' ||
     user.primaryCafeId === cafe.cafeId ||
     (Array.isArray(user.assignedCafeIds) && user.assignedCafeIds.includes(cafe.cafeId)) ||
     (user.cafeOperatorAccess?.active && user.cafeOperatorAccess?.assignedCafeId === cafe.cafeId);
 
-  // Four-part check failure evaluation
+  // 9. Failure Domain Separation & Evaluation:
   if (!isCafePinValid || !isEmployeePinValid || !isAssigned) {
-    cafe.operationsPinFailedAttempts = (cafe.operationsPinFailedAttempts || 0) + 1;
-    if (cafe.operationsPinFailedAttempts >= 5) {
-      cafe.operationsPinLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+    // If Café PIN failed: Record failure against the source IP / client tracker (prevents global Cafe DoS)
+    if (!isCafePinValid) {
+      recordCafePinFailure(cafe.cafeId, clientIp);
     }
-    await cafe.save().catch(() => {});
 
-    user.operatorPinFailedAttempts = (user.operatorPinFailedAttempts || 0) + 1;
-    if (user.operatorPinFailedAttempts >= 5) {
-      user.operatorPinLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+    // If Employee PIN failed (and Café PIN was correct): Increment ONLY this employee's failure count
+    if (isCafePinValid && !isEmployeePinValid) {
+      user.operatorPinFailedAttempts = (user.operatorPinFailedAttempts || 0) + 1;
+      if (user.operatorPinFailedAttempts >= 5) {
+        user.operatorPinLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+      }
+      await user.save().catch(() => {});
     }
-    await user.save().catch(() => {});
+
+    // Determine internal audit safe reason (never log PIN values)
+    const auditReason = !isCafePinValid
+      ? 'CAFE_PIN_MISMATCH'
+      : !isEmployeePinValid
+      ? 'EMPLOYEE_PIN_MISMATCH'
+      : 'CAFE_ASSIGNMENT_MISMATCH';
 
     try {
       await auditService.recordAuditEvent({
@@ -2604,19 +2744,16 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
         action: 'CAFE_OPERATIONS_LOGIN_FAILED',
         entityType: 'OPERATOR_SESSION',
         entityId: cafe.cafeId,
-        reason: !isCafePinValid
-          ? 'Café PIN mismatch'
-          : !isEmployeePinValid
-          ? 'Employee PIN mismatch'
-          : 'Café assignment mismatch',
+        reason: auditReason,
         result: 'FAILURE',
         riskClassification: 'HIGH',
-        ipAddress: request.ip || null,
+        ipAddress: clientIp,
         userAgent: request.get('user-agent') || null,
         correlationId: request.correlationId || null,
         metadata: {
           cafeId: cafe.cafeId,
           userId: user.userId,
+          pinCredentialSource,
         },
       });
     } catch {}
@@ -2630,19 +2767,15 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
     });
   }
 
-  // 7. Success! Reset failure counters
-  if (cafe.operationsPinFailedAttempts > 0 || cafe.operationsPinLockedUntil) {
-    cafe.operationsPinFailedAttempts = 0;
-    cafe.operationsPinLockedUntil = null;
-    await cafe.save().catch(() => {});
-  }
+  // 10. Success! Reset failure counters
+  resetCafePinAttempts(cafe.cafeId, clientIp);
   if (user.operatorPinFailedAttempts > 0 || user.operatorPinLockedUntil) {
     user.operatorPinFailedAttempts = 0;
     user.operatorPinLockedUntil = null;
     await user.save().catch(() => {});
   }
 
-  // 8. Create standard session
+  // 11. Create Standard Session & Device Metadata
   const device = buildDeviceMetadata(request);
   if (!device.deviceId) {
     device.deviceId = `DEV-WEB-${cafe.cafeId}`;
@@ -2670,13 +2803,14 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
       entityId: cafe.cafeId,
       result: 'SUCCESS',
       riskClassification: 'LOW',
-      ipAddress: request.ip || null,
+      ipAddress: clientIp,
       userAgent: request.get('user-agent') || null,
       correlationId: request.correlationId || null,
       metadata: {
         cafeId: cafe.cafeId,
         userId: user.userId,
         sessionId: sessionData.session?.sessionId,
+        pinCredentialSource,
       },
     });
   } catch {}
@@ -2698,7 +2832,7 @@ const loginCafeOperations = asyncHandler(async (request, response) => {
       accessTokenExpiresAt: sessionData.accessTokenExpiresAt,
       refreshTokenExpiresAt: sessionData.refreshTokenExpiresAt,
       cafe: {
-        cafeId: cafe.cafeId,
+        cafeId: cafe.code || cafe.cafeId,
         name: cafe.name,
         displayName: cafe.displayName || cafe.name,
         code: cafe.code || cafe.cafeId,

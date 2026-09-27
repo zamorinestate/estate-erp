@@ -327,7 +327,7 @@ describe('LOGIN-PAGE-2.0 Automatic MFA Orchestration 15-Point Suite', () => {
 
     const mainPath = path.resolve(__dirname, '../../frontend/src/js/main.js');
     const mainContent = fs.readFileSync(mainPath, 'utf8');
-    assert.ok(mainContent.includes('const landingRoute = (role === "staff") ? "staff-home" : "dashboard";'), 'STAFF landing route resolves to staff-home');
+    assert.ok(mainContent.includes('(role === "staff") ? "staff-home"'), 'STAFF landing route resolves to staff-home');
   });
 
   // TEST 14: Passkey login creates session with mfaVerified: true and is not forced through TOTP

@@ -272,7 +272,7 @@ test('Cafe Operations Login 2.0 Contract & 32-Requirement Specification Suite', 
     assert.match(res.body.error.message, /ID.*required/i);
   });
 
-  // Req 6: Cafe PIN requires exactly 6 numeric digits
+  // Req 6: Cafe PIN requires exactly 6 numeric digits (rejected with generic 401 to prevent format enumeration)
   await t.test('6: Cafe PIN requires exactly 6 numeric digits', async () => {
     for (const badPin of ['12345', '1234567', 'abcdef', '12345a']) {
       const res = await requestHttp(server, {
@@ -285,12 +285,12 @@ test('Cafe Operations Login 2.0 Contract & 32-Requirement Specification Suite', 
         employeePin: '007890',
       });
 
-      assert.equal(res.status, 400, `PIN "${badPin}" must be rejected with 400`);
-      assert.match(res.body.error.message, /6 numeric digits/i);
+      assert.equal(res.status, 401, `PIN "${badPin}" must be rejected with 401`);
+      assert.equal(res.body.error.message, 'Unable to sign in. Please verify your Café, ID and PINs.');
     }
   });
 
-  // Req 7: Employee PIN requires exactly 6 numeric digits
+  // Req 7: Employee PIN requires exactly 6 numeric digits (rejected with generic 401 to prevent format enumeration)
   await t.test('7: Employee PIN requires exactly 6 numeric digits', async () => {
     for (const badPin of ['999', '12345678', 'ABCDEF', '12 456']) {
       const res = await requestHttp(server, {
@@ -303,8 +303,8 @@ test('Cafe Operations Login 2.0 Contract & 32-Requirement Specification Suite', 
         employeePin: badPin,
       });
 
-      assert.equal(res.status, 400, `Employee PIN "${badPin}" must be rejected with 400`);
-      assert.match(res.body.error.message, /6 numeric digits/i);
+      assert.equal(res.status, 401, `Employee PIN "${badPin}" must be rejected with 401`);
+      assert.equal(res.body.error.message, 'Unable to sign in. Please verify your Café, ID and PINs.');
     }
   });
 
@@ -467,7 +467,11 @@ test('Cafe Operations Login 2.0 Contract & 32-Requirement Specification Suite', 
       assert.equal(res.body.error.message, 'Unable to sign in. Please verify your Café, ID and PINs.');
     }
 
-    // 6th attempt must be locked out with 423
+    // Verify in database that employee account was locked out
+    const lockedUser = await User.findOne({ userId: 'AD-0001' });
+    assert(lockedUser.operatorPinLockedUntil && new Date(lockedUser.operatorPinLockedUntil) > new Date(), 'User must have operatorPinLockedUntil in the future');
+
+    // 6th attempt: even with correct PIN, must fail with generic 401 (never disclosing locked status)
     const lockedRes = await requestHttp(server, {
       path: '/api/v1/auth/cafe-operations/login',
       method: 'POST',
@@ -475,11 +479,11 @@ test('Cafe Operations Login 2.0 Contract & 32-Requirement Specification Suite', 
       cafeId: 'ZC-0001',
       userId: 'AD-0001',
       cafePin: '001234',
-      employeePin: '123456', // even with correct PIN, must be locked!
+      employeePin: '123456', // correct PIN, but locked
     });
 
-    assert.equal(lockedRes.status, 423);
-    assert.match(lockedRes.body.error.message, /locked.*try again later/i);
+    assert.equal(lockedRes.status, 401);
+    assert.equal(lockedRes.body.error.message, 'Unable to sign in. Please verify your Café, ID and PINs.');
 
     // Reset lockout for other tests
     await User.updateOne({ userId: 'AD-0001' }, { operatorPinFailedAttempts: 0, operatorPinLockedUntil: null });
@@ -644,5 +648,208 @@ test('Cafe Operations Login 2.0 Contract & 32-Requirement Specification Suite', 
     assert.equal(res.status, 401);
     assert.equal(res.body.success, false);
     assert.equal(res.body.error.message, 'Unable to sign in. Please verify your Café, ID and PINs.');
+  });
+
+  // Security Certification Suite: Weak PIN Policy Enforcement
+  await t.test('Security: Trivial Cafe and Employee PINs rejected during provisioning', async () => {
+    const operatorSessionService = require('../src/services/operatorSessionService');
+    const { isWeakPin } = require('../src/utils/pinPolicy');
+
+    // Test blocklist functions
+    assert.equal(isWeakPin('123456'), true, 'Ascending sequence must be weak');
+    assert.equal(isWeakPin('654321'), true, 'Descending sequence must be weak');
+    assert.equal(isWeakPin('111111'), true, 'Repeated digits must be weak');
+    assert.equal(isWeakPin('121212'), true, 'Alternating digits must be weak');
+    assert.equal(isWeakPin('987654'), true, 'Descending sequence must be weak');
+    assert.equal(isWeakPin('482910'), false, 'Non-trivial PIN must be accepted');
+
+    // Test operatorSessionService.setCafeOperationsPin rejects weak PIN
+    await assert.rejects(
+      async () => {
+        await operatorSessionService.setCafeOperationsPin({
+          orgId: TEST_ORG,
+          cafeId: 'ZC-0001',
+          pin: '123456',
+          actorUserId: 'MU-0001',
+          actorRole: 'MASTER',
+        });
+      },
+      (err) => err.code === 'WEAK_PIN_REJECTED' || /stronger/i.test(err.message)
+    );
+
+    // Test operatorSessionService.setOperatorPin rejects weak PIN
+    await assert.rejects(
+      async () => {
+        await operatorSessionService.setOperatorPin({
+          organisationId: TEST_ORG,
+          targetUserId: 'ST-0001',
+          actorUserId: 'MU-0001',
+          actorRole: 'MASTER',
+          newPin: '654321',
+        });
+      },
+      (err) => err.code === 'WEAK_PIN_REJECTED' || /stronger/i.test(err.message)
+    );
+  });
+
+  // Security Certification Suite: Denial-of-Service Isolation
+  await t.test('Security: Unknown employee or wrong employee PIN does NOT globally lock Cafe', async () => {
+    await Cafe.updateOne({ cafeId: 'ZC-0001' }, { operationsPinFailedAttempts: 0, operationsPinLockedUntil: null });
+
+    // 1. 6 failed attempts with unknown employee
+    for (let i = 0; i < 6; i++) {
+      const res = await requestHttp(server, {
+        path: '/api/v1/auth/cafe-operations/login',
+        method: 'POST',
+      }, {
+        cafeId: 'ZC-0001',
+        userId: `UNKNOWN-${i}`,
+        cafePin: '001234',
+        employeePin: '999998',
+      });
+      assert.equal(res.status, 401);
+      assert.equal(res.body.error.message, 'Unable to sign in. Please verify your Café, ID and PINs.');
+    }
+
+    // Verify Cafe is NOT locked
+    const cafeAfterUnknown = await Cafe.findOne({ cafeId: 'ZC-0001' });
+    assert.equal(cafeAfterUnknown.operationsPinFailedAttempts, 0, 'Unknown employee failures must not increment Cafe failure count');
+    assert.equal(cafeAfterUnknown.operationsPinLockedUntil, null, 'Unknown employee failures must not lock Cafe');
+
+    // 2. 6 failed attempts with wrong employee PIN for ST-0001
+    for (let i = 0; i < 6; i++) {
+      const res = await requestHttp(server, {
+        path: '/api/v1/auth/cafe-operations/login',
+        method: 'POST',
+      }, {
+        cafeId: 'ZC-0001',
+        userId: 'ST-0001',
+        cafePin: '001234',
+        employeePin: '999998',
+      });
+      assert.equal(res.status, 401);
+    }
+
+    // Verify Cafe is still NOT locked
+    const cafeAfterWrongEmpPin = await Cafe.findOne({ cafeId: 'ZC-0001' });
+    assert.equal(cafeAfterWrongEmpPin.operationsPinFailedAttempts, 0, 'Wrong employee PIN must not increment Cafe failure count');
+    assert.equal(cafeAfterWrongEmpPin.operationsPinLockedUntil, null, 'Wrong employee PIN must not lock Cafe');
+
+    // 3. 6 cross-cafe attempts with ST-0002 (assigned to Cafe B) at Cafe A
+    for (let i = 0; i < 6; i++) {
+      const res = await requestHttp(server, {
+        path: '/api/v1/auth/cafe-operations/login',
+        method: 'POST',
+      }, {
+        cafeId: 'ZC-0001',
+        userId: 'ST-0002',
+        cafePin: '001234',
+        employeePin: '234567',
+      });
+      assert.equal(res.status, 401);
+    }
+
+    // Verify Cafe is STILL not locked
+    const cafeAfterCross = await Cafe.findOne({ cafeId: 'ZC-0001' });
+    assert.equal(cafeAfterCross.operationsPinFailedAttempts, 0, 'Cross-cafe attempts must not increment Cafe failure count');
+    assert.equal(cafeAfterCross.operationsPinLockedUntil, null, 'Cross-cafe attempts must not lock Cafe');
+  });
+
+  // Security Certification Suite: Legitimate User Access After Another User Lockout
+  await t.test('Security: Legitimate second employee can log in after another employee is locked out', async () => {
+    // Reset AD-0001 counters
+    await User.updateOne({ userId: 'AD-0001' }, { operatorPinFailedAttempts: 0, operatorPinLockedUntil: null });
+
+    // Fail AD-0001 5 times to trigger employee lockout
+    for (let i = 0; i < 5; i++) {
+      await requestHttp(server, {
+        path: '/api/v1/auth/cafe-operations/login',
+        method: 'POST',
+      }, {
+        cafeId: 'ZC-0001',
+        userId: 'AD-0001',
+        cafePin: '001234',
+        employeePin: '999998',
+      });
+    }
+
+    // Verify AD-0001 is locked
+    const lockedAdmin = await User.findOne({ userId: 'AD-0001' });
+    assert(lockedAdmin.operatorPinLockedUntil && new Date(lockedAdmin.operatorPinLockedUntil) > new Date());
+
+    // Reset ST-0001 counters to ensure clean state
+    await User.updateOne({ userId: 'ST-0001' }, { operatorPinFailedAttempts: 0, operatorPinLockedUntil: null });
+
+    // ST-0001 logs in with correct credentials - MUST SUCCEED with 200!
+    const staffRes = await requestHttp(server, {
+      path: '/api/v1/auth/cafe-operations/login',
+      method: 'POST',
+    }, {
+      cafeId: 'ZC-0001',
+      userId: 'ST-0001',
+      cafePin: '001234',
+      employeePin: '007890',
+    });
+
+    assert.equal(staffRes.status, 200, 'Legitimate employee must still log in successfully');
+    assert.equal(staffRes.body.success, true);
+    assert.equal(staffRes.body.data.user.userId, 'ST-0001');
+
+    // Clean up
+    await User.updateOne({ userId: 'AD-0001' }, { operatorPinFailedAttempts: 0, operatorPinLockedUntil: null });
+  });
+
+  // Security Certification Suite: Public Cafe Directory Privacy & Integrity
+  await t.test('Security: Public Cafe directory returns only safe fields, strictly isolated to canonical org', async () => {
+    const res = await requestHttp(server, {
+      path: '/api/v1/auth/cafe-operations/cafes',
+      method: 'GET',
+    });
+
+    assert.equal(res.status, 200);
+    const cafes = res.body.data.cafes;
+    assert(cafes.length >= 2);
+
+    for (const c of cafes) {
+      // Must contain safe public fields
+      assert(c.cafeId, 'Must have cafeId');
+      assert(c.code, 'Must have code');
+      assert(c.displayName, 'Must have displayName');
+      assert(typeof c.city === 'string', 'Must have city string');
+
+      // Must NEVER contain sensitive or private operational fields
+      assert.strictEqual(c._id, undefined, 'Must not expose database _id');
+      assert.strictEqual(c.operationsPinHash, undefined, 'Must not expose operationsPinHash');
+      assert.strictEqual(c.operationsPinSetAt, undefined, 'Must not expose operationsPinSetAt');
+      assert.strictEqual(c.operationsPinFailedAttempts, undefined, 'Must not expose failure counts');
+      assert.strictEqual(c.operationsPinLockedUntil, undefined, 'Must not expose lock state');
+      assert.strictEqual(c.deviceTokens, undefined, 'Must not expose device tokens');
+      assert.strictEqual(c.employeeCount, undefined, 'Must not expose employee counts');
+      assert.strictEqual(c.createdBy, undefined, 'Must not expose creator IDs');
+    }
+  });
+
+  // Security Certification Suite: E2E Runner Environment Guard & Source Cleanliness
+  await t.test('Security: E2E runner contains no hardcoded PINs and fails closed on missing config', async () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const e2ePath = path.resolve(__dirname, '../../scripts/test_cafe_ops_e2e.mjs');
+    if (fs.existsSync(e2ePath)) {
+      const e2eContent = fs.readFileSync(e2ePath, 'utf8');
+
+      // Verify no hardcoded exposed test PINs
+      assert(!e2eContent.includes("'123456'"), 'Must not contain hardcoded PIN 123456');
+      assert(!e2eContent.includes("'654321'"), 'Must not contain hardcoded PIN 654321');
+      assert(!e2eContent.includes("'147258'"), 'Must not contain hardcoded PIN 147258');
+      assert(!e2eContent.includes("'258369'"), 'Must not contain hardcoded PIN 258369');
+
+      // Verify required env var names exist in runner
+      assert(e2eContent.includes('CAFE_OPS_E2E_CAFE_ID'), 'Must reference CAFE_OPS_E2E_CAFE_ID');
+      assert(e2eContent.includes('CAFE_OPS_E2E_STAFF_ID'), 'Must reference CAFE_OPS_E2E_STAFF_ID');
+      assert(e2eContent.includes('CAFE_OPS_E2E_CAFE_PIN'), 'Must reference CAFE_OPS_E2E_CAFE_PIN');
+      assert(e2eContent.includes('CAFE_OPS_E2E_EMPLOYEE_PIN'), 'Must reference CAFE_OPS_E2E_EMPLOYEE_PIN');
+      assert(e2eContent.includes('CAFE_OPS_E2E_CREDENTIALS_NOT_CONFIGURED'), 'Must fail closed with CAFE_OPS_E2E_CREDENTIALS_NOT_CONFIGURED');
+      assert(e2eContent.includes('ALLOW_CAFE_OPS_E2E_NONLOCAL'), 'Must guard non-local environments with ALLOW_CAFE_OPS_E2E_NONLOCAL');
+    }
   });
 });
