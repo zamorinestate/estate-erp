@@ -2037,130 +2037,174 @@ const getPendingCorrections = asyncHandler(async (request, response) => {
 
 // 15c. POST /api/v1/attendance/corrections/:requestId/review
 const reviewStaffCorrection = asyncHandler(async (request, response) => {
-  const { requestId: rawReqId } = request.params;
-  const requestId = normalizeIdentifier(rawReqId);
+  const requestId = normalizeIdentifier(request.params.requestId);
   const rawDecision = request.body?.decision || request.body?.action;
   const decision = String(rawDecision || '').toUpperCase().trim();
-  const remarks = request.body?.remarks || request.body?.reviewerNote || request.body?.reviewRemarks || '';
+  const remarks = String(request.body?.remarks || request.body?.reviewerNote || request.body?.reviewRemarks || '').trim();
 
-  if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(request.auth.role)) {
-    throw new ApiError(403, 'PERMISSION_DENIED', 'Insufficient permissions to review correction requests.');
+  if (request.auth.role !== 'MASTER' || !request.auth.isPrimaryMaster) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Attendance correction decisions require Primary Master authority.'
+    );
   }
 
   if (!['APPROVE', 'REJECT'].includes(decision)) {
     throw new ApiError(400, 'INVALID_DECISION', "Decision must be 'APPROVE' or 'REJECT'.");
   }
 
-  const correctionRequest = await AttendanceCorrectionRequest.findOne({
+  const existingRequest = await AttendanceCorrectionRequest.findOne({
     $or: [{ correctionRequestId: requestId }, { requestId }],
     organisationId: request.auth.organisationId,
-  });
+  }).lean();
 
-  if (!correctionRequest) {
+  if (!existingRequest) {
     throw new ApiError(404, 'REQUEST_NOT_FOUND', 'Correction request not found.');
   }
-
-  if (request.auth.role === 'CAFE_ADMIN') {
-    ensureCafeOperationsAllowed(request);
-    ensureCafeAccess(request, correctionRequest.cafeId);
+  if (existingRequest.status !== 'PENDING') {
+    throw new ApiError(409, 'ALREADY_DECIDED', `Correction request is already ${existingRequest.status}.`);
   }
 
-  correctionRequest.status = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-  correctionRequest.reviewedBy = request.auth.userId;
-  correctionRequest.reviewedByUserId = request.auth.userId;
-  correctionRequest.reviewedAt = new Date();
-  correctionRequest.reviewReason = String(remarks).trim();
-  correctionRequest.reviewRemarks = String(remarks).trim();
-
-  let attendance = null;
   if (decision === 'APPROVE') {
-    if (correctionRequest.attendanceId) {
-      attendance = await Attendance.findOne({
-        attendanceId: correctionRequest.attendanceId,
-        organisationId: request.auth.organisationId,
-      });
-    }
-
-    if (!attendance && correctionRequest.userId && correctionRequest.businessDate) {
-      attendance = await Attendance.findOne({
-        organisationId: request.auth.organisationId,
-        userId: correctionRequest.userId,
-        businessDate: correctionRequest.businessDate,
-      });
-    }
-
-    const businessDate = correctionRequest.businessDate || attendance?.businessDate;
-    await ensurePeriodNotLocked(request.auth.organisationId, businessDate);
-
-    if (attendance) {
-      if (correctionRequest.requestedCheckInAt) attendance.checkInAt = correctionRequest.requestedCheckInAt;
-      if (correctionRequest.requestedCheckOutAt) attendance.checkOutAt = correctionRequest.requestedCheckOutAt;
-      if (correctionRequest.requestedBreakMinutes !== undefined) attendance.breakMinutes = correctionRequest.requestedBreakMinutes;
-      attendance.status = attendance.checkOutAt ? 'CHECKED_OUT' : 'CHECKED_IN';
-      attendance.isManualEntry = true;
-      attendance.isCorrection = true;
-      attendance.correctionRequired = false;
-      attendance.correctionReason = `Approved request ${requestId}: ${correctionRequest.reason || ''}`;
-      attendance.updatedBy = request.auth.userId;
-
-      const metrics = calculateAttendanceMetrics({
-        checkInAt: attendance.checkInAt,
-        checkOutAt: attendance.checkOutAt,
-        breaks: attendance.breaks,
-        breakMinutes: attendance.breakMinutes,
-        scheduledStartAt: attendance.scheduledStartAt,
-        scheduledEndAt: attendance.scheduledEndAt,
-        scheduledDurationMinutes: attendance.scheduledDurationMinutes,
-      });
-      attendance.totalWorkedMinutes = metrics.totalWorkedMinutes;
-      attendance.workedMinutes = metrics.totalWorkedMinutes;
-      attendance.regularMinutes = metrics.regularMinutes;
-      attendance.detectedOvertimeMinutes = metrics.detectedOvertimeMinutes;
-      attendance.overtimeMinutes = metrics.approvedOvertimeMinutes || 0;
-
-      if (typeof attendance.calculateWorkedMinutes === 'function') {
-        attendance.calculateWorkedMinutes();
-      }
-      if (typeof attendance.save === 'function') {
-        await attendance.save();
-      }
-      await flagPayrollRecalculationRequired(
-        request.auth.organisationId,
-        attendance.cafeId,
-        attendance.businessDate,
-        request.auth.userId
-      );
-    }
+    await ensurePeriodNotLocked(
+      request.auth.organisationId,
+      existingRequest.businessDate
+    );
   }
 
-  if (typeof correctionRequest.save === 'function') {
-    await correctionRequest.save();
-  }
+  let correctionRequest = null;
+  let attendance = null;
+  let approval = null;
 
-  // Sync Master Approval status
+  const session = await mongoose.startSession();
   try {
-    await Approval.findOneAndUpdate(
-      {
+    await session.withTransaction(async () => {
+      correctionRequest = await AttendanceCorrectionRequest.findOne({
+        $or: [{ correctionRequestId: requestId }, { requestId }],
+        organisationId: request.auth.organisationId,
+      }).session(session);
+
+      if (!correctionRequest) {
+        throw new ApiError(404, 'REQUEST_NOT_FOUND', 'Correction request not found.');
+      }
+      if (correctionRequest.status !== 'PENDING') {
+        throw new ApiError(409, 'ALREADY_DECIDED', `Correction request is already ${correctionRequest.status}.`);
+      }
+
+      approval = await Approval.findOne({
         organisationId: request.auth.organisationId,
         entityType: 'ATTENDANCE_CORRECTION',
         entityId: requestId,
-        status: 'PENDING',
-      },
-      {
-        status: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
-        decidedByUserId: request.auth.userId,
-        decidedAt: new Date(),
-        decisionReason: String(remarks).trim(),
+      }).session(session);
+
+      if (!approval) {
+        throw new ApiError(
+          409,
+          'APPROVAL_TARGET_NOT_FOUND',
+          'The attendance correction has no matching Approval record. No decision was committed.'
+        );
       }
-    );
-  } catch (syncErr) {
-    console.warn(`[ATTENDANCE_APPROVAL_SYNC_WARN] ${syncErr.message}`);
+      if (approval.status !== 'PENDING') {
+        throw new ApiError(409, 'ALREADY_DECIDED', `Approval request is already ${approval.status}.`);
+      }
+
+      correctionRequest.status = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+      correctionRequest.reviewedBy = request.auth.userId;
+      correctionRequest.reviewedByUserId = request.auth.userId;
+      correctionRequest.reviewedAt = new Date();
+      correctionRequest.reviewReason = remarks;
+      correctionRequest.reviewRemarks = remarks;
+
+      if (decision === 'APPROVE') {
+        if (correctionRequest.attendanceId) {
+          attendance = await Attendance.findOne({
+            attendanceId: correctionRequest.attendanceId,
+            organisationId: request.auth.organisationId,
+          }).session(session);
+        }
+
+        if (!attendance && correctionRequest.userId && correctionRequest.businessDate) {
+          attendance = await Attendance.findOne({
+            organisationId: request.auth.organisationId,
+            userId: correctionRequest.userId,
+            businessDate: correctionRequest.businessDate,
+          }).session(session);
+        }
+
+        if (!attendance) {
+          throw new ApiError(
+            409,
+            'ATTENDANCE_TARGET_NOT_FOUND',
+            'The attendance record to correct could not be resolved. No decision was committed.'
+          );
+        }
+
+        if (correctionRequest.requestedCheckInAt) attendance.checkInAt = correctionRequest.requestedCheckInAt;
+        if (correctionRequest.requestedCheckOutAt) attendance.checkOutAt = correctionRequest.requestedCheckOutAt;
+        if (correctionRequest.requestedBreakMinutes !== undefined) attendance.breakMinutes = correctionRequest.requestedBreakMinutes;
+        attendance.status = attendance.checkOutAt ? 'CHECKED_OUT' : 'CHECKED_IN';
+        attendance.isManualEntry = true;
+        attendance.isCorrection = true;
+        attendance.correctionRequired = false;
+        attendance.correctionReason = `Approved request ${requestId}: ${correctionRequest.reason || ''}`;
+        attendance.updatedBy = request.auth.userId;
+
+        const metrics = calculateAttendanceMetrics({
+          checkInAt: attendance.checkInAt,
+          checkOutAt: attendance.checkOutAt,
+          breaks: attendance.breaks,
+          breakMinutes: attendance.breakMinutes,
+          scheduledStartAt: attendance.scheduledStartAt,
+          scheduledEndAt: attendance.scheduledEndAt,
+          scheduledDurationMinutes: attendance.scheduledDurationMinutes,
+        });
+        attendance.totalWorkedMinutes = metrics.totalWorkedMinutes;
+        attendance.workedMinutes = metrics.totalWorkedMinutes;
+        attendance.regularMinutes = metrics.regularMinutes;
+        attendance.detectedOvertimeMinutes = metrics.detectedOvertimeMinutes;
+        attendance.overtimeMinutes = metrics.approvedOvertimeMinutes || 0;
+
+        if (typeof attendance.calculateWorkedMinutes === 'function') {
+          attendance.calculateWorkedMinutes();
+        }
+        await attendance.save({ session });
+      }
+
+      await correctionRequest.save({ session });
+
+      approval.status = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+      approval.decidedByUserId = request.auth.userId;
+      approval.decidedAt = new Date();
+      approval.decisionReason = remarks;
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
   }
 
-  // Notify Staff User of Decision
+  if (decision === 'APPROVE' && attendance) {
+    await flagPayrollRecalculationRequired(
+      request.auth.organisationId,
+      attendance.cafeId,
+      attendance.businessDate,
+      request.auth.userId
+    );
+  }
+
   try {
     const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const notifId = await SequenceCounter.generateId({
+      organisationId: request.auth.organisationId,
+      sequenceKey: `NOTIFICATION_${todayStr}`,
+      prefix: `NT-${todayStr}`,
+      minimumDigits: 4,
+    });
     await Notification.create({
       notificationId: notifId,
       organisationId: request.auth.organisationId,
@@ -2169,7 +2213,6 @@ const reviewStaffCorrection = asyncHandler(async (request, response) => {
       category: 'OPERATIONS',
       recipientUserId: correctionRequest.userId,
       recipientRole: 'STAFF',
-      recipientEmail: `${String(correctionRequest.userId).toLowerCase()}@zamorincafe.com`,
       title: `Attendance Correction ${decision === 'APPROVE' ? 'Approved' : 'Rejected'}`,
       message: `Your attendance correction request for ${correctionRequest.businessDate} was ${decision === 'APPROVE' ? 'approved' : 'rejected'}.${remarks ? ' Reason: ' + remarks : ''}`,
       priority: 'NORMAL',
@@ -2178,6 +2221,10 @@ const reviewStaffCorrection = asyncHandler(async (request, response) => {
       sourceModule: 'ATTENDANCE',
       sourceEntityType: 'ATTENDANCE_CORRECTION',
       sourceEntityId: requestId,
+      deduplicationKey: `${correctionRequest.userId}:ATTENDANCE_CORRECTION_DECISION:${requestId}`,
+      correlationId: request.correlationId || `CORR-ACR-${requestId}`,
+      status: 'DELIVERED',
+      deliveredAt: new Date(),
       createdBy: request.auth.userId,
     });
   } catch (notifErr) {
@@ -2190,13 +2237,13 @@ const reviewStaffCorrection = asyncHandler(async (request, response) => {
     action: decision === 'APPROVE' ? 'CORRECTION_REQUEST_APPROVED' : 'CORRECTION_REQUEST_REJECTED',
     entityType: 'AttendanceCorrectionRequest',
     entityId: requestId,
-    metadata: { requestId, decision, remarks: remarks.trim(), reviewerUserId: request.auth.userId },
+    metadata: { requestId, decision, remarks, reviewerUserId: request.auth.userId },
   });
 
   return response.status(200).json({
     success: true,
     message: `Correction request ${decision === 'APPROVE' ? 'approved' : 'rejected'} successfully.`,
-    data: { correctionRequest, attendance },
+    data: { correctionRequest, attendance, approval },
     correlationId: request.correlationId || null,
   });
 });
