@@ -241,4 +241,59 @@ describe('NOTIFICATION OUTBOX WORKER FAULT INJECTION', () => {
     assert.equal(record.providerMessageId || null, null);
   });
 
+
+  it('OUTBOX-FI-007: provider accepted delivery but SENT persistence fails -> SEND_STATE_UNKNOWN, never RETRY', async () => {
+    await NotificationOutbox.create(dueRecord({
+      outboxId: 'OUT-20260927-0007',
+      idempotencyKey: 'IDEMP-POST-SEND-DB-FAIL',
+    }));
+
+    let sends = 0;
+    const worker = new NotificationService();
+    worker.setProvider({
+      async sendEmail() {
+        sends += 1;
+        return { providerMessageId: 'MSG-POST-SEND-PERSIST-FAIL' };
+      },
+    });
+
+    const originalUpdateOne = NotificationOutbox.updateOne.bind(NotificationOutbox);
+    let injected = false;
+    NotificationOutbox.updateOne = async function injectedPostSendPersistenceFailure(filter, update, options) {
+      if (!injected && update?.$set?.status === 'SENT') {
+        injected = true;
+        const err = new Error('INJECTED_POST_SEND_DB_PERSISTENCE_FAILURE');
+        err.code = 'INJECTED_DB_FAILURE';
+        throw err;
+      }
+      return originalUpdateOne(filter, update, options);
+    };
+
+    try {
+      await worker.processDueOutbox({ limit: 1 });
+
+      let record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0007' }).lean();
+      assert.equal(sends, 1, 'Provider was called exactly once');
+      assert.equal(record.status, 'SEND_STATE_UNKNOWN');
+      assert.equal(record.providerMessageId, 'MSG-POST-SEND-PERSIST-FAIL');
+      assert.equal(record.lastErrorCode, 'POST_SEND_PERSISTENCE_FAILED');
+
+      // A fresh worker (simulated process restart) must not pick this record up.
+      const replacementWorker = new NotificationService();
+      replacementWorker.setProvider({
+        async sendEmail() {
+          sends += 1;
+          return { providerMessageId: 'SHOULD-NOT-BE-SENT' };
+        },
+      });
+      await replacementWorker.processDueOutbox({ limit: 1 });
+
+      record = await NotificationOutbox.findOne({ outboxId: 'OUT-20260927-0007' }).lean();
+      assert.equal(record.status, 'SEND_STATE_UNKNOWN');
+      assert.equal(sends, 1, 'Ambiguous provider state must not cause duplicate delivery');
+    } finally {
+      NotificationOutbox.updateOne = originalUpdateOne;
+    }
+  });
+
 });
