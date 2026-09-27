@@ -180,8 +180,8 @@ const reviewPayrollQuery = asyncHandler(async (request, response) => {
         subject: `Update on Payroll Inquiry ${query.queryId}: ${status}`,
         renderedSubject: `Update on Payroll Inquiry ${query.queryId}: ${status}`,
         renderedBody: `Your payroll inquiry regarding "${query.subject}" has been updated to ${status}. Notes: ${resolution || 'None'}`,
-        status: 'SENT',
-        sentAt: new Date(),
+        status: 'QUEUED',
+        nextAttemptAt: new Date(),
       });
 
       const inAppId = `NT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
