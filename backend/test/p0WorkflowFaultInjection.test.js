@@ -14,9 +14,13 @@ const { SequenceCounter } = require('../src/models/SequenceCounter');
 const { Notification } = require('../src/models/Notification');
 const { NotificationOutbox } = require('../src/models/NotificationOutbox');
 const { AuditEvent } = require('../src/models/AuditEvent');
+const { Expense } = require('../src/models/Expense');
+const { StaffLoanAdvance } = require('../src/models/StaffLoanAdvance');
 
 const approvalController = require('../src/controllers/approvalController');
 const leaveController = require('../src/controllers/leaveController');
+const expenseController = require('../src/controllers/expenseController');
+const loanAdvanceController = require('../src/controllers/loanAdvanceController');
 
 const ORG = 'ORG-ZAMORIN';
 const CAFE = 'CAFE-001';
@@ -30,7 +34,16 @@ const MASTER_AUTH = {
 const STAFF_AUTH = {
   organisationId: ORG,
   userId: 'ST-0001',
+  fullName: 'Test Staff',
   role: 'STAFF',
+  assignedCafeIds: [CAFE],
+};
+const CAFE_ADMIN_AUTH = {
+  organisationId: ORG,
+  userId: 'AD-0001',
+  fullName: 'Test Cafe Admin',
+  role: 'CAFE_ADMIN',
+  primaryCafeId: CAFE,
   assignedCafeIds: [CAFE],
 };
 
@@ -105,6 +118,8 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       Notification,
       NotificationOutbox,
       AuditEvent,
+      Expense,
+      StaffLoanAdvance,
     ];
     for (const model of models) {
       try { await model.createCollection(); } catch {}
@@ -126,6 +141,8 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       SequenceCounter,
       Notification,
       NotificationOutbox,
+      Expense,
+      StaffLoanAdvance,
     ]) {
       await model.deleteMany({});
     }
@@ -349,6 +366,136 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
       assert.equal(await LeaveRequest.countDocuments({ leaveId: 'LR-20260927-005' }), 1);
     } finally {
       ClientSession.prototype.commitTransaction = originalCommit;
+    }
+  });
+
+
+  it('P0-FI-007: Expense Approval creation failure rolls back submitted Expense', async () => {
+    const originalSave = Approval.prototype.save;
+    Approval.prototype.save = async function injectedExpenseApprovalFailure() {
+      const err = new Error('INJECTED_EXPENSE_APPROVAL_FAILURE');
+      err.code = 'INJECTED_EXPENSE_APPROVAL_FAILURE';
+      throw err;
+    };
+
+    try {
+      const { error } = await invoke(expenseController.createExpense, {
+        auth: CAFE_ADMIN_AUTH,
+        body: {
+          cafeId: CAFE,
+          businessDate: '2026-10-03',
+          category: 'UTILITIES',
+          description: 'Fault injection expense',
+          amount: 1250,
+          vendorName: 'Fault Test Vendor',
+          invoiceNumber: 'FI-EXP-001',
+          isDraft: false,
+        },
+        headers: { 'x-idempotency-key': 'FI-EXPENSE-CREATE-001' },
+        correlationId: 'FI-EXPENSE-CREATE',
+        method: 'POST',
+        originalUrl: '/api/v1/expenses',
+      });
+
+      assert.ok(error, 'Injected Approval failure must propagate');
+      assert.equal(await Expense.countDocuments({ organisationId: ORG }), 0);
+      assert.equal(await Approval.countDocuments({ organisationId: ORG, entityType: 'EXPENSE' }), 0);
+    } finally {
+      Approval.prototype.save = originalSave;
+    }
+  });
+
+  it('P0-FI-008: Loan Approval creation failure rolls back StaffLoanAdvance request', async () => {
+    const originalSave = Approval.prototype.save;
+    Approval.prototype.save = async function injectedLoanApprovalFailure() {
+      const err = new Error('INJECTED_LOAN_APPROVAL_FAILURE');
+      err.code = 'INJECTED_LOAN_APPROVAL_FAILURE';
+      throw err;
+    };
+
+    try {
+      const { error } = await invoke(loanAdvanceController.requestLoan, {
+        auth: STAFF_AUTH,
+        body: {
+          requestedAmountPaise: 500000,
+          loanCategory: 'WELFARE',
+          tenureMonths: 10,
+          reason: 'Fault injection loan request',
+        },
+        headers: { 'x-idempotency-key': 'FI-LOAN-CREATE-001' },
+        correlationId: 'FI-LOAN-CREATE',
+        method: 'POST',
+        originalUrl: '/api/v1/loans/request',
+      });
+
+      assert.ok(error, 'Injected Approval failure must propagate');
+      assert.equal(await StaffLoanAdvance.countDocuments({ organisationId: ORG }), 0);
+      assert.equal(await Approval.countDocuments({ organisationId: ORG, entityType: 'LOAN_ADVANCE' }), 0);
+    } finally {
+      Approval.prototype.save = originalSave;
+    }
+  });
+
+  it('P0-FI-009: Expense target write failure rolls back Approval decision', async () => {
+    const expense = await Expense.create({
+      expenseId: 'EX-20261003-0001',
+      organisationId: ORG,
+      cafeId: CAFE,
+      businessDate: '2026-10-03',
+      expenseType: 'COMPANY_PAID',
+      ownerUserId: 'AD-0001',
+      preparerUserId: 'AD-0001',
+      category: 'UTILITIES',
+      purpose: 'Fault injection',
+      description: 'Decision rollback fixture',
+      amount: 100,
+      amountPaisa: 10000,
+      taxPaisa: 0,
+      totalPaisa: 10000,
+      paymentMethod: 'CASH',
+      paymentSource: 'CASH',
+      status: 'SUBMITTED',
+      createdBy: 'AD-0001',
+    });
+    await Approval.create({
+      approvalId: 'APP-10006',
+      organisationId: ORG,
+      cafeId: CAFE,
+      entityType: 'EXPENSE',
+      entityId: expense.expenseId,
+      requestingUserId: 'AD-0001',
+      actionRequired: 'Approve expense',
+      amountPaisa: 10000,
+      status: 'PENDING',
+    });
+
+    const originalSave = Expense.prototype.save;
+    Expense.prototype.save = async function injectedExpenseWriteFailure() {
+      if (!this.isNew) {
+        const err = new Error('INJECTED_EXPENSE_WRITE_FAILURE');
+        err.code = 'INJECTED_EXPENSE_WRITE_FAILURE';
+        throw err;
+      }
+      return originalSave.apply(this, arguments);
+    };
+
+    try {
+      const { error } = await invoke(approvalController.decideApproval, {
+        auth: MASTER_AUTH,
+        params: { approvalId: 'APP-10006' },
+        body: { decision: 'APPROVED', reason: 'Expense rollback test' },
+        correlationId: 'FI-EXPENSE-DECISION',
+        method: 'POST',
+        originalUrl: '/api/v1/approvals/APP-10006/decide',
+      });
+      assert.ok(error);
+
+      const approval = await Approval.findOne({ approvalId: 'APP-10006' }).lean();
+      const afterExpense = await Expense.findOne({ expenseId: expense.expenseId }).lean();
+      assert.equal(approval.status, 'PENDING');
+      assert.equal(afterExpense.status, 'SUBMITTED');
+    } finally {
+      Expense.prototype.save = originalSave;
     }
   });
 
