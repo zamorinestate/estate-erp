@@ -102,14 +102,15 @@ class OperatorSessionService {
   /**
    * Sets or resets the 6-digit Cafe Operations PIN for a cafe.
    */
-  async setCafePin({ organisationId, cafeId, actorUserId, actorRole, newPin }) {
-    if (!newPin || !/^\d{6}$/.test(String(newPin))) {
-      throw new ApiError(400, 'INVALID_CAFE_PIN', 'Cafe PIN must be exactly 6 numeric digits.');
+  async setCafePin({ organisationId, cafeId, actorUserId, actorRole, newPin, pin }) {
+    const rawPin = newPin || pin;
+    if (!rawPin || !/^\d{6}$/.test(String(rawPin))) {
+      throw new ApiError(400, 'INVALID_CAFE_PIN', 'Cafe Operations PIN must be exactly 6 numeric digits.');
     }
 
-    const weakPins = ['000000', '111111', '123456', '654321', '999999', '121212'];
-    if (weakPins.includes(String(newPin))) {
-      throw new ApiError(400, 'WEAK_CAFE_PIN', 'Please choose a stronger, non-sequential 6-digit PIN.');
+    const { isWeakPin } = require('../utils/pinPolicy');
+    if (isWeakPin(String(rawPin))) {
+      throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Please choose a stronger, non-sequential 6-digit Café PIN.');
     }
 
     if (actorRole !== 'MASTER') {
@@ -117,7 +118,7 @@ class OperatorSessionService {
     }
 
     const cafe = await Cafe.findOne({
-      organisationId: organisationId.toUpperCase(),
+      organisationId: (organisationId || 'ZAMORIN').toUpperCase(),
       cafeId: cafeId.toUpperCase(),
     });
 
@@ -125,7 +126,7 @@ class OperatorSessionService {
       throw new ApiError(404, 'CAFE_NOT_FOUND', `Cafe ${cafeId} was not found.`);
     }
 
-    const pinHash = await this.hashPin(newPin);
+    const pinHash = await this.hashPin(rawPin);
     cafe.operationsPinHash = pinHash;
     cafe.operationsPinSetAt = new Date();
     cafe.operationsPinFailedAttempts = 0;
@@ -149,12 +150,21 @@ class OperatorSessionService {
       cafeId: cafe.cafeId,
     };
   }
+
+  async setCafeOperationsPin(params) {
+    return this.setCafePin(params);
+  }
+
   /**
    * Hashes a 6-digit Operator PIN.
    */
   async hashPin(pin) {
     if (!pin || !/^\d{6}$/.test(String(pin))) {
       throw new ApiError(400, 'INVALID_OPERATOR_PIN', 'Operator PIN must be exactly 6 digits.');
+    }
+    const { isWeakPin } = require('../utils/pinPolicy');
+    if (isWeakPin(String(pin))) {
+      throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Operator PIN must be a strong, non-sequential 6-digit PIN.');
     }
     return bcrypt.hash(String(pin), PIN_HASH_ROUNDS);
   }
@@ -167,10 +177,10 @@ class OperatorSessionService {
       throw new ApiError(400, 'INVALID_OPERATOR_PIN', 'Operator PIN must be exactly 6 numeric digits.');
     }
 
-    // Weak PIN check
-    const weakPins = ['000000', '111111', '123456', '654321', '999999', '121212'];
-    if (weakPins.includes(String(newPin))) {
-      throw new ApiError(400, 'WEAK_OPERATOR_PIN', 'Please choose a stronger, non-sequential 6-digit PIN.');
+    // Centralized weak PIN check
+    const { isWeakPin } = require('../utils/pinPolicy');
+    if (isWeakPin(String(newPin))) {
+      throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Please choose a stronger, non-sequential 6-digit PIN.');
     }
 
     const user = await User.findOne({

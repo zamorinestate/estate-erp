@@ -267,6 +267,7 @@ async function executeTransactionWithRetry(operationFn, options = {}) {
 
       if (isTransient && transientAttempts < maxTransientRetries) {
         lastTransientError = err;
+        await new Promise((r) => setTimeout(r, 50 * Math.pow(2, transientAttempts - 1)));
         continue;
       }
 

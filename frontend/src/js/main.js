@@ -982,8 +982,10 @@ async function boot() {
 
     const urlHash =
       typeof window !== "undefined" && window.location.hash
-        ? window.location.hash.replace(/^#/, "")
+        ? window.location.hash.replace(/^#\/?/, "")
         : "";
+
+    const cleanHash = (urlHash || "").replace(/^\//, "");
 
     const params =
       typeof window !== "undefined"
@@ -992,19 +994,22 @@ async function boot() {
 
     // Direct Café Access QR / Link / PIN Gateway Routing (P0-02, P0-02B, REC-03)
     const pathname = typeof window !== "undefined" ? window.location.pathname : "";
-    const isCShortPath = pathname.startsWith("/c/") || urlHash.startsWith("c/");
-    const isQrPath = isCShortPath || pathname.startsWith("/cafe-access/qr/") || urlHash.startsWith("cafe-access/qr/");
-    const isLinkPath = pathname.startsWith("/cafe-access/link/") || urlHash.startsWith("cafe-access/link/");
-    const isGatewayPath = pathname === "/cafe-gateway" || urlHash === "cafe-gateway";
+    const isCShortPath = pathname.startsWith("/c/") || urlHash.startsWith("c/") || cleanHash.startsWith("c/");
+    const isQrPath = isCShortPath || pathname.startsWith("/cafe-access/qr/") || urlHash.startsWith("cafe-access/qr/") || cleanHash.startsWith("cafe-access/qr/");
+    const isLinkPath = pathname.startsWith("/cafe-access/link/") || urlHash.startsWith("cafe-access/link/") || cleanHash.startsWith("cafe-access/link/");
+    const isGatewayPath = pathname === "/cafe-gateway" || urlHash === "cafe-gateway" || cleanHash === "cafe-gateway";
 
     if (isQrPath || isLinkPath || isGatewayPath) {
       let token = null;
       if (pathname.startsWith("/c/")) token = pathname.slice("/c/".length);
       else if (urlHash.startsWith("c/")) token = urlHash.slice("c/".length);
+      else if (cleanHash.startsWith("c/")) token = cleanHash.slice("c/".length);
       else if (pathname.startsWith("/cafe-access/qr/")) token = pathname.slice("/cafe-access/qr/".length);
       else if (urlHash.startsWith("cafe-access/qr/")) token = urlHash.slice("cafe-access/qr/".length);
+      else if (cleanHash.startsWith("cafe-access/qr/")) token = cleanHash.slice("cafe-access/qr/".length);
       else if (pathname.startsWith("/cafe-access/link/")) token = pathname.slice("/cafe-access/link/".length);
       else if (urlHash.startsWith("cafe-access/link/")) token = urlHash.slice("cafe-access/link/".length);
+      else if (cleanHash.startsWith("cafe-access/link/")) token = cleanHash.slice("cafe-access/link/".length);
 
       const method = isQrPath ? "QR" : isLinkPath ? "LINK" : null;
 
@@ -1015,30 +1020,35 @@ async function boot() {
 
     // Direct Auth Screen Routing (0ms instant mount)
     // Handle /login2 alias -> redirect to canonical /login
-    if (pathname === "/login2" || urlHash === "login2") {
+    if (pathname === "/login2" || urlHash === "login2" || cleanHash === "login2") {
       if (typeof window !== "undefined" && window.history && window.history.replaceState) {
         window.history.replaceState(null, "", "/login");
       }
     }
 
-    // Café Operations Operator Sign-In — always public, bypass session check
-    if (urlHash === "cafe-operator-signin") {
-      const { renderCafeOperatorSignIn, wireCafeOperatorSignIn } = await import("./pages/cafeOperatorSignIn.js");
+    // Café Operations Login 2.0 — always public, bypass session check
+    const isCafeOpsLogin =
+      pathname === "/cafe-operations/login" ||
+      pathname.startsWith("/cafe-operations/login") ||
+      cleanHash === "cafe-operations/login" ||
+      cleanHash.startsWith("cafe-operations/login") ||
+      cleanHash === "cafe-operations-login" ||
+      cleanHash === "cafe-operator-signin";
+
+    if (isCafeOpsLogin) {
+      const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
+      const preselectedCafeId = urlParams.get('cafe') || '';
+      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
       const appEl = document.getElementById("app");
       if (appEl) {
-        appEl.innerHTML = renderCafeOperatorSignIn();
-        wireCafeOperatorSignIn(appEl, {
-          onSignIn: async ({ employeeId, pin }) => {
-            const { apiPost, getCanonicalDeviceId, setCafeOpsSessionToken, setCafeOpsDeviceToken, setSessionId } = await import("./apiClient.js");
-            const deviceId = getCanonicalDeviceId();
-            const res = await apiPost('/cafe-operations/operator/signin', { deviceId, operatorUserId: employeeId, pin });
-            const sessionToken = res?.sessionToken || res?.operatorSession?.sessionToken;
-            if (sessionToken) setCafeOpsSessionToken(sessionToken);
-            if (res?.trustedDeviceToken) setCafeOpsDeviceToken(res.trustedDeviceToken);
-            if (res?.operatorSession?.operatorSessionId) setSessionId(res.operatorSession.operatorSessionId);
-            window.location.hash = 'dashboard';
+        appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
+        wireCafeOperationsLogin2(appEl, {
+          onSignIn: async (authData) => {
+            const userRole = (authData?.user?.role || state.user?.role || "").toUpperCase();
+            const targetRoute = userRole === "STAFF" ? "staff-home" : "dashboard";
+            await renderShell();
+            await navigate(targetRoute);
           },
-          onReturnKiosk: () => { window.location.hash = 'kiosk-attendance'; },
         });
       }
       return;
@@ -1141,24 +1151,22 @@ async function boot() {
       mountPublicCafeGateway(document.getElementById("app"), { method, token });
       return;
     }
-    if (urlHash === "cafe-operator-signin") {
-      const { renderCafeOperatorSignIn, wireCafeOperatorSignIn } = await import("./pages/cafeOperatorSignIn.js");
+    if (
+      urlHash === "cafe-operations/login" ||
+      urlHash.startsWith("cafe-operations/login") ||
+      urlHash === "cafe-operations-login" ||
+      urlHash === "cafe-operator-signin"
+    ) {
+      const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
+      const preselectedCafeId = urlParams.get('cafe') || '';
+      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
       const appEl = document.getElementById("app");
       if (appEl) {
-        appEl.innerHTML = renderCafeOperatorSignIn();
-        wireCafeOperatorSignIn(appEl, {
-          onSignIn: async ({ employeeId, pin }) => {
-            const { apiPost } = await import("./apiClient.js");
-            const { getCanonicalDeviceId, setCafeOpsSessionToken, setCafeOpsDeviceToken, setSessionId } = await import("./apiClient.js");
-            const deviceId = getCanonicalDeviceId();
-            const res = await apiPost('/cafe-operations/operator/signin', { deviceId, operatorUserId: employeeId, pin });
-            const sessionToken = res?.sessionToken || res?.operatorSession?.sessionToken;
-            if (sessionToken) setCafeOpsSessionToken(sessionToken);
-            if (res?.trustedDeviceToken) setCafeOpsDeviceToken(res.trustedDeviceToken);
-            if (res?.operatorSession?.operatorSessionId) setSessionId(res.operatorSession.operatorSessionId);
-            window.location.hash = 'dashboard';
+        appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
+        wireCafeOperationsLogin2(appEl, {
+          onSignIn: () => {
+            window.location.hash = "dashboard";
           },
-          onReturnKiosk: () => { window.location.hash = 'kiosk-attendance'; },
         });
       }
       return;
@@ -1166,7 +1174,8 @@ async function boot() {
 
     const isExplicitAppHash = Boolean(
       urlHash &&
-      !["login", "login2", "forgot", "mfa", "register", "cafe-gateway", "cafe-operator-signin"].includes(urlHash) &&
+      !["login", "login2", "forgot", "mfa", "register", "cafe-gateway", "cafe-operator-signin", "cafe-operations/login", "cafe-operations-login"].includes(urlHash) &&
+      !urlHash.startsWith("cafe-operations/login") &&
       !urlHash.startsWith("cafe-access/") &&
       !urlHash.startsWith("c/")
     );
@@ -1287,23 +1296,25 @@ if (typeof window !== "undefined") {
       const method = isQr ? "QR" : isLink ? "LINK" : null;
       const { mountPublicCafeGateway } = await getCafeGateway();
       mountPublicCafeGateway(document.getElementById("app"), { method, token });
-    } else if (rawHash === "cafe-operator-signin") {
-      const { renderCafeOperatorSignIn, wireCafeOperatorSignIn } = await import("./pages/cafeOperatorSignIn.js");
+    } else if (
+      rawHash === "cafe-operations/login" ||
+      rawHash.startsWith("cafe-operations/login") ||
+      rawHash === "cafe-operations-login" ||
+      rawHash === "cafe-operator-signin"
+    ) {
+      const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
+      const preselectedCafeId = urlParams.get('cafe') || '';
+      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
       const appEl = document.getElementById("app");
       if (appEl) {
-        appEl.innerHTML = renderCafeOperatorSignIn();
-        wireCafeOperatorSignIn(appEl, {
-          onSignIn: async ({ employeeId, pin }) => {
-            const { apiPost, getCanonicalDeviceId, setCafeOpsSessionToken, setCafeOpsDeviceToken, setSessionId } = await import("./apiClient.js");
-            const deviceId = getCanonicalDeviceId();
-            const res = await apiPost('/cafe-operations/operator/signin', { deviceId, operatorUserId: employeeId, pin });
-            const sessionToken = res?.sessionToken || res?.operatorSession?.sessionToken;
-            if (sessionToken) setCafeOpsSessionToken(sessionToken);
-            if (res?.trustedDeviceToken) setCafeOpsDeviceToken(res.trustedDeviceToken);
-            if (res?.operatorSession?.operatorSessionId) setSessionId(res.operatorSession.operatorSessionId);
-            window.location.hash = 'dashboard';
+        appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
+        wireCafeOperationsLogin2(appEl, {
+          onSignIn: async (authData) => {
+            const userRole = (authData?.user?.role || state.user?.role || "").toUpperCase();
+            const targetRoute = userRole === "STAFF" ? "staff-home" : "dashboard";
+            await renderShell();
+            await navigate(targetRoute);
           },
-          onReturnKiosk: () => { window.location.hash = 'kiosk-attendance'; },
         });
       }
     } else if (rawHash && state.route !== rawHash) {

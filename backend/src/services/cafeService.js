@@ -267,6 +267,22 @@ class CafeService {
     const pinLookupHash = null;
     const encryptedPin = null;
 
+    // 2b. Operations PIN setup for Café Operations (bcrypt 12 rounds)
+    // Server generates strong non-trivial 6-digit PIN if not supplied
+    const { isWeakPin, generateStrongSixDigitPin } = require('../utils/pinPolicy');
+    let rawInitialPin = sanitized.cafePin || sanitized.operationsPin || cafeData.cafePin || cafeData.operationsPin;
+    if (rawInitialPin) {
+      const pinStr = String(rawInitialPin).trim();
+      if (isWeakPin(pinStr)) {
+        throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Café Operations PIN must be a strong, non-sequential 6-digit numeric PIN.');
+      }
+      rawInitialPin = pinStr;
+    } else {
+      rawInitialPin = generateStrongSixDigitPin();
+    }
+    const operationsPinHash = await bcrypt.hash(rawInitialPin, 12);
+    const operationsPinSetAt = new Date();
+
     // 3. Generate high-entropy, independent QR and Link tokens
     const qrToken = generateOpaqueToken();
     let linkToken = generateOpaqueToken();
@@ -354,6 +370,10 @@ class CafeService {
             parentOrganisationId: sanitized.parentOrganisationId || organisationId,
             cafeType,
             status: initialStatus,
+            operationsPinHash,
+            operationsPinSetAt,
+            operationsPinFailedAttempts: 0,
+            operationsPinLockedUntil: null,
             legalConstitution: {
               constitution: sanitized.constitution || sanitized.legalConstitution?.constitution || 'PROPRIETORSHIP',
               legalOwnerName: sanitized.legalOwnerName || sanitized.ownerName || sanitized.legalConstitution?.legalOwnerName || '',
@@ -552,6 +572,7 @@ class CafeService {
               qrRecordId: universalQr ? universalQr.qrId : null,
               securePublicCafeReference,
               loginUrl: `https://zamorin.app/cafe/${securePublicCafeReference}/login`,
+              cafeOperationsLoginUrl: `${getPublicAppOrigin()}/cafe-operations/login?cafe=${cafeId}`,
               status: 'ACTIVE',
               lastScannedAt: null,
               scanCount: 0,
@@ -789,6 +810,28 @@ class CafeService {
         actorUserId: auth.userId,
         actorRole: auth.role,
         module: 'CAFE_OPERATIONS',
+        action: 'CAFE_PIN_CREATED',
+        entityType: 'CAFE',
+        entityId: cafeId,
+        reason: 'Fixed 6-digit Café Operations PIN provisioned (bcrypt-12).',
+        result: 'SUCCESS',
+        riskClassification: 'CRITICAL',
+        correlationId,
+        ipAddress: clientIp,
+        userAgent,
+        metadata: {
+          pinConfigured: true,
+          algorithm: 'bcrypt-12',
+          fixedUntilReset: true,
+        },
+      });
+
+      await auditService.recordAuditEvent({
+        organisationId,
+        cafeId,
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        module: 'CAFE_OPERATIONS',
         action: 'CAFE_ACCESS_CREATED',
         entityType: 'CAFE_ACCESS',
         entityId: cafeId,
@@ -812,17 +855,23 @@ class CafeService {
 
     return {
       cafe: createdCafe,
+      operationsPin: rawInitialPin, // Plaintext PIN returned ONLY ONCE in creation response to Primary Master
       access: {
         cafeId,
         organisationId,
         provisioningStatus: 'READY',
         accessStatus: 'ACTIVE',
+        initialCafePin: rawInitialPin, // Plaintext PIN returned ONLY ONCE in creation response
+        operationsPin: rawInitialPin,
+        operationsPinMasked: '••••••',
         permanentCafePin: null, // Retired in REC-02
+        permanentCafePinMasked: '••••••',
         qrToken,
         qrUrl: `${publicOrigin}/cafe-access/qr/${qrToken}`,
         qrVersion: 1,
         linkToken,
         linkUrl: `${publicOrigin}/cafe-access/link/${linkToken}`,
+        dedicatedLoginUrl: `${publicOrigin}/cafe-access/link/${linkToken}`,
         linkVersion: 1,
       },
     };
@@ -1644,7 +1693,7 @@ class CafeService {
     const cafe = await Cafe.findOne({
       organisationId: String(organisationId).toUpperCase(),
       cafeId: String(cafeId).toUpperCase(),
-    }).lean();
+    }).select('+operationsPinHash').lean();
 
     // Compute real enrolled device count
     let registeredDeviceCount = 0;
@@ -1707,7 +1756,11 @@ class CafeService {
       linkVersion: access.linkVersion || 1,
       linkCreatedAt: access.linkCreatedAt,
       linkLastUsedAt: access.linkLastUsedAt,
-      linkUrl,
+      operationsPinSet: Boolean(cafe?.operationsPinHash),
+      operationsPinMasked: '••••••',
+      dedicatedLoginUrl: linkUrl,
+      qrUrl: access.qrEnabled ? qrUrl : null,
+      linkUrl: access.linkEnabled ? linkUrl : null,
       emergencyLocked: access.accessStatus === 'LOCKED',
       emergencyLockReason: access.emergencyLockReason,
       emergencyLockedAt: access.emergencyLockedAt,
@@ -1721,20 +1774,23 @@ class CafeService {
   }
 
   /**
-   * Reveals Permanent Café PIN with password step-up verification.
+   * Resets the 6-digit Café Operations PIN with Primary Master password step-up verification.
+   * Fixed until manually reset; old hash replaced; active sessions revoked.
    */
-  async revealPermanentPin({
+  async resetCafeOperationsPin({
     organisationId,
     cafeId,
     auth,
     currentPassword,
+    newPin = null,
     clientIp = null,
     userAgent = null,
+    correlationId = null,
   }) {
-    requireGovernanceAuthority(auth);
+    requireMasterCreationAuthority(auth);
 
     if (!currentPassword || typeof currentPassword !== 'string') {
-      throw new ApiError(400, 'PASSWORD_REQUIRED', 'Current password is required to reveal Permanent Café PIN.');
+      throw new ApiError(400, 'PASSWORD_REQUIRED', 'Current password is required to reset Café Operations PIN.');
     }
 
     const user = await User.findOne({
@@ -1751,37 +1807,137 @@ class CafeService {
       throw new ApiError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
     }
 
-    const access = await CafeAccess.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    }).select('+permanentCafePinEncrypted');
+    const cleanCafe = String(cafeId).toUpperCase();
+    const cleanOrg = String(organisationId).toUpperCase();
 
-    if (!access || !access.permanentCafePinEncrypted) {
-      throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
+    const cafe = await Cafe.findOne({
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
+    });
+
+    if (!cafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
     }
 
-    const pin = decryptCafePin(access.permanentCafePinEncrypted);
+    const { isWeakPin, generateStrongSixDigitPin } = require('../utils/pinPolicy');
+    let candidatePin = newPin;
+    if (candidatePin) {
+      candidatePin = String(candidatePin).trim();
+      if (isWeakPin(candidatePin)) {
+        throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Café Operations PIN must be a strong, non-sequential 6-digit numeric PIN.');
+      }
+    } else {
+      candidatePin = generateStrongSixDigitPin();
+    }
+
+    const newHash = await bcrypt.hash(candidatePin, 12);
+    cafe.operationsPinHash = newHash;
+    cafe.operationsPinSetAt = new Date();
+    cafe.operationsPinFailedAttempts = 0;
+    cafe.operationsPinLockedUntil = null;
+    await cafe.save();
+
+    // Revoke active operator sessions for this café
+    try {
+      await OperatorSession.updateMany(
+        { cafeId: cleanCafe, status: 'ACTIVE' },
+        { status: 'REVOKED', revokedReason: 'CAFE_PIN_RESET', revokedAt: new Date() }
+      );
+    } catch (_) {}
 
     await auditService.recordAuditEvent({
-      organisationId,
-      cafeId,
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
       actorUserId: auth.userId,
       actorRole: auth.role,
       module: 'CAFE_OPERATIONS',
-      action: 'CAFE_PIN_VIEWED',
-      entityType: 'CAFE_ACCESS',
-      entityId: cafeId,
-      reason: 'Governance user revealed Permanent Café Access PIN via step-up authentication.',
+      action: 'CAFÉ_PIN_RESET',
+      entityType: 'CAFE',
+      entityId: cleanCafe,
+      reason: 'Café Operations PIN manually reset by Primary Master via step-up reauthentication.',
       result: 'SUCCESS',
       riskClassification: 'CRITICAL',
+      correlationId,
       ipAddress: clientIp,
       userAgent,
+      metadata: {
+        cafeId: cleanCafe,
+        algorithm: 'bcrypt-12',
+      },
     });
 
     return {
-      cafeId,
-      permanentCafePin: pin,
+      success: true,
+      message: `Café Operations PIN for ${cleanCafe} has been reset.`,
+      cafeId: cleanCafe,
+      operationsPin: candidatePin, // One-time delivery of newly reset PIN
     };
+  }
+
+  async resetCafePin(params) {
+    return this.resetCafeOperationsPin(params);
+  }
+
+  /**
+   * Emergency Disable: stops new Café Operations sessions without deleting café or records.
+   */
+  async disableCafeAccess({
+    organisationId,
+    cafeId,
+    auth,
+    reason,
+    currentPassword = null,
+    clientIp = null,
+    userAgent = null,
+  }) {
+    requireMasterCreationAuthority(auth);
+    if (!reason || !reason.trim()) {
+      throw new ApiError(400, 'REASON_REQUIRED', 'A reason is required to disable Café Operations access.');
+    }
+    return this.setEmergencyLock({
+      organisationId,
+      cafeId,
+      lock: true,
+      reason: reason.trim(),
+      auth,
+      currentPassword,
+      clientIp,
+      userAgent,
+    });
+  }
+
+  async enableCafeAccess({
+    organisationId,
+    cafeId,
+    auth,
+    reason = 'Access re-enabled by Primary Master',
+    currentPassword = null,
+    clientIp = null,
+    userAgent = null,
+  }) {
+    requireMasterCreationAuthority(auth);
+    return this.setEmergencyLock({
+      organisationId,
+      cafeId,
+      lock: false,
+      reason,
+      auth,
+      currentPassword,
+      clientIp,
+      userAgent,
+    });
+  }
+
+  /**
+   * Permanent Café PIN reveal has been permanently retired.
+   * PIN is stored as a one-way bcrypt-12 hash and cannot be decrypted or recovered.
+   */
+  async revealPermanentPin() {
+    throw new ApiError(
+      410,
+      'CAFE_PIN_REVEAL_RETIRED',
+      'Permanent Café PIN reveal has been permanently retired. The PIN is stored as a one-way bcrypt hash. If the PIN is lost, use Reset Café PIN.'
+    );
   }
 
   /**
@@ -2023,6 +2179,7 @@ class CafeService {
       linkVersion: access.linkVersion,
       linkToken: newLinkToken,
       linkUrl: `${publicOrigin}/cafe-access/link/${newLinkToken}`,
+      dedicatedLoginUrl: `${publicOrigin}/cafe-access/link/${newLinkToken}`,
     };
   }
 
@@ -2075,7 +2232,7 @@ class CafeService {
       actorUserId: auth.userId,
       actorRole: auth.role,
       module: 'CAFE_OPERATIONS',
-      action: isLocking ? 'CAFE_EMERGENCY_LOCKED' : 'CAFE_EMERGENCY_UNLOCKED',
+      action: isLocking ? 'ACCESS_DISABLED' : 'ACCESS_ENABLED',
       entityType: 'CAFE_ACCESS',
       entityId: cafeId,
       reason: reason || (isLocking ? 'Emergency lock engaged' : 'Emergency lock released'),
@@ -2083,6 +2240,10 @@ class CafeService {
       riskClassification: 'CRITICAL',
       ipAddress: clientIp,
       userAgent,
+      metadata: {
+        accessStatus: access.accessStatus,
+        emergencyLocked: isLocking,
+      },
     });
 
     return {
@@ -2286,6 +2447,70 @@ class CafeService {
   }
 
   /**
+   * Resolves canonical opaque dedicated login link token to safe public café context.
+   * Zero secrets, zero ObjectIDs, zero employee data.
+   */
+  async resolvePublicLinkToken(token, { clientIp = null, userAgent = null, correlationId = null } = {}) {
+    if (!token || typeof token !== 'string' || !token.trim()) {
+      throw new ApiError(400, 'TOKEN_REQUIRED', 'Access Link token is required.');
+    }
+
+    const cleanToken = token.trim();
+    let hash;
+    try {
+      hash = hashOpaqueToken(cleanToken);
+    } catch {
+      throw new ApiError(401, 'INVALID_OR_EXPIRED_CAFE_ACCESS', 'Invalid or unavailable café access link.');
+    }
+
+    const access = await CafeAccess.findOne({
+      linkCredentialHash: hash,
+    });
+
+    if (!access || !access.linkEnabled) {
+      throw new ApiError(
+        401,
+        'CAFE_ACCESS_LINK_UNAVAILABLE',
+        'This café access link is unavailable or has expired.'
+      );
+    }
+
+    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+      throw new ApiError(
+        403,
+        'CAFE_ACCESS_UNAVAILABLE',
+        'Café Operations access is currently unavailable.'
+      );
+    }
+
+    const cafe = await Cafe.findOne({
+      organisationId: access.organisationId,
+      cafeId: access.cafeId,
+    }).lean();
+
+    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+      throw new ApiError(
+        403,
+        'CAFE_INACTIVE',
+        'Café Operations access is currently unavailable.'
+      );
+    }
+
+    // Touch last used timestamp
+    await CafeAccess.updateOne({ _id: access._id }, { linkLastUsedAt: new Date() }).catch(() => {});
+
+    return {
+      cafeId: access.cafeId,
+      displayName: cafe.displayName || cafe.name,
+      city: cafe.address?.city || cafe.city || null,
+      organisationId: access.organisationId,
+      operationalStatus: cafe.status,
+      brandLogo: '/src/assets/zamorin-estate-mark.png',
+      loginEnabled: true,
+    };
+  }
+
+  /**
    * REC-03: Validates post-authentication café access binding.
    * Enforces: AUTHENTICATED USER + RESOLVED CAFÉ + ORGANISATION + ROLE + ACTIVE ASSIGNMENT.
    */
@@ -2421,14 +2646,17 @@ class CafeService {
       overallHealth: 'PASS',
     };
 
-    // Test 1: PIN decryption and lookup integrity
+    // Test 1: PIN posture (one-way bcrypt hash)
     try {
-      if (access.permanentCafePinEncrypted && access.permanentCafePinLookupHash) {
-        const decrypted = decryptCafePin(access.permanentCafePinEncrypted);
-        const recomputedHash = computePinLookupHash(decrypted);
-        if (recomputedHash === access.permanentCafePinLookupHash) {
-          results.permanentPin = 'PASS';
-        }
+      const cafeDoc = await Cafe.findOne({ cafeId: cleanCafe }).select('+operationsPinHash').lean();
+      if (cafeDoc?.operationsPinHash) {
+        results.permanentPin = 'PASS';
+        results.pinPosture = 'BCRYPT_ONE_WAY';
+      } else if (access.permanentCafePinEncrypted) {
+        results.permanentPin = 'PASS';
+        results.pinPosture = 'LEGACY_ENCRYPTED';
+      } else {
+        results.permanentPin = 'NOT_SET';
       }
     } catch {
       results.permanentPin = 'FAIL';

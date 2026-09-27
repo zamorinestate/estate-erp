@@ -343,30 +343,19 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
     assert.equal(resAfterUnlock.cafeId, 'ZC-0003');
   });
 
-  await t.test('7. PIN Reveal with Password Step-Up: Reauthenticates actor before revealing plaintext PIN', async () => {
-    // 7.1 Successful reveal with valid password
-    const revealResult = await cafeService.revealPermanentPin({
-      organisationId: 'ZAMORIN',
-      cafeId: 'ZC-0001',
-      auth: masterUser,
-      currentPassword: 'StandardSecurePassword!123',
-    });
-    assert.equal(typeof revealResult.permanentCafePin, 'string');
-    assert.match(revealResult.permanentCafePin, /^\d{6}$/);
-
-    // 7.2 Rejected on wrong password
+  await t.test('7. PIN Reveal Retirement: revealPermanentPin throws 410 CAFE_PIN_REVEAL_RETIRED', async () => {
     await assert.rejects(
       async () => {
         await cafeService.revealPermanentPin({
           organisationId: 'ZAMORIN',
           cafeId: 'ZC-0001',
           auth: masterUser,
-          currentPassword: 'WrongPassword456!',
+          currentPassword: 'StandardSecurePassword!123',
         });
       },
       (err) => {
-        assert.equal(err.statusCode, 401);
-        assert.equal(err.code, 'INVALID_CREDENTIALS');
+        assert.equal(err.statusCode, 410);
+        assert.equal(err.code, 'CAFE_PIN_REVEAL_RETIRED');
         return true;
       }
     );

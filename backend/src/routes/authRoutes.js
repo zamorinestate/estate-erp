@@ -33,6 +33,8 @@ const {
   getAppPinStatus,
   unlockWithAppPin,
   loginWithAppPin,
+  loginCafeOperations,
+  getPublicCafeOperationsCafes,
 } = require('../controllers/authController');
 
 const {
@@ -223,12 +225,66 @@ const mfaAccountRateLimiter = rateLimit({
   message: MFA_RATE_LIMIT_MESSAGE,
 });
 
+function normalizeCafeOpsAccountKey(req) {
+  const body = req.body || {};
+  const cafeId = String(body.cafeId || body.cafe || '').trim().toUpperCase();
+  const userId = String(body.userId || body.employeeId || body.identifier || '').trim().toUpperCase();
+  if (!cafeId || !userId) {
+    return `auth:cafeops:anon:${ipKeyGenerator(getTrustedClientIp(req))}`;
+  }
+  const hash = crypto
+    .createHash('sha256')
+    .update(`${cafeId}:${userId}`)
+    .digest('hex')
+    .slice(0, 32);
+  return `auth:cafeops:${hash}`;
+}
+
+function createCafeOpsIpRateLimiter(overrides = {}) {
+  return rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: process.env.AUTH_RATE_LIMIT_CAFE_OPS_IP_MAX
+      ? Number(process.env.AUTH_RATE_LIMIT_CAFE_OPS_IP_MAX)
+      : 50,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(getTrustedClientIp(req)),
+    skip: (req) => process.env.NODE_ENV === 'test' && !req.headers['x-test-rate-limit'],
+    handler: createRateLimitHandler('AUTH_CAFE_OPS_IP', LOGIN_RATE_LIMIT_MESSAGE),
+    message: LOGIN_RATE_LIMIT_MESSAGE,
+    ...overrides,
+  });
+}
+
+function createCafeOpsAccountRateLimiter(overrides = {}) {
+  return rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: process.env.AUTH_RATE_LIMIT_CAFE_OPS_ACCOUNT_MAX
+      ? Number(process.env.AUTH_RATE_LIMIT_CAFE_OPS_ACCOUNT_MAX)
+      : 10,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    keyGenerator: (req) => normalizeCafeOpsAccountKey(req),
+    skip: (req) => process.env.NODE_ENV === 'test' && !req.headers['x-test-rate-limit'],
+    handler: createRateLimitHandler('AUTH_CAFE_OPS_ACCOUNT', LOGIN_RATE_LIMIT_MESSAGE),
+    message: LOGIN_RATE_LIMIT_MESSAGE,
+    ...overrides,
+  });
+}
+
+const cafeOpsIpRateLimiter = createCafeOpsIpRateLimiter();
+const cafeOpsAccountRateLimiter = createCafeOpsAccountRateLimiter();
+
 // Authentication endpoints
 router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, login);
 router.post('/password/forgot', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, requestPasswordReset);
 router.post('/password/reset/verify', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, verifyPasswordResetCode);
 router.post('/password/reset', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, resetPassword);
 router.post('/refresh', refreshSession);
+
+// Café Operations Login 2.0 Endpoints
+router.get('/cafe-operations/cafes', getPublicCafeOperationsCafes);
+router.post('/cafe-operations/login', cafeOpsIpRateLimiter, cafeOpsAccountRateLimiter, loginCafeOperations);
 
 // Personal Six-Digit Application PIN Endpoints (ACP-05E-02)
 router.post('/app-pin/setup', authenticate, setupAppPin);

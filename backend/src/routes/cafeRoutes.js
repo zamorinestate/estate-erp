@@ -31,6 +31,9 @@ const {
   createCafeTemplate,
   previewTemplateOverrides,
   applyTemplateToCafe,
+  resetCafePin,
+  disableCafeAccess,
+  enableCafeAccess,
 } = require('../controllers/cafeController');
 
 const router = express.Router();
@@ -74,6 +77,21 @@ router.patch(
 router.post(
   '/:cafeId/archive',
   archiveCafe
+);
+
+router.post(
+  '/:cafeId/reset-pin',
+  resetCafePin
+);
+
+router.post(
+  '/:cafeId/disable-access',
+  disableCafeAccess
+);
+
+router.post(
+  '/:cafeId/enable-access',
+  enableCafeAccess
 );
 
 // Stage 03: Café Readiness Engine & Lifecycle States

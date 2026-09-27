@@ -48,7 +48,31 @@ const getPublicQrContext = asyncHandler(async (req, res) => {
 
   // If HTML requested from browser navigation, safe internal redirect
   if (req.accepts && req.accepts('html') && !req.xhr && !req.path.startsWith('/api/')) {
-    return res.redirect(`/#cafe-access/qr/${encodeURIComponent(token)}`);
+    return res.redirect(`/cafe-operations/login?cafe=${encodeURIComponent(result.cafeId)}`);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Café Operations gateway resolved successfully.',
+    data: result,
+  });
+});
+
+const getPublicLinkContext = asyncHandler(async (req, res) => {
+  const token = (req.params.token || req.query.token || '').trim();
+  if (!token) {
+    throw new ApiError(400, 'TOKEN_REQUIRED', 'Access Link token is required.');
+  }
+
+  const result = await cafeService.resolvePublicLinkToken(token, {
+    clientIp: req.ip,
+    userAgent: req.headers['user-agent'],
+    correlationId: req.correlationId || req.headers['x-correlation-id'],
+  });
+
+  // If HTML requested from browser navigation, safe internal redirect to Login 2.0 with resolved cafe context
+  if (req.accepts && req.accepts('html') && !req.xhr && !req.path.startsWith('/api/')) {
+    return res.redirect(`/cafe-operations/login?cafe=${encodeURIComponent(result.cafeId)}`);
   }
 
   return res.status(200).json({
@@ -95,27 +119,11 @@ const getAccessSummary = asyncHandler(async (req, res) => {
 });
 
 const revealPermanentPin = asyncHandler(async (req, res) => {
-  const cafeId = (req.params.cafeId || '').trim().toUpperCase();
-  if (!cafeId) {
-    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'Café ID is required.');
-  }
-  requireGovernance(req, cafeId);
-  const { currentPassword } = req.body || {};
-
-  const result = await cafeService.revealPermanentPin({
-    organisationId: req.auth.organisationId,
-    cafeId,
-    auth: req.auth,
-    currentPassword,
-    clientIp: req.ip,
-    userAgent: req.headers['user-agent'],
-  });
-
-  return res.status(200).json({
-    success: true,
-    message: 'Permanent Café PIN revealed successfully.',
-    data: result,
-  });
+  throw new ApiError(
+    410,
+    'CAFE_PIN_REVEAL_RETIRED',
+    'Permanent Café PIN reveal has been permanently retired. The PIN is stored as a one-way bcrypt hash. If the PIN is lost, use Reset Café PIN.'
+  );
 });
 
 const rotateQr = asyncHandler(async (req, res) => {
@@ -285,16 +293,98 @@ const verifyCafeBinding = asyncHandler(async (req, res) => {
   });
 });
 
+const resetCafePin = asyncHandler(async (req, res) => {
+  const cafeId = (req.params.cafeId || '').trim().toUpperCase();
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'Café ID is required.');
+  }
+  requireGovernance(req, cafeId);
+  const { currentPassword, newPin } = req.body || {};
+
+  const result = await cafeService.resetCafeOperationsPin({
+    organisationId: req.auth.organisationId,
+    cafeId,
+    auth: req.auth,
+    currentPassword,
+    newPin,
+    clientIp: req.ip,
+    userAgent: req.headers['user-agent'],
+    correlationId: req.correlationId || req.headers['x-correlation-id'],
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: result.message,
+    data: result,
+  });
+});
+
+const disableAccess = asyncHandler(async (req, res) => {
+  const cafeId = (req.params.cafeId || '').trim().toUpperCase();
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'Café ID is required.');
+  }
+  requireGovernance(req, cafeId);
+  const { reason, currentPassword } = req.body || {};
+
+  const result = await cafeService.disableCafeAccess({
+    organisationId: req.auth.organisationId,
+    cafeId,
+    auth: req.auth,
+    reason,
+    currentPassword,
+    clientIp: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Café Operations access disabled.',
+    data: result,
+  });
+});
+
+const enableAccess = asyncHandler(async (req, res) => {
+  const cafeId = (req.params.cafeId || '').trim().toUpperCase();
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'Café ID is required.');
+  }
+  requireGovernance(req, cafeId);
+  const { reason, currentPassword } = req.body || {};
+
+  const result = await cafeService.enableCafeAccess({
+    organisationId: req.auth.organisationId,
+    cafeId,
+    auth: req.auth,
+    reason,
+    currentPassword,
+    clientIp: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Café Operations access re-enabled.',
+    data: result,
+  });
+});
+
 module.exports = {
   getPublicQrContext,
+  getPublicLinkContext,
   resolveGateway,
   getAccessSummary,
   revealPermanentPin,
   rotateQr,
+  regenerateQr: rotateQr,
   revokeQr,
   rotateLink,
+  regenerateLink: rotateLink,
   emergencyLock,
   emergencyUnlock,
   runAccessTest,
   verifyCafeBinding,
+  resetCafePin,
+  disableAccess,
+  enableAccess,
 };

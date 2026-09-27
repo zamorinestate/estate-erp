@@ -239,6 +239,7 @@ const createCafe = asyncHandler(
         'Café created successfully and access credentials provisioned.',
       data: {
         cafe: result.cafe,
+        operationsPin: result.operationsPin,
         access: result.access,
       },
       correlationId:
@@ -913,6 +914,73 @@ const applyTemplateToCafe = asyncHandler(async (request, response) => {
   });
 });
 
+const resetCafePin = asyncHandler(async (request, response) => {
+  requireMaster(request);
+  const cafeId = normalizeIdentifier(request.params.cafeId);
+  const { currentPassword, newPin } = request.body || {};
+
+  const result = await cafeService.resetCafeOperationsPin({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    auth: request.auth,
+    currentPassword,
+    newPin,
+    clientIp: request.ip,
+    userAgent: request.headers ? request.headers['user-agent'] : '',
+    correlationId: request.correlationId || null,
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: result.message,
+    data: result,
+  });
+});
+
+const disableCafeAccess = asyncHandler(async (request, response) => {
+  requireMaster(request);
+  const cafeId = normalizeIdentifier(request.params.cafeId);
+  const { reason, currentPassword } = request.body || {};
+
+  const result = await cafeService.disableCafeAccess({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    auth: request.auth,
+    reason,
+    currentPassword,
+    clientIp: request.ip,
+    userAgent: request.headers ? request.headers['user-agent'] : '',
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Café Operations access disabled.',
+    data: result,
+  });
+});
+
+const enableCafeAccess = asyncHandler(async (request, response) => {
+  requireMaster(request);
+  const cafeId = normalizeIdentifier(request.params.cafeId);
+  const { reason, currentPassword } = request.body || {};
+
+  const result = await cafeService.enableCafeAccess({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    auth: request.auth,
+    reason,
+    currentPassword,
+    clientIp: request.ip,
+    userAgent: request.headers ? request.headers['user-agent'] : '',
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Café Operations access re-enabled.',
+    data: result,
+  });
+});
+
 module.exports = {
   listCafes,
   getCafe,
@@ -938,4 +1006,7 @@ module.exports = {
   createCafeTemplate,
   previewTemplateOverrides,
   applyTemplateToCafe,
+  resetCafePin,
+  disableCafeAccess,
+  enableCafeAccess,
 };
