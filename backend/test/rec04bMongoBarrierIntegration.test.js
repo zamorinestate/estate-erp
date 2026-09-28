@@ -121,6 +121,7 @@ describe('REC-04B — Real MongoDB distributed idempotency barrier', () => {
 
     const makeBill = (billId) => ({
       billId,
+      invoiceNumber: `INV-${billId}`,
       organisationId,
       cafeId,
       businessDate: '2026-09-28',
@@ -177,6 +178,7 @@ describe('REC-04B — Real MongoDB distributed idempotency barrier', () => {
   it('keeps saleAttemptId immutable after the bill has been persisted', async () => {
     const bill = await Bill.create({
       billId: 'BILL-20260928-9403',
+      invoiceNumber: 'INV-BILL-20260928-9403',
       organisationId,
       cafeId,
       businessDate: '2026-09-28',
