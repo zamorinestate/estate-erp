@@ -688,40 +688,101 @@ class PosOrderService {
       );
     }
 
-    // 2. Resolve line item prices if not supplied in payload
-    const itemIds = (orderPayload.lineItems || []).map((li) => normalizeId(li.menuItemId)).filter(Boolean);
-    let itemMap = {};
-    if (itemIds.length > 0) {
-      try {
-        const foundItems = await MenuItem.find({
-          organisationId: orgId,
-          menuItemId: { $in: itemIds },
-        });
-        const itemsList = foundItems && typeof foundItems.lean === 'function' ? await foundItems.lean() : foundItems;
-        if (Array.isArray(itemsList)) {
-          for (const it of itemsList) {
-            itemMap[it.menuItemId] = it;
-          }
-        }
-      } catch {
-        // Fallback to payload prices
+    // 2. Resolve every financial line item from the canonical server catalog.
+    // Client-supplied price, tax, item name or catalog existence is never an
+    // authoritative input for a committed POS sale.
+    const itemIds = (orderPayload.lineItems || [])
+      .map((li) => normalizeId(li.menuItemId))
+      .filter(Boolean);
+
+    if (itemIds.length !== (orderPayload.lineItems || []).length) {
+      throw new ApiError(
+        400,
+        'POS_CATALOG_ITEM_ID_REQUIRED',
+        'Every committed POS line item must reference a canonical menuItemId.'
+      );
+    }
+
+    let itemsList;
+    try {
+      const foundItems = await MenuItem.find({
+        organisationId: orgId,
+        menuItemId: { $in: [...new Set(itemIds)] },
+      });
+      itemsList = foundItems && typeof foundItems.lean === 'function'
+        ? await foundItems.lean()
+        : foundItems;
+    } catch (catalogError) {
+      throw new ApiError(
+        503,
+        'POS_CATALOG_UNAVAILABLE',
+        'The canonical POS catalog could not be verified. The sale was not committed.'
+      );
+    }
+
+    const itemMap = {};
+    if (Array.isArray(itemsList)) {
+      for (const item of itemsList) {
+        const id = normalizeId(item?.menuItemId);
+        if (id) itemMap[id] = item;
       }
     }
 
-    // Enrich line items with catalog metadata if available
-    // REC-13: Server Catalog Pricing Authority — client IndexedDB prices cannot override catalog
+    // REC-13 / REC-04B: Server Catalog Financial Authority.
     const enrichedItems = orderPayload.lineItems.map((li) => {
-      const catalogItem = itemMap[normalizeId(li.menuItemId)];
-      const authoritativeUnitPrice = (catalogItem && catalogItem.currentPricePaisa != null)
-        ? catalogItem.currentPricePaisa
-        : (li.unitPricePaisa ?? li.pricePaisa ?? (li.price != null ? li.price * 100 : 0));
+      const menuItemId = normalizeId(li.menuItemId);
+      const catalogItem = itemMap[menuItemId];
+
+      if (!catalogItem) {
+        throw new ApiError(
+          409,
+          'POS_CATALOG_ITEM_NOT_FOUND',
+          `Menu item ${menuItemId} does not exist in the canonical organisation catalog.`
+        );
+      }
+
+      const lifecycleStatus = normalizeId(catalogItem.status || 'ACTIVE');
+      if (lifecycleStatus !== 'ACTIVE') {
+        throw new ApiError(
+          409,
+          'POS_CATALOG_ITEM_UNAVAILABLE',
+          `Menu item ${menuItemId} is not active for POS sale.`
+        );
+      }
+
+      const availableCafeIds = Array.isArray(catalogItem.availableCafeIds)
+        ? catalogItem.availableCafeIds.filter(Boolean).map(normalizeId)
+        : [];
+      if (availableCafeIds.length > 0 && !availableCafeIds.includes(cafeId)) {
+        throw new ApiError(
+          409,
+          'POS_CATALOG_ITEM_NOT_AVAILABLE_AT_CAFE',
+          `Menu item ${menuItemId} is not available at café ${cafeId}.`
+        );
+      }
+
+      const authoritativeUnitPrice = Number(catalogItem.currentPricePaisa);
+      if (!Number.isInteger(authoritativeUnitPrice) || authoritativeUnitPrice < 0) {
+        throw new ApiError(
+          503,
+          'POS_CATALOG_PRICE_INVALID',
+          `Menu item ${menuItemId} does not have a valid canonical price.`
+        );
+      }
 
       return {
         ...li,
-        itemNameSnapshot: li.itemNameSnapshot || li.name || catalogItem?.name || 'Item',
+        menuItemId,
+        itemNameSnapshot: catalogItem.name || catalogItem.receiptName || catalogItem.posShortName || menuItemId,
         unitPricePaisa: authoritativeUnitPrice,
-        taxRatePercent: li.taxRatePercent ?? catalogItem?.taxRatePercent ?? 5,
-        taxClassification: li.taxClassification || catalogItem?.taxClassification || 'GST_5',
+        taxRatePercent:
+          Number.isFinite(Number(catalogItem.taxRatePercent))
+            ? Number(catalogItem.taxRatePercent)
+            : 5,
+        taxClassification:
+          catalogItem.taxClassification ||
+          catalogItem.taxCategoryRef ||
+          'GST_5',
       };
     });
 
