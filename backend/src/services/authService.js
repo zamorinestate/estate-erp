@@ -933,16 +933,34 @@ async function rotateRefreshToken({
     );
   }
 
+  const maximumRefreshRotations =
+    getPositiveIntegerEnvironmentValue(
+      'MAX_REFRESH_ROTATIONS_PER_SESSION',
+      1024
+    );
+
+  if (session.sessionVersion >= maximumRefreshRotations) {
+    await session.revoke({
+      revokedBy: 'SYSTEM',
+      reason: 'SESSION_EXPIRED',
+      details:
+        'The session reached its maximum refresh-token rotation count.',
+    });
+
+    throw new Error(
+      'The session must be renewed.'
+    );
+  }
+
   const tokenDates = calculateTokenDates();
   const nextRefreshToken =
     generateOpaqueToken();
 
+  // Retain the complete token lineage for the bounded lifetime of this
+  // session so reuse of any rotated predecessor is detected.
   session.previousRefreshTokenHashes.push(
     session.refreshTokenHash
   );
-
-  session.previousRefreshTokenHashes =
-    session.previousRefreshTokenHashes.slice(-10);
 
   session.sessionVersion += 1;
 
