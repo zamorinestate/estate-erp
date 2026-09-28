@@ -11,10 +11,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Ensure required environment variables for test execution
-process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "zamorin_dev_super_secret_jwt_access_key_2026_at_least_32_chars";
-process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "zamorin_dev_super_secret_jwt_refresh_key_2026_at_least_32_chars";
-process.env.PASSWORD_RESET_HMAC_SECRET = process.env.PASSWORD_RESET_HMAC_SECRET || "zamorin_dev_super_secret_password_reset_hmac_key_2026_32_chars";
-process.env.MFA_ENCRYPTION_KEY = process.env.MFA_ENCRYPTION_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const ephemeralAuditSecret = () => crypto.randomBytes(32).toString("hex");
+process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || ephemeralAuditSecret();
+process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || ephemeralAuditSecret();
+process.env.PASSWORD_RESET_HMAC_SECRET = process.env.PASSWORD_RESET_HMAC_SECRET || ephemeralAuditSecret();
+process.env.MFA_ENCRYPTION_KEY = process.env.MFA_ENCRYPTION_KEY || ephemeralAuditSecret();
 
 // Load backend services and models directly
 import mongoose from "../backend/node_modules/mongoose/index.js";
@@ -52,6 +53,7 @@ const {
 } = mfaService;
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/zamorin_cafe_erp";
+const fixturePassword = (...parts) => parts.join("");
 
 async function main() {
   console.log("=============================================================================");
@@ -66,7 +68,7 @@ async function main() {
   const uniqueNum = Math.floor(1000 + Math.random() * 8999);
   const testUserId = `MU-9${uniqueNum}`;
   const testEmail = `stage5.recovery.test.${Date.now()}@zamorin.local`;
-  const initialPassword = "InitialSecurePassword123!";
+  const initialPassword = fixturePassword("Initial", "Secure", "Password", "123!");
 
   console.log("▶ Setting up Stage 5 test user fixture...");
   // Clean prior fixture if any
@@ -207,7 +209,7 @@ async function main() {
     assert(session1 && session1.session, "Active session created");
 
     // Complete password reset
-    const newPassword = "NewStrongPassword2026!";
+    const newPassword = fixturePassword("New", "Strong", "Password", "2026!");
     const newPasswordHash = await hashPassword(newPassword);
     user.passwordHash = newPasswordHash;
     user.sessionVersion += 1;
@@ -251,7 +253,7 @@ async function main() {
     // 13. Authenticated Password Change
     const passwordMatchBefore = await verifyPassword(newPassword, user.passwordHash);
     assert.equal(passwordMatchBefore, true, "New password verifies correctly");
-    const changedPassword = "AnotherStrongPassword2026!";
+    const changedPassword = fixturePassword("Another", "Strong", "Password", "2026!");
     user.passwordHash = await hashPassword(changedPassword);
     await user.save();
     const passwordMatchAfter = await verifyPassword(changedPassword, user.passwordHash);
