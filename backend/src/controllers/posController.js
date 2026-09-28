@@ -33,7 +33,15 @@ function assertCafeAccess(request, cafeId) {
       'Cross-café access is denied. You are not authorized for the requested café.'
     );
   }
-  if (request.auth.role === 'MASTER' || request.auth.role === 'OWNER') return;
+  if (request.auth.role === 'MASTER') {
+    if (request.auth.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER POS access.'
+    );
+  }
+  if (request.auth.role === 'OWNER') return;
   if (!request.auth.assignedCafeIds || !request.auth.assignedCafeIds.map(normalizeId).includes(normCafeId)) {
     throw new ApiError(
       403,
@@ -171,14 +179,31 @@ const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'TRANSACTION_ID_REQUIRED', 'transactionId (idempotencyKey or saleAttemptId) is required.');
   }
 
-  const orgId = request.auth?.organisationId || 'ORG-ZAMORIN';
-  const cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : null;
+  const orgId = normalizeId(request.auth?.organisationId || '');
+  if (!orgId) {
+    throw new ApiError(
+      401,
+      'ORGANISATION_CONTEXT_REQUIRED',
+      'Authenticated organisation context is required for transaction recovery.'
+    );
+  }
+
+  const cafeId = normalizeId(request.query?.cafeId || '');
+  if (!cafeId) {
+    throw new ApiError(
+      400,
+      'CAFE_ID_REQUIRED',
+      'cafeId is required for exact transaction recovery.'
+    );
+  }
+
+  assertCafeAccess(request, cafeId);
 
   const billQuery = {
     organisationId: orgId,
+    cafeId,
     $or: [{ correlationId: transactionId }, { saleAttemptId: transactionId }],
   };
-  if (cafeId) billQuery.cafeId = cafeId;
 
   const bill = await Bill.findOne(billQuery);
   if (bill) {
@@ -198,9 +223,9 @@ const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
 
   const recordQuery = {
     organisationId: orgId,
+    cafeId,
     $or: [{ idempotencyKey: transactionId }, { saleAttemptId: transactionId }],
   };
-  if (cafeId) recordQuery.cafeId = cafeId;
 
   const record = await IdempotencyRecord.findOne(recordQuery);
   if (record) {
