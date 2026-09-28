@@ -998,7 +998,7 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
     assert.equal(leave.status, 'PENDING');
   });
 
-  it('P0-FI-019: non-primary MASTER cannot decide protected approval', async () => {
+  it('P0-FI-019: malformed MASTER authority claim cannot decide protected approval', async () => {
     await seedLeaveApproval({ approvalId: 'APP-10127', leaveId: 'LR-20260927-019' });
 
     const { error } = await invoke(approvalController.decideApproval, {
@@ -1010,8 +1010,8 @@ describe('P0 WORKFLOW FAULT INJECTION', () => {
         assignedCafeIds: [CAFE],
       },
       params: { approvalId: 'APP-10127' },
-      body: { decision: 'APPROVED', reason: 'Unauthorized non-primary master decision attempt' },
-      correlationId: 'FI-NONPRIMARY-APPROVAL',
+      body: { decision: 'APPROVED', reason: 'Malformed MASTER authority claim decision attempt' },
+      correlationId: 'FI-MALFORMED-MASTER-APPROVAL',
       method: 'POST',
       originalUrl: '/api/v1/approvals/APP-10127/decide',
     });
