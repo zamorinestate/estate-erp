@@ -5626,12 +5626,12 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
         const cafeAdminItems = NAVIGATION.cafe_admin.items.map((i) => i.route);
         const staffItems = NAVIGATION.staff.items.map((i) => i.route);
 
-        // All normal master items must be in primary master
+        // All malformed MASTER items must be in primary master
         for (const r of normalItems) {
-          assert.ok(pmItems.includes(r), `Primary Master must include Normal Master route ${r}`);
+          assert.ok(pmItems.includes(r), `Primary Master must include Malformed MASTER route ${r}`);
         }
 
-        // Primary master must have exclusive routes that normal master doesn't
+        // Primary master must have exclusive routes that malformed MASTER doesn't
         assert.ok(pmItems.includes('payroll'));
         assert.ok(pmItems.includes('ledger'));
         assert.ok(pmItems.includes('passbook'));
@@ -5732,12 +5732,12 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
         assert.equal(EMPLOYEE_INHERITS_PRIVILEGED_PORTAL_CAPABILITY, 0);
       });
 
-      // 16.16: Normal Master canonical implementation parity
-      await s16.test('16.16 Invariant NORMAL_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION = 0 & SHARED_CAPABILITY_UPDATE_PROPAGATES_TO_ALL_AUTHORIZED_PORTALS = 1 & CROSS_PORTAL_SHARED_CAPABILITY_VERSION_DRIFT = 0', async () => {
+      // 16.16: Malformed MASTER canonical implementation parity
+      await s16.test('16.16 Invariant MALFORMED_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION = 0 & SHARED_CAPABILITY_UPDATE_PROPAGATES_TO_ALL_AUTHORIZED_PORTALS = 1 & CROSS_PORTAL_SHARED_CAPABILITY_VERSION_DRIFT = 0', async () => {
         const { NAVIGATION } = await import('../../frontend/src/js/navigation.js');
         const normalItems = NAVIGATION.master.normalItems.map((i) => i.id);
 
-        // Normal Master has procurement and vendors
+        // Malformed MASTER has procurement and vendors
         assert.ok(normalItems.includes('procurement'));
         assert.ok(normalItems.includes('vendors'));
 
@@ -5750,12 +5750,12 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
         const nmVenItem = NAVIGATION.master.normalItems.find((i) => i.id === 'vendors');
         assert.equal(pmVenItem.route, nmVenItem.route);
 
-        const NORMAL_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION = 0;
+        const MALFORMED_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION = 0;
         const SHARED_CAPABILITY_UPDATE_PROPAGATES_TO_ALL_AUTHORIZED_PORTALS = 1;
         const CROSS_PORTAL_SHARED_CAPABILITY_VERSION_DRIFT = 0;
         const PM03_UPDATE_MISSING_FROM_AUTHORIZED_PORTAL = 0;
 
-        assert.equal(NORMAL_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION, 0);
+        assert.equal(MALFORMED_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION, 0);
         assert.equal(SHARED_CAPABILITY_UPDATE_PROPAGATES_TO_ALL_AUTHORIZED_PORTALS, 1);
         assert.equal(CROSS_PORTAL_SHARED_CAPABILITY_VERSION_DRIFT, 0);
         assert.equal(PM03_UPDATE_MISSING_FROM_AUTHORIZED_PORTAL, 0);

@@ -318,14 +318,14 @@ test('PM-05 Personal Ledger Integration & Invariant Suite', async (t) => {
     assert.strictEqual(mockEntries.length, 1, 'No duplicate entry inserted into database');
   });
 
-  await t.test('3. Role Authority Matrix: Primary Master & Owner allowed; Normal Master, Cafe Admin, Staff denied (403)', async () => {
+  await t.test('3. Role Authority Matrix: Primary Master & Owner allowed; Malformed MASTER, Cafe Admin, Staff denied (403)', async () => {
     currentUser = makeUser({ userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false });
     currentSession = makeSession({ userId: 'MU-0002', roleSnapshot: 'MASTER' });
 
     let res = await fetch(`${baseUrl}/personal-ledger/overview`, {
       headers: { Authorization: 'Bearer valid-token' },
     });
-    assert.strictEqual(res.status, 403, 'Normal Master strictly denied 403');
+    assert.strictEqual(res.status, 403, 'Malformed MASTER strictly denied 403');
 
     currentUser = makeUser({ userId: 'CA-0001', role: 'CAFE_ADMIN', isPrimaryMaster: false });
     currentSession = makeSession({ userId: 'CA-0001', roleSnapshot: 'CAFE_ADMIN' });

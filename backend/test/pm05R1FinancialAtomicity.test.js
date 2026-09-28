@@ -707,7 +707,7 @@ test('PM-05-R1 Financial Atomicity, Idempotency & Governance Suite', async (t) =
   });
 
   await t.test('R2-5: Five-Portal Personal Ledger authority matrix & Zero drift', async () => {
-    // 1. Normal Master: DENIED (403)
+    // 1. Malformed MASTER: DENIED (403)
     currentUser = makeUser({ userId: 'MU-NORMAL-01', role: 'MASTER', isPrimaryMaster: false });
     currentSession = makeSession({ userId: 'MU-NORMAL-01', roleSnapshot: 'MASTER' });
     const nmRes = await fetch(`${baseUrl}/personal-ledger/overview`, {

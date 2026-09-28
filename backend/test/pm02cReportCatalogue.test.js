@@ -7,7 +7,7 @@
  * Verifies:
  * - Canonical Category Registry (all 25 categories, human-friendly labels, management descriptions)
  * - Canonical Report Registry integrity (valid IDs, categories, trust, classification, runnable routes)
- * - Server-authorized catalogue filtering across Primary Master, Normal Master, Owner, Café Admin, Staff
+ * - Server-authorized catalogue filtering across Primary Master, Malformed MASTER, Owner, Café Admin, Staff
  * - Zero count leakage across security tiers (category counts reflect only authorized reports)
  * - Direct navigation, endpoint resolution, legacy route deduplication, and terminology compliance
  */
@@ -215,7 +215,7 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
     assert.ok(confidentialRep, 'Primary Master must receive CONFIDENTIAL reports');
   });
 
-  await suite.test('3.2 Normal Master: Excludes HIGHLY_CONFIDENTIAL reports', async () => {
+  await suite.test('3.2 Malformed MASTER: Excludes HIGHLY_CONFIDENTIAL reports', async () => {
     const req = {
       auth: {
         userId: 'MU-0002',
@@ -236,7 +236,7 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
       assert.notEqual(
         r.classification,
         'HIGHLY_CONFIDENTIAL',
-        `Normal Master must not receive HIGHLY_CONFIDENTIAL report: ${r.reportId}`
+        `Malformed MASTER must not receive HIGHLY_CONFIDENTIAL report: ${r.reportId}`
       );
     }
   });
@@ -576,9 +576,9 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
     );
   });
 
-  // ─── 8. PRIMARY MASTER vs NORMAL MASTER DISTINCTION (§11) ───────────────────
+  // ─── 8. PRIMARY MASTER vs MALFORMED MASTER DISTINCTION (§11) ───────────────────
 
-  await suite.test('8.1 Primary Master receives HIGHLY_CONFIDENTIAL reports; Normal Master does not', async () => {
+  await suite.test('8.1 Primary Master receives HIGHLY_CONFIDENTIAL reports; Malformed MASTER does not', async () => {
     // Register a temporary HIGHLY_CONFIDENTIAL test report
     ReportRegistry.registerReport({
       reportId: 'test-hc-report-pm02cr1',
@@ -620,7 +620,7 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
     const nmRes = makeRes();
     await reportController.getReportCatalogue(makeReq(false), nmRes);
     const nmReports = nmRes.jsonData.data.reports;
-    assert.equal(nmReports.find((r) => r.reportId === 'test-hc-report-pm02cr1'), undefined, 'Normal Master must NOT receive HIGHLY_CONFIDENTIAL reports');
+    assert.equal(nmReports.find((r) => r.reportId === 'test-hc-report-pm02cr1'), undefined, 'Malformed MASTER must NOT receive HIGHLY_CONFIDENTIAL reports');
 
     // Cleanup
     ReportRegistry.unregisterReport('test-hc-report-pm02cr1');
@@ -816,14 +816,14 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
       const ownerReports = ownerRes.jsonData.data.reports;
       assert.equal(ownerReports.find((r) => r.reportId === 'test-hc-search-pm02cr2'), undefined, 'Owner must NOT discover HIGHLY_CONFIDENTIAL reports');
 
-      // 2. Normal Master: Cannot discover HIGHLY_CONFIDENTIAL reports
+      // 2. Malformed MASTER: Cannot discover HIGHLY_CONFIDENTIAL reports
       const nmRes = makeRes();
       await reportController.getReportCatalogue({
         auth: { userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
         query: {},
       }, nmRes);
       const nmReports = nmRes.jsonData.data.reports;
-      assert.equal(nmReports.find((r) => r.reportId === 'test-hc-search-pm02cr2'), undefined, 'Normal Master must NOT discover HIGHLY_CONFIDENTIAL reports');
+      assert.equal(nmReports.find((r) => r.reportId === 'test-hc-search-pm02cr2'), undefined, 'Malformed MASTER must NOT discover HIGHLY_CONFIDENTIAL reports');
 
       // 3. Cafe Admin: Cannot discover CONFIDENTIAL reports restricted to Owner/Master
       const caRes = makeRes();
