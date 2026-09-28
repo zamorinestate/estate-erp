@@ -74,6 +74,14 @@ function assertCafeAccess(authContext = {}, cafeId) {
   if (!normCafeId) return;
 
   const role = normalizeId(authContext.role);
+  if (role === 'OWNER') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Owner role is read-only for POS and cannot execute operational POS actions.'
+    );
+  }
+
   if (role === 'MASTER') {
     if (authContext.isPrimaryMaster === true) return;
     throw new ApiError(
