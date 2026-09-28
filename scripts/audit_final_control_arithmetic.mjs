@@ -64,16 +64,19 @@ async function runArithmeticAudit() {
     metadata: {
       generatedAt: new Date().toISOString(),
       auditVersion: '2.1.0',
+      evidenceType: 'DECLARED_CLASSIFICATION_BASELINE',
       totalContracts: TOTAL_CONTROL_CONTRACTS,
       arithmeticMatch: mathMatches,
     },
     counts: CLASSIFICATION_COUNTS,
     personaBreakdown: {
       PRIMARY_MASTER: { visibleWorking: 1468, policyHidden: 0, blocked: 2, total: 1470 },
-      MALFORMED_MASTER:  { visibleWorking: 1410, policyHidden: 58, blocked: 2, total: 1470 },
       OWNER:          { visibleWorking: 1430, policyHidden: 38, blocked: 2, total: 1470 },
       CAFE_ADMIN:     { visibleWorking: 1000, policyHidden: 468, blocked: 2, total: 1470 },
       STAFF:          { visibleWorking: 240,  policyHidden: 1228, blocked: 2, total: 1470 },
+    },
+    negativeSecurityContexts: {
+      MALFORMED_MASTER: 'DENY_ALL_SUPPORTED_ROUTES',
     }
   };
 
@@ -83,48 +86,15 @@ async function runArithmeticAudit() {
     'utf8'
   );
 
-  const runtimeResultsArtifact = {
-    metadata: {
-      auditTimestamp: new Date().toISOString(),
-      runner: 'scripts/audit_all_interactive_controls_runtime.mjs',
-      totalContractsTested: TOTAL_CONTROL_CONTRACTS,
-      failures: 0,
-      untested: 0,
-    },
-    executionModes: {
-      REAL_POINTER_CLICKS: 1468,
-      KEYBOARD_ACTIVATIONS: 1696,
-      NON_CLICK_INTERACTION: 637,
-      GOVERNED_NON_EXECUTABLE: 2,
-    },
-    postconditionSummary: {
-      navigationSuccess: 129,
-      navigationGuarded: 106,
-      formsValidated: 69,
-      mutationsCommitted: 141,
-      modalsHandled: 229,
-      tablesTargeted: 147,
-      securityDenialsVerified: 106,
-      f5PersistenceVerified: true,
-    }
-  };
-
-  await writeFile(
-    join(artifactsDir, 'final_control_runtime_results.json'),
-    JSON.stringify(runtimeResultsArtifact, null, 2),
-    'utf8'
-  );
-
   console.log(`\n  Generated Machine-Readable Evidence:`);
-  console.log(`   - artifacts/final_control_classification.json`);
-  console.log(`   - artifacts/final_control_runtime_results.json`);
+  console.log(`   - artifacts/final_control_classification.json (declared classification baseline)`);
   console.log('═'.repeat(72));
 
   if (mathMatches) {
-    console.log('🏆 CONTROL ARITHMETIC GATE: ✅ 100% PASS');
+    console.log('✅ CONTROL CLASSIFICATION ARITHMETIC: PASS');
     process.exit(0);
   } else {
-    console.error('❌ CONTROL ARITHMETIC GATE: FAILED');
+    console.error('❌ CONTROL CLASSIFICATION ARITHMETIC: FAILED');
     process.exit(1);
   }
 }

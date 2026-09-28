@@ -15,7 +15,7 @@ const AUDITS = [
   'audit_final_control_arithmetic.mjs',
   'audit_final_route_set.mjs',
   'audit_user_visible_stubs.mjs',
-  'audit_all_interactive_controls_runtime.mjs',
+  'audit_interactive_control_contract_smoke.mjs',
   'audit_all_navigation_controls.mjs',
   'audit_readonly_actions.mjs',
   'audit_mutation_actions.mjs',
@@ -30,8 +30,8 @@ const AUDITS = [
 ];
 
 console.log('╔══════════════════════════════════════════════════════════════════════╗');
-console.log('║        ZAMORIN CAFÉ ERP — MASTER INTERACTIVE AUDIT RUNNER            ║');
-console.log('║        ZERO DEAD BUTTONS · ZERO DEAD OPTIONS · ZERO BROKEN ACTIONS   ║');
+console.log('║        ZAMORIN CAFÉ ERP — CONTROL AUDIT RUNNER            ║');
+console.log('║        STATIC/CONTRACT CHECKS · REAL-BROWSER RELEASE GATE SEPARATE   ║');
 console.log('╚══════════════════════════════════════════════════════════════════════╝\n');
 
 let allPass = true;
@@ -50,8 +50,8 @@ for (const script of AUDITS) {
 
 console.log('═'.repeat(72));
 if (allPass) {
-  console.log('🏆 FINAL CLOSURE RESULT: 100% PASS ACROSS ALL 15 AUDIT SUITES');
-  console.log('ZERO DEAD BUTTONS · ZERO DEAD OPTIONS · ALL PERSONAS & MODULES CLOSED');
+  console.log(`✅ CONTROL AUDIT RESULT: PASS ACROSS ${AUDITS.length} SUITES`);
+  console.log('STATIC/CONTRACT AUDITS PASSED · REAL-BROWSER RELEASE GATE REMAINS REQUIRED');
   process.exit(0);
 } else {
   console.error('❌ ONE OR MORE AUDITS FAILED');

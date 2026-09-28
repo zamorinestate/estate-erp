@@ -19,13 +19,13 @@ const SUITES = [
     cwd: rootDir,
   },
   {
-    name: "2. Backend JavaScript Syntax Validation (315 Files)",
+    name: "2. Backend JavaScript Syntax Validation",
     cmd: "node",
     args: ["backend/src/scripts/checkAllJavaScript.js"],
     cwd: rootDir,
   },
   {
-    name: "3. Frontend Router Import Integrity (53 Modules)",
+    name: "3. Frontend Router Import Integrity",
     cmd: "node",
     args: ["verifyRouterImports.mjs"],
     cwd: path.join(rootDir, "frontend"),
@@ -55,13 +55,13 @@ const SUITES = [
     cwd: rootDir,
   },
   {
-    name: "8. Five-Persona Browser Runtime & Authorization Boundaries",
+    name: "8. Supported-Persona Browser Runtime & Authorization Boundaries",
     cmd: "node",
     args: ["scripts/audit_all_supported_personas.mjs"],
     cwd: rootDir,
   },
   {
-    name: "9. Full Responsive Screen Matrix (1,332 Combinations across 18 Viewports)",
+    name: "9. Full Responsive Screen Matrix",
     cmd: "node",
     args: ["scripts/test_responsive_screens.mjs"],
     cwd: rootDir,
@@ -79,7 +79,7 @@ const SUITES = [
     cwd: rootDir,
   },
   {
-    name: "12. Backend Functional Regression Test Suite (903 Tests)",
+    name: "12. Backend Functional Regression Test Suite",
     cmd: "npm",
     args: ["test"],
     cwd: path.join(rootDir, "backend"),
@@ -150,7 +150,7 @@ async function main() {
   const passCount = results.filter((r) => r.passed).length;
   const totalCount = results.length;
   console.log(`Summary: ${passCount} / ${totalCount} Suites Passed | Total Time: ${(results.reduce((a, b) => a + b.durationMs, 0) / 1000).toFixed(1)}s`);
-  console.log(`Status : ${allPassed ? '\x1b[32m100% PRODUCTION READY & CERTIFIED\x1b[0m' : '\x1b[31mFAILURES DETECTED\x1b[0m'}`);
+  console.log(`Status : ${allPassed ? '\x1b[32mCORE VERIFICATION SUITES PASSED — RELEASE GATES STILL REQUIRED\x1b[0m' : '\x1b[31mFAILURES DETECTED\x1b[0m'}`);
   console.log("===============================================================================\n");
 
   process.exit(allPassed ? 0 : 1);
