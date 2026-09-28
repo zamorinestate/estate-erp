@@ -135,3 +135,152 @@ test('P2-02: mock governance headers are test-only, opt-in, and loopback-bound',
     else process.env.ALLOW_TEST_AUTH_HEADERS = previousFlag;
   }
 });
+
+
+test('P2-02: distributed auth rate limiter fails closed in staging and production', async () => {
+  const authRoutes = require('../src/routes/authRoutes');
+  const { redisClientFactory } = require('../src/services/redisClientFactory');
+
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousAppMode = process.env.APP_MODE;
+  const previousAdapter = redisClientFactory.adapterService;
+
+  function makeRequest() {
+    return {
+      body: {
+        organisationId: 'ORG-TEST',
+        email: 'user@example.test',
+      },
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: {},
+      get() { return null; },
+      originalUrl: '/api/v1/auth/login',
+      correlationId: 'P2-DIST-RL',
+    };
+  }
+
+  function makeResponse() {
+    return {
+      statusCode: 200,
+      body: null,
+      headers: {},
+      setHeader(name, value) {
+        this.headers[String(name).toLowerCase()] = String(value);
+      },
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+        return this;
+      },
+    };
+  }
+
+  const middleware = authRoutes.createDistributedAuthRateLimiter({
+    scope: 'AUTH_LOGIN_TEST',
+    ipLimit: 5,
+    accountLimit: 3,
+  });
+
+  try {
+    process.env.NODE_ENV = 'staging';
+    delete process.env.APP_MODE;
+    redisClientFactory.adapterService = null;
+
+    let response = makeResponse();
+    let nextCalled = false;
+    await middleware(makeRequest(), response, () => { nextCalled = true; });
+    assert.equal(nextCalled, false);
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.body?.error?.code, 'AUTH_RATE_LIMITER_UNAVAILABLE');
+
+    process.env.NODE_ENV = 'development';
+    response = makeResponse();
+    nextCalled = false;
+    await middleware(makeRequest(), response, () => { nextCalled = true; });
+    assert.equal(nextCalled, true);
+
+    process.env.NODE_ENV = 'production';
+    redisClientFactory.adapterService = {
+      async checkRateLimit() {
+        throw new Error('redis unavailable');
+      },
+    };
+    response = makeResponse();
+    nextCalled = false;
+    await middleware(makeRequest(), response, () => { nextCalled = true; });
+    assert.equal(nextCalled, false);
+    assert.equal(response.statusCode, 503);
+  } finally {
+    redisClientFactory.adapterService = previousAdapter;
+
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+
+    if (previousAppMode === undefined) delete process.env.APP_MODE;
+    else process.env.APP_MODE = previousAppMode;
+  }
+});
+
+test('P2-02: distributed auth rate limiter enforces atomic adapter denial', async () => {
+  const authRoutes = require('../src/routes/authRoutes');
+  const { redisClientFactory } = require('../src/services/redisClientFactory');
+
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousAdapter = redisClientFactory.adapterService;
+  const calls = [];
+
+  process.env.NODE_ENV = 'production';
+  redisClientFactory.adapterService = {
+    async checkRateLimit(scope, identifier, limit, windowMs) {
+      calls.push({ scope, identifier, limit, windowMs });
+      if (scope.endsWith(':ACCOUNT')) {
+        return { allowed: false, remaining: 0, resetAfterSeconds: 42 };
+      }
+      return { allowed: true, remaining: 4, resetAfterSeconds: 42 };
+    },
+  };
+
+  const middleware = authRoutes.createDistributedAuthRateLimiter({
+    scope: 'AUTH_LOGIN_TEST',
+    ipLimit: 5,
+    accountLimit: 3,
+  });
+
+  const request = {
+    body: { organisationId: 'ORG-TEST', email: 'user@example.test' },
+    ip: '127.0.0.1',
+    socket: { remoteAddress: '127.0.0.1' },
+    headers: {},
+    get() { return null; },
+    originalUrl: '/api/v1/auth/login',
+  };
+  const response = {
+    statusCode: 200,
+    body: null,
+    headers: {},
+    setHeader(name, value) { this.headers[String(name).toLowerCase()] = String(value); },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+
+  try {
+    let nextCalled = false;
+    await middleware(request, response, () => { nextCalled = true; });
+
+    assert.equal(nextCalled, false);
+    assert.equal(response.statusCode, 429);
+    assert.equal(response.body?.error?.code, 'TOO_MANY_REQUESTS');
+    assert.equal(response.headers['retry-after'], '42');
+    assert.equal(calls.length, 2);
+    assert.ok(calls.some((call) => call.scope === 'AUTH_LOGIN_TEST:IP'));
+    assert.ok(calls.some((call) => call.scope === 'AUTH_LOGIN_TEST:ACCOUNT'));
+  } finally {
+    redisClientFactory.adapterService = previousAdapter;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+  }
+});
