@@ -5,7 +5,6 @@
 //
 // Zero-Dependency Real Runtime Execution Harness across all 5 Personas:
 // 1. Primary Master
-// 2. Normal Master
 // 3. Owner
 // 4. Cafe Operations (Admin)
 // 5. Staff
@@ -25,7 +24,6 @@ const FRONTEND_URL = 'http://localhost:3000';
 
 const PERSONAS = [
   { id: 'PRIMARY_MASTER', role: 'master', isPrimary: true, name: 'Zamorin Primary Master' },
-  { id: 'NORMAL_MASTER',  role: 'master', isPrimary: false, name: 'Zamorin Normal Master' },
   { id: 'OWNER',          role: 'owner',  isPrimary: false, name: 'Zamorin Owner' },
   { id: 'CAFE_ADMIN',     role: 'cafe_admin', isPrimary: false, name: 'Cafe Operations Lead' },
   { id: 'STAFF',          role: 'staff',  isPrimary: false, name: 'Normal Employee / Staff' },
