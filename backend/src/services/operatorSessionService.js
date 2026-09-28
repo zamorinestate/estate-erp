@@ -16,6 +16,50 @@ const PIN_LOCK_MINUTES = 15;
 const INACTIVITY_LOCK_MINUTES = 30;
 
 class OperatorSessionService {
+  async _assertPrimaryMasterActor({
+    organisationId,
+    actorUserId,
+    actorRole,
+    actorIsPrimaryMaster,
+    code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+    message = 'Primary Master authority is required for this action.',
+  }) {
+    if (String(actorRole || '').toUpperCase() !== 'MASTER') {
+      throw new ApiError(403, code, message);
+    }
+
+    if (actorIsPrimaryMaster === true) return true;
+    if (actorIsPrimaryMaster === false) {
+      throw new ApiError(403, code, message);
+    }
+
+    const orgId = String(organisationId || 'ZAMORIN').trim().toUpperCase();
+    const userId = String(actorUserId || '').trim().toUpperCase();
+    if (!userId) {
+      throw new ApiError(403, code, message);
+    }
+
+    const actor = await User.findOne({
+      organisationId: orgId,
+      userId,
+    })
+      .select('userId role isPrimaryMaster accountStatus')
+      .lean();
+
+    if (
+      !actor ||
+      actor.role !== 'MASTER' ||
+      actor.isPrimaryMaster !== true ||
+      actor.accountStatus === 'INACTIVE' ||
+      actor.accountStatus === 'SUSPENDED' ||
+      actor.accountStatus === 'DISABLED'
+    ) {
+      throw new ApiError(403, code, message);
+    }
+
+    return true;
+  }
+
   /**
    * Safe audit logging helper.
    */
@@ -70,8 +114,11 @@ class OperatorSessionService {
 
       User.find({
         organisationId: orgId,
-        role: { $in: ['CAFE_ADMIN', 'MASTER'] },
         accountStatus: 'ACTIVE',
+        $or: [
+          { role: 'CAFE_ADMIN' },
+          { role: 'MASTER', isPrimaryMaster: true },
+        ],
       })
         .select('userId name role primaryCafeId assignedCafeIds isPrimaryMaster')
         .sort({ name: 1 })
@@ -102,7 +149,7 @@ class OperatorSessionService {
   /**
    * Sets or resets the 6-digit Cafe Operations PIN for a cafe.
    */
-  async setCafePin({ organisationId, cafeId, actorUserId, actorRole, newPin, pin }) {
+  async setCafePin({ organisationId, cafeId, actorUserId, actorRole, actorIsPrimaryMaster, newPin, pin }) {
     const rawPin = newPin || pin;
     if (!rawPin || !/^\d{6}$/.test(String(rawPin))) {
       throw new ApiError(400, 'INVALID_CAFE_PIN', 'Cafe Operations PIN must be exactly 6 numeric digits.');
@@ -113,9 +160,14 @@ class OperatorSessionService {
       throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Please choose a stronger, non-sequential 6-digit Café PIN.');
     }
 
-    if (actorRole !== 'MASTER') {
-      throw new ApiError(403, 'UNAUTHORIZED_CAFE_PIN_SETUP', 'Only Master Administrator can configure Cafe PIN.');
-    }
+    await this._assertPrimaryMasterActor({
+      organisationId,
+      actorUserId,
+      actorRole,
+      actorIsPrimaryMaster,
+      code: 'UNAUTHORIZED_CAFE_PIN_SETUP',
+      message: 'Only Primary Master can configure Café Operations PIN.',
+    });
 
     const cafe = await Cafe.findOne({
       organisationId: (organisationId || 'ZAMORIN').toUpperCase(),
@@ -172,7 +224,7 @@ class OperatorSessionService {
   /**
    * Sets or resets an Operator PIN for an eligible employee.
    */
-  async setOperatorPin({ organisationId, targetUserId, actorUserId, actorRole, newPin }) {
+  async setOperatorPin({ organisationId, targetUserId, actorUserId, actorRole, actorIsPrimaryMaster, newPin }) {
     if (!newPin || !/^\d{6}$/.test(String(newPin))) {
       throw new ApiError(400, 'INVALID_OPERATOR_PIN', 'Operator PIN must be exactly 6 numeric digits.');
     }
@@ -192,9 +244,21 @@ class OperatorSessionService {
       throw new ApiError(404, 'USER_NOT_FOUND', `User ${targetUserId} was not found.`);
     }
 
-    // Role check: Only MASTER or the user themselves can set their PIN
-    if (actorRole !== 'MASTER' && actorUserId !== targetUserId) {
-      throw new ApiError(403, 'UNAUTHORIZED_PIN_SETUP', 'Only Master or the user themselves can configure Operator PIN.');
+    if (String(actorRole || '').toUpperCase() === 'MASTER') {
+      await this._assertPrimaryMasterActor({
+        organisationId,
+        actorUserId,
+        actorRole,
+        actorIsPrimaryMaster,
+        code: 'UNAUTHORIZED_PIN_SETUP',
+        message: 'Only Primary Master or the user themselves can configure Operator PIN.',
+      });
+    } else if (String(actorUserId || '').toUpperCase() !== String(targetUserId || '').toUpperCase()) {
+      throw new ApiError(
+        403,
+        'UNAUTHORIZED_PIN_SETUP',
+        'Only Primary Master or the user themselves can configure Operator PIN.'
+      );
     }
 
     const pinHash = await this.hashPin(newPin);
@@ -487,7 +551,15 @@ class OperatorSessionService {
       throw new ApiError(403, 'STAFF_ELEVATION_DENIED', 'Staff users cannot access Cafe Operations without explicit Operator authorization.');
     }
 
-    // Only CAFE_ADMIN and MASTER can operate
+    if (user.role === 'MASTER' && user.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER Café Operations access.'
+      );
+    }
+
+    // Only CAFE_ADMIN and the designated Primary Master can operate
     if (user.role !== 'CAFE_ADMIN' && user.role !== 'MASTER') {
       throw new ApiError(403, 'UNAUTHORIZED_ROLE', 'User does not possess Cafe Operations authority.');
     }
@@ -920,8 +992,12 @@ class OperatorSessionService {
       userId: masterUserId.toUpperCase(),
     }).select('+passwordHash +mfaSecret');
 
-    if (!user || user.role !== 'MASTER') {
-      throw new ApiError(401, 'INVALID_MASTER_CREDENTIALS', 'Invalid Master credentials.');
+    if (!user || user.role !== 'MASTER' || user.isPrimaryMaster !== true) {
+      throw new ApiError(
+        401,
+        'INVALID_MASTER_CREDENTIALS',
+        'Invalid Primary Master credentials.'
+      );
     }
 
     if (user.accountStatus !== 'ACTIVE') {
