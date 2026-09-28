@@ -647,7 +647,7 @@ class OfflineSyncService {
 
     const reviewerRole = (authContext?.role || '').toUpperCase();
     const reviewerUserId = (authContext?.userId || '').trim().toUpperCase();
-    const reviewedByRole = reviewerRole;
+    let reviewedByRole = reviewerRole;
     const reviewedByUserId = reviewerUserId;
     const cleanOrg = (authContext?.organisationId || 'ORG-ZAMORIN').trim().toUpperCase();
 
@@ -707,6 +707,17 @@ class OfflineSyncService {
       organisationId: cleanOrg,
     }).lean();
 
+    // MASTER authority must be backed by a live canonical user record. A stale,
+    // forged, or orphaned token/context must never self-assert Primary-Master
+    // authority for a financial review operation.
+    if (!canonicalReviewer && reviewerRole === 'MASTER') {
+      const err = new Error('Primary Master authority could not be verified against the canonical user record.');
+      err.statusCode = 403;
+      err.errorCode = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      throw err;
+    }
+
     if (canonicalReviewer) {
       const accountStatus = String(canonicalReviewer.accountStatus || canonicalReviewer.status || 'ACTIVE').toUpperCase();
       if (['DISABLED', 'TERMINATED', 'SUSPENDED', 'DEACTIVATED', 'ARCHIVED', 'LOCKED', 'EXITED'].includes(accountStatus)) {
@@ -718,6 +729,7 @@ class OfflineSyncService {
       }
 
       const activeRole = String(canonicalReviewer.role || '').toUpperCase();
+      reviewedByRole = activeRole;
       if (activeRole === 'OWNER') {
         const err = new Error('Owner role does not possess offline POS review authorization (Segregation of Duties).');
         err.statusCode = 403;
@@ -809,7 +821,7 @@ class OfflineSyncService {
         $set: {
           status: nextStatus,
           reviewedByUserId,
-          reviewedByRole: reviewerRole,
+          reviewedByRole,
           reviewedAt: new Date(),
           reviewDecision: normAction,
           reviewNotes: reason || '',
@@ -857,7 +869,7 @@ class OfflineSyncService {
           organisationId: cleanOrg,
           cafeId: itemCafeId,
           actorUserId: reviewerUserId,
-          actorRole: reviewerRole,
+          actorRole: reviewedByRole,
           module: 'POS_OFFLINE_SYNC',
           action: 'OFFLINE_POS_REVIEW_REJECTED',
           entityType: 'POS_OFFLINE_REVIEW_ITEM',
@@ -890,7 +902,7 @@ class OfflineSyncService {
           organisationId: cleanOrg,
           cafeId: itemCafeId,
           actorUserId: reviewerUserId,
-          actorRole: reviewerRole,
+          actorRole: reviewedByRole,
           module: 'POS_OFFLINE_SYNC',
           action: 'OFFLINE_POS_REVIEW_ESCALATED',
           entityType: 'POS_OFFLINE_REVIEW_ITEM',
@@ -983,10 +995,10 @@ class OfflineSyncService {
         organisationId: cleanOrg,
         cafeId: itemCafeId,
         userId: reviewerUserId,
-        role: reviewerRole,
+        role: reviewedByRole,
         isPrimaryMaster:
-          reviewerRole === 'MASTER' &&
-          (canonicalReviewer?.isPrimaryMaster === true || authContext?.isPrimaryMaster === true),
+          reviewedByRole === 'MASTER' &&
+          canonicalReviewer?.isPrimaryMaster === true,
         assignedCafeIds: canonicalAssignedCafeIds,
         primaryCafeId: canonicalReviewer?.primaryCafeId || authContext?.primaryCafeId || null,
       };
@@ -1013,7 +1025,7 @@ class OfflineSyncService {
       lockedItem.status = 'APPROVED_FINALIZED';
       lockedItem.reviewDecision = 'APPROVE_AND_FINALIZE';
       lockedItem.reviewedByUserId = reviewerUserId;
-      lockedItem.reviewedByRole = reviewerRole;
+      lockedItem.reviewedByRole = reviewedByRole;
       lockedItem.reviewNotes = reason.trim() || 'Approved by authorized reviewer';
       lockedItem.reviewedAt = new Date();
       lockedItem.finalizedBillId = billId;
@@ -1026,7 +1038,7 @@ class OfflineSyncService {
           organisationId: cleanOrg,
           cafeId: itemCafeId,
           actorUserId: reviewerUserId,
-          actorRole: reviewerRole,
+          actorRole: reviewedByRole,
           module: 'POS_OFFLINE_SYNC',
           action: 'OFFLINE_POS_REVIEW_APPROVED',
           entityType: 'POS_OFFLINE_REVIEW_ITEM',
