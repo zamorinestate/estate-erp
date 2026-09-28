@@ -87,7 +87,7 @@ describe('REC-17 ADD-ON — Vendor Accounts Payable Ledger & Lifecycle Suite', (
   const cafeIdA = 'ZC-CAF-01';
   const cafeIdB = 'ZC-CAF-02';
 
-  const masterAuth = { userId: 'USR-MASTER-01', role: 'MASTER', organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
+  const masterAuth = { userId: 'USR-MASTER-01', role: 'MASTER', isPrimaryMaster: true, organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
   const ownerAuth = { userId: 'USR-OWNER-01', role: 'OWNER', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const cafeAdminAAuth = { userId: 'USR-ADMIN-01', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const staffAuth = { userId: 'USR-STAFF-01', role: 'STAFF', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
