@@ -120,9 +120,9 @@ class RedisClientFactory {
       const { defaultLimiter } = require('./distributedRateLimiter');
       const { defaultEventBus } = require('./distributedEventBus');
       const { defaultPresenceService } = require('./devicePresenceService');
-      defaultLimiter.setRedisClient(this.commandClient);
-      defaultEventBus.setRedisBrokers(this.commandClient, this.subscriberClient);
-      defaultPresenceService.setRedisClient(this.commandClient);
+      defaultLimiter.setRedisClient(this.commandClient, keyPrefix);
+      defaultEventBus.setRedisBrokers(this.commandClient, this.subscriberClient, keyPrefix);
+      defaultPresenceService.setRedisClient(this.commandClient, keyPrefix);
 
       this.status = 'READY';
       return {
