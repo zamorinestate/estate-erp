@@ -1259,8 +1259,6 @@ async function loadDashboardData(root) {
     params.set("cafeIds", dashboardState.selectedCafeIds.join(","));
   }
 
-  const isNormalMaster = state.role === "master" && !state.user?.isPrimaryMaster;
-
   try {
     const res = await apiGet(`/dashboard?${params.toString()}`);
     if (res?.data) {

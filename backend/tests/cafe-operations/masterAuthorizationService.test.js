@@ -14,8 +14,13 @@ test('Primary Master + Cafe A device, same org => PASS (no cafe-assignment looku
   assert.equal(evaluateMasterCafeOperationsAccess({ device: device(), master: master() }).granted, true);
 });
 
-test('Malformed MASTER + Cafe A device, same org => PASS', () => {
-  assert.equal(evaluateMasterCafeOperationsAccess({ device: device(), master: master({ role: 'MASTER_NORMAL' }) }).granted, true);
+test('Malformed non-primary MASTER + Cafe A device, same org => DENIED', () => {
+  const result = evaluateMasterCafeOperationsAccess({
+    device: device(),
+    master: master({ role: 'MASTER_MALFORMED' }),
+  });
+  assert.equal(result.granted, false);
+  assert.equal(result.reason, 'MASTER_AUTH_FAILED');
 });
 
 test('Master from a different organisation on this device => DENIED (ORG_MISMATCH), not a cafe-scope question', () => {

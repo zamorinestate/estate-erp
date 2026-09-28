@@ -319,9 +319,9 @@ async function runRuntimeAudit() {
   // TEST SUITE 7: SECURITY & IDOR AUTHORIZATION REJECTION
   // =========================================================================
   console.log('\n▶ SUITE 7: Security Role Denials & IDOR Resistance');
-  const normalMasterDenied = !isRouteAllowed('master', 'passbook', false);
+  const malformedMasterDenied = !isRouteAllowed('master', 'passbook', false);
   const staffDenied = !isRouteAllowed('staff', 'admin', false);
-  if (normalMasterDenied) auditStats.securityDenialsVerified++;
+  if (malformedMasterDenied) auditStats.securityDenialsVerified++;
   if (staffDenied) auditStats.securityDenialsVerified++;
   console.log(`  ✓ Security Denial Invariants Verified: ${auditStats.securityDenialsVerified}`);
 
