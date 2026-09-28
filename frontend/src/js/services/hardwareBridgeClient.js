@@ -16,6 +16,7 @@ class HardwareBridgeClient {
     this.barcodeBuffer = '';
     this.barcodeLastCharTime = 0;
     this.scannerCallbacks = new Set();
+    this.scannerLastDetectedAt = null;
     this.activeUsbDevice = null;
   }
 
@@ -39,6 +40,16 @@ class HardwareBridgeClient {
       localBridgeConfigured: true,
       localBridgeStatus,
       browserPrintSupported: typeof window !== 'undefined' && typeof window.print === 'function',
+      barcodeScannerListenerSupported:
+        typeof window !== 'undefined' && typeof window.addEventListener === 'function',
+      barcodeScannerListenerActive: Boolean(this._scannerListenerAttached),
+      barcodeScannerLastDetectedAt: this.scannerLastDetectedAt,
+      barcodeScannerStatus: this.scannerLastDetectedAt
+        ? 'DETECTED'
+        : (this._scannerListenerAttached ? 'LISTENING' : 'NOT_INITIALIZED'),
+      cameraScannerSupported:
+        typeof navigator !== 'undefined' &&
+        Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function'),
       activePaperWidth: (typeof localStorage !== 'undefined' && localStorage.getItem('zamorin_pos_paper_width')) || '80',
     };
   }
@@ -97,6 +108,7 @@ class HardwareBridgeClient {
         if (this.barcodeBuffer.length >= 3 && diff < 100) {
           const scannedCode = this.barcodeBuffer.trim();
           this.barcodeBuffer = '';
+          this.scannerLastDetectedAt = new Date().toISOString();
           this.scannerCallbacks.forEach((cb) => cb(scannedCode));
           e.preventDefault();
         } else {
