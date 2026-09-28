@@ -14,9 +14,33 @@ const { User } = require('../src/models/User');
 const { UniversalQrRecord } = require('../src/models/UniversalQrRecord');
 const cafeService = require('../src/services/cafeService');
 
+const TRANSACTION_MODELS = [
+  Cafe,
+  CafeAccess,
+  CafeInventoryConfig,
+  GlobalInventoryItem,
+  SequenceCounter,
+  User,
+  UniversalQrRecord,
+];
+
+async function connectTransactionalTestDatabase(replSet) {
+  await mongoose.connect(replSet.getUri(), {
+    autoIndex: false,
+    autoCreate: false,
+  });
+
+  // Pre-create every collection touched by the provisioning transaction so
+  // fault injection tests exercise transaction semantics rather than MongoDB
+  // catalog creation/index timing on a fresh in-memory replica set.
+  for (const model of TRANSACTION_MODELS) {
+    await model.createCollection();
+  }
+}
+
 test('staged Café provisioning rolls back every subsystem on a late failure', async (t) => {
   const replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(replSet.getUri());
+  await connectTransactionalTestDatabase(replSet);
 
   t.after(async () => {
     await mongoose.disconnect();
@@ -121,7 +145,7 @@ test('staged Café provisioning rolls back every subsystem on a late failure', a
 
 test('createCafeWithAccess rolls back QR, Café, access, inventory and fiscal sequences on late failure', async (t) => {
   const replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(replSet.getUri());
+  await connectTransactionalTestDatabase(replSet);
 
   t.after(async () => {
     await mongoose.disconnect();
@@ -201,7 +225,7 @@ test('createCafeWithAccess rolls back QR, Café, access, inventory and fiscal se
 
 test('createCafeWithAccess retries the whole transaction on TransientTransactionError exactly once', async (t) => {
   const replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(replSet.getUri());
+  await connectTransactionalTestDatabase(replSet);
 
   t.after(async () => {
     await mongoose.disconnect();

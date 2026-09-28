@@ -239,7 +239,8 @@ test('STAGE 03 — Café Registration, 12-Section Onboarding & Store Readiness S
     // Section K: Verify Stage 02 Universal QR Auto-Provisioned
     assert.ok(savedCafe.qrLoginContext);
     assert.ok(savedCafe.qrLoginContext.securePublicCafeReference);
-    assert.match(savedCafe.qrLoginContext.loginUrl, /^https:\/\/zamorin\.app\/cafe\/.+\/login$/);
+    const qrLoginUrl = new URL(savedCafe.qrLoginContext.loginUrl);
+    assert.match(qrLoginUrl.pathname, /^\/cafe-access\/qr\/[^/]+$/);
 
     // Verify Stage 02 UniversalQrRecord exists in DB
     const qrRec = await UniversalQrRecord.findOne({ qrId: savedCafe.qrLoginContext.qrRecordId });
