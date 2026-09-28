@@ -1,6 +1,21 @@
 import https from 'https';
 
-const VERCEL_BASE = 'https://zamorin-cafe-erp.vercel.app/api/v1';
+const VERCEL_BASE = process.env.E2E_API_BASE_URL || 'https://zamorin-cafe-erp.vercel.app/api/v1';
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
+const OWNER_EMAIL = requiredEnv('E2E_OWNER_EMAIL');
+const OWNER_PASSWORD = requiredEnv('E2E_OWNER_PASSWORD');
+const CAFE_ADMIN_EMAIL = requiredEnv('E2E_CAFE_ADMIN_EMAIL');
+const CAFE_ADMIN_PASSWORD = requiredEnv('E2E_CAFE_ADMIN_PASSWORD');
+const STAFF_EMAIL = requiredEnv('E2E_STAFF_EMAIL');
+const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
 
 function request(method, path, body = null, token = null, cookies = null) {
   return new Promise((resolve) => {
@@ -96,10 +111,10 @@ async function run() {
   console.log('  ZAMORIN CAFÉ ERP — VERCEL AUTHENTICATION & ACCESS MATRIX');
   console.log('═'.repeat(65));
 
-  const master = await testRole('PRIMARY MASTER', 'pradeeshk331@gmail.com', 'PRADEESHK@94309');
-  const owner = await testRole('OWNER', 'owner@example.com', 'PRADEESHK@94309');
-  const admin = await testRole('CAFE_ADMIN', 'admin@example.com', 'PRADEESHK@94309');
-  const staff = await testRole('STAFF', 'staff@example.com', 'PRADEESHK@94309');
+  const master = await testRole('PRIMARY MASTER', PRIMARY_MASTER_EMAIL, PRIMARY_MASTER_PASSWORD);
+  const owner = await testRole('OWNER', OWNER_EMAIL, OWNER_PASSWORD);
+  const admin = await testRole('CAFE_ADMIN', CAFE_ADMIN_EMAIL, CAFE_ADMIN_PASSWORD);
+  const staff = await testRole('STAFF', STAFF_EMAIL, STAFF_PASSWORD);
 
   section('SECURITY BOUNDARY ENFORCEMENT ON VERCEL');
 

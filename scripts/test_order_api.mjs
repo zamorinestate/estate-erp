@@ -1,5 +1,14 @@
 // Test script to verify vendor order creation end-to-end
-const API_BASE = "http://localhost:4000/api/v1";
+const API_BASE = process.env.E2E_API_BASE_URL || "http://localhost:4000/api/v1";
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
 
 async function run() {
   console.log("1. Authenticating as Cafe Admin...");
@@ -8,8 +17,8 @@ async function run() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       organisationId: "ORG-0001",
-      email: "pradeeshk331@gmail.com",
-      password: "PRADEESHK@94309",
+      email: PRIMARY_MASTER_EMAIL,
+      password: PRIMARY_MASTER_PASSWORD,
       role: "PRIMARY_MASTER",
       device: {
         deviceId: "dev_test_123",
