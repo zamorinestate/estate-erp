@@ -9,6 +9,8 @@ const { authorize, canAccessCafe } = require('../src/middleware/authorize');
 const { resolveEffectiveCafeScope } = require('../src/utils/cafeScope');
 const { requireCafeOperationsDevice } = require('../src/middleware/deviceAuthorization');
 const expenseController = require('../src/controllers/expenseController');
+const procurementController = require('../src/controllers/procurementController');
+const vendorController = require('../src/controllers/vendorController');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SKIP_DIRS = new Set([
@@ -325,5 +327,49 @@ test('Malformed non-primary MASTER shared scope/device helpers fail closed', () 
   assert.equal(nextCalled, true);
   assert.equal(statusCode, null);
   assert.equal(payload, null);
+});
+
+test('Malformed non-primary MASTER procurement/vendor governance mutations fail closed', async () => {
+  const auth = {
+    userId: 'MU-MALFORMED-PROCUREMENT',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+    assignedCafeIds: ['ZC-0001'],
+  };
+
+  const cases = [
+    {
+      fn: procurementController.approveOrder,
+      request: { auth, params: { purchaseOrderId: 'PO-MALFORMED-001' }, body: {} },
+    },
+    {
+      fn: procurementController.masterApproveOrderAndBill,
+      request: { auth, params: { purchaseOrderId: 'PO-MALFORMED-001' }, body: {} },
+    },
+    {
+      fn: vendorController.masterApproveInvoiceAndPostInventory,
+      request: { auth, params: { poId: 'PO-MALFORMED-001' }, body: {} },
+    },
+    {
+      fn: vendorController.retryFailedInventoryPosting,
+      request: { auth, params: { poId: 'PO-MALFORMED-001' }, body: {} },
+    },
+    {
+      fn: vendorController.approveBankChangeRequest,
+      request: { auth, params: { vendorId: 'VEN-MALFORMED-001' }, body: {} },
+    },
+  ];
+
+  for (const entry of cases) {
+    await assert.rejects(
+      () => invokeController(entry.fn, entry.request),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+  }
 });
 

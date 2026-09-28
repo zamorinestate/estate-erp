@@ -1020,12 +1020,19 @@ const computeThreeWayMatch = asyncHandler(async (request, response) => {
 // ── 7. MASTER Approval & Atomic Exactly-Once Inventory Posting (P1 Absolute) ──
 
 const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, response) => {
-  // P1 Mandatory Guard: Server-authoritative MASTER check
+  // P1 Mandatory Guard: server-authoritative Primary Master check.
   if (request.auth.role !== 'MASTER') {
     throw new ApiError(
       403,
       'MASTER_APPROVAL_REQUIRED',
-      'Only an authenticated MASTER user may approve supplier invoices and authorise automatic inventory posting.'
+      'Only the Primary Master may approve supplier invoices and authorise automatic inventory posting.'
+    );
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to approve supplier invoices and post inventory.'
     );
   }
 
@@ -1281,7 +1288,14 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
 
 const retryFailedInventoryPosting = asyncHandler(async (request, response) => {
   if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN', 'Only MASTER role may retry failed stock postings.');
+    throw new ApiError(403, 'FORBIDDEN', 'Only the Primary Master may retry failed stock postings.');
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to retry failed stock postings.'
+    );
   }
 
   const purchaseOrderId = normalizeId(request.params.poId);
@@ -1367,7 +1381,14 @@ const submitBankChangeRequest = asyncHandler(async (request, response) => {
 
 const approveBankChangeRequest = asyncHandler(async (request, response) => {
   if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN', 'Only MASTER role may approve high-risk bank detail changes.');
+    throw new ApiError(403, 'FORBIDDEN', 'Only the Primary Master may approve high-risk bank detail changes.');
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to approve high-risk bank detail changes.'
+    );
   }
 
   const vendorId = normalizeId(request.params.vendorId);
