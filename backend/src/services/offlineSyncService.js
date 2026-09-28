@@ -543,7 +543,14 @@ class OfflineSyncService {
    * OWNER and STAFF are strictly barred with 403 AUTHORIZATION_DENIED (Segregation of Duties).
    */
   static async getPendingReviews({ organisationId, cafeId = null, authUser }) {
-    const cleanOrg = (organisationId || authUser?.organisationId || 'ORG-ZAMORIN').trim().toUpperCase();
+    const cleanOrg = String(organisationId || authUser?.organisationId || '').trim().toUpperCase();
+    if (!cleanOrg) {
+      const err = new Error('Authenticated organisation context is required for offline queue review.');
+      err.statusCode = 403;
+      err.errorCode = 'ORGANISATION_CONTEXT_REQUIRED';
+      err.code = 'ORGANISATION_CONTEXT_REQUIRED';
+      throw err;
+    }
     const role = (authUser?.role || '').toUpperCase();
 
     // Policy A / Segregation of Duties: Owner and Staff are barred from POS review operations
@@ -706,7 +713,14 @@ class OfflineSyncService {
     const reviewerUserId = (authContext?.userId || '').trim().toUpperCase();
     let reviewedByRole = reviewerRole;
     const reviewedByUserId = reviewerUserId;
-    const cleanOrg = (authContext?.organisationId || 'ORG-ZAMORIN').trim().toUpperCase();
+    const cleanOrg = String(authContext?.organisationId || '').trim().toUpperCase();
+    if (!cleanOrg) {
+      const err = new Error('Authenticated organisation context is required for offline review execution.');
+      err.statusCode = 403;
+      err.errorCode = 'ORGANISATION_CONTEXT_REQUIRED';
+      err.code = 'ORGANISATION_CONTEXT_REQUIRED';
+      throw err;
+    }
 
     // 1. Initial Role Governance Check (Policy A: Owner and Staff are strictly barred)
     if (reviewerRole === 'OWNER') {
