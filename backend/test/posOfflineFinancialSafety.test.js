@@ -22,7 +22,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const { Bill } = require('../src/models/Bill');
 const { TaxInvoice } = require('../src/models/TaxInvoice');
@@ -48,9 +48,18 @@ describe('STAGE 11.36 — POS Offline Financial Safety & Statutory Numbering Inv
   };
 
   before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const uri = mongoServer.getUri();
-    await mongoose.connect(uri);
+    await mongoose.connect(uri, {
+      autoIndex: false,
+      autoCreate: false,
+    });
+
+    // Transactions should test financial behavior, not implicitly create
+    // MongoDB collections on their first write.
+    for (const model of [Bill, TaxInvoice, SequenceCounter]) {
+      await model.createCollection();
+    }
     await syncTaxInvoiceIndexes(TaxInvoice.collection);
   });
 
