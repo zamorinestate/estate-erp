@@ -28,6 +28,10 @@ test('P2 forensic evidence integrity: smoke/static checks cannot masquerade as p
   assert.doesNotMatch(arithmetic, /final_control_runtime_results\.json|REAL_POINTER_CLICKS|mutationsCommitted:\s*141/i);
   assert.match(arithmetic, /DECLARED_CLASSIFICATION_BASELINE/);
 
+  const staticVerifier = read('scripts/master_system_verification.mjs');
+  assert.doesNotMatch(staticVerifier, /100% PRODUCTION READY & CERTIFIED/i);
+  assert.match(staticVerifier, /RELEASE GATES STILL REQUIRED/);
+
   const verifier = read('scripts/verify_all_master.mjs');
   assert.doesNotMatch(verifier, /100% PRODUCTION READY & CERTIFIED|Five-Persona/i);
   assert.match(verifier, /RELEASE GATES STILL REQUIRED/);
