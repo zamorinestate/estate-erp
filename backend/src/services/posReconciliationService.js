@@ -54,7 +54,7 @@ class PosReconciliationService {
       return null;
     }
 
-    const jobId = `RECJOB-${bId}-${eType}`;
+    const jobId = `RECJOB-${orgId}-${bId}-${eType}`;
     const errCode = error?.code || error?.name || 'SIDE_EFFECT_FAILURE';
     const errMsg = String(error?.message || error || 'Unknown failure').slice(0, 500);
 
@@ -155,7 +155,11 @@ class PosReconciliationService {
 
         try {
           await Bill.findOneAndUpdate(
-            { billId: job.billId },
+            {
+              organisationId: normalizeId(job.organisationId),
+              cafeId: normalizeId(job.cafeId),
+              billId: job.billId,
+            },
             { $set: { bomDepletionStatus: bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED', bomDepletionError: null } }
           );
         } catch {}
@@ -172,6 +176,8 @@ class PosReconciliationService {
       if (job.effectType === 'CASH_LEDGER') {
         // Exactly-once guard: verify if CashTransaction for this bill already exists
         const existingCt = await CashTransaction.findOne({
+          organisationId: normalizeId(job.organisationId),
+          cafeId: normalizeId(job.cafeId),
           referenceId: job.billId,
           category: 'POS_SALE',
         });
@@ -239,7 +245,6 @@ class PosReconciliationService {
           organisationId: normalizeId(job.organisationId),
           cafeId: normalizeId(job.cafeId),
           registerId,
-          status: 'OPEN',
         };
 
         const existing = await RegisterSession.findOne(scope);
@@ -247,7 +252,7 @@ class PosReconciliationService {
           throw new ApiError(
             409,
             'REGISTER_SESSION_SCOPE_MISMATCH',
-            'The original POS register session is no longer open in the expected organisation/café/register scope.'
+            'The original POS register session does not exist in the expected organisation/café/register scope.'
           );
         }
 
@@ -277,6 +282,16 @@ class PosReconciliationService {
               timestamp: new Date(),
             },
           };
+
+          if (existing.status === 'CLOSED') {
+            const adjustedExpectedCashPaisa =
+              Math.max(0, Number(existing.expectedCashPaisa || 0)) + cashPaidPaisa;
+            const countedCashPaisa = Math.max(0, Number(existing.countedCashPaisa || 0));
+            update.$set = {
+              expectedCashPaisa: adjustedExpectedCashPaisa,
+              cashVariancePaisa: countedCashPaisa - adjustedExpectedCashPaisa,
+            };
+          }
         }
 
         const updated = await RegisterSession.findOneAndUpdate(
