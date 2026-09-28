@@ -6,7 +6,7 @@
  * AUTHORIZATION:
  *   - PRIMARY MASTER (role = MASTER && isPrimaryMaster === true): Full authority.
  *   - OWNER (role = OWNER): Authorized according to authorized Owner-account scope.
- *   - NORMAL MASTER, CAFE_ADMIN, STAFF: Strictly DENIED (403/404).
+ *   - OWNER, CAFE_ADMIN, STAFF: Strictly denied unless explicitly authorized by route policy.
  *
  * Financial Invariants:
  *   - 100% integer paise calculations.
@@ -70,7 +70,7 @@ function parsePositiveInteger(value, fallback, maximum) {
  * Verify SCR-018 Authorization:
  * - Primary Master: authorized
  * - Owner: authorized
- * - Normal Master: strictly denied (403 PRIMARY_MASTER_AUTHORITY_REQUIRED)
+ * - MASTER access requires Primary Master authority
  * - Other roles: strictly denied (404 / 403)
  */
 function verifyPersonalLedgerAccess(request) {
@@ -79,7 +79,7 @@ function verifyPersonalLedgerAccess(request) {
   if (role === 'MASTER') {
     if (!isPrimaryMaster) {
       throw ApiError.forbidden(
-        'This action requires Primary Master authority. Normal Masters are denied access.',
+        'This action requires Primary Master authority.',
         'PRIMARY_MASTER_AUTHORITY_REQUIRED'
       );
     }
