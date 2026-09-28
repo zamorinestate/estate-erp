@@ -68,66 +68,6 @@ async function authenticate(
       extractAccessToken(request);
 
     if (!accessToken) {
-      const explicitDevRole = request.get('x-dev-role') || request.query?.devRole || request.query?.role;
-      if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'staging' && explicitDevRole) {
-        const rawRole = explicitDevRole.trim().toUpperCase();
-
-        const roleEmailMap = {
-          MASTER: 'pradeeshk331@gmail.com',
-          PRIMARY_MASTER: 'pradeeshk331@gmail.com',
-          OWNER: 'owner@example.com',
-          CAFE_ADMIN: 'admin@example.com',
-          ADMIN: 'admin@example.com',
-          STAFF: 'staff@example.com',
-          VENDOR: 'vendor@example.com',
-        };
-        const targetEmail = roleEmailMap[rawRole] || 'pradeeshk331@gmail.com';
-        const devUser = await User.findOne({
-          organisationId: 'ZAMORIN',
-          email: targetEmail,
-          accountStatus: 'ACTIVE',
-        }) || await User.findOne({
-          organisationId: 'ZAMORIN',
-          role: 'MASTER',
-          isPrimaryMaster: true,
-          accountStatus: 'ACTIVE',
-        });
-
-        if (devUser) {
-          const assignedCafeIds = [
-            ...new Set(
-              (devUser.assignedCafeIds || [])
-                .filter(Boolean)
-                .map((cafeId) => cafeId.trim().toUpperCase())
-            ),
-          ];
-
-          request.auth = {
-            userId: devUser.userId,
-            email: devUser.email,
-            name: devUser.name || devUser.email,
-            organisationId: devUser.organisationId || 'ZAMORIN',
-            role: devUser.role,
-            vendorId: devUser.vendorId || null,
-            isPrimaryMaster: Boolean(devUser.isPrimaryMaster),
-            assignedCafeIds,
-            primaryCafeId: devUser.primaryCafeId || assignedCafeIds[0] || null,
-            sessionId: 'DEV-LOCAL-SESSION',
-            capabilities: Array.isArray(devUser.capabilities)
-              ? devUser.capabilities.map((c) => String(c).trim().toUpperCase()).filter(Boolean)
-              : [],
-            mfaVerified: true,
-            mfaVerifiedAt: new Date(),
-            stepUpVerifiedAt: new Date(),
-            sessionVersion: devUser.sessionVersion || 0,
-            permissionsVersion: devUser.permissionsVersion || 0,
-          };
-          request.user = request.auth;
-          request.authenticatedUser = devUser;
-          return next();
-        }
-      }
-
       return sendAuthenticationError(
         response,
         'AUTHENTICATION_REQUIRED',
