@@ -25,8 +25,10 @@ const { User } = require('../src/models/User');
 const { Session } = require('../src/models/Session');
 const { Vendor } = require('../src/models/Vendor');
 const { Cafe } = require('../src/models/Cafe');
-const { isRouteAllowed, ROLES } = require('../../Frontend/src/js/navigation.js');
 const authService = require('../src/services/authService');
+
+let isRouteAllowed;
+let ROLES;
 
 const ORG_ID = 'ORG-ZAMORIN';
 const CAFE_A = 'ZC-0001';
@@ -95,6 +97,8 @@ test('STAGE V-00: Vendor Foundation & Security Boundary Suite', async (suite) =>
   let suspendedVendorToken;
 
   suite.before(async () => {
+    ({ isRouteAllowed, ROLES } = await import('../../frontend/src/js/navigation.js'));
+
     mongoReplSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoReplSet.getUri());
 
