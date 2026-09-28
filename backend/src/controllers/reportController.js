@@ -1759,7 +1759,7 @@ const runForecast = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
+  // Primary Master authority constraint
   if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
     const err = new Error('Enterprise portfolio forecasting requires Primary Master authority or an assigned café scope.');
     err.statusCode = 403;
@@ -1851,7 +1851,7 @@ const runScenarioSimulation = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
+  // Primary Master authority constraint
   if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
     const err = new Error('Enterprise What-If Scenario Studio requires Primary Master authority or an assigned café scope.');
     err.statusCode = 403;
@@ -1897,7 +1897,7 @@ const runSensitivityAnalysis = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
+  // Primary Master authority constraint
   if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
     const err = new Error('Enterprise What-If Scenario Studio requires Primary Master authority or an assigned café scope.');
     err.statusCode = 403;
