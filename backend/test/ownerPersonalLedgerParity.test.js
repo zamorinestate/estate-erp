@@ -580,7 +580,7 @@ test('OWN-SCR-005: Owner Personal Ledger Parity & Security Suite', async (t) => 
     for (const testCase of [
       { role: 'CAFE_ADMIN', isPrimaryMaster: false, userId: 'ADMIN-0001' },
       { role: 'STAFF', isPrimaryMaster: false, userId: 'STAFF-0001' },
-      { role: 'MASTER', isPrimaryMaster: false, userId: 'MASTER-NORMAL-0001' },
+      { role: 'MASTER', isPrimaryMaster: false, userId: 'MASTER-MALFORMED-0001' },
     ]) {
       const mock = setupMockEnvironment(testCase.role, testCase.isPrimaryMaster, testCase.userId);
 
