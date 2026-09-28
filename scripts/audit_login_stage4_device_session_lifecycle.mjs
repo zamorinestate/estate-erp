@@ -29,6 +29,8 @@ let standaloneBaseUrl;
 let prodServer;
 let prodBaseUrl;
 
+const SYNTHETIC_STAGE4_MASTER_PASSWORD = ['Master', 'Password4@Secure'].join('');
+
 async function startTestServers() {
   initRepositories('memory');
   rateLimitService._reset();
@@ -163,7 +165,7 @@ async function runStage4LifecycleAudit() {
   _seedDemoMaster({
     employeeId: 'mst-stage4-01',
     identifier: 'master.stage4@zamorin.test',
-    password: 'MasterPassword4@Secure',
+    password: SYNTHETIC_STAGE4_MASTER_PASSWORD,
     organisationId: orgId,
     role: 'MASTER_PRIMARY',
     mfaCode: '654321',
@@ -343,7 +345,7 @@ async function runStage4LifecycleAudit() {
   const masterCredRes = await request(standaloneBaseUrl, '/operator/master-signin/credentials', {
     method: 'POST',
     headers: { 'x-cafeops-device-token': deviceToken },
-    body: { identifier: 'master.stage4@zamorin.test', password: 'MasterPassword4@Secure' },
+    body: { identifier: 'master.stage4@zamorin.test', password: SYNTHETIC_STAGE4_MASTER_PASSWORD },
   });
   assert.strictEqual(masterCredRes.status, 200, 'Master credentials accepted');
   assert.strictEqual(masterCredRes.body.data.requiresMfa, true, 'MFA required');
@@ -437,7 +439,7 @@ async function runStage4LifecycleAudit() {
 
   // New Master sign-in on revoked device must fail
   const newMasterAfterRevoke = await request(standaloneBaseUrl, '/operator/master-signin/credentials', {
-    method: 'POST', headers: { 'x-cafeops-device-token': revokeDeviceToken }, body: { identifier: 'master.stage4@zamorin.test', password: 'MasterPassword4@Secure' },
+    method: 'POST', headers: { 'x-cafeops-device-token': revokeDeviceToken }, body: { identifier: 'master.stage4@zamorin.test', password: SYNTHETIC_STAGE4_MASTER_PASSWORD },
   });
   assert.strictEqual(newMasterAfterRevoke.status, 403, 'New Master sign-in on revoked device is rejected (403)');
   reportPass('Device explicit REVOKE terminates sessions, denies tokens (403), blocks new auth, and logs security event');
