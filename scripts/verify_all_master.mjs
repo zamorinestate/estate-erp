@@ -57,7 +57,7 @@ const SUITES = [
   {
     name: "8. Five-Persona Browser Runtime & Authorization Boundaries",
     cmd: "node",
-    args: ["scripts/audit_all_five_personas.mjs"],
+    args: ["scripts/audit_all_supported_personas.mjs"],
     cwd: rootDir,
   },
   {

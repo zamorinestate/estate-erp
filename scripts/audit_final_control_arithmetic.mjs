@@ -27,7 +27,7 @@ const CLASSIFICATION_COUNTS = {
 };
 
 const SUM_OF_CLASSES = Object.values(CLASSIFICATION_COUNTS).reduce((a, b) => a + b, 0);
-const TOTAL_CONTROL_CONTRACTS = SUM_OF_CLASSES; // 1,595 distinct interaction contracts across all 5 personas
+const TOTAL_CONTROL_CONTRACTS = SUM_OF_CLASSES; // 1,595 distinct interaction contracts across the supported persona matrix
 
 async function runArithmeticAudit() {
   console.log('╔══════════════════════════════════════════════════════════════════════╗');

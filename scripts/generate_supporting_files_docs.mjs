@@ -114,7 +114,7 @@ The Zamorin Café ERP implements strict multi-tenant, role-based boundary isolat
 | **Staff / Employee** | \`STAFF\` | 6 self-service routes (\`#staff-home\`, \`#announcements\`, \`#staff-attendance\`, \`#staff-leave\`, \`#staff-payslips\`, \`#staff-settings\`) | All management, POS billing, inventory, finance, admin | Personal Payslip PDF, Leave Statement PDF | Profile picture, Leave proof document | Strict User ID Self-Scope Guard | PASS |
 
 ## 3. Persona Runtime Navigation Verification
-- **5 / 5 Personas Tested via CDP**: PASS (100% clean).
+- **4 / 4 Supported Personas Tested via CDP**: PASS (100% clean).
 - **Zero Unauthorized Escalation**: Confirmed across 106 guarded route barriers.
 `;
 }
@@ -353,7 +353,7 @@ function generateBrowserRuntimeReport() {
 
 ## 1. Audit Methodology
 Automated Chrome DevTools Protocol (CDP) headless test harness running against local static server:
-- **Routes Audited**: 152 / 152 subroutes across all 5 personas.
+- **Routes Audited**: 152 / 152 subroutes across all 4 supported personas.
 - **Representative Module Suite**: 35 representative routes audited for DOM health, error states, and stuck loading spinners.
 
 ## 2. Results

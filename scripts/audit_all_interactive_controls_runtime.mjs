@@ -3,11 +3,11 @@
 // ZAMORIN CAFÉ ERP — MASTER REAL RUNTIME & POSTCONDITION AUDIT
 // scripts/audit_all_interactive_controls_runtime.mjs
 //
-// Zero-Dependency Real Runtime Execution Harness across all 5 Personas:
+// Zero-Dependency Real Runtime Execution Harness across all 4 supported personas:
 // 1. Primary Master
-// 3. Owner
-// 4. Cafe Operations (Admin)
-// 5. Staff
+// 2. Owner
+// 3. Cafe Operations (Admin)
+// 4. Staff
 // =============================================================================
 
 import { readFile } from 'fs/promises';
@@ -154,7 +154,7 @@ global.CustomEvent = class CustomEvent extends global.Event { constructor(type, 
 async function runRuntimeAudit() {
   console.log('╔══════════════════════════════════════════════════════════════════════╗');
   console.log('║   ZAMORIN CAFÉ ERP — REAL RUNTIME & POSTCONDITION AUDIT HARNESS      ║');
-  console.log('║   5 PERSONAS · 46 MODULES · 170 DESTINATIONS · 100% POSTCONDITIONS   ║');
+  console.log('║   4 PERSONAS · 46 MODULES · 170 DESTINATIONS · 100% POSTCONDITIONS   ║');
   console.log('╚══════════════════════════════════════════════════════════════════════╝\n');
 
   // Verify backend connectivity
@@ -194,9 +194,9 @@ async function runRuntimeAudit() {
   };
 
   // =========================================================================
-  // TEST SUITE 1: 5-PERSONA RUNTIME NAVIGATION & ROUTE RECONCILIATION
+  // TEST SUITE 1: 4-PERSONA RUNTIME NAVIGATION & ROUTE RECONCILIATION
   // =========================================================================
-  console.log('\n▶ SUITE 1: 5-Persona Runtime Navigation & Authority Matrix Enforcement');
+  console.log('\n▶ SUITE 1: 4-Persona Runtime Navigation & Authority Matrix Enforcement');
 
   const ALL_TEST_ROUTES = [
     'dashboard', 'pos', 'bills', 'inventory', 'expenses', 'finance',
@@ -253,7 +253,7 @@ async function runRuntimeAudit() {
     }
   }
 
-  console.log(`  ✓ Personas Tested: ${auditStats.personasTested}/5`);
+  console.log(`  ✓ Personas Tested: ${auditStats.personasTested}/4`);
   console.log(`  ✓ Authorized Destinations Reached: ${auditStats.navigationSuccess}`);
   console.log(`  ✓ Unauthorized Protected Routes Guarded: ${auditStats.navigationBlockedGuarded}`);
 

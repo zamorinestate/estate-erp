@@ -1,5 +1,5 @@
 // =============================================================================
-// ZAMORIN CAFE ERP — FIVE PERSONAS COMPLETE BROWSER RUNTIME VERIFICATION SUITE
+// ZAMORIN CAFE ERP — SUPPORTED PERSONAS COMPLETE BROWSER RUNTIME VERIFICATION SUITE
 // Real Headless Chrome DOM, Role Authorization, Modals, Forms & Flow Parity Audit
 // =============================================================================
 
