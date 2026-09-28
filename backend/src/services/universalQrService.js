@@ -33,6 +33,7 @@ class UniversalQrService {
     actorUserId = 'SYSTEM',
     session = null,
     publicOrigin = null,
+    payloadOverride = null,
   }) {
     if (!QR_TYPES.includes(qrType)) {
       throw new ApiError(400, 'INVALID_QR_TYPE', `QR type must be one of: ${QR_TYPES.join(', ')}`);
@@ -75,6 +76,10 @@ class UniversalQrService {
       default:
         payload = `ZAMORIN:BATCH:${encodeURIComponent(targetEntityId)}:${opaqueToken}`;
         break;
+    }
+
+    if (payloadOverride) {
+      payload = String(payloadOverride).trim();
     }
 
     let expiresAt = null;
