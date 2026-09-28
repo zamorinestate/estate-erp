@@ -210,6 +210,7 @@ class OfflineSyncService {
       }
       const existing = await Bill.findOne({
         organisationId: cleanOrg,
+        cafeId: cleanCafe,
         $or: duplicateConditions,
       }).lean();
 
