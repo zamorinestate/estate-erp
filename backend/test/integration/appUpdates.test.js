@@ -23,9 +23,9 @@ const users = {
     accountStatus: 'ACTIVE',
     status: 'ACTIVE',
   },
-  normalMaster: {
+  malformedMaster: {
     userId: 'USR-NM-001',
-    name: 'Normal Master User',
+    name: 'Malformed MASTER User',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: orgId,
@@ -160,7 +160,7 @@ test.describe('Role-Targeted Application Updates & Version Control Suite', () =>
 
   test('3. Master can publish a Universal Release (ALL personas)', async () => {
     const req = {
-      user: users.normalMaster,
+      user: users.malformedMaster,
       body: {
         version: 'v1.2.0',
         title: 'Enterprise Core Q3 Update & Design Tokens',

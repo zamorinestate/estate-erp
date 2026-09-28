@@ -559,7 +559,7 @@ test('EXT-17 — Monitoring, Health Checks, Alerting & Observability Suite (40-P
   // -------------------------------------------------------------------------
   // 34. Personal Ledger Regression
   // -------------------------------------------------------------------------
-  await t.test('34. Personal Ledger regression: Primary Master & Owner ALLOW, Normal Master DENY', () => {
+  await t.test('34. Personal Ledger regression: Primary Master & Owner ALLOW, Malformed MASTER DENY', () => {
     function canAccessPersonalLedger(auth) {
       if (auth.role === 'OWNER') return true;
       if (auth.role === 'MASTER' && auth.isPrimaryMaster === true) return true;
@@ -575,7 +575,7 @@ test('EXT-17 — Monitoring, Health Checks, Alerting & Observability Suite (40-P
   // -------------------------------------------------------------------------
   // 35. PO Approval Regression
   // -------------------------------------------------------------------------
-  await t.test('35. PO approval regression: Primary Master & Normal Master ALLOW, Owner DENY', () => {
+  await t.test('35. PO approval regression: Primary Master & Malformed MASTER ALLOW, Owner DENY', () => {
     function canApprovePo(auth) {
       if (auth.role === 'MASTER') return true;
       return false;

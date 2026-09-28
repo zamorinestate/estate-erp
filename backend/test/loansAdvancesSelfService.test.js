@@ -118,13 +118,13 @@ test('SCR-014: My Loans & Advances — Comprehensive Integration Suite', async (
     save: async function () { return this; },
   };
 
-  const normalMaster = {
+  const malformedMaster = {
     userId: 'USR-NORMAL-MASTER',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
     isPrimaryMaster: false,
-    email: 'normal.master@zamorin.com',
-    fullName: 'Normal Master',
+    email: 'malformed.master@zamorin.com',
+    fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
     assignedCafeIds: ['ZC-0001', 'ZC-0002'],
@@ -206,7 +206,7 @@ test('SCR-014: My Loans & Advances — Comprehensive Integration Suite', async (
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
     let activeUser = primaryMaster;
-    if (token === 'token_normal_master') activeUser = normalMaster;
+    if (token === 'token_malformed_master') activeUser = malformedMaster;
     if (token === 'token_staff_rahul') activeUser = staffRahul;
     if (token === 'token_staff_priya') activeUser = staffPriya;
     if (token === 'token_kora_admin') activeUser = cafeAdminKora;
@@ -234,7 +234,7 @@ test('SCR-014: My Loans & Advances — Comprehensive Integration Suite', async (
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'USR-PRIMARY-MASTER') return primaryMaster;
-    if (query?.userId === 'USR-NORMAL-MASTER') return normalMaster;
+    if (query?.userId === 'USR-NORMAL-MASTER') return malformedMaster;
     if (query?.userId === 'ST-0001') return staffRahul;
     if (query?.userId === 'ST-0002') return staffPriya;
     if (query?.userId === 'USR-ADMIN-KORA') return cafeAdminKora;
@@ -312,16 +312,16 @@ test('SCR-014: My Loans & Advances — Comprehensive Integration Suite', async (
     return s;
   });
 
-  // ── 1. Self-Service Identity & Normal Master Privacy Firewall ─────────────
+  // ── 1. Self-Service Identity & Malformed MASTER Privacy Firewall ─────────────
   await t.test('1. Normal MASTER is blocked with 403 on ALL loan endpoints (Privacy Firewall)', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
       path: '/api/v1/loan-advances/me',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
     });
     assert.equal(res.statusCode, 403);
-    assert.equal(res.body?.error?.code, 'PRIVACY_FIREWALL_NORMAL_MASTER_DENIED');
+    assert.equal(res.body?.error?.code, 'PRIVACY_FIREWALL_MALFORMED_MASTER_DENIED');
   });
 
   await t.test('2. Staff user retrieves own self-service loans and factual KPIs', async () => {

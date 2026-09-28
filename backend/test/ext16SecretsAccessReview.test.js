@@ -569,7 +569,7 @@ test('EXT-16 — Production Secrets, Access Control, Environment Isolation & Rot
   // -------------------------------------------------------------------------
   // 29. Personal Ledger Regression
   // -------------------------------------------------------------------------
-  await t.test('29. Personal Ledger regression: Primary Master & Owner ALLOW, Normal Master DENY', () => {
+  await t.test('29. Personal Ledger regression: Primary Master & Owner ALLOW, Malformed MASTER DENY', () => {
     function checkPersonalLedgerAccess(user) {
       if (user.role === 'OWNER') return true;
       if (user.role === 'MASTER' && user.isPrimaryMaster === true) return true;
@@ -585,7 +585,7 @@ test('EXT-16 — Production Secrets, Access Control, Environment Isolation & Rot
   // -------------------------------------------------------------------------
   // 30. PO Approval Regression
   // -------------------------------------------------------------------------
-  await t.test('30. PO approval regression: Primary Master & Normal Master ALLOW, Owner DENY', () => {
+  await t.test('30. PO approval regression: Primary Master & Malformed MASTER ALLOW, Owner DENY', () => {
     function checkPoApprovalAccess(user) {
       if (user.role === 'MASTER') return true;
       return false;

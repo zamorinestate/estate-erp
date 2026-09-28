@@ -389,7 +389,7 @@ test('EXT-15 — PWA Distribution, Microsoft Store, Android/TWA & App-Store Read
   // -------------------------------------------------------------------------
   // 36. Personal Ledger
   // -------------------------------------------------------------------------
-  await t.test('36. Personal Ledger invariant: Primary Master & Owner ALLOW; Normal Master, Admin, Staff DENY', () => {
+  await t.test('36. Personal Ledger invariant: Primary Master & Owner ALLOW; Malformed MASTER, Admin, Staff DENY', () => {
     function canAccessPersonalLedger(role, isPrimaryMaster) {
       if (role === 'OWNER') return true;
       if (role === 'MASTER' && isPrimaryMaster === true) return true;
@@ -406,7 +406,7 @@ test('EXT-15 — PWA Distribution, Microsoft Store, Android/TWA & App-Store Read
   // -------------------------------------------------------------------------
   // 37. PO Approval
   // -------------------------------------------------------------------------
-  await t.test('37. PO approval invariant: Primary Master & Normal Master ALLOW; Owner, Admin, Staff DENY', () => {
+  await t.test('37. PO approval invariant: Primary Master & Malformed MASTER ALLOW; Owner, Admin, Staff DENY', () => {
     function canApprovePo(role) {
       return role === 'MASTER';
     }

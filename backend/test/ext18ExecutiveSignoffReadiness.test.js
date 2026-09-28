@@ -262,7 +262,7 @@ test('EXT-18 — Executive Sign-off Preparation & Decision-Package Verification 
   // -------------------------------------------------------------------------
   // 21. Personal Ledger Invariant
   // -------------------------------------------------------------------------
-  await t.test('21. Personal Ledger invariant: Primary Master & Owner ALLOW, Normal Master DENY', () => {
+  await t.test('21. Personal Ledger invariant: Primary Master & Owner ALLOW, Malformed MASTER DENY', () => {
     function canAccessPersonalLedger(auth) {
       if (auth.role === 'OWNER') return true;
       if (auth.role === 'MASTER' && auth.isPrimaryMaster === true) return true;
@@ -279,7 +279,7 @@ test('EXT-18 — Executive Sign-off Preparation & Decision-Package Verification 
   // -------------------------------------------------------------------------
   // 22. PO Approval Invariant
   // -------------------------------------------------------------------------
-  await t.test('22. PO approval invariant: Primary Master & Normal Master ALLOW, Owner DENY', () => {
+  await t.test('22. PO approval invariant: Primary Master & Malformed MASTER ALLOW, Owner DENY', () => {
     function canApprovePo(auth) {
       if (auth.role === 'MASTER') return true;
       return false;
