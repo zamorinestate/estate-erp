@@ -1094,11 +1094,6 @@ async function boot() {
       // Local preview state is UI-only. Real authenticated browser tests must
       // sign in explicitly with environment-supplied credentials.
       loadAvailableCafes().catch(() => {});
-      }).catch((err) => {
-        console.warn("[Dev Auth] Background token acquisition:", err.message);
-      });
-
-      loadAvailableCafes().catch(() => {});
       registerServiceWorker().catch(() => {});
       return;
     }
