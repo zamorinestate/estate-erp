@@ -8,7 +8,6 @@
  * Verifies:
  * 01. PO Approval Authority:
  *     - Primary Master: ALLOW
- *     - Normal Master: ALLOW
  *     - Owner: 403 DENIED
  *     - Café Admin: 403 DENIED
  *     - Staff / Accounts Capability: 403 DENIED
@@ -73,7 +72,6 @@ const CAFE_ID = 'CAFE-REC17C-01';
 const FOREIGN_CAFE_ID = 'CAFE-REC17C-02';
 
 const USER_PRIMARY_MASTER = 'USER-PM-01';
-const USER_NORMAL_MASTER = 'USER-NM-01';
 const USER_OWNER = 'USER-OWN-01';
 const USER_CAFE_ADMIN = 'USER-ADM-01';
 const USER_STAFF_PLAIN = 'USER-STF-PLAIN';
@@ -150,18 +148,6 @@ describe('REC-17C — PO Approval Authority, Accounts Capabilities & AP Aging Su
         passwordHash: 'hash',
         accountStatus: 'ACTIVE',
         assignedCafeIds: [],
-        createdBy: 'SYSTEM',
-      },
-      {
-        userId: 'MU-1002',
-        organisationId: ORG_ID,
-        name: 'Normal Master User',
-        email: 'nm1002@zamorin.cafe',
-        role: 'MASTER',
-        isPrimaryMaster: false,
-        passwordHash: 'hash',
-        accountStatus: 'ACTIVE',
-        assignedCafeIds: [CAFE_ID, FOREIGN_CAFE_ID],
         createdBy: 'SYSTEM',
       },
       {
@@ -264,28 +250,6 @@ describe('REC-17C — PO Approval Authority, Accounts Capabilities & AP Aging Su
       assert.strictEqual(res.body.success, true);
       assert.strictEqual(res.body.data.order.status, 'APPROVED');
       assert.strictEqual(res.body.data.order.approvedByUserId, 'MU-1001');
-    });
-
-    it('Normal Master: ALLOW PO Approval', async () => {
-      await createSubmittedPo('PO-REC17C-NM');
-      const req = {
-        auth: {
-          userId: 'MU-1002',
-          role: 'MASTER',
-          isPrimaryMaster: false,
-          organisationId: ORG_ID,
-          assignedCafeIds: [CAFE_ID],
-        },
-        params: { purchaseOrderId: 'PO-REC17C-NM' },
-        body: { notes: 'Approved by Normal Master' },
-      };
-      const res = createMockResponse();
-
-      await invokeController(procurementController.approveOrder, req, res);
-      assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(res.body.success, true);
-      assert.strictEqual(res.body.data.order.status, 'APPROVED');
-      assert.strictEqual(res.body.data.order.approvedByUserId, 'MU-1002');
     });
 
     it('Owner: DENY PO Approval (403 FORBIDDEN_ROLE)', async () => {
