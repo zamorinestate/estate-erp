@@ -1,6 +1,16 @@
 import puppeteer from 'puppeteer-core';
 
-const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; browser/integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
+const BASE_URL = process.env.E2E_FRONTEND_BASE_URL || 'http://localhost:3000';
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -12,7 +22,7 @@ const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
   
   await page.setViewport({ width: 1440, height: 900 });
   console.log('Navigating to http://localhost:3000/#login...');
-  await page.goto('http://localhost:3000/#login', { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await page.goto(`${BASE_URL}/#login`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForSelector('#l2-email', { timeout: 8000 });
 
   const orgInput = await page.$('#l2-org-id');
@@ -21,9 +31,9 @@ const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
     await page.type('#l2-org-id', 'ZAMORIN');
   }
   await page.$eval('#l2-email', el => el.value = '');
-  await page.type('#l2-email', 'pradeeshk331@gmail.com');
+  await page.type('#l2-email', PRIMARY_MASTER_EMAIL);
   await page.$eval('#l2-password', el => el.value = '');
-  await page.type('#l2-password', 'PRADEESHK@94309');
+  await page.type('#l2-password', PRIMARY_MASTER_PASSWORD);
   await page.click('#l2-submit-btn');
 
   // Wait for shell to mount
@@ -32,7 +42,7 @@ const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
   console.log('Login successful! Shell mounted.');
 
   // Go to #attendance
-  await page.goto('http://localhost:3000/#attendance', { waitUntil: 'domcontentloaded' });
+  await page.goto(`${BASE_URL}/#attendance`, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 1500));
   await page.screenshot({ path: 'attendance_desktop_live.png' });
 

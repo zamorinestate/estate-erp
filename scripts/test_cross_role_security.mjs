@@ -14,7 +14,22 @@
  * 9. Cafe scope enforcement: User assigned to Cafe A cannot access Cafe B's restricted endpoints.
  */
 
-const BASE_URL = 'http://localhost:3000/api/v1';
+const BASE_URL = process.env.E2E_API_BASE_URL || 'http://localhost:3000/api/v1';
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; browser/integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
+const STAFF_EMAIL = requiredEnv('E2E_STAFF_EMAIL');
+const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
+const CAFE_ADMIN_EMAIL = requiredEnv('E2E_CAFE_ADMIN_EMAIL');
+const CAFE_ADMIN_PASSWORD = requiredEnv('E2E_CAFE_ADMIN_PASSWORD');
+const VENDOR_EMAIL = requiredEnv('VENDOR_E2E_EMAIL');
+const VENDOR_PASSWORD = requiredEnv('VENDOR_E2E_PASSWORD');
 
 async function loginUser(email, password) {
   const res = await fetch(`${BASE_URL}/auth/login`, {
@@ -74,16 +89,16 @@ async function main() {
 
   // Test 2: Authenticate users
   console.log('\n2. Authenticating test roles...');
-  const staff = await loginUser('staff@example.com', 'PK@NilaVega_8427!Cedar');
+  const staff = await loginUser(STAFF_EMAIL, STAFF_PASSWORD);
   console.log(`   ✓ Staff authenticated: ${staff.user.userId} (${staff.user.role})`);
 
-  const admin = await loginUser('admin@example.com', 'PK@NilaVega_8427!Cedar');
+  const admin = await loginUser(CAFE_ADMIN_EMAIL, STAFF_PASSWORD);
   console.log(`   ✓ Cafe Admin authenticated: ${admin.user.userId} (${admin.user.role})`);
 
-  const vendor = await loginUser('vendor@malabarfresh.com', 'M2X_L4d2qj7DJ3zmXrYNew_9A!');
+  const vendor = await loginUser(VENDOR_EMAIL, VENDOR_PASSWORD);
   console.log(`   ✓ Vendor authenticated: ${vendor.user.userId} (${vendor.user.role})`);
 
-  const master = await loginUser('pradeeshk331@gmail.com', 'PRADEESHK@94309');
+  const master = await loginUser(PRIMARY_MASTER_EMAIL, PRIMARY_MASTER_PASSWORD);
   console.log(`   ✓ Primary Master authenticated: ${master.user.userId} (${master.user.role})`);
 
   // Test 3: Staff attempting to access Master Approvals
@@ -159,7 +174,7 @@ async function main() {
 
   // Test 8: Revoked session / post-logout attack
   console.log('\n8. Testing revoked session attack after logout...');
-  const tempStaff = await loginUser('staff@example.com', 'PK@NilaVega_8427!Cedar');
+  const tempStaff = await loginUser(STAFF_EMAIL, STAFF_PASSWORD);
   // Log out
   const logoutRes = await fetch(`${BASE_URL}/auth/logout`, {
     method: 'POST',

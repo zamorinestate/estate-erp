@@ -12,7 +12,20 @@
  * 7. Requester can view their updated status and history.
  */
 
-const BASE_URL = 'http://localhost:3000/api/v1';
+const BASE_URL = process.env.E2E_API_BASE_URL || 'http://localhost:3000/api/v1';
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; browser/integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
+const STAFF_EMAIL = requiredEnv('E2E_STAFF_EMAIL');
+const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
+const CAFE_ADMIN_EMAIL = requiredEnv('E2E_CAFE_ADMIN_EMAIL');
+const CAFE_ADMIN_PASSWORD = requiredEnv('E2E_CAFE_ADMIN_PASSWORD');
 
 async function loginUser(email, password) {
   const res = await fetch(`${BASE_URL}/auth/login`, {
@@ -61,10 +74,10 @@ async function main() {
 
   // Step 1: Login Staff and Primary Master
   console.log('1. Authenticating test users...');
-  const staff = await loginUser('staff@example.com', 'PK@NilaVega_8427!Cedar');
+  const staff = await loginUser(STAFF_EMAIL, STAFF_PASSWORD);
   console.log(`   ✓ Staff logged in: ${staff.user.userId} (${staff.user.email}) - Role: ${staff.user.role}`);
 
-  const master = await loginUser('pradeeshk331@gmail.com', 'PRADEESHK@94309');
+  const master = await loginUser(PRIMARY_MASTER_EMAIL, PRIMARY_MASTER_PASSWORD);
   console.log(`   ✓ Primary Master logged in: ${master.user.userId} (${master.user.email}) - Role: ${master.user.role}, isPrimaryMaster: ${master.user.isPrimaryMaster}`);
 
   // Step 2: Staff Submits Leave Request
@@ -336,7 +349,7 @@ async function main() {
 
   // Step 12: Cafe Admin Expense Claim Workflow
   console.log('\n12. Testing Cafe Admin Expense Claim Workflow...');
-  const cafeAdmin = await loginUser('admin@example.com', 'PK@NilaVega_8427!Cedar');
+  const cafeAdmin = await loginUser(CAFE_ADMIN_EMAIL, STAFF_PASSWORD);
   console.log(`   ✓ Cafe Admin logged in: ${cafeAdmin.user.userId}`);
 
   const expensePayload = {

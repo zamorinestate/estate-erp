@@ -1,8 +1,19 @@
 import puppeteer from 'puppeteer-core';
 import path from 'path';
+import fs from 'fs';
 
-const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const ARTIFACTS_DIR = "C:/Users/chris/.gemini/antigravity-ide/brain/37f87a1c-e54e-4418-93b2-8f9b926d30cd";
+const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const ARTIFACTS_DIR = process.env.E2E_ARTIFACTS_DIR || path.join(process.cwd(), 'artifacts', 'e2e');
+fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; browser/integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
 
 async function run() {
   console.log('Testing login page banner fix with clean session...');
@@ -48,9 +59,9 @@ async function run() {
     console.log('\n2. Testing login with Primary Master credentials...');
     await page.waitForSelector('#l2-email', { timeout: 8000 });
     await page.$eval('#l2-email', el => el.value = '');
-    await page.type('#l2-email', 'pradeeshk331@gmail.com');
+    await page.type('#l2-email', PRIMARY_MASTER_EMAIL);
     await page.$eval('#l2-password', el => el.value = '');
-    await page.type('#l2-password', 'PRADEESHK@94309');
+    await page.type('#l2-password', PRIMARY_MASTER_PASSWORD);
 
     console.log('Clicking login...');
     await page.click('#l2-submit-btn');
