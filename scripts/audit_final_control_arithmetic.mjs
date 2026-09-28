@@ -17,7 +17,7 @@ const ROOT = join(__dirname, '..');
 const CLASSIFICATION_COUNTS = {
   WORKING: 1468,
   INTENTIONALLY_DISABLED_VALID: 2,   // POS Hold ticket when cart empty, Vendor master-only post
-  POLICY_HIDDEN: 106,                // Role-scoped controls hidden for Normal Master, Staff, Cafe Ops
+  POLICY_HIDDEN: 106,                // Role-scoped controls hidden for Staff and Cafe Ops
   BLOCKED_BUSINESS_DECISION: 2,      // Revenue Share ACT-017 & ACT-018
   'N/A_BUSINESS_PROCESS': 4,         // Statutory employment documents verified in HR records
   RETIRED_CONTROL: 13,               // MailOps subview controls retired per architectural freeze
