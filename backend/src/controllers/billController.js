@@ -72,6 +72,14 @@ function normalizeId(value) {
     : '';
 }
 
+function resolveRegisterId(request, explicitValue = '') {
+  return normalizeId(
+    explicitValue ||
+    request.deviceContext?.deviceId ||
+    ''
+  );
+}
+
 function getIstBusinessDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata',
@@ -670,6 +678,29 @@ const createBill = asyncHandler(async (request, response) => {
   }
 
   const effectiveServiceMode = serviceMode ? normalizeId(serviceMode) : (orderType ? normalizeId(orderType) : 'QUICK_SALE');
+  const cleanRegisterSessionId = normalizeId(registerSessionId);
+  const cleanRegisterId = resolveRegisterId(request, registerId);
+
+  if (cleanRegisterSessionId && !cleanRegisterId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required whenever registerSessionId is supplied.');
+  }
+
+  if (cleanRegisterSessionId) {
+    const scopedSession = await RegisterSession.findOne({
+      registerSessionId: cleanRegisterSessionId,
+      organisationId: request.auth.organisationId,
+      cafeId,
+      registerId: cleanRegisterId,
+      status: 'OPEN',
+    });
+    if (!scopedSession) {
+      throw new ApiError(
+        409,
+        'REGISTER_SESSION_SCOPE_MISMATCH',
+        'The supplied register session is not open in the authenticated organisation/café/register scope.'
+      );
+    }
+  }
 
   const bill = new Bill({
     billId: seqId,
@@ -680,8 +711,8 @@ const createBill = asyncHandler(async (request, response) => {
     serviceMode: effectiveServiceMode,
     guestCovers: Math.max(1, Number(guestCovers) || 1),
     tableToken: typeof tableToken === 'string' ? tableToken.trim() : '',
-    registerId: typeof registerId === 'string' ? registerId.trim() : 'REG-01',
-    registerSessionId: typeof registerSessionId === 'string' ? registerSessionId.trim() : '',
+    registerId: cleanRegisterId,
+    registerSessionId: cleanRegisterSessionId,
     financialYear: typeof financialYear === 'string' ? financialYear.trim() : '2026-2027',
     tableNumber: typeof tableNumber === 'string' ? tableNumber.trim() : '',
     customerName: typeof customerName === 'string' ? customerName.trim() : '',
@@ -717,10 +748,16 @@ const createBill = asyncHandler(async (request, response) => {
 
   await bill.save();
 
-  // If register session exists, update its running metrics
-  if (registerSessionId) {
+  // If register session exists, update only the authenticated scoped register session.
+  if (cleanRegisterSessionId) {
     try {
-      const session = await RegisterSession.findOne({ registerSessionId, status: 'OPEN' });
+      const session = await RegisterSession.findOne({
+        registerSessionId: cleanRegisterSessionId,
+        organisationId: request.auth.organisationId,
+        cafeId,
+        registerId: cleanRegisterId,
+        status: 'OPEN',
+      });
       if (session) {
         session.orderCount += 1;
         session.totalSalesPaisa += totalPaisa;
@@ -1455,7 +1492,12 @@ const listOpenTickets = asyncHandler(async (request, response) => {
  * Opens a new register session.
  */
 const openRegisterSession = asyncHandler(async (request, response) => {
-  const { cafeId: rawCafeId, registerId = 'REG-01', openingFloatPaisa = 0 } = request.body;
+  const { cafeId: rawCafeId, registerId: rawRegisterId, openingFloatPaisa = 0 } = request.body;
+  const registerId = resolveRegisterId(request, rawRegisterId);
+  if (!registerId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'A registered terminal/register identity is required.');
+  }
+
   const role = request.auth.role;
   let cafeId = normalizeId(rawCafeId);
   if (role === 'CAFE_ADMIN') {
@@ -1529,14 +1571,20 @@ const openRegisterSession = asyncHandler(async (request, response) => {
  * Records a cash drawer event (Cash In, Cash Out, Safe Drop, No Sale).
  */
 const recordCashEvent = asyncHandler(async (request, response) => {
-  const { registerSessionId, eventType, amountPaisa = 0, reason = '' } = request.body;
+  const { registerSessionId, registerId: rawRegisterId, eventType, amountPaisa = 0, reason = '' } = request.body;
   if (!registerSessionId) {
     throw new ApiError(400, 'SESSION_ID_REQUIRED', 'registerSessionId is required.');
+  }
+
+  const registerId = resolveRegisterId(request, rawRegisterId);
+  if (!registerId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required for register cash events.');
   }
 
   const session = await RegisterSession.findOne({
     registerSessionId: normalizeId(registerSessionId),
     organisationId: request.auth.organisationId,
+    registerId,
     status: 'OPEN',
   });
 
@@ -1589,14 +1637,20 @@ const recordCashEvent = asyncHandler(async (request, response) => {
  * Closes a register session with blind count and variance calculation.
  */
 const closeRegisterSession = asyncHandler(async (request, response) => {
-  const { registerSessionId, countedCashPaisa = 0, closingDeclarationNote = '' } = request.body;
+  const { registerSessionId, registerId: rawRegisterId, countedCashPaisa = 0, closingDeclarationNote = '' } = request.body;
   if (!registerSessionId) {
     throw new ApiError(400, 'SESSION_ID_REQUIRED', 'registerSessionId is required.');
+  }
+
+  const registerId = resolveRegisterId(request, rawRegisterId);
+  if (!registerId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required to close a register session.');
   }
 
   const session = await RegisterSession.findOne({
     registerSessionId: normalizeId(registerSessionId),
     organisationId: request.auth.organisationId,
+    registerId,
     status: 'OPEN',
   });
 
@@ -1654,6 +1708,10 @@ const closeRegisterSession = asyncHandler(async (request, response) => {
 const getRegisterSession = asyncHandler(async (request, response) => {
   const orgId = request.auth.organisationId;
   const role = request.auth.role;
+  const registerId = resolveRegisterId(request, request.query.registerId);
+  if (!registerId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required to resolve the current register session.');
+  }
   let cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
   if (role === 'CAFE_ADMIN') {
     cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
@@ -1682,6 +1740,7 @@ const getRegisterSession = asyncHandler(async (request, response) => {
   const session = await RegisterSession.findOne({
     organisationId: orgId,
     cafeId,
+    registerId,
     status: 'OPEN',
   }).sort({ openedAt: -1 }).lean();
 
