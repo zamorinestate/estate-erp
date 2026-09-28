@@ -24,10 +24,7 @@ const {
   hashOpaqueToken,
 } = require('./cafeAccessCryptoService');
 const { ApiError } = require('../utils/ApiError');
-const {
-  commitWithRetry,
-  executeTransactionWithRetry,
-} = require('../utils/transactionHelper');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 const { verifyPassword } = require('./authService');
 const {
   INDIAN_STATE_CODES,
