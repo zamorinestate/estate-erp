@@ -36,11 +36,20 @@ class RedisClientFactory {
       process.env.CLUSTER_MODE === 'true' ||
       config.clusterMode === true;
 
-    const redisUrl = config.url || process.env.REDIS_URL || process.env.REDIS_HOST;
+    const redisUrl = config.url || process.env.REDIS_URL || null;
+    const redisHost = config.host || process.env.REDIS_HOST || null;
+    const redisPortRaw = config.port || process.env.REDIS_PORT || 6379;
+    const redisPort = Number(redisPortRaw);
 
-    if (isClusterMode && !redisUrl) {
+    if (!Number.isInteger(redisPort) || redisPort < 1 || redisPort > 65535) {
+      const err = new Error('REDIS_PORT_INVALID: Redis port must be an integer between 1 and 65535.');
+      err.code = 'REDIS_PORT_INVALID';
+      throw err;
+    }
+
+    if (isClusterMode && !redisUrl && !redisHost) {
       const err = new Error(
-        'CLUSTER_REDIS_CONFIG_MISSING: Clustered production mode requires a valid REDIS_URL. Local in-memory fallback is forbidden in cluster mode.'
+        'CLUSTER_REDIS_CONFIG_MISSING: Clustered production mode requires REDIS_URL or REDIS_HOST. Local in-memory fallback is forbidden in cluster mode.'
       );
       err.code = 'CLUSTER_REDIS_CONFIG_MISSING';
       throw err;
@@ -48,9 +57,18 @@ class RedisClientFactory {
 
     return {
       isClusterMode,
-      hasRedisConfig: Boolean(redisUrl),
-      url: redisUrl || null,
+      hasRedisConfig: Boolean(redisUrl || redisHost),
+      url: redisUrl,
+      host: redisHost,
+      port: redisPort,
     };
+  }
+
+  static resolveRedisUrl(config = {}) {
+    if (config.url) return config.url;
+    if (!config.host) return null;
+    if (/^rediss?:\/\//i.test(config.host)) return config.host;
+    return `redis://${config.host}:${config.port || 6379}`;
   }
 
   /**
@@ -68,7 +86,7 @@ class RedisClientFactory {
       throw new Error('REDIS_PACKAGE_MISSING: The official "redis" package is not installed or loadable.');
     }
 
-    const redisUrl = options.url || process.env.REDIS_URL || `redis://${options.host || '127.0.0.1'}:${options.port || 6379}`;
+    const redisUrl = RedisClientFactory.resolveRedisUrl(config);
     const keyPrefix = options.keyPrefix || 'zamorin:';
 
     this.status = 'CONNECTING';
