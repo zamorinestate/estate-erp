@@ -14,6 +14,7 @@
 class DevicePresenceService {
   constructor(options = {}) {
     this.redisClient = options.redisClient || null;
+    this.keyPrefix = options.keyPrefix || 'zamorin:';
     this.ephemeralPresence = new Map(); // key: organisationId:cafeId:deviceId
     this.pendingCheckpoints = new Map(); // same tenant-scoped key -> timestamp
     this.checkpointWindowMs = options.checkpointWindowMs !== undefined ? options.checkpointWindowMs : 5 * 60 * 1000; // 5 minutes durable coalesce window
@@ -28,8 +29,9 @@ class DevicePresenceService {
     };
   }
 
-  setRedisClient(client) {
+  setRedisClient(client, keyPrefix = this.keyPrefix || 'zamorin:') {
     this.redisClient = client || null;
+    this.keyPrefix = keyPrefix || 'zamorin:';
   }
 
   buildPresenceKey({ organisationId, cafeId, deviceId }) {
@@ -93,7 +95,7 @@ class DevicePresenceService {
     if (this.redisClient) {
       try {
         const ttl = Math.ceil(this.baseHeartbeatIntervalSec * 3);
-        await this.redisClient.set(`zamorin:presence:${scope.scopeKey}`, JSON.stringify(presenceEntry), { EX: ttl });
+        await this.redisClient.set(`${this.keyPrefix}presence:${scope.scopeKey}`, JSON.stringify(presenceEntry), { EX: ttl });
       } catch (_) {}
     }
 
@@ -188,7 +190,7 @@ class DevicePresenceService {
     }
 
     try {
-      const raw = await this.redisClient.get(`zamorin:presence:${scope.scopeKey}`);
+      const raw = await this.redisClient.get(`${this.keyPrefix}presence:${scope.scopeKey}`);
       if (!raw) return null;
 
       const distributed = JSON.parse(raw);
