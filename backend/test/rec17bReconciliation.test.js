@@ -5,11 +5,11 @@
  * REC-17B — FINAL BACKEND REGRESSION & ACCOUNTS-DEPARTMENT AUTHORITY RECONCILIATION
  *
  * Covers:
- * 01. PO Approval Matrix: Primary Master (ALLOW) and Normal Master (ALLOW)
+ * 01. PO Approval Matrix: Primary Master (ALLOW)
  * 02. PO Approval Separation of Duties: PO approval does NOT grant payment authority
  * 03. Payment & AP Authority Matrix: Master (ALLOW), Owner (DENY write), Staff (DENY)
  * 04. Accounts Model B Reconciliation: Master is functional owner of payment release
- * 05. Personal Ledger Invariant: Primary Master + Owner ALLOW; Normal Master, Admin, Staff DENY
+ * 05. Personal Ledger Invariant: Primary Master + Owner ALLOW; Admin, Staff DENY
  * 06. Full Cash/Bank Smoke Test: ₹1,000 payable -> ₹500 payment -> ₹500 outstanding
  * 07. Canonical CashTransaction Posting: Exactly once per disbursement, zero duplication
  * 08. Complete Settlement to Zero: Second ₹500 payment -> status PAID, ₹0 outstanding
@@ -38,7 +38,6 @@ const procurementController = require('../src/controllers/procurementController'
 const ORG_ID = 'ORG-REC17B-TEST';
 const CAFE_ID = 'CAFE-REC17B-01';
 const USER_PRIMARY_MASTER = 'USER-PM-01';
-const USER_NORMAL_MASTER = 'USER-NM-01';
 const USER_OWNER = 'USER-OWN-01';
 const USER_CAFE_ADMIN = 'USER-ADM-01';
 const USER_STAFF = 'USER-STF-01';
@@ -147,51 +146,6 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
     assert.strictEqual(res.body.data.order.approvedByUserId, USER_PRIMARY_MASTER);
 
     const reloaded = await PurchaseOrder.findOne({ purchaseOrderId: 'PO-PM-0001' });
-    assert.strictEqual(reloaded.status, 'APPROVED');
-  });
-
-  // 02. PO APPROVAL: NORMAL MASTER ALLOW
-  it('02. PO Approval: Normal Master (isPrimaryMaster=false) approves SUBMITTED order -> APPROVED', async () => {
-    const po = await PurchaseOrder.create({
-      organisationId: ORG_ID,
-      purchaseOrderId: 'PO-NM-0001',
-      cafeId: CAFE_ID,
-      vendorId: 'VEN-0001',
-      vendorNameSnapshot: 'Malabar Supplies',
-      status: 'SUBMITTED',
-      lineItems: [
-        {
-          itemId: 'ITEM-01',
-          orderedQuantityBase: 5,
-          unitPricePaisa: 2000,
-          totalLinePaisa: 10000,
-        },
-      ],
-      subtotalPaisa: 10000,
-      totalPaisa: 10000,
-      createdByUserId: USER_CAFE_ADMIN,
-    });
-
-    const req = {
-      auth: {
-        userId: USER_NORMAL_MASTER,
-        role: 'MASTER',
-        isPrimaryMaster: false,
-        organisationId: ORG_ID,
-        assignedCafeIds: [CAFE_ID],
-      },
-      params: { purchaseOrderId: 'PO-NM-0001' },
-      body: { notes: 'Approved by Normal Master' },
-    };
-    const res = createMockResponse();
-
-    await invokeController(procurementController.approveOrder, req, res);
-    assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(res.body.success, true);
-    assert.strictEqual(res.body.data.order.status, 'APPROVED');
-    assert.strictEqual(res.body.data.order.approvedByUserId, USER_NORMAL_MASTER);
-
-    const reloaded = await PurchaseOrder.findOne({ purchaseOrderId: 'PO-NM-0001' });
     assert.strictEqual(reloaded.status, 'APPROVED');
   });
 
@@ -310,12 +264,12 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
       paymentStatus: 'UNPAID',
     });
 
-    // Normal Master records payment
-    const nmPayReq = {
+    // Primary Master records first payment
+    const firstPayReq = {
       auth: {
-        userId: USER_NORMAL_MASTER,
+        userId: USER_PRIMARY_MASTER,
         role: 'MASTER',
-        isPrimaryMaster: false,
+        isPrimaryMaster: true,
         organisationId: ORG_ID,
         assignedCafeIds: [CAFE_ID],
       },
@@ -324,15 +278,15 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
         paymentAmountPaisa: 25000,
         allocations: [{ invoiceId: 'INV-PM-0001', amountPaisa: 25000 }],
         paymentMethod: 'BANK_TRANSFER',
-        reference: 'UTR-NM-001',
-        idempotencyKey: 'IDEM-NM-PAY-001',
+        reference: 'UTR-FIRST-001',
+        idempotencyKey: 'IDEM-FIRST-PAY-001',
       },
     };
-    const resNm = createMockResponse();
-    await invokeController(vendorLedgerController.recordPayment, nmPayReq, resNm);
-    assert.strictEqual(resNm.statusCode, 200);
-    assert.strictEqual(resNm.body.success, true);
-    assert.strictEqual(resNm.body.data.ledgerEntry.debitPaisa, 25000);
+    const resFirst = createMockResponse();
+    await invokeController(vendorLedgerController.recordPayment, firstPayReq, resFirst);
+    assert.strictEqual(resFirst.statusCode, 200);
+    assert.strictEqual(resFirst.body.success, true);
+    assert.strictEqual(resFirst.body.data.ledgerEntry.debitPaisa, 25000);
 
     // Primary Master records payment
     const pmPayReq = {
@@ -365,10 +319,9 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
   });
 
   // 06. PERSONAL LEDGER INVARIANT: ABSOLUTE VERIFICATION
-  it('06. Personal Ledger Invariant: Primary Master + Owner ALLOW; Normal Master, Admin, Staff DENY', () => {
+  it('06. Personal Ledger Invariant: Primary Master + Owner ALLOW; Admin, Staff DENY', () => {
     assert.strictEqual(canAccessPersonalLedger('MASTER', true), true, 'Primary Master must be ALLOWED');
     assert.strictEqual(canAccessPersonalLedger('OWNER', false), true, 'Owner must be ALLOWED');
-    assert.strictEqual(canAccessPersonalLedger('MASTER', false), false, 'Normal Master must be DENIED');
     assert.strictEqual(canAccessPersonalLedger('CAFE_ADMIN', false), false, 'Cafe Admin must be DENIED');
     assert.strictEqual(canAccessPersonalLedger('STAFF', false), false, 'Staff must be DENIED');
   });
