@@ -1421,7 +1421,10 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
       ],
     });
 
-    assert.ok(offlineBatchResult.syncedCount >= 1 || offlineBatchResult.processed >= 1);
+    assert.ok(
+      offlineBatchResult.syncedCount >= 1 || offlineBatchResult.processed >= 1,
+      `Expected valid offline cash sale to sync; result=${JSON.stringify(offlineBatchResult)}`
+    );
 
     // 37.3 Foreign café attempting to replay device assigned to new café is blocked
     await assert.rejects(
