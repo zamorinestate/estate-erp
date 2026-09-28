@@ -239,6 +239,14 @@ const publishRelease = asyncHandler(async (req, res) => {
           { accountStatus: { $exists: false } },
         ],
       },
+      {
+        // Defensive cleanup boundary: malformed legacy MASTER rows must never
+        // receive update-publisher or release-target privileges.
+        $or: [
+          { role: { $ne: 'MASTER' } },
+          { role: 'MASTER', isPrimaryMaster: true },
+        ],
+      },
     ],
   };
 
