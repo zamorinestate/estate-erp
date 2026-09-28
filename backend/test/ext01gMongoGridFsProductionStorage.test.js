@@ -906,7 +906,7 @@ describe('EXT-01G — MongoDB Atlas + GridFS Production Document Storage Suite',
   });
 
   // 54 PO approval regression
-  test('54. PO Approval Invariant: Primary Master/Normal Master ALLOW, Owner/Cafe Admin/Staff DENY', () => {
+  test('54. PO Approval Invariant: Primary Master/Malformed MASTER ALLOW, Owner/Cafe Admin/Staff DENY', () => {
     const evalPoApproval = (role) => (role === 'MASTER');
     assert.equal(evalPoApproval('MASTER'), true);
     assert.equal(evalPoApproval('OWNER'), false);

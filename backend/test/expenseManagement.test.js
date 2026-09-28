@@ -102,13 +102,13 @@ test('Screen 009: Expense Management & Approvals Integration Test Suite', async 
     save: async function () { return this; },
   };
 
-  const normalMasterUser = {
+  const malformedMasterUser = {
     userId: 'MU-NORMAL-01',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
     isPrimaryMaster: false,
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
     assignedCafeIds: ['ZC-0001', 'ZC-0002'],
@@ -215,7 +215,7 @@ test('Screen 009: Expense Management & Approvals Integration Test Suite', async 
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
     let activeUser = primaryMasterUser;
-    if (token === 'token_normal_master') activeUser = normalMasterUser;
+    if (token === 'token_malformed_master') activeUser = malformedMasterUser;
     if (token === 'token_cafe_admin') activeUser = cafeAdminUser;
     return {
       payload: {
@@ -240,7 +240,7 @@ test('Screen 009: Expense Management & Approvals Integration Test Suite', async 
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'MU-PRIMARY-01') return primaryMasterUser;
-    if (query?.userId === 'MU-NORMAL-01') return normalMasterUser;
+    if (query?.userId === 'MU-NORMAL-01') return malformedMasterUser;
     if (query?.userId === 'ADM-001') return cafeAdminUser;
     return null;
   });
@@ -308,7 +308,7 @@ test('Screen 009: Expense Management & Approvals Integration Test Suite', async 
       port,
       method: 'GET',
       path: '/api/v1/expenses?status=APPROVED',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
     });
 
     assert.equal(res.statusCode, 200);

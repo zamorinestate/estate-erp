@@ -168,7 +168,7 @@ test('Dashboard Command Centre — Primary Master receives full portfolio and ex
   assert.equal(res.body.data.cafePerformanceCards.length, 2);
 });
 
-test('Dashboard Command Centre — Normal Master has expense financials restricted', async (t) => {
+test('Dashboard Command Centre — Malformed MASTER has expense financials restricted', async (t) => {
   mockAuth(t, { role: 'MASTER', isPrimaryMaster: false });
   mockDashboardModels(t);
 
@@ -178,7 +178,7 @@ test('Dashboard Command Centre — Normal Master has expense financials restrict
   assert.equal(res.status, 200);
   assert.equal(res.body.success, true);
   assert.equal(res.body.data.portfolioKpis.salesTotal.valuePaisa, 5000000);
-  // Normal Master must have expenses restricted
+  // Malformed MASTER must have expenses restricted
   assert.equal(res.body.data.portfolioKpis.expenses.restricted, true);
   assert.equal(res.body.data.portfolioKpis.expenses.valuePaisa, null);
 });
@@ -232,7 +232,7 @@ test('Dashboard Saved Views — User can create and list saved views', async (t)
   assert.equal(listRes.body.data.views.length, 1);
 });
 
-test('Dashboard Targets — Normal Master is forbidden from setting targets', async (t) => {
+test('Dashboard Targets — Malformed MASTER is forbidden from setting targets', async (t) => {
   mockAuth(t, { role: 'MASTER', isPrimaryMaster: false });
 
   const server = await startServer(t);

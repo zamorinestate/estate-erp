@@ -686,7 +686,7 @@ describe('EXT-03 — MongoDB Atlas Backup, Snapshot Integrity & GridFS Restore S
   });
 
   // 31 PO approval regression
-  test('31. PO Approval Invariant: Primary Master and Normal Master ALLOW; Owner, Cafe Admin, Staff DENY', () => {
+  test('31. PO Approval Invariant: Primary Master and Malformed MASTER ALLOW; Owner, Cafe Admin, Staff DENY', () => {
     const canApprovePo = (role) => role === 'MASTER';
     assert.equal(canApprovePo('MASTER'), true);
     assert.equal(canApprovePo('OWNER'), false);
