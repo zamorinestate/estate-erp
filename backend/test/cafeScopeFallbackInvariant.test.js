@@ -14,22 +14,27 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage', '.cache'
 const TEXT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 
 const CAFE_ONE = ['ZC', '0001'].join('-');
+const QUOTED_CAFE_ONE = `["']${CAFE_ONE.replace('-', '\\-')}["']`;
 const DANGEROUS_PATTERNS = [
   {
     name: 'logical OR café fallback',
-    re: new RegExp('\\|\\|\\s*[\\' + '"' + ']?' + CAFE_ONE.replace('-', '\\-') + '[\\' + '"' + ']?', 'g'),
+    re: new RegExp(`\\|\\|\\s*${QUOTED_CAFE_ONE}`, 'g'),
   },
   {
     name: 'nullish café fallback',
-    re: new RegExp('\\?\\?\\s*[\\' + '"' + ']?' + CAFE_ONE.replace('-', '\\-') + '[\\' + '"' + ']?', 'g'),
+    re: new RegExp(`\\?\\?\\s*${QUOTED_CAFE_ONE}`, 'g'),
   },
   {
     name: 'schema café default',
-    re: new RegExp('default\\s*:\\s*[\\' + '"' + ']' + CAFE_ONE.replace('-', '\\-') + '[\\' + '"' + ']', 'g'),
+    re: new RegExp(`default\\s*:\\s*${QUOTED_CAFE_ONE}`, 'g'),
   },
   {
     name: 'array café fallback',
-    re: new RegExp('\\|\\|\\s*\\[\\s*[\\' + '"' + ']' + CAFE_ONE.replace('-', '\\-') + '[\\' + '"' + ']', 'g'),
+    re: new RegExp(`\\|\\|\\s*\\[\\s*${QUOTED_CAFE_ONE}`, 'g'),
+  },
+  {
+    name: 'cafeId assignment default',
+    re: new RegExp(`\\bcafeId\\s*=\\s*${QUOTED_CAFE_ONE}`, 'g'),
   },
 ];
 
