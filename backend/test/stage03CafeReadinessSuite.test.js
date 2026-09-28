@@ -9,6 +9,9 @@ const { Cafe, READINESS_CHECKLIST_KEYS } = require('../src/models/Cafe');
 const { CafeAccess } = require('../src/models/CafeAccess');
 const { UniversalQrRecord } = require('../src/models/UniversalQrRecord');
 const { User } = require('../src/models/User');
+const { CafeInventoryConfig } = require('../src/models/CafeInventoryConfig');
+const { GlobalInventoryItem } = require('../src/models/GlobalInventoryItem');
+const { SequenceCounter } = require('../src/models/SequenceCounter');
 const cafeService = require('../src/services/cafeService');
 
 test('STAGE 03 — Café Registration, 12-Section Onboarding & Store Readiness Suite', async (t) => {
@@ -32,7 +35,23 @@ test('STAGE 03 — Café Registration, 12-Section Onboarding & Store Readiness S
 
   t.before(async () => {
     mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-    await mongoose.connect(mongoServer.getUri());
+    await mongoose.connect(mongoServer.getUri(), {
+      autoIndex: true,
+      autoCreate: true,
+    });
+
+    // Stage 03 provisions Café, access, QR, inventory and sequence records in
+    // one transaction. Ensure every touched collection/index exists before the
+    // transaction starts so MongoDB catalog DDL cannot race the transaction.
+    await Promise.all([
+      Cafe.init(),
+      CafeAccess.init(),
+      CafeInventoryConfig.init(),
+      GlobalInventoryItem.init(),
+      SequenceCounter.init(),
+      User.init(),
+      UniversalQrRecord.init(),
+    ]);
 
     await User.create({
       userId: authMaster.userId,
