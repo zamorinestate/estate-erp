@@ -157,3 +157,51 @@ test('safe GET request with authentication cookies does not require Origin', asy
   assert.equal(response.body.success, true);
   assert.equal(response.body.status, 'ok');
 });
+
+
+test('credentialed state change rejects a similarly named Vercel origin', async (t) => {
+  const server = await startServer(t);
+
+  const response = await request(
+    server,
+    '/api/v1/auth/refresh',
+    {
+      method: 'POST',
+      origin: 'https://evil-estate-preview.vercel.app',
+      cookie: 'zamorin_session_id=SS-20260808-0001',
+    }
+  );
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error?.code, 'CORS_ORIGIN_DENIED');
+});
+
+test('canonical Vercel origin remains explicitly trusted', async (t) => {
+  const app = createApp({
+    allowedOrigins: [],
+    production: true,
+    staging: false,
+  });
+
+  const server = await new Promise((resolve) => {
+    const instance = app.listen(0, () => resolve(instance));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const response = await request(
+    server,
+    '/api/v1/auth/refresh',
+    {
+      method: 'POST',
+      origin: 'https://zamorin-cafe-erp.vercel.app',
+      cookie: 'zamorin_session_id=SS-20260808-0001',
+    }
+  );
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error?.code, 'REFRESH_SESSION_REQUIRED');
+  assert.equal(
+    response.headers['access-control-allow-origin'],
+    'https://zamorin-cafe-erp.vercel.app'
+  );
+});
