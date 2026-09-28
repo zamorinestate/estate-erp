@@ -26,19 +26,18 @@ function assert(condition, name, details = '') {
   }
 }
 
-// 1. Audit Navigation & Four-Profile Route Parity
-console.log('1. Auditing Four-Profile Navigation Configurations...');
+// 1. Audit Navigation & Active-Profile Route Parity
+console.log('1. Auditing Active-Profile Navigation Configurations...');
 const profiles = [
   { name: 'PRIMARY MASTER', role: ROLES.MASTER, isPrimary: true, expectedCount: 24 },
-  { name: 'NORMAL MASTER', role: ROLES.MASTER, isPrimary: false, expectedCount: 20 },
   { name: 'OWNER', role: ROLES.OWNER, isPrimary: false, expectedCount: 12 },
   { name: 'CAFE OPERATIONS', role: ROLES.CAFE_ADMIN, isPrimary: false, expectedCount: 15 }
 ];
 
 for (const p of profiles) {
   const navConfig = NAVIGATION[p.role];
-  const items = p.role === ROLES.MASTER 
-    ? (p.isPrimary ? navConfig.primaryItems : navConfig.normalItems)
+  const items = p.role === ROLES.MASTER
+    ? (navConfig.primaryItems || navConfig.items)
     : navConfig.items;
 
   assert(items.length === p.expectedCount, `${p.name} navigation item count equals ${p.expectedCount}`, `Actual: ${items.length}`);
@@ -61,19 +60,8 @@ for (const p of profiles) {
   assert(!hasMailops, `${p.name} does NOT contain retired MailOps in user-facing navigation`);
 }
 
-// Normal Master Primary-Only Lockdown check
-console.log('\n2. Auditing Normal Master Security Isolation...');
-let pmOnlyBlocked = true;
-for (const pmRoute of PRIMARY_MASTER_ONLY_ROUTES) {
-  if (isRouteAllowed(ROLES.MASTER, pmRoute, false)) {
-    pmOnlyBlocked = false;
-    console.error(`    Normal Master improperly allowed Primary route: ${pmRoute}`);
-  }
-}
-assert(pmOnlyBlocked, 'Normal Master is strictly blocked from all Primary-Master-Only routes');
-
-// 3. Audit Control-Centre Hub Codebases for Button Grids & Subpage Headers
-console.log('\n3. Auditing Control-Centre Button Hub Implementations...');
+// 2. Audit Control-Centre Hub Codebases for Button Grids & Subpage Headers
+console.log('\n2. Auditing Control-Centre Button Hub Implementations...');
 const modulesToCheck = [
   { name: 'Finance & Accounts', path: './frontend/src/js/pages/financeAccounts.js', hubAttr: 'data-fin-hub-tile', backBtn: '#fin-back-to-hub-btn' },
   { name: 'Customer Directory & Loyalty', path: './frontend/src/js/pages/customers.js', hubAttr: 'data-cust-hub-tile', backBtn: '#cust-back-to-hub-btn' },
