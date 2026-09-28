@@ -97,3 +97,12 @@ test('P2 forensic evidence integrity: supporting-file evidence cannot self-certi
   assert.doesNotMatch(browserAudit, /certified 100% operational/i);
   assert.match(browserAudit, /not a production certification/i);
 });
+
+
+test('P2 credential integrity: seed PINs must never be source-code defaults', () => {
+  const seed = read('backend/src/scripts/seedInitialData.js');
+  assert.doesNotMatch(seed, /bcrypt\.hash\(['"]\d{6}['"]/);
+  for (const name of ['SEED_CAFE_OPERATIONS_PIN', 'SEED_OPERATOR_PIN_1', 'SEED_OPERATOR_PIN_2']) {
+    assert.match(seed, new RegExp(name));
+  }
+});
