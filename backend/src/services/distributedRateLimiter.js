@@ -26,6 +26,7 @@ const SECURITY_CRITICAL_SCOPES = new Set([
 class DistributedRateLimiter {
   constructor(options = {}) {
     this.redisClient = options.redisClient || null;
+    this.keyPrefix = options.keyPrefix || '';
     this.memoryStore = new Map();
     this.isDistributed = options.isDistributed !== undefined ? options.isDistributed : Boolean(this.redisClient);
     this.degraded = Boolean(options.degraded);
@@ -34,8 +35,9 @@ class DistributedRateLimiter {
     this.forcedSecurityDegradation = false; // Testing hook for negative controls
   }
 
-  setRedisClient(client) {
+  setRedisClient(client, keyPrefix = this.keyPrefix || '') {
     this.redisClient = client;
+    this.keyPrefix = keyPrefix || '';
     this.isDistributed = Boolean(client);
     this.degraded = false;
   }
@@ -57,7 +59,7 @@ class DistributedRateLimiter {
   }
 
   formatKey({ organisationId = 'GLOBAL', cafeId = '*', deviceId = '*', userId = '*', ip = '*', scope = 'DEFAULT' }) {
-    return `rl:${organisationId}:${cafeId}:${deviceId}:${userId}:${ip}:${scope}`;
+    return `${this.keyPrefix}rl:${organisationId}:${cafeId}:${deviceId}:${userId}:${ip}:${scope}`;
   }
 
   /**
