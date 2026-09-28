@@ -133,7 +133,7 @@ describe('REC-17 — Vendor Short Supply, Backorder & Receiving Certification Su
   const cafeAdminAAuth = { userId: 'USR-ADMIN-01', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const cafeAdminBAuth = { userId: 'USR-ADMIN-02', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdB, assignedCafeIds: [cafeIdB] };
   const staffAAuth = { userId: 'USR-STAFF-01', role: 'STAFF', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
-  const orgBMasterAuth = { userId: 'USR-ORGB-MASTER', role: 'MASTER', organisationId: orgIdB, assignedCafeIds: ['GLOBAL'] };
+  const orgBMasterAuth = { userId: 'USR-ORGB-MASTER', role: 'MASTER', isPrimaryMaster: true, organisationId: orgIdB, assignedCafeIds: ['GLOBAL'] };
 
   before(async () => {
     mongoServer = await MongoMemoryServer.create();
