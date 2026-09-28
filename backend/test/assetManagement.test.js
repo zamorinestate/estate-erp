@@ -84,7 +84,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'malformed MASTER claim',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
@@ -257,8 +257,8 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
     assert.equal(res.data.data.kpis.inService, 1);
   });
 
-  // 2. POST /api/v1/assets (Normal Master registers new asset)
-  await t.test('Normal Master can register a new equipment asset', async () => {
+  // 2. POST /api/v1/assets (malformed MASTER claim registers new asset)
+  await t.test('malformed MASTER claim can register a new equipment asset', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
