@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { validateProposedRole } = require('../src/services/userGovernanceService');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SKIP_DIRS = new Set([
@@ -26,6 +27,10 @@ const FORBIDDEN = [
   // directly in this guard file: spaces, camelCase, dots, hyphens, underscores.
   new RegExp(['normal', 'master'].join('[\\s._-]*'), 'ig'),
   new RegExp(['master', 'normal'].join('[\\s._-]+'), 'ig'),
+  new RegExp(['secondary', 'master'].join('[\\s_-]+'), 'ig'),
+  new RegExp(['master', 'secondary'].join('[\\s_-]+'), 'ig'),
+  new RegExp(['secondary', 'master'].join(''), 'ig'),
+  new RegExp(['master', 'operational'].join('[\\s()_-]*'), 'ig'),
 ];
 
 function walk(dir, findings) {
@@ -62,14 +67,14 @@ function walk(dir, findings) {
   }
 }
 
-test('Retired secondary MASTER persona is absent from the repository', () => {
+test('Retired alternate MASTER persona is absent from the repository', () => {
   const findings = [];
   walk(REPO_ROOT, findings);
 
   assert.deepEqual(
     findings,
     [],
-    'Retired secondary MASTER persona references remain:\n' +
+    'Retired alternate MASTER persona references remain:\n' +
       findings.map((f) => `- ${f.file}: ${f.hits.join(', ')}`).join('\n')
   );
 });
@@ -94,5 +99,20 @@ test('Malformed non-primary MASTER frontend context fails closed', async () => {
   assert.equal(isRouteAllowed('master', 'dashboard', true), true);
   assert.equal(isRouteAllowed('master', 'passbook', true), true);
   assert.ok(Object.keys(getGroupedNavItems('master', true)).length > 0);
+});
+
+test('MASTER role is singleton-only in governance policy', () => {
+  assert.throws(
+    () => validateProposedRole('MASTER'),
+    (err) => {
+      assert.equal(err.code, 'MASTER_SINGLETON_ROLE_RESTRICTED');
+      assert.equal(err.statusCode, 403);
+      return true;
+    }
+  );
+
+  for (const role of ['OWNER', 'CAFE_ADMIN', 'STAFF', 'VENDOR']) {
+    assert.doesNotThrow(() => validateProposedRole(role));
+  }
 });
 
