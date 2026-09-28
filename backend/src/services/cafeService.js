@@ -3153,7 +3153,13 @@ class CafeService {
 
     let qrRecord = null;
     if (cafe.qrLoginContext?.qrRecordId) {
-      qrRecord = await UniversalQrRecord.findOne({ qrId: cafe.qrLoginContext.qrRecordId });
+      qrRecord = await UniversalQrRecord.findOne({
+        qrId: cafe.qrLoginContext.qrRecordId,
+        organisationId: cafe.organisationId,
+        cafeId: cafe.cafeId,
+        qrType: 'CAFE_LOGIN',
+        status: 'ACTIVE',
+      });
     }
 
     if (!qrRecord) {
@@ -3167,16 +3173,11 @@ class CafeService {
     }
 
     if (!qrRecord) {
-      // Create on-demand
-      const ref = cafe.qrLoginContext?.securePublicCafeReference || generateOpaqueToken();
-      qrRecord = await UniversalQrService.createQrRecord({
-        qrType: 'CAFE_LOGIN',
-        targetEntityId: ref,
-        organisationId: cafe.organisationId,
-        cafeId: cafe.cafeId,
-        title: `Café Login QR — ${cafe.name}`,
-        actorUserId: 'SYSTEM',
-      });
+      throw new ApiError(
+        409,
+        'CAFE_QR_RECORD_MISSING',
+        'The canonical Café login QR record is missing. Regenerate the Café QR before printing so the card cannot point to a stale or alternate credential.'
+      );
     }
 
     const branding = {
