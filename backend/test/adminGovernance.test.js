@@ -84,7 +84,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'malformed MASTER claim',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
@@ -234,8 +234,8 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     assert.ok(Array.isArray(res.data.data.queue));
   });
 
-  // 3. POST /admin/requests (Normal Master submits request)
-  await t.test('Normal Master can submit an Administrative Request to Primary Master', async () => {
+  // 3. POST /admin/requests (malformed MASTER claim submits request)
+  await t.test('malformed MASTER claim can submit an Administrative Request to Primary Master', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
@@ -253,8 +253,8 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     assert.equal(res.data.data.request.status, 'SUBMITTED');
   });
 
-  // 4. PATCH /admin/requests/:id/decision (Normal Master blocked from deciding)
-  await t.test('Normal Master is forbidden from deciding Administrative Requests', async () => {
+  // 4. PATCH /admin/requests/:id/decision (malformed MASTER claim blocked from deciding)
+  await t.test('malformed MASTER claim is forbidden from deciding Administrative Requests', async () => {
     const res = await makeRequest({
       port,
       method: 'PATCH',
@@ -306,8 +306,8 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     }
   });
 
-  // 7. POST /cafes (Both Primary and Normal Master can create cafes)
-  await t.test('Normal Master can create a new Café location', async () => {
+  // 7. POST /cafes (Both Primary and malformed MASTER claim can create cafes)
+  await t.test('malformed MASTER claim can create a new Café location', async () => {
     t.mock.method(cafeService, 'createCafeWithAccess', async ({ cafeData }) => ({
       cafe: {
         ...cafeData,
