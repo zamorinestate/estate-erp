@@ -18,6 +18,7 @@ class DistributedEventBus extends EventEmitter {
     super();
     this.redisPublisher = options.redisPublisher || null;
     this.redisSubscriber = options.redisSubscriber || null;
+    this.keyPrefix = options.keyPrefix || '';
     this.isDistributed = Boolean(this.redisPublisher && this.redisSubscriber);
     this.subscribers = new Map(); // topic -> Set(callbacks)
     this.redisSubscriptions = new Set();
@@ -30,9 +31,10 @@ class DistributedEventBus extends EventEmitter {
     };
   }
 
-  setRedisBrokers(publisher, subscriber) {
+  setRedisBrokers(publisher, subscriber, keyPrefix = this.keyPrefix || '') {
     this.redisPublisher = publisher;
     this.redisSubscriber = subscriber;
+    this.keyPrefix = keyPrefix || '';
     this.isDistributed = Boolean(publisher && subscriber);
     this.redisSubscriptions.clear();
 
@@ -45,7 +47,8 @@ class DistributedEventBus extends EventEmitter {
 
   async subscribeRedisTopic(topic) {
     if (!this.isDistributed || !this.redisSubscriber || this.redisSubscriptions.has(topic)) return;
-    await this.redisSubscriber.subscribe(topic, (messageStr) => {
+    const channel = `${this.keyPrefix}events:${topic}`;
+    await this.redisSubscriber.subscribe(channel, (messageStr) => {
       try {
         const eventEnvelope = typeof messageStr === 'string' ? JSON.parse(messageStr) : messageStr;
         if (eventEnvelope?.sourceInstanceId === this.instanceId) return;
@@ -74,7 +77,7 @@ class DistributedEventBus extends EventEmitter {
     // Broadcast across cluster if distributed
     if (this.isDistributed && this.redisPublisher) {
       try {
-        await this.redisPublisher.publish(topic, JSON.stringify(eventEnvelope));
+        await this.redisPublisher.publish(`${this.keyPrefix}events:${topic}`, JSON.stringify(eventEnvelope));
       } catch (err) {
         console.warn(`[EventBus] Distributed publish failed: ${err.message}`);
       }
@@ -112,7 +115,7 @@ class DistributedEventBus extends EventEmitter {
         this.subscribers.delete(topic);
         if (this.isDistributed && this.redisSubscriber) {
           this.redisSubscriptions.delete(topic);
-          this.redisSubscriber.unsubscribe(topic).catch(() => {});
+          this.redisSubscriber.unsubscribe(`${this.keyPrefix}events:${topic}`).catch(() => {});
         }
       }
     }
