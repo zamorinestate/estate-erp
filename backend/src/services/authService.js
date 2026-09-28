@@ -609,9 +609,9 @@ async function authenticatePassword({
   }
 
   if (String(user.role || '').toUpperCase() === 'MASTER' && user.isPrimaryMaster !== true) {
-    throw new Error(
-      'This account is not available for sign-in.'
-    );
+    // Defensive fail-closed guard for malformed/legacy data. The User model
+    // forbids this state from being created.
+    throw new Error('Invalid MASTER account configuration.');
   }
 
   // Transparent opportunistic upgrade to canonical scrypt KDF on successful login
