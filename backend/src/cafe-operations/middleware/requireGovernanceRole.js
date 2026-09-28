@@ -21,11 +21,33 @@ try {
   };
 }
 
+function isLoopbackRequest(req) {
+  const address = String(
+    req?.socket?.remoteAddress ||
+    req?.ip ||
+    ''
+  ).trim();
+
+  return (
+    address === '127.0.0.1' ||
+    address === '::1' ||
+    address === '::ffff:127.0.0.1'
+  );
+}
+
+function allowExplicitTestIdentityHeaders(req) {
+  return (
+    process.env.NODE_ENV === 'test' &&
+    process.env.ALLOW_TEST_AUTH_HEADERS === 'true' &&
+    isLoopbackRequest(req)
+  );
+}
+
 function resolveCallerFromRequest(req) {
   if (req.cafeOpsCaller) {
     return req.cafeOpsCaller;
   }
-  if (process.env.NODE_ENV !== 'production' && req.headers && req.headers['x-mock-user-role']) {
+  if (allowExplicitTestIdentityHeaders(req) && req.headers && req.headers['x-mock-user-role']) {
     const isPrimary = req.headers['x-mock-user-is-primary'] === 'true' || req.headers['x-mock-user-role'] === 'MASTER_PRIMARY';
     const role = req.headers['x-mock-user-role'];
     return {
@@ -157,5 +179,5 @@ function requireGovernanceRole(...allowedRoles) {
   };
 }
 
-module.exports = { requireGovernanceRole, resolveCallerFromRequest };
+module.exports = { requireGovernanceRole, resolveCallerFromRequest, allowExplicitTestIdentityHeaders, isLoopbackRequest };
 
