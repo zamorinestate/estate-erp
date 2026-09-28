@@ -356,8 +356,31 @@ const retryReconciliation = asyncHandler(async (request, response) => {
  */
 const syncOfflineOrders = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
+  const role = normalizeId(request.auth?.role || '');
   const cafeId = normalizeId(request.body?.cafeId || request.query?.cafeId || request.auth?.primaryCafeId || '');
   const { transactions, deviceId, operatorSessionId } = request.body || {};
+
+  if (role === 'OWNER' || !['STAFF', 'CAFE_ADMIN', 'MASTER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'This role is not authorized to replay operational offline POS queues.'
+    );
+  }
+
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER offline POS synchronization.'
+    );
+  }
+
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required for offline POS synchronization.');
+  }
+
+  assertCafeAccess(request, cafeId);
 
   if (!Array.isArray(transactions) || transactions.length === 0) {
     throw new ApiError(400, 'VALIDATION_FAILED', 'Transactions array is required for offline sync.');
