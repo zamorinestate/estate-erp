@@ -243,7 +243,7 @@ const listEmployees = asyncHandler(async (req, res) => {
       .lean(),
   ]);
 
-  // Field-level privacy masking for Normal Master / non-Primary & Primary Master Designation Lock
+  // Field-level privacy masking for non-primary callers & Primary Master designation lock
   const sanitizedUsers = users.map((u) => {
     const userCopy = { ...u };
     if (
