@@ -22,11 +22,10 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 const FORBIDDEN = [
-  new RegExp(['Normal', 'Master'].join(' '), 'g'),
-  new RegExp(['NORMAL', 'MASTER'].join(' '), 'g'),
-  new RegExp(['NORMAL', 'MASTER'].join('_'), 'g'),
-  new RegExp(['master', 'normal'].join('_'), 'g'),
-  new RegExp(['normal', 'master'].join('\\.'), 'g'),
+  // Catch every retired alias family without embedding the forbidden phrase
+  // directly in this guard file: spaces, camelCase, dots, hyphens, underscores.
+  new RegExp(['normal', 'master'].join('[\\s._-]*'), 'ig'),
+  new RegExp(['master', 'normal'].join('[\\s._-]+'), 'ig'),
 ];
 
 function walk(dir, findings) {
