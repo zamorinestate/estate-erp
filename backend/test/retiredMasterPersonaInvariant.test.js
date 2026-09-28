@@ -11,6 +11,9 @@ const { requireCafeOperationsDevice } = require('../src/middleware/deviceAuthori
 const expenseController = require('../src/controllers/expenseController');
 const procurementController = require('../src/controllers/procurementController');
 const vendorController = require('../src/controllers/vendorController');
+const cashController = require('../src/controllers/cashController');
+const companyIdentityController = require('../src/controllers/companyIdentityController');
+const { ApprovalPolicyService } = require('../src/services/approvalPolicyService');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SKIP_DIRS = new Set([
@@ -371,5 +374,133 @@ test('Malformed non-primary MASTER procurement/vendor governance mutations fail 
       }
     );
   }
+});
+
+test('Malformed non-primary MASTER approval-policy governance fails closed', async () => {
+  await assert.rejects(
+    () =>
+      ApprovalPolicyService.setPolicy({
+        organisationId: 'ORG-ZAMORIN',
+        cafeId: 'ZC-0001',
+        workflowType: 'EXPENSE',
+        role: 'CAFE_ADMIN',
+        maxAmountPaisa: 500000,
+        auth: {
+          userId: 'MU-MALFORMED-POLICY',
+          role: 'MASTER',
+          isPrimaryMaster: false,
+        },
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+});
+
+test('Malformed non-primary MASTER direct cash governance fails closed', async () => {
+  const auth = {
+    userId: 'MU-MALFORMED-CASH',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+    assignedCafeIds: ['ZC-0001'],
+  };
+
+  await assert.rejects(
+    () =>
+      invokeController(cashController.createCashTransaction, {
+        auth,
+        headers: {},
+        body: {
+          cafeId: 'ZC-0001',
+          transactionType: 'CASH_IN',
+          category: 'TEST',
+          amount: 100,
+          paymentMethod: 'CASH',
+        },
+        query: {},
+        params: {},
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      invokeController(cashController.reverseCashTransaction, {
+        auth,
+        headers: {},
+        body: { reason: 'Unauthorized reversal' },
+        query: {},
+        params: { cashTransactionId: 'CT-MALFORMED-001' },
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+});
+
+test('Organisation identity requires real Primary Master role, not a stray flag', async () => {
+  const malformedMaster = {
+    userId: 'MU-MALFORMED-IDENTITY',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+  };
+
+  for (const [fn, request] of [
+    [companyIdentityController.getCompanyIdentity, { auth: malformedMaster }],
+    [companyIdentityController.getCompanyIdentityHistory, { auth: malformedMaster }],
+    [
+      companyIdentityController.unlockCompanyIdentity,
+      { auth: malformedMaster, body: {} },
+    ],
+    [
+      companyIdentityController.updateCompanyIdentity,
+      {
+        auth: malformedMaster,
+        body: {
+          updates: { legalName: 'Unauthorized' },
+          changeReason: 'Unauthorized identity mutation',
+        },
+      },
+    ],
+  ]) {
+    await assert.rejects(
+      () => invokeController(fn, request),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+  }
+
+  const forgedFlagAuth = {
+    userId: 'ADM-FORGED-PRIMARY-FLAG',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'CAFE_ADMIN',
+    isPrimaryMaster: true,
+  };
+
+  await assert.rejects(
+    () =>
+      invokeController(companyIdentityController.unlockCompanyIdentity, {
+        auth: forgedFlagAuth,
+        body: {},
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
 });
 
