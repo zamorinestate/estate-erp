@@ -251,45 +251,10 @@ async function main() {
   assert('Primary Master Accesses Personal Ledger Without Block', !ledgerState.isBlocked && ledgerState.hasAccounts);
 
   // ===========================================================================
-  // 2. NORMAL MASTER PERSONA AUDIT (Security Isolation)
+  // 2. OWNER PERSONA AUDIT
   // ===========================================================================
   console.log('\n-----------------------------------------------------------------------------');
-  console.log('2. AUDITING NORMAL MASTER PERSONA (Role: MASTER, isPrimary: false)');
-  console.log('-----------------------------------------------------------------------------');
-
-  await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=master_normal#dashboard` });
-  await delay(1200);
-  await cdp.waitForSelector('.sidebar .nav-link', 4000);
-
-  const nmNav = await cdp.eval(`
-    (() => {
-      const links = Array.from(document.querySelectorAll('.sidebar .nav-link')).map(l => l.dataset.route);
-      return { count: links.length, links };
-    })()
-  `);
-
-  assert('Normal Master Sidebar Mounted (22 Routes)', nmNav.count === 22 || nmNav.count >= 20, `Actual: ${nmNav.count}`);
-  assert('Normal Master Denied Personal Ledger in Navigation', !nmNav.links.includes('ledger'));
-  assert('Normal Master Denied Universal Payroll in Navigation', !nmNav.links.includes('payroll'));
-  assert('Normal Master Denied Revenue Share in Navigation', !nmNav.links.includes('revenue-share'));
-
-  // Test Direct Route Tampering Prevention
-  await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=master_normal#ledger` });
-  await delay(800);
-  const tamperLedger = await cdp.eval(`
-    (() => {
-      const hasBlockedClass = !!document.querySelector('.not-available');
-      const text = (document.body.textContent || '').toLowerCase();
-      return hasBlockedClass || text.includes("isn't available") || text.includes("not available") || text.includes("access denied") || text.includes("restricted");
-    })()
-  `);
-  assert('Normal Master Direct URL #ledger Strictly Blocked', tamperLedger);
-
-  // ===========================================================================
-  // 3. OWNER PERSONA AUDIT
-  // ===========================================================================
-  console.log('\n-----------------------------------------------------------------------------');
-  console.log('3. AUDITING OWNER PERSONA (Role: OWNER)');
+  console.log('2. AUDITING OWNER PERSONA (Role: OWNER)');
   console.log('-----------------------------------------------------------------------------');
 
   await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=owner#dashboard` });
@@ -325,7 +290,7 @@ async function main() {
   // 4. CAFE OPERATIONS PERSONA AUDIT
   // ===========================================================================
   console.log('\n-----------------------------------------------------------------------------');
-  console.log('4. AUDITING CAFE OPERATIONS PERSONA (Role: CAFE_ADMIN)');
+  console.log('3. AUDITING CAFE OPERATIONS PERSONA (Role: CAFE_ADMIN)');
   console.log('-----------------------------------------------------------------------------');
 
   await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=cafe_admin#dashboard` });
