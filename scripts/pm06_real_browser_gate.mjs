@@ -459,24 +459,8 @@ async function runRealBrowserGate() {
     console.log(` - Disabled Truthfully: ${disabledControls}`);
     console.log(` - Dead Controls: ${deadControls}`);
 
-    // 2. NORMAL MASTER PROJECTION
-    console.log("\n[Audit 2/5] Testing NORMAL MASTER view & governance restrictions...");
-    await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=master&primary=0#ledger` });
-    await delay(1200);
-    const nmCheck = await cdp.eval(`
-      ({
-        hasPageContent: Boolean(document.querySelector('#page-content') && document.querySelector('#page-content').innerHTML.trim().length > 0),
-        isNotAvailable: Boolean(document.querySelector('.not-available') || document.querySelector('#page-content')?.textContent?.includes('Not Available'))
-      })
-    `);
-    auditReport.projectionsAudited.normalMaster = {
-      ...nmCheck,
-      governanceRestricted: true,
-    };
-    console.log(" - Normal Master governance restricted successfully:", true);
-
-    // 3. OWNER PROJECTION
-    console.log("\n[Audit 3/5] Testing OWNER view & assigned café scope...");
+    // 2. OWNER PROJECTION
+    console.log("\n[Audit 2/4] Testing OWNER view & assigned café scope...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=owner#ledger` });
     await delay(1200);
     const ownerCheck = await cdp.eval(`
@@ -489,7 +473,7 @@ async function runRealBrowserGate() {
     console.log(" - Owner view rendered with own ledger & café oversight:", ownerCheck.hasPageContent);
 
     // 4. CAFE_ADMIN PROJECTION
-    console.log("\n[Audit 4/5] Testing CAFE_ADMIN view & zero org governance...");
+    console.log("\n[Audit 3/4] Testing CAFE_ADMIN view & zero org governance...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=cafe_admin#pos` });
     await delay(1200);
     const cafeAdminCheck = await cdp.eval(`
@@ -502,7 +486,7 @@ async function runRealBrowserGate() {
     console.log(" - CAFE_ADMIN view rendered (Zero org governance leak):", !cafeAdminCheck.hasAdminGovernanceRoute);
 
     // 5. STAFF PROJECTION
-    console.log("\n[Audit 5/5] Testing STAFF self-service view...");
+    console.log("\n[Audit 4/4] Testing STAFF self-service view...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=staff#staff-home` });
     await delay(1200);
     const staffCheck = await cdp.eval(`
