@@ -502,10 +502,10 @@ class ForecastRegistry {
       throw err;
     }
 
-    // Primary Master vs Normal Master governance
+    // Primary Master governance
     if (role === 'MASTER') {
       const isPrimary = auth.isPrimaryMaster === true;
-      if (!isPrimary && auth.requirePrimaryMaster) {
+      if (!isPrimary) {
         const err = new Error('This forecasting capability requires Primary Master authority.');
         err.statusCode = 403;
         err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
