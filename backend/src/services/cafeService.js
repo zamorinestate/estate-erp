@@ -336,6 +336,7 @@ class CafeService {
         actorUserId: auth.userId,
         session,
         publicOrigin: getPublicAppOrigin(),
+        payloadOverride: `${getPublicAppOrigin()}/cafe-access/qr/${qrToken}`,
       });
 
       // 4c. Resolve FSSAI 2026 eligibility and fee based on Kind of Business
@@ -571,7 +572,7 @@ class CafeService {
             qrLoginContext: {
               qrRecordId: universalQr ? universalQr.qrId : null,
               securePublicCafeReference,
-              loginUrl: `https://zamorin.app/cafe/${securePublicCafeReference}/login`,
+              loginUrl: `${getPublicAppOrigin()}/cafe-access/qr/${qrToken}`,
               cafeOperationsLoginUrl: `${getPublicAppOrigin()}/cafe-operations/login?cafe=${cafeId}`,
               status: 'ACTIVE',
               lastScannedAt: null,
@@ -3035,6 +3036,7 @@ class CafeService {
 
     // 2. Generate new opaque token and create Universal QR Record
     const newReference = generateOpaqueToken();
+    const publicOrigin = getPublicAppOrigin();
     const newQrRecord = await UniversalQrService.createQrRecord({
       qrType: 'CAFE_LOGIN',
       targetEntityId: newReference,
@@ -3047,13 +3049,15 @@ class CafeService {
         regeneratedAt: new Date().toISOString(),
       },
       actorUserId: auth.userId,
+      publicOrigin,
+      payloadOverride: `${publicOrigin}/cafe-access/qr/${newReference}`,
     });
 
     // 3. Update Cafe model
     cafe.qrLoginContext = {
       qrRecordId: newQrRecord.qrId,
       securePublicCafeReference: newReference,
-      loginUrl: `https://zamorin.app/cafe/${newReference}/login`,
+      loginUrl: `${publicOrigin}/cafe-access/qr/${newReference}`,
       status: 'ACTIVE',
       lastScannedAt: null,
       scanCount: 0,
