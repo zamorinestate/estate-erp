@@ -66,7 +66,7 @@ function requirePayrollManagementAccess(
     );
   }
 
-  // Normal Master cannot manage organisational payroll.
+  // Defensive fail-closed check: a malformed MASTER claim without Primary Master designation cannot manage organisational payroll.
   if (
     request.auth.role === 'MASTER' &&
     !request.auth.isPrimaryMaster
