@@ -4,7 +4,7 @@
  *
  * The master-access spec (Section 15) is explicit: Cafe Operations must call
  * the SAME canonical Master authentication system Zamorin already uses for
- * normal Master login — password verification, MFA, passkey where present —
+ * Primary Master login — password verification, MFA, passkey where present —
  * never a second, weaker, parallel implementation built just for this
  * shared device. That real system isn't available in this environment, so
  * this file does NOT attempt to reimplement it. It defines the three calls
@@ -21,7 +21,7 @@
  *     { ok:false } |
  *     { ok:true, requiresMfa:true, mfaChallengeId } |
  *     { ok:true, requiresMfa:false, employeeId, organisationId, role }
- *       // role must be 'MASTER_PRIMARY' (Normal Master runtime is retired)
+ *       // role must be 'MASTER_PRIMARY'
  *   completeMfa({ mfaChallengeId, code }) →
  *     { ok:false } | { ok:true, employeeId, organisationId, role }
  *   reauth({ employeeId, password, mfaCode }) →   // for unlock / step-up on an ALREADY-KNOWN master
@@ -99,7 +99,7 @@ const productionAdapter = {
     try {
       const User = require('mongoose').model('User');
       const user = await User.findOne({ $or: [{ userId: employeeId }, { _id: employeeId }] });
-      if (!user || user.role !== 'MASTER') return { ok: false };
+      if (!user || user.role !== 'MASTER' || user.isPrimaryMaster !== true) return { ok: false };
       const authResult = await authService.authenticatePassword({ email: user.email, password });
       if (!authResult || !authResult.user) return { ok: false };
       if (authResult.requiresMfa && mfaCode) {
