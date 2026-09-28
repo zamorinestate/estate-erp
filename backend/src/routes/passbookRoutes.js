@@ -3,7 +3,7 @@
 /**
  * PASSBOOK & MULTI-CAFÉ TREASURY ROUTES
  * Mounted at /api/v1/passbook
- * Strictly guarded: Primary Master & Owner only. Normal Master, Cafe Admin, and Staff receive 403.
+ * Strictly guarded: Primary Master & Owner only. Cafe Admin and Staff receive 403.
  */
 
 const express = require('express');
