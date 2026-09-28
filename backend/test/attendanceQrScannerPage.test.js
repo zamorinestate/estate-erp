@@ -203,7 +203,7 @@ test('AUTH-01: Primary Master can generate rotating challenge across any café i
   assert.ok(challenge.opaqueToken.startsWith('ZAM_ATT_'), 'Must generate high-entropy opaque token');
 });
 
-test('AUTH-02: Normal Master can generate rotating challenge across organisation cafés', async () => {
+test('AUTH-02: Malformed MASTER can generate rotating challenge across organisation cafés', async () => {
   const challenge = await attendanceQrService.getActiveOrNewChallenge({
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0002',

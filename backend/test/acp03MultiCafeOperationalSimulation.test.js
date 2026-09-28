@@ -74,7 +74,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
     organisationId: ORG_ID,
   };
 
-  const normalMasterAuth = {
+  const malformedMasterAuth = {
     userId: 'USR-NM-01',
     name: 'Operations Master',
     email: 'ops.master@zamorin.test',
@@ -482,7 +482,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
 
     assert.equal(canAccessPersonalLedger(primaryMasterAuth), true, 'Primary Master allowed');
     assert.equal(canAccessPersonalLedger(ownerAuth), true, 'Owner allowed');
-    assert.equal(canAccessPersonalLedger(normalMasterAuth), false, 'Normal Master denied');
+    assert.equal(canAccessPersonalLedger(malformedMasterAuth), false, 'Malformed MASTER denied');
     assert.equal(canAccessPersonalLedger(cafeAManagerAuth), false, 'Cafe Admin denied');
     assert.equal(canAccessPersonalLedger(cafeAStaffAuth), false, 'Staff denied');
   });

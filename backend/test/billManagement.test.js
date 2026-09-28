@@ -79,20 +79,20 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
+  const malformedMasterUser = {
     userId: 'MU-NORMAL-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isNormal = token === 'token_malformed_master';
+    const activeUser = isNormal ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -116,7 +116,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'MU-NORMAL-01') {
-      return { ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser };
+      return { ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser };
     }
     return { ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser };
   });
@@ -246,7 +246,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
       port,
       method: 'GET',
       path: '/api/v1/bills/overview?date=2026-08-18',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -262,7 +262,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
       port,
       method: 'GET',
       path: '/api/v1/bills?status=COMPLETED&cafeId=ZC-0001',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -276,7 +276,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
       port,
       method: 'GET',
       path: '/api/v1/bills/BILL-20260818-0004',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -291,7 +291,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
       port,
       method: 'POST',
       path: '/api/v1/bills/BILL-20260818-0004/reprint',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: { reason: 'Customer Duplicate Copy' },
     });
 
@@ -306,7 +306,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
       port,
       method: 'POST',
       path: '/api/v1/bills/BILL-20260818-0004/refund',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         refundType: 'PARTIAL',
         amount: 100,
@@ -342,7 +342,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
       port,
       method: 'GET',
       path: '/api/v1/bills/tax/gst-register?date=2026-08-18',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -356,7 +356,7 @@ test('Sales Bills & Tax Receipts — Screen 005 Integration Test Suite', async (
       port,
       method: 'GET',
       path: '/api/v1/bills/reconciliation/status?date=2026-08-18',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);

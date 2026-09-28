@@ -633,7 +633,7 @@ test('Cafe Operations Login 2.0 Contract & 32-Requirement Specification Suite', 
     assert.notEqual(getRes.status, 200, 'GET to login endpoint must not authenticate user');
   });
 
-  // Req 32: No Normal Master role introduced; Master accounts cannot login via operator PIN
+  // Req 32: No Malformed MASTER role introduced; Master accounts cannot login via operator PIN
   await t.test('32: Primary Master and non-operator roles rejected from Cafe Operations login', async () => {
     const res = await requestHttp(server, {
       path: '/api/v1/auth/cafe-operations/login',
