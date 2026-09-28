@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { validateProposedRole } = require('../src/services/userGovernanceService');
+const { authorize, canAccessCafe } = require('../src/middleware/authorize');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SKIP_DIRS = new Set([
@@ -114,5 +115,73 @@ test('MASTER role is singleton-only in governance policy', () => {
   for (const role of ['OWNER', 'CAFE_ADMIN', 'STAFF', 'VENDOR']) {
     assert.doesNotThrow(() => validateProposedRole(role));
   }
+});
+
+test('Malformed non-primary MASTER authorization context fails closed', async () => {
+  const malformedAuth = {
+    userId: 'MU-MALFORMED-01',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+    assignedCafeIds: ['ZC-0001'],
+  };
+
+  assert.equal(
+    canAccessCafe(malformedAuth, 'ZC-0001'),
+    false,
+    'malformed MASTER must not inherit café-wide access'
+  );
+
+  let nextCalled = false;
+  let statusCode = null;
+  let payload = null;
+  const response = {
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(body) {
+      payload = body;
+      return this;
+    },
+  };
+
+  await authorize(['MASTER'])(
+    { auth: malformedAuth, method: 'GET', originalUrl: '/test' },
+    response,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(statusCode, 403);
+  assert.equal(
+    payload?.error?.code,
+    'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+  );
+
+  const primaryAuth = {
+    ...malformedAuth,
+    userId: 'MU-0001',
+    isPrimaryMaster: true,
+  };
+
+  assert.equal(canAccessCafe(primaryAuth, 'ZC-0001'), true);
+
+  nextCalled = false;
+  statusCode = null;
+  payload = null;
+  await authorize(['MASTER'])(
+    { auth: primaryAuth, method: 'GET', originalUrl: '/test' },
+    response,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(statusCode, null);
+  assert.equal(payload, null);
 });
 
