@@ -51,6 +51,7 @@ test('staged Café provisioning rolls back every subsystem on a late failure', a
     category: 'OTHER',
     baseUnit: 'unit',
     status: 'ACTIVE',
+    createdByUserId: primaryAuth.userId,
   });
 
   await User.create({
