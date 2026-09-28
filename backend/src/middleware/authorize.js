@@ -148,7 +148,7 @@ function canAccessCafe(
   }
 
   if (auth.role === 'MASTER') {
-    return true;
+    return auth.isPrimaryMaster === true;
   }
 
   const assignedCafeIds =
@@ -169,7 +169,7 @@ function ruleAppliesToRequest({
 
   switch (rule.scope) {
     case 'ORGANISATION':
-      return auth.role === 'MASTER' ||
+      return (auth.role === 'MASTER' && auth.isPrimaryMaster === true) ||
         auth.role === 'OWNER';
 
     case 'ASSIGNED_CAFES':
@@ -389,8 +389,20 @@ function authorize(
         );
       }
       const authRole = String(request.auth.role).toUpperCase();
-      const isMasterRole = authRole === 'MASTER' || authRole === 'PRIMARY_MASTER' || Boolean(request.auth.isPrimaryMaster);
-      const isRoleAllowed = roles.includes(authRole) || (roles.includes('MASTER') && isMasterRole);
+      if (authRole === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+        return sendAuthorizationError(
+          response,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER access.',
+          403,
+          request
+        );
+      }
+      const isPrimaryMasterRole =
+        authRole === 'MASTER' && request.auth.isPrimaryMaster === true;
+      const isRoleAllowed =
+        roles.includes(authRole) &&
+        (authRole !== 'MASTER' || isPrimaryMasterRole);
       if (!isRoleAllowed) {
         return sendAuthorizationError(
           response,
@@ -426,6 +438,17 @@ function authorize(
       }
 
       const auth = request.auth;
+
+      if (auth.role === 'MASTER' && auth.isPrimaryMaster !== true) {
+        return sendAuthorizationError(
+          response,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER access.',
+          403,
+          request
+        );
+      }
+
       const userCaps = Array.isArray(auth.capabilities) ? auth.capabilities : [];
       const hasMatchingCapability =
         Array.isArray(allowedCapabilities) &&
@@ -552,7 +575,8 @@ function authorize(
         // No explicit DB rule found. If the route explicitly permits this role,
         // or if the actor is Primary Master (with full governance and no absolute restriction),
         // fallback to default permission grant.
-        const isMaster = auth.role === 'MASTER' || Boolean(auth.isPrimaryMaster);
+        const isMaster =
+          auth.role === 'MASTER' && auth.isPrimaryMaster === true;
         const isRoleInAllowed = Array.isArray(allowedRoles) && allowedRoles.includes(auth.role);
 
         if (isMaster || isRoleInAllowed || hasMatchingCapability) {
@@ -560,7 +584,7 @@ function authorize(
             allowed: true,
             rule: {
               permissionRuleId: `DEFAULT_${auth.role}_${normalizedPermissionCode}`,
-              scope: (auth.role === 'MASTER' || auth.role === 'OWNER') ? 'ORGANISATION' : (cafeId ? 'CAFE' : 'ORGANISATION'),
+              scope: ((auth.role === 'MASTER' && auth.isPrimaryMaster === true) || auth.role === 'OWNER') ? 'ORGANISATION' : (cafeId ? 'CAFE' : 'ORGANISATION'),
               requiresMfa: false,
               requiresReason: false,
               requiresAuditEvent: false,
