@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { validateProposedRole } = require('../src/services/userGovernanceService');
 const { authorize, canAccessCafe } = require('../src/middleware/authorize');
+const expenseController = require('../src/controllers/expenseController');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SKIP_DIRS = new Set([
@@ -22,6 +23,29 @@ const TEXT_EXTENSIONS = new Set([
   '.json', '.md', '.txt', '.yml', '.yaml', '.ps1',
   '.html', '.css', '.scss', '.xml', '.sh',
 ]);
+
+function invokeController(controllerFn, request) {
+  return new Promise((resolve, reject) => {
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+        resolve(this);
+        return this;
+      },
+    };
+    const next = (err) => {
+      if (err) reject(err);
+      else resolve(response);
+    };
+    Promise.resolve(controllerFn(request, response, next)).catch(reject);
+  });
+}
 
 const FORBIDDEN = [
   // Catch every retired alias family without embedding the forbidden phrase
@@ -185,3 +209,46 @@ test('Malformed non-primary MASTER authorization context fails closed', async ()
   assert.equal(payload, null);
 });
 
+
+test('Malformed non-primary MASTER direct expense mutations fail closed', async () => {
+  const malformedAuth = {
+    userId: 'MU-MALFORMED-EXPENSE',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+    assignedCafeIds: ['ZC-0001'],
+  };
+
+  await assert.rejects(
+    () =>
+      invokeController(expenseController.reverseExpense, {
+        auth: malformedAuth,
+        params: { expenseId: 'EX-MALFORMED-001' },
+        body: { reason: 'Unauthorized reversal attempt' },
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      invokeController(expenseController.createOperationalAdvance, {
+        auth: malformedAuth,
+        body: {
+          recipientUserId: 'ADM-001',
+          cafeId: 'ZC-0001',
+          purpose: 'Unauthorized advance attempt',
+          amount: 1000,
+          returnDueDate: '2026-10-15',
+        },
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+});
