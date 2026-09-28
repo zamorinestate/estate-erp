@@ -16,12 +16,121 @@ const { OperationalAlert } = require('../models/OperationalAlert');
 const { CashTransaction } = require('../models/CashTransaction');
 const { RegisterSession } = require('../models/RegisterSession');
 const { Bill } = require('../models/Bill');
+const { User } = require('../models/User');
 const { BomDepletionService } = require('./bomDepletionService');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { ApiError } = require('../utils/ApiError');
 
 function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
+async function resolveReconciliationAuthority(job, authContext = {}) {
+  const jobOrg = normalizeId(job?.organisationId);
+  const jobCafe = normalizeId(job?.cafeId);
+  const authOrg = normalizeId(authContext?.organisationId);
+  const claimedRole = normalizeId(authContext?.role);
+  const userId = normalizeId(authContext?.userId);
+
+  if (!authOrg || authOrg !== jobOrg) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Reconciliation job does not belong to the authenticated organisation.'
+    );
+  }
+
+  if (claimedRole === 'OWNER' || claimedRole === 'STAFF' || !['CAFE_ADMIN', 'MASTER'].includes(claimedRole)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Only an assigned Café Admin or the Primary Master may retry POS reconciliation jobs.'
+    );
+  }
+
+  if (claimedRole === 'MASTER' && authContext?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to retry POS reconciliation jobs.'
+    );
+  }
+
+  if (!userId) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Canonical reviewer identity is required to retry POS reconciliation jobs.'
+    );
+  }
+
+  const canonicalUser = await User.findOne({
+    organisationId: authOrg,
+    userId,
+  }).lean();
+
+  if (!canonicalUser) {
+    throw new ApiError(
+      403,
+      claimedRole === 'MASTER' ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED' : 'AUTHORIZATION_DENIED',
+      'Reconciliation retry authority could not be verified against the canonical user record.'
+    );
+  }
+
+  const accountStatus = normalizeId(canonicalUser.accountStatus || canonicalUser.status || 'ACTIVE');
+  if (['DISABLED', 'TERMINATED', 'SUSPENDED', 'DEACTIVATED', 'ARCHIVED', 'LOCKED', 'EXITED'].includes(accountStatus)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      `User ${userId} is currently ${accountStatus}; reconciliation retry is denied.`
+    );
+  }
+
+  const activeRole = normalizeId(canonicalUser.role);
+  if (!['CAFE_ADMIN', 'MASTER'].includes(activeRole)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      `Current role ${activeRole} is not authorized to retry POS reconciliation jobs.`
+    );
+  }
+
+  if (activeRole !== claimedRole) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_CONTEXT_STALE',
+      'Authorization context is stale because the canonical role has changed. Re-authentication is required.'
+    );
+  }
+
+  if (activeRole === 'MASTER') {
+    if (canonicalUser.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required to retry POS reconciliation jobs.'
+      );
+    }
+    return canonicalUser;
+  }
+
+  const assignedCafes = [
+    ...(Array.isArray(canonicalUser.assignedCafeIds) ? canonicalUser.assignedCafeIds : []),
+    canonicalUser.primaryCafeId,
+    canonicalUser.cafeId,
+  ]
+    .filter(Boolean)
+    .map(normalizeId);
+
+  if (!jobCafe || !assignedCafes.includes(jobCafe)) {
+    throw new ApiError(
+      403,
+      'CAFE_ACCESS_DENIED',
+      'Café Admin is not assigned to the reconciliation job café.'
+    );
+  }
+
+  return canonicalUser;
 }
 
 class PosReconciliationService {
@@ -127,6 +236,8 @@ class PosReconciliationService {
     if (!job) {
       throw new ApiError(404, 'RECONCILIATION_JOB_NOT_FOUND', `Reconciliation job ${jobId} does not exist.`);
     }
+
+    await resolveReconciliationAuthority(job, authContext);
 
     if (job.status === 'RESOLVED') {
       return { success: true, alreadyResolved: true, job };
