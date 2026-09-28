@@ -15,8 +15,8 @@ const {
 
 const { ApiError } = require('../src/utils/ApiError');
 
-test('Primary Master Security Countermeasure — Secondary Master neutralization attempt', async (t) => {
-  await t.test('secondary Master attacking Primary Master gets automatically suspended', async () => {
+test('Primary Master Security Countermeasure — malformed non-primary MASTER neutralization attempt', async (t) => {
+  await t.test('malformed non-primary MASTER attacking Primary Master gets automatically suspended', async () => {
     const pm = new User({
       userId: 'MU-0001',
       organisationId: 'ORG-0001',
@@ -30,10 +30,10 @@ test('Primary Master Security Countermeasure — Secondary Master neutralization
       primaryMasterDesignationReason: 'Initial bootstrap',
     });
 
-    const secondaryMaster = new User({
+    const malformedMaster = new User({
       userId: 'MU-0002',
       organisationId: 'ORG-0001',
-      name: 'Attacking Secondary Master',
+      name: 'Attacking Malformed Master Context',
       email: 'attacker@zamorin.com',
       role: 'MASTER',
       isPrimaryMaster: false,
@@ -44,7 +44,7 @@ test('Primary Master Security Countermeasure — Secondary Master neutralization
 
     // Mock save
     let attackerSaved = false;
-    secondaryMaster.save = async function () {
+    malformedMaster.save = async function () {
       attackerSaved = true;
     };
 
@@ -61,7 +61,7 @@ test('Primary Master Security Countermeasure — Secondary Master neutralization
       async () => {
         await handlePrimaryMasterAttack({
           request: mockRequest,
-          actorDocument: secondaryMaster,
+          actorDocument: malformedMaster,
           target: pm,
           operationDescription: 'deactivate Primary Master',
         });
@@ -76,11 +76,11 @@ test('Primary Master Security Countermeasure — Secondary Master neutralization
 
     // Verify attacking Master state
     assert.equal(attackerSaved, true);
-    assert.equal(secondaryMaster.accountStatus, 'SUSPENDED');
-    assert.equal(secondaryMaster.primaryMasterProtectionSuspension, true);
-    assert.equal(secondaryMaster.sessionVersion, 2);
-    assert.equal(secondaryMaster.permissionsVersion, 2);
-    assert.match(secondaryMaster.statusReason, /PRIMARY_MASTER_PROTECTION_TRIGGERED/);
+    assert.equal(malformedMaster.accountStatus, 'SUSPENDED');
+    assert.equal(malformedMaster.primaryMasterProtectionSuspension, true);
+    assert.equal(malformedMaster.sessionVersion, 2);
+    assert.equal(malformedMaster.permissionsVersion, 2);
+    assert.match(malformedMaster.statusReason, /PRIMARY_MASTER_PROTECTION_TRIGGERED/);
 
     // Verify Primary Master remains untouched
     assert.equal(pm.accountStatus, 'ACTIVE');
@@ -88,7 +88,7 @@ test('Primary Master Security Countermeasure — Secondary Master neutralization
     assert.equal(pm.role, 'MASTER');
   });
 
-  await t.test('secondary Master cannot restore an account suspended for Primary Master attack', async () => {
+  await t.test('malformed non-primary MASTER cannot restore an account suspended for Primary Master attack', async () => {
     const pmAttacker = new User({
       userId: 'MU-0002',
       organisationId: 'ORG-0001',
@@ -100,17 +100,17 @@ test('Primary Master Security Countermeasure — Secondary Master neutralization
       statusReason: 'PRIMARY_MASTER_PROTECTION_TRIGGERED: Attempted illegal action',
     });
 
-    const otherSecondaryMaster = new User({
+    const otherMalformedMaster = new User({
       userId: 'MU-0003',
       organisationId: 'ORG-0001',
-      name: 'Other Secondary Master',
+      name: 'Other Malformed Master Context',
       role: 'MASTER',
       isPrimaryMaster: false,
     });
 
     assert.throws(
       () => {
-        assertMayRestoreAccount(otherSecondaryMaster, pmAttacker);
+        assertMayRestoreAccount(otherMalformedMaster, pmAttacker);
       },
       (err) => {
         assert.equal(err instanceof ApiError, true);
