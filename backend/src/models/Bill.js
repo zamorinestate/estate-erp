@@ -791,6 +791,7 @@ const billSchema = new mongoose.Schema(
     // Database-level uniqueness prevents multi-process / multi-worker duplicate sale creation.
     saleAttemptId: {
       type: String,
+      immutable: true,
       trim: true,
       index: true,
       sparse: true,
