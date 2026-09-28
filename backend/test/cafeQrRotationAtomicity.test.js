@@ -153,4 +153,23 @@ test('successful QR rotation keeps public reference distinct from secret credent
     false,
     'secret QR credential must not be persisted as the public café reference'
   );
+
+  const revoked = await cafeService.revokeQrCredential({
+    organisationId,
+    cafeId: created.cafe.cafeId,
+    auth,
+    reason: 'Atomic revocation verification',
+  });
+  assert.equal(revoked.qrEnabled, false);
+
+  const revokedCafe = await Cafe.findOne({
+    organisationId,
+    cafeId: created.cafe.cafeId,
+  }).lean();
+  const revokedRecord = await UniversalQrRecord.findOne({
+    qrId: result.qrId,
+  }).lean();
+
+  assert.equal(revokedCafe.qrLoginContext.status, 'REVOKED');
+  assert.equal(revokedRecord.status, 'REVOKED');
 });
