@@ -28,3 +28,12 @@ test('Café-access governance accepts Primary Master, not a generic MASTER token
   assert.match(accessController, /role === 'MASTER' && req\.auth\.isPrimaryMaster === true/);
   assert.match(accessController, /PRIMARY_MASTER_AUTHORITY_REQUIRED/);
 });
+
+test('printable Café QR never creates an alternate credential on demand', () => {
+  assert.match(cafeService, /CAFE_QR_RECORD_MISSING/);
+  assert.doesNotMatch(
+    cafeService,
+    /\/\/ Create on-demand[\s\S]{0,500}UniversalQrService\.createQrRecord/,
+    'Printable QR repair must not invent a second gateway identity'
+  );
+});
