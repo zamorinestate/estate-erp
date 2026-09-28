@@ -202,13 +202,13 @@ async function runSecurityMatrix() {
 
     _seedDemoMaster({
       identifier: 'mfa_master@zamorin.com',
-      employeeId: 'USR_MASTER_02',
+      employeeId: 'USR_MASTER_01',
       organisationId: orgId,
-      role: 'MASTER_NORMAL',
+      role: 'MASTER_PRIMARY',
       password: 'MasterPassword123!',
       mfaCode: '654321', // MFA enabled
     });
-    repos.masters.seed({ id: 'USR_MASTER_02', isActive: true, organisationId: orgId, role: 'MASTER_NORMAL' });
+    repos.masters.seed({ id: 'USR_MASTER_01', isActive: true, organisationId: orgId, role: 'MASTER_PRIMARY' });
 
     // 7. Master Correct Password (no MFA)
     const masterRes = await request(standaloneBaseUrl, '/operator/master-signin/credentials', {
@@ -334,7 +334,7 @@ async function runSecurityMatrix() {
     const { requireGovernanceRole, resolveCallerFromRequest } = await import('../backend/src/cafe-operations/middleware/requireGovernanceRole.js');
     const mockReqStaff = { auth: { userId: 'STAFF_01', role: 'STAFF', organisationId: orgId, status: 'ACTIVE' } };
     let staffDenied = false;
-    const staffGuard = requireGovernanceRole('MASTER_PRIMARY', 'MASTER_NORMAL', 'CAFE_ADMIN');
+    const staffGuard = requireGovernanceRole('MASTER_PRIMARY', 'CAFE_ADMIN');
     staffGuard(mockReqStaff, {
       status(s) { return { json(b) { if (s === 403) staffDenied = true; return b; } }; }
     }, () => {});
