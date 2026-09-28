@@ -686,6 +686,15 @@ async function createSession({
     );
   }
 
+  if (
+    String(user.role || '').trim().toUpperCase() === 'MASTER' &&
+    user.isPrimaryMaster !== true
+  ) {
+    throw new Error(
+      'Invalid MASTER account configuration.'
+    );
+  }
+
   // Mandatory TOTP is removed; session creation never demands mandatory TOTP
   const roleRequiresMfaSession = false;
 
@@ -862,11 +871,47 @@ async function rotateRefreshToken({
     organisationId: session.organisationId,
     userId: session.userId,
     accountStatus: 'ACTIVE',
+    archivedAt: null,
   });
 
   if (!user) {
+    await session.revoke({
+      revokedBy: 'SYSTEM',
+      reason: 'USER_UNAVAILABLE',
+      details:
+        'The user account is unavailable or archived.',
+    });
+
     throw new Error(
       'The user account is unavailable.'
+    );
+  }
+
+  if (
+    String(user.role || '').trim().toUpperCase() === 'MASTER' &&
+    user.isPrimaryMaster !== true
+  ) {
+    await session.markCompromised({
+      revokedBy: 'SYSTEM',
+      details:
+        'A malformed non-primary MASTER account attempted token rotation.',
+    });
+
+    throw new Error(
+      'Invalid MASTER account configuration.'
+    );
+  }
+
+  if (session.roleSnapshot !== user.role) {
+    await session.revoke({
+      revokedBy: 'SYSTEM',
+      reason: 'ROLE_CHANGED',
+      details:
+        'The user role changed after the session was issued.',
+    });
+
+    throw new Error(
+      'The session role is no longer valid.'
     );
   }
 
