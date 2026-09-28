@@ -104,8 +104,7 @@ function assertCafeAccess(request, cafeId) {
 
 function buildCafeFilter(request) {
   const filter = {
-    organisationId:
-      request.auth.organisationId,
+    organisationId: requireOrganisationId(request),
   };
 
   if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
