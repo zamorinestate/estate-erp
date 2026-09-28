@@ -190,8 +190,16 @@ class UniversalQrService {
   /**
    * Revokes a QR code permanently.
    */
-  static async revokeQr(qrId, { reason = 'Revoked by administrator', actorUserId = 'SYSTEM' } = {}) {
-    const record = await UniversalQrRecord.findOne({ qrId });
+  static async revokeQr(qrId, {
+    reason = 'Revoked by administrator',
+    actorUserId = 'SYSTEM',
+    session = null,
+  } = {}) {
+    let query = UniversalQrRecord.findOne({ qrId });
+    if (session && typeof query.session === 'function') {
+      query = query.session(session);
+    }
+    const record = await query;
     if (!record) {
       throw new ApiError(404, 'QR_NOT_FOUND', 'QR record not found.');
     }
@@ -199,9 +207,9 @@ class UniversalQrService {
     record.status = 'REVOKED';
     record.revocationReason = reason;
     record.revokedAt = new Date();
-    await record.save();
+    await record.save(session ? { session } : {});
 
-    await auditService.recordAuditEvent({
+    if (!session) await auditService.recordAuditEvent({
       organisationId: record.organisationId,
       cafeId: record.cafeId || 'GLOBAL',
       actorUserId,
@@ -249,8 +257,13 @@ class UniversalQrService {
   /**
    * Revokes a QR code permanently (convenience alias).
    */
-  static async revokeQrRecord(qrId, reason = 'Revoked by administrator', actorUserId = 'SYSTEM') {
-    return this.revokeQr(qrId, { reason, actorUserId });
+  static async revokeQrRecord(
+    qrId,
+    reason = 'Revoked by administrator',
+    actorUserId = 'SYSTEM',
+    session = null
+  ) {
+    return this.revokeQr(qrId, { reason, actorUserId, session });
   }
 
   /**
