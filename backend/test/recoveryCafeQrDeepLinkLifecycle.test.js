@@ -10,6 +10,7 @@ const { Cafe } = require('../src/models/Cafe');
 const { CafeAccess } = require('../src/models/CafeAccess');
 const { User } = require('../src/models/User');
 const { AuditEvent } = require('../src/models/AuditEvent');
+const { UniversalQrRecord } = require('../src/models/UniversalQrRecord');
 const cafeAccessCryptoService = require('../src/services/cafeAccessCryptoService');
 const cafeService = require('../src/services/cafeService');
 const { ApiError } = require('../src/utils/ApiError');
@@ -39,7 +40,21 @@ test('REC-03: Per-Café Unique QR, Secure Deep-Link, Gateway & Access-Credential
 
   t.before(async () => {
     mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-    await mongoose.connect(mongoServer.getUri());
+    await mongoose.connect(mongoServer.getUri(), {
+      autoIndex: true,
+      autoCreate: true,
+    });
+
+    // QR rotation/revocation uses a multi-document transaction spanning Café,
+    // CafeAccess and UniversalQrRecord. Build their collections/indexes before
+    // the first transaction so catalog DDL cannot race transaction execution.
+    await Promise.all([
+      Cafe.init(),
+      CafeAccess.init(),
+      UniversalQrRecord.init(),
+      User.init(),
+      AuditEvent.init(),
+    ]);
 
     cafeAccessCryptoService.verifySecretKeys();
 
