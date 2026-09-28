@@ -40,3 +40,19 @@ test('P2 forensic evidence integrity: smoke/static checks cannot masquerade as p
   assert.doesNotMatch(runner, /FINAL CLOSURE RESULT: 100% PASS|ZERO DEAD BUTTONS/i);
   assert.match(runner, /REAL-BROWSER RELEASE GATE REMAINS REQUIRED/);
 });
+
+
+test('P2 forensic credential integrity: executable scripts cannot bypass hardcoded-password scanning', () => {
+  const scanner = read('scripts/scan_repository_secrets.mjs');
+  assert.doesNotMatch(scanner, /filePath\.includes\(['"]scripts['"]\)/, 'scripts directory must not be blanket-exempt from password scanning');
+
+  for (const rel of [
+    'scripts/test_staff_login_reload.mjs',
+    'scripts/test_staff_buttons_and_master_approvals.mjs',
+    'scripts/test_session_lifecycle.mjs',
+  ]) {
+    const source = read(rel);
+    assert.match(source, /requiredEnv\(/, `${rel} must require environment-supplied credentials`);
+    assert.doesNotMatch(source, /password\s*:\s*['"][^'"]{8,}['"]/i, `${rel} must not embed a reusable password literal`);
+  }
+});

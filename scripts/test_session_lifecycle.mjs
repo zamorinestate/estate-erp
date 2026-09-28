@@ -1,6 +1,15 @@
 import fs from 'node:fs';
 
-const API_BASE = 'http://localhost:4000/api/v1';
+const API_BASE = process.env.E2E_API_BASE_URL || 'http://localhost:4000/api/v1';
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; runtime test credentials must be supplied through the environment.`);
+  return value;
+}
+
+const STAFF_EMAIL = requiredEnv('E2E_STAFF_EMAIL');
+const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
 
 async function testSessionLifecycle() {
   console.log('=== Testing Session Lifecycle & Refresh ===\n');
@@ -11,8 +20,8 @@ async function testSessionLifecycle() {
     headers: { 'Content-Type': 'application/json', 'x-device-id': 'lifecycle-device-01' },
     body: JSON.stringify({
       organisationId: 'ZAMORIN',
-      email: 'staff@example.com',
-      password: 'PK@NilaVega_8427!Cedar',
+      email: STAFF_EMAIL,
+      password: STAFF_PASSWORD,
       device: { deviceId: 'lifecycle-device-01', deviceName: 'Lifecycle Test', deviceType: 'DESKTOP' }
     })
   });

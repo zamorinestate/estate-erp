@@ -44,11 +44,11 @@ function scanFile(filePath) {
 
   totalFilesScanned++;
   const content = fs.readFileSync(filePath, 'utf8');
-  const isTestFile = filePath.includes(path.join('backend', 'test')) || filePath.includes('fixtures') || filePath.includes('scripts');
+  const isTestFile = filePath.includes(path.join('backend', 'test')) || filePath.includes('fixtures');
 
   for (const pattern of SECRET_PATTERNS) {
     if (isTestFile && pattern.name === 'Hardcoded Production Password') {
-      // Test files use dummy sample passwords like "Password123!" for API assertions
+      // Dedicated test/fixture files may use dummy sample passwords for isolated API assertions
       continue;
     }
 
