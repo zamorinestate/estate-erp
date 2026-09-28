@@ -1226,6 +1226,22 @@ userSchema.pre('validate', function normalizeUserFields() {
     this.organisationId = this.organisationId.trim().toUpperCase();
   }
 
+  // MASTER is a singleton Primary Master authority. A second/non-primary
+  // MASTER persona is not a valid domain state and must never be persisted.
+  if (String(this.role || '').toUpperCase() === 'MASTER' && this.isPrimaryMaster !== true) {
+    this.invalidate(
+      'isPrimaryMaster',
+      'Every MASTER account must be the designated Primary Master.'
+    );
+  }
+
+  if (this.isPrimaryMaster === true && String(this.role || '').toUpperCase() !== 'MASTER') {
+    this.invalidate(
+      'role',
+      'Primary Master designation requires the MASTER role.'
+    );
+  }
+
   this.name =
     normalizeOptionalText(this.name);
 
