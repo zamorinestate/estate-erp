@@ -95,8 +95,13 @@ test('STAGE V-00: Vendor Foundation & Security Boundary Suite', async (suite) =>
   let masterToken;
   let unboundVendorToken;
   let suspendedVendorToken;
+  const originalJwtAccessSecret = process.env.JWT_ACCESS_SECRET;
+  const originalJwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
 
   suite.before(async () => {
+    process.env.JWT_ACCESS_SECRET = 'vendor_security_test_access_secret_32_chars_minimum!';
+    process.env.JWT_REFRESH_SECRET = 'vendor_security_test_refresh_secret_32_chars_minimum!';
+
     ({ isRouteAllowed, ROLES } = await import('../../frontend/src/js/navigation.js'));
 
     mongoReplSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
@@ -280,6 +285,12 @@ test('STAGE V-00: Vendor Foundation & Security Boundary Suite', async (suite) =>
     if (server) await new Promise((resolve) => server.close(resolve));
     if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
     if (mongoReplSet) await mongoReplSet.stop();
+
+    if (originalJwtAccessSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+    else process.env.JWT_ACCESS_SECRET = originalJwtAccessSecret;
+
+    if (originalJwtRefreshSecret === undefined) delete process.env.JWT_REFRESH_SECRET;
+    else process.env.JWT_REFRESH_SECRET = originalJwtRefreshSecret;
   });
 
   // ── 1. AUTHENTICATION & IDENTITY BINDING ───────────────────────────────────
