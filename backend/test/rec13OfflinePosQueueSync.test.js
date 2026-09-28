@@ -1183,12 +1183,36 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
 
   // Test D: Assigned Café Admin approves -> exactly one bill/invoice/cash/BOM effect
   it('REC-13A Test D: Assigned Café Admin approves -> creates exactly one bill, invoice, and BOM depletion', async () => {
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: 'AD-001' },
+      {
+        userId: 'AD-001',
+        organisationId: orgId,
+        name: 'REC-13 Active Café Admin',
+        email: 'rec13.admin@zamorin.test',
+        role: 'CAFE_ADMIN',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeId],
+      },
+      { upsert: true }
+    );
+
     const adminAuthContext = {
       userId: 'AD-001',
       role: 'CAFE_ADMIN',
       organisationId: orgId,
       assignedCafeIds: [cafeId],
     };
+
+    const visiblePending = await OfflineSyncService.getPendingReviews({
+      organisationId: orgId,
+      cafeId,
+      authUser: adminAuthContext,
+    });
+    assert.ok(
+      visiblePending.some((item) => item.reviewId === 'REV-ATT-TERM-USER-001'),
+      'Assigned Café Admin must see the pending review only after canonical live-authority verification'
+    );
 
     const reviewResult = await OfflineSyncService.reviewItem({
       reviewId: 'REV-ATT-TERM-USER-001',
@@ -1257,7 +1281,23 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
       transactions: [foreignTx],
     });
 
-    // Koramangala Admin (assigned ONLY to cafeIdB) attempts to approve Indiranagar transaction
+    // Koramangala Admin (assigned ONLY to cafeIdB) attempts to approve Indiranagar transaction.
+    // Seed the live canonical record so the denial proves cross-café isolation,
+    // not merely missing-user fail-closed behavior.
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: 'AD-KOR-01' },
+      {
+        userId: 'AD-KOR-01',
+        organisationId: orgId,
+        name: 'REC-13 Koramangala Admin',
+        email: 'rec13.kor.admin@zamorin.test',
+        role: 'CAFE_ADMIN',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeIdB],
+      },
+      { upsert: true }
+    );
+
     const foreignAdminContext = {
       userId: 'AD-KOR-01',
       role: 'CAFE_ADMIN',
@@ -1352,6 +1392,19 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     };
 
     await assert.rejects(
+      () => OfflineSyncService.getPendingReviews({
+        organisationId: orgId,
+        cafeId,
+        authUser: orphanedPrimaryContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
       () => OfflineSyncService.reviewItem({
         reviewId: 'REV-ATT-FOR-CAFE-001',
         action: 'APPROVE_AND_FINALIZE',
@@ -1361,6 +1414,58 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
       (err) => {
         assert.strictEqual(err.statusCode, 403);
         assert.strictEqual(err.errorCode || err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+  });
+
+  // Test H1: stale allowed-role token cannot inherit a more privileged live role
+  it('REC-13A Test H1: stale Café Admin token cannot inherit newly promoted Primary-Master authority', async () => {
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: 'MU-PROMOTED-01' },
+      {
+        userId: 'MU-PROMOTED-01',
+        organisationId: orgId,
+        name: 'REC-13 Promoted Primary Master',
+        email: 'rec13.promoted.primary@zamorin.test',
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [],
+      },
+      { upsert: true }
+    );
+
+    const staleAdminContext = {
+      userId: 'MU-PROMOTED-01',
+      role: 'CAFE_ADMIN',
+      organisationId: orgId,
+      assignedCafeIds: [cafeId],
+    };
+
+    await assert.rejects(
+      () => OfflineSyncService.getPendingReviews({
+        organisationId: orgId,
+        cafeId,
+        authUser: staleAdminContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'AUTHORIZATION_CONTEXT_STALE');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => OfflineSyncService.reviewItem({
+        reviewId: 'REV-ATT-FOR-CAFE-001',
+        action: 'APPROVE_AND_FINALIZE',
+        reason: 'Stale admin token must not inherit Primary-Master scope',
+        authContext: staleAdminContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'AUTHORIZATION_CONTEXT_STALE');
         return true;
       }
     );
