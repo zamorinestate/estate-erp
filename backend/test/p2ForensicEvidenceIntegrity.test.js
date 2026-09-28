@@ -87,3 +87,13 @@ test('P2 forensic hygiene: obsolete live-like credential utilities stay retired'
     assert.equal(fs.existsSync(path.join(ROOT, rel)), false, `${rel} must remain retired`);
   }
 });
+
+
+test('P2 forensic evidence integrity: supporting-file evidence cannot self-certify production readiness', () => {
+  const docsGenerator = read('scripts/generate_supporting_files_docs.mjs');
+  assert.doesNotMatch(docsGenerator, /CLOSED AND CERTIFIED 100% COMPLETE|100% Certified Standard Compliant|100% Single Authority Certified/i);
+
+  const browserAudit = read('scripts/audit_supporting_files_browser_runtime.mjs');
+  assert.doesNotMatch(browserAudit, /certified 100% operational/i);
+  assert.match(browserAudit, /not a production certification/i);
+});
