@@ -707,13 +707,15 @@ test('PM-05-R1 Financial Atomicity, Idempotency & Governance Suite', async (t) =
   });
 
   await t.test('R2-5: Five-Portal Personal Ledger authority matrix & Zero drift', async () => {
-    // 1. Malformed MASTER: DENIED (403)
-    currentUser = makeUser({ userId: 'MU-NORMAL-01', role: 'MASTER', isPrimaryMaster: false });
-    currentSession = makeSession({ userId: 'MU-NORMAL-01', roleSnapshot: 'MASTER' });
+    // 1. Malformed non-primary MASTER: rejected at the authentication boundary.
+    currentUser = makeUser({ userId: 'MU-MALFORMED-01', role: 'MASTER', isPrimaryMaster: false });
+    currentSession = makeSession({ userId: 'MU-MALFORMED-01', roleSnapshot: 'MASTER' });
     const nmRes = await fetch(`${baseUrl}/personal-ledger/overview`, {
       headers: { Authorization: 'Bearer valid-token' },
     });
-    assert.strictEqual(nmRes.status, 403);
+    assert.strictEqual(nmRes.status, 401);
+    const nmBody = await nmRes.json();
+    assert.strictEqual(nmBody?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
 
     // 2. CAFE_ADMIN: DENIED (403)
     currentUser = makeUser({ userId: 'ADM-01', role: 'CAFE_ADMIN', isPrimaryMaster: false });
