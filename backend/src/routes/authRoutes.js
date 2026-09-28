@@ -44,6 +44,7 @@ const {
 const passkeyController = require('../controllers/passkeyController');
 const { getTrustedClientIp } = require('../utils/clientIp');
 const { logSecurityEvent } = require('../services/securityLogger');
+const { redisClientFactory } = require('../services/redisClientFactory');
 
 const router = express.Router();
 
@@ -128,6 +129,112 @@ const MFA_RATE_LIMIT_MESSAGE = Object.freeze({
   },
 });
 
+
+function isProductionLikeAuthEnvironment() {
+  const nodeEnv = String(process.env.NODE_ENV || '').trim().toLowerCase();
+  const appMode = String(process.env.APP_MODE || '').trim().toUpperCase();
+  return (
+    nodeEnv === 'production' ||
+    nodeEnv === 'staging' ||
+    appMode === 'PRODUCTION' ||
+    appMode === 'STAGING' ||
+    appMode === 'UAT' ||
+    appMode === 'REAL_USER_TEST'
+  );
+}
+
+function sendDistributedLimiterUnavailable(req, res) {
+  try {
+    logSecurityEvent({
+      correlationId: req.correlationId || null,
+      organisationId: req.body?.organisationId || req.body?.orgId || null,
+      action: 'AUTH_DISTRIBUTED_RATE_LIMITER_UNAVAILABLE',
+      outcome: 'DENIED',
+      severity: 'ERROR',
+      metadata: {
+        route: req.originalUrl || req.baseUrl || '/auth',
+        clientIp: getTrustedClientIp(req),
+      },
+    });
+  } catch {}
+
+  return res.status(503).json({
+    success: false,
+    error: {
+      code: 'AUTH_RATE_LIMITER_UNAVAILABLE',
+      message: 'Authentication protection is temporarily unavailable. Please try again later.',
+    },
+  });
+}
+
+function createDistributedAuthRateLimiter({
+  scope,
+  ipLimit,
+  accountLimit,
+  accountKeyFn = normalizeAccountKey,
+  windowMs = 15 * 60 * 1000,
+  message = LOGIN_RATE_LIMIT_MESSAGE,
+}) {
+  return async function distributedAuthRateLimiter(req, res, next) {
+    const adapter = redisClientFactory.adapterService;
+
+    if (!adapter) {
+      if (isProductionLikeAuthEnvironment()) {
+        return sendDistributedLimiterUnavailable(req, res);
+      }
+      return next();
+    }
+
+    const ipIdentifier = ipKeyGenerator(getTrustedClientIp(req));
+    const accountIdentifier = accountKeyFn(req);
+
+    try {
+      const [ipResult, accountResult] = await Promise.all([
+        adapter.checkRateLimit(`${scope}:IP`, ipIdentifier, ipLimit, windowMs),
+        adapter.checkRateLimit(`${scope}:ACCOUNT`, accountIdentifier, accountLimit, windowMs),
+      ]);
+
+      const deniedResult = !ipResult.allowed
+        ? { result: ipResult, limiter: `${scope}_IP` }
+        : (!accountResult.allowed
+          ? { result: accountResult, limiter: `${scope}_ACCOUNT` }
+          : null);
+
+      if (deniedResult) {
+        try {
+          logSecurityEvent({
+            correlationId: req.correlationId || null,
+            organisationId: req.body?.organisationId || req.body?.orgId || null,
+            action: 'RATE_LIMIT_EXCEEDED',
+            outcome: 'DENIED',
+            severity: 'WARN',
+            metadata: {
+              route: req.originalUrl || req.baseUrl || '/auth',
+              limiter: deniedResult.limiter,
+              clientIp: getTrustedClientIp(req),
+              distributed: true,
+            },
+          });
+        } catch {}
+
+        if (Number.isFinite(deniedResult.result.resetAfterSeconds)) {
+          res.setHeader('Retry-After', String(Math.max(1, deniedResult.result.resetAfterSeconds)));
+        }
+
+        return res.status(429).json(message);
+      }
+
+      return next();
+    } catch (error) {
+      if (isProductionLikeAuthEnvironment()) {
+        return sendDistributedLimiterUnavailable(req, res);
+      }
+
+      return next();
+    }
+  };
+}
+
 function createLoginIpRateLimiter(overrides = {}) {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -184,6 +291,22 @@ const loginIpRateLimiter = createLoginIpRateLimiter();
 const loginAccountRateLimiter = createLoginAccountRateLimiter();
 const passwordResetIpRateLimiter = createPasswordResetIpRateLimiter();
 const passwordResetAccountRateLimiter = createPasswordResetAccountRateLimiter();
+
+const distributedLoginRateLimiter = createDistributedAuthRateLimiter({
+  scope: 'AUTH_LOGIN',
+  ipLimit: process.env.AUTH_RATE_LIMIT_IP_MAX ? Number(process.env.AUTH_RATE_LIMIT_IP_MAX) : 50,
+  accountLimit: process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX ? Number(process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX) : 10,
+  accountKeyFn: (req) => normalizeAccountKey(req, 'email'),
+  message: LOGIN_RATE_LIMIT_MESSAGE,
+});
+
+const distributedPasswordResetRateLimiter = createDistributedAuthRateLimiter({
+  scope: 'AUTH_PASSWORD_RECOVERY',
+  ipLimit: 15,
+  accountLimit: 5,
+  accountKeyFn: (req) => normalizeAccountKey(req, 'email'),
+  message: PASSWORD_RESET_RATE_LIMIT_MESSAGE,
+});
 
 const passkeyIpRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -276,10 +399,10 @@ const cafeOpsIpRateLimiter = createCafeOpsIpRateLimiter();
 const cafeOpsAccountRateLimiter = createCafeOpsAccountRateLimiter();
 
 // Authentication endpoints
-router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, login);
-router.post('/password/forgot', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, requestPasswordReset);
-router.post('/password/reset/verify', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, verifyPasswordResetCode);
-router.post('/password/reset', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, resetPassword);
+router.post('/login', distributedLoginRateLimiter, loginIpRateLimiter, loginAccountRateLimiter, login);
+router.post('/password/forgot', distributedPasswordResetRateLimiter, passwordResetIpRateLimiter, passwordResetAccountRateLimiter, requestPasswordReset);
+router.post('/password/reset/verify', distributedPasswordResetRateLimiter, passwordResetIpRateLimiter, passwordResetAccountRateLimiter, verifyPasswordResetCode);
+router.post('/password/reset', distributedPasswordResetRateLimiter, passwordResetIpRateLimiter, passwordResetAccountRateLimiter, resetPassword);
 router.post('/refresh', refreshSession);
 
 // Café Operations Login 2.0 Endpoints
@@ -356,5 +479,7 @@ router.createLoginIpRateLimiter = createLoginIpRateLimiter;
 router.createLoginAccountRateLimiter = createLoginAccountRateLimiter;
 router.createPasswordResetIpRateLimiter = createPasswordResetIpRateLimiter;
 router.createPasswordResetAccountRateLimiter = createPasswordResetAccountRateLimiter;
+router.createDistributedAuthRateLimiter = createDistributedAuthRateLimiter;
+router.isProductionLikeAuthEnvironment = isProductionLikeAuthEnvironment;
 
 module.exports = router;
