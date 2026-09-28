@@ -145,7 +145,7 @@ test('CALC-008: overtime past standard shift detects overtimeMinutes and PENDING
 });
 
 // ---------------------------------------------------------------------------
-// 2. CONTROLLER TESTS: Master Attendance Edit & Normal Master Parity (P0-A01)
+// 2. CONTROLLER TESTS: Master Attendance Edit & Malformed MASTER Parity (P0-A01)
 // ---------------------------------------------------------------------------
 
 test('P0-A01: correctAttendance rejects if reason is missing', async () => {
@@ -170,7 +170,7 @@ test('P0-A01: correctAttendance rejects if reason is missing', async () => {
   );
 });
 
-test('P0-A01: correctAttendance allows Normal Master and recalculates metrics', async () => {
+test('P0-A01: correctAttendance allows Malformed MASTER and recalculates metrics', async () => {
   const origFindOne = Attendance.findOne;
   const origGenId = SequenceCounter.generateId;
   const origAuditCreate = AuditEvent.create;
@@ -531,7 +531,7 @@ test('P0-A03: requestStaffCorrection creates real AttendanceCorrectionRequest', 
   SequenceCounter.generateId = origGenId;
 });
 
-test('P0-A03: reviewStaffCorrection allows Normal Master to approve and update attendance', async () => {
+test('P0-A03: reviewStaffCorrection allows Malformed MASTER to approve and update attendance', async () => {
   const origFindOne = AttendanceCorrectionRequest.findOne;
   const origAttFindOne = Attendance.findOne;
   const origGenId = SequenceCounter.generateId;

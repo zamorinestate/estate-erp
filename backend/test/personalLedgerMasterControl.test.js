@@ -257,7 +257,7 @@ test('SCR-018: Master Control & Financial Invariant Tests', async (t) => {
     }
   });
 
-  await t.test('3. Normal Master (role = MASTER, isPrimaryMaster = false) is strictly DENIED (403)', async () => {
+  await t.test('3. Malformed MASTER (role = MASTER, isPrimaryMaster = false) is strictly DENIED (403)', async () => {
     const mock = setupMockEnvironment('MASTER', false, 'MU-0002');
     try {
       const res = await fetch(`${baseUrl}/personal-ledger/overview`, {

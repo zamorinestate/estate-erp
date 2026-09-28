@@ -7,7 +7,7 @@
  * 1. Primary Master ↔ Owner 100% functional parity across all ledger workflows.
  * 2. Strict principal data isolation & cross-owner IDOR denial.
  * 3. Immutable audit logs, reversals, and financial calculations.
- * 4. Absolute denial for Normal Master, CAFE_ADMIN, and STAFF.
+ * 4. Absolute denial for Malformed MASTER, CAFE_ADMIN, and STAFF.
  */
 
 const assert = require('node:assert/strict');
@@ -576,7 +576,7 @@ test('OWN-SCR-005: Owner Personal Ledger Parity & Security Suite', async (t) => 
     }
   });
 
-  await t.test('11. Role Boundaries: CAFE_ADMIN, STAFF, and Normal Master are strictly DENIED', async () => {
+  await t.test('11. Role Boundaries: CAFE_ADMIN, STAFF, and Malformed MASTER are strictly DENIED', async () => {
     for (const testCase of [
       { role: 'CAFE_ADMIN', isPrimaryMaster: false, userId: 'ADMIN-0001' },
       { role: 'STAFF', isPrimaryMaster: false, userId: 'STAFF-0001' },
