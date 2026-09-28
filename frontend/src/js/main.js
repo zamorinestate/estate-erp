@@ -370,8 +370,15 @@ function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
   if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
-    // MASTER authority is valid only when the authenticated server context
-    // explicitly marks the singleton Primary Master.
+    // MASTER is a singleton authority. A malformed/non-primary MASTER context
+    // must never enter the Master navigation window.
+    if (user?.isPrimaryMaster !== true) {
+      return {
+        role: "staff",
+        isPrimaryMaster: false,
+      };
+    }
+
     return {
       role: "master",
       isPrimaryMaster: user?.isPrimaryMaster === true,
