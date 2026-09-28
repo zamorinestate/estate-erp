@@ -149,7 +149,7 @@ class CdpClient {
 // ── Main Audit Runner ────────────────────────────────────────────────────────
 async function main() {
   console.log('=============================================================================');
-  console.log('FIVE-PERSONA FULL-SYSTEM FUNCTIONAL & UI/UX AUDIT SUITE');
+  console.log('FOUR-PERSONA FULL-SYSTEM FUNCTIONAL & UI/UX AUDIT SUITE');
   console.log('=============================================================================\n');
 
   const server = await startServer();
@@ -457,7 +457,7 @@ async function main() {
   // AUDIT SUMMARY
   // ===========================================================================
   console.log('\n=============================================================================');
-  console.log(`FIVE-PERSONA AUDIT COMPLETE: ${passedChecks + failedChecks} CHECKS | PASSED: ${passedChecks} | FAILED: ${failedChecks}`);
+  console.log(`FOUR-PERSONA AUDIT COMPLETE: ${passedChecks + failedChecks} CHECKS | PASSED: ${passedChecks} | FAILED: ${failedChecks}`);
   const unhandledExceptions = cdp.runtimeExceptions.filter((e) => {
     const desc = e.exceptionDetails?.exception?.description || "";
     return !desc.includes("NETWORK_UNAVAILABLE") && !desc.includes("Failed to fetch");
