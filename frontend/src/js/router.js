@@ -524,7 +524,7 @@ async function renderPage() {
     case "passbook":
     case "passbook-treasury":
       // SCR-PASSBOOK Rule: Primary Master or Owner ONLY.
-      // Normal Master, CAFE_ADMIN, STAFF are strictly denied.
+      // CAFE_ADMIN, STAFF are strictly denied.
       if (
         (state.role === ROLES.MASTER && !getIsPrimaryMaster()) ||
         (state.role !== ROLES.MASTER && state.role !== ROLES.OWNER)
@@ -538,7 +538,7 @@ async function renderPage() {
 
     case "ledger":
     case "personal-ledger":
-      // SCR-018 Rule: Primary Master or Owner only. Normal Master, CAFE_ADMIN, STAFF denied.
+      // SCR-018 Rule: Primary Master or Owner only. CAFE_ADMIN, STAFF denied.
       if (
         (state.role === ROLES.MASTER && !getIsPrimaryMaster()) ||
         (state.role !== ROLES.MASTER && state.role !== ROLES.OWNER)
@@ -551,7 +551,7 @@ async function renderPage() {
       break;
 
     case "revenue-share":
-      // SCR-026 Rule: Primary Master or Owner only. Normal Master, CAFE_ADMIN, STAFF strictly denied.
+      // SCR-026 Rule: Primary Master or Owner only. CAFE_ADMIN, STAFF strictly denied.
       if (
         (state.role === ROLES.MASTER && !getIsPrimaryMaster()) ||
         (state.role !== ROLES.MASTER && state.role !== ROLES.OWNER)
