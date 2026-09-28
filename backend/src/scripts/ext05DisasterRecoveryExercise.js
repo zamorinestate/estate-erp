@@ -795,20 +795,18 @@ class EXT05DisasterRecoveryOrchestrator {
    */
   verifyPostRecoverySecurityInvariants() {
     // 1. Personal Ledger permanent policy:
-    // PRIMARY MASTER = ALLOW, OWNER = ALLOW, NORMAL MASTER = DENY, CAFE ADMIN = DENY, STAFF = DENY
+    // PRIMARY MASTER = ALLOW, OWNER = ALLOW, CAFE ADMIN = DENY, STAFF = DENY
     const personalLedgerPolicy = {
       PRIMARY_MASTER: 'ALLOW',
       OWNER: 'ALLOW',
-      NORMAL_MASTER: 'DENY',
       CAFE_ADMIN: 'DENY',
       STAFF: 'DENY',
     };
 
     // 2. PO Approval permanent policy:
-    // PRIMARY MASTER = ALLOW, NORMAL MASTER = ALLOW, OWNER = DENY, CAFE ADMIN = DENY, STAFF = DENY
+    // PRIMARY MASTER = ALLOW, OWNER = DENY, CAFE ADMIN = DENY, STAFF = DENY
     const poApprovalPolicy = {
       PRIMARY_MASTER: 'ALLOW',
-      NORMAL_MASTER: 'ALLOW',
       OWNER: 'DENY',
       CAFE_ADMIN: 'DENY',
       STAFF: 'DENY',
