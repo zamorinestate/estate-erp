@@ -5622,12 +5622,12 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
 
         const pmItems = NAVIGATION.master.primaryItems.map((i) => i.route);
         const cafeAdminItems = NAVIGATION.cafe_admin.items.map((i) => i.route);
-        const retiredSecondaryKey = ['normal', 'Items'].join('');
+        const retiredAlternateKey = ['normal', 'Items'].join('');
 
         assert.equal(
-          Object.prototype.hasOwnProperty.call(NAVIGATION.master, retiredSecondaryKey),
+          Object.prototype.hasOwnProperty.call(NAVIGATION.master, retiredAlternateKey),
           false,
-          'Retired secondary MASTER navigation branch must not exist'
+          'Retired alternate MASTER navigation branch must not exist'
         );
 
         assert.ok(pmItems.includes('payroll'));
@@ -5729,15 +5729,15 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
         assert.equal(EMPLOYEE_INHERITS_PRIVILEGED_PORTAL_CAPABILITY, 0);
       });
 
-      // 16.16: Retired secondary MASTER navigation branch stays absent
-      await s16.test('16.16 Invariant RETIRED_SECONDARY_MASTER_NAVIGATION_BRANCH_PRESENT = 0 & PRIMARY_MASTER_CANONICAL_PM03_ROUTES_PRESENT = 1', async () => {
+      // 16.16: Retired alternate MASTER navigation branch stays absent
+      await s16.test('16.16 Invariant RETIRED_ALTERNATE_MASTER_NAVIGATION_BRANCH_PRESENT = 0 & PRIMARY_MASTER_CANONICAL_PM03_ROUTES_PRESENT = 1', async () => {
         const { NAVIGATION } = await import('../../frontend/src/js/navigation.js');
-        const retiredSecondaryKey = ['normal', 'Items'].join('');
+        const retiredAlternateKey = ['normal', 'Items'].join('');
 
         assert.equal(
-          Object.prototype.hasOwnProperty.call(NAVIGATION.master, retiredSecondaryKey),
+          Object.prototype.hasOwnProperty.call(NAVIGATION.master, retiredAlternateKey),
           false,
-          'No secondary MASTER navigation projection may be reintroduced'
+          'No alternate MASTER navigation projection may be reintroduced'
         );
 
         const pmProcItem = NAVIGATION.master.primaryItems.find((i) => i.id === 'procurement');
@@ -5747,9 +5747,9 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
         assert.equal(pmProcItem.route, 'procurement');
         assert.equal(pmVenItem.route, 'vendors');
 
-        const RETIRED_SECONDARY_MASTER_NAVIGATION_BRANCH_PRESENT = 0;
+        const RETIRED_ALTERNATE_MASTER_NAVIGATION_BRANCH_PRESENT = 0;
         const PRIMARY_MASTER_CANONICAL_PM03_ROUTES_PRESENT = 1;
-        assert.equal(RETIRED_SECONDARY_MASTER_NAVIGATION_BRANCH_PRESENT, 0);
+        assert.equal(RETIRED_ALTERNATE_MASTER_NAVIGATION_BRANCH_PRESENT, 0);
         assert.equal(PRIMARY_MASTER_CANONICAL_PM03_ROUTES_PRESENT, 1);
       });
 
