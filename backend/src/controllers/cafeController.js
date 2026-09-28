@@ -32,24 +32,41 @@ function normalizeIdentifier(value) {
     : '';
 }
 
+function requireOrganisationId(request) {
+  const organisationId = String(request.auth?.organisationId || '').trim().toUpperCase();
+  if (!organisationId) {
+    throw new ApiError(
+      403,
+      'ORGANISATION_REQUIRED',
+      'Authenticated organisation context is required.'
+    );
+  }
+  return organisationId;
+}
+
 function requireGovernanceRole(request) {
   const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
-  if (role !== 'MASTER' && role !== 'OWNER') {
+  const isPrimaryMaster = role === 'MASTER' && request.auth?.isPrimaryMaster === true;
+  const isOwner = role === 'OWNER';
+
+  if (!isPrimaryMaster && !isOwner) {
     throw new ApiError(
       403,
       'GOVERNANCE_ACCESS_REQUIRED',
-      'Only Master and Owner roles may perform this action.'
+      'Only the Primary Master or Owner may perform this action.'
     );
   }
 }
 
 function requireMaster(request) {
   const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
-  if (role !== 'MASTER') {
+  const isPrimaryMaster = role === 'MASTER' && request.auth?.isPrimaryMaster === true;
+
+  if (!isPrimaryMaster) {
     throw new ApiError(
       403,
-      'MASTER_ACCESS_REQUIRED',
-      'Only Master role may perform this operational café mutation.'
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may perform this operational café mutation.'
     );
   }
 }
@@ -62,7 +79,14 @@ function assertCafeAccess(request, cafeId) {
       'Vendor accounts cannot access internal café administration.'
     );
   }
-  if (request.auth.role === 'MASTER') return;
+  if (request.auth?.role === 'MASTER') {
+    if (request.auth.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may exercise organisation-wide café access.'
+    );
+  }
   const rawCafes = [
     ...(Array.isArray(request.auth.assignedCafeIds) ? request.auth.assignedCafeIds : (request.auth.assignedCafeIds ? [request.auth.assignedCafeIds] : [])),
     ...(request.auth.primaryCafeId ? [request.auth.primaryCafeId] : []),
@@ -83,6 +107,14 @@ function buildCafeFilter(request) {
     organisationId:
       request.auth.organisationId,
   };
+
+  if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may exercise organisation-wide café access.'
+    );
+  }
 
   if (request.auth.role !== 'MASTER') {
     const rawCafes = [
@@ -766,7 +798,7 @@ const activateCafe = asyncHandler(async (request, response) => {
 });
 
 const listCafeTemplates = asyncHandler(async (request, response) => {
-  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  const organisationId = requireOrganisationId(request);
   const templates = await CafeTemplate.find({ organisationId, isActive: true }).lean();
   return response.status(200).json({
     success: true,
@@ -775,11 +807,8 @@ const listCafeTemplates = asyncHandler(async (request, response) => {
 });
 
 const createCafeTemplate = asyncHandler(async (request, response) => {
-  const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
-  if (role !== 'MASTER') {
-    throw new ApiError(403, 'MASTER_ROLE_REQUIRED', 'Only Master can create café configuration templates.');
-  }
-  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  requireMaster(request);
+  const organisationId = requireOrganisationId(request);
   const {
     name,
     description,
@@ -828,7 +857,7 @@ const createCafeTemplate = asyncHandler(async (request, response) => {
 
 const previewTemplateOverrides = asyncHandler(async (request, response) => {
   const cafeId = normalizeIdentifier(request.params.cafeId);
-  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  const organisationId = requireOrganisationId(request);
   assertCafeAccess(request, cafeId);
 
   const cafe = await Cafe.findOne({ organisationId, cafeId }).lean();
@@ -873,12 +902,9 @@ const previewTemplateOverrides = asyncHandler(async (request, response) => {
 });
 
 const applyTemplateToCafe = asyncHandler(async (request, response) => {
-  const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
-  if (role !== 'MASTER' && role !== 'OWNER') {
-    throw new ApiError(403, 'GOVERNANCE_ROLE_REQUIRED', 'Only Master and Owner can apply templates to cafés.');
-  }
+  requireGovernanceRole(request);
   const cafeId = normalizeIdentifier(request.params.cafeId);
-  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
+  const organisationId = requireOrganisationId(request);
   assertCafeAccess(request, cafeId);
 
   const { templateId, overrides } = request.body;
