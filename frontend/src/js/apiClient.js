@@ -819,12 +819,6 @@ export async function performRequest(
     requestHeaders["x-cafe-id"] = activeCafeScope.trim();
   }
 
-  // Active persona propagation for local development
-  const devRole = state?.role || (typeof localStorage !== "undefined" ? localStorage.getItem("zamorin-dev-role") : null);
-  if (devRole && typeof devRole === "string") {
-    requestHeaders["x-dev-role"] = devRole.trim().toUpperCase();
-  }
-
   if (headers) {
     if (headers instanceof Headers) {
       for (const [k, v] of headers.entries()) {
