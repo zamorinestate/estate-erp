@@ -103,11 +103,11 @@ test('Screen 009: Expense Management & Approvals Integration Test Suite', async 
   };
 
   const malformedMasterUser = {
-    userId: 'MU-NORMAL-01',
+    userId: 'MU-MALFORMED-01',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
     isPrimaryMaster: false,
-    email: 'normal@zamorincafe.com',
+    email: 'malformed.master@zamorincafe.com',
     fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
@@ -240,7 +240,7 @@ test('Screen 009: Expense Management & Approvals Integration Test Suite', async 
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'MU-PRIMARY-01') return primaryMasterUser;
-    if (query?.userId === 'MU-NORMAL-01') return malformedMasterUser;
+    if (query?.userId === 'MU-MALFORMED-01') return malformedMasterUser;
     if (query?.userId === 'ADM-001') return cafeAdminUser;
     return null;
   });
@@ -308,11 +308,23 @@ test('Screen 009: Expense Management & Approvals Integration Test Suite', async 
       port,
       method: 'GET',
       path: '/api/v1/expenses?status=APPROVED',
-      headers: { Authorization: 'Bearer token_malformed_master' },
+      headers: { Authorization: 'Bearer token_primary_master' },
     });
 
     assert.equal(res.statusCode, 200);
     assert.ok(Array.isArray(res.body.expenses));
+  });
+
+  await t.test('2A. Malformed non-primary MASTER is rejected before expense access', async () => {
+    const res = await makeRequest({
+      port,
+      method: 'GET',
+      path: '/api/v1/expenses?status=APPROVED',
+      headers: { Authorization: 'Bearer token_malformed_master' },
+    });
+
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.body?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
   });
 
   await t.test('3. POST /api/v1/expenses creates a new expense voucher', async () => {
