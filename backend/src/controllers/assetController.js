@@ -84,6 +84,16 @@ function parsePositiveInteger(value, fallback, maximum) {
   return Math.min(parsed, maximum);
 }
 
+function assertValidMasterContext(request) {
+  if (request?.auth?.role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER asset access.'
+    );
+  }
+}
+
 function assertCafeAccess(request, cafeId) {
   if (!cafeId) return;
   if (request.auth.role === 'MASTER' || request.auth.role === 'OWNER') return;
@@ -109,6 +119,7 @@ function assertCafeAccess(request, cafeId) {
 
 // 1. GET /api/v1/assets/overview
 const getAssetOverview = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const { organisationId } = request.auth;
   let effectiveCafe = null;
   if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
@@ -212,6 +223,7 @@ const getAssetOverview = asyncHandler(async (request, response) => {
 
 // 2. GET /api/v1/assets
 const listAssets = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const page = parsePositiveInteger(request.query.page, 1, 1000);
   const limit = parsePositiveInteger(request.query.limit, 25, 100);
   const skip = (page - 1) * limit;
@@ -267,6 +279,7 @@ const listAssets = asyncHandler(async (request, response) => {
 
 // 3. POST /api/v1/assets
 const createAsset = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const {
     cafeId: rawCafeId,
     name,
@@ -387,6 +400,7 @@ const createAsset = asyncHandler(async (request, response) => {
 
 // 4. GET /api/v1/assets/:assetId
 const getAssetDetail = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const normAssetId = normalizeId(request.params.assetId);
   const asset = await Asset.findOne({
     assetId: normAssetId,
@@ -460,6 +474,7 @@ const getAssetDetail = asyncHandler(async (request, response) => {
 
 // 5. POST /api/v1/assets/:assetId/commission
 const commissionAsset = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const normAssetId = normalizeId(request.params.assetId);
   const asset = await Asset.findOne({
     assetId: normAssetId,
@@ -502,6 +517,7 @@ const commissionAsset = asyncHandler(async (request, response) => {
 
 // 6. POST /api/v1/assets/:assetId/transfer
 const transferAsset = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const normAssetId = normalizeId(request.params.assetId);
   const { toCafeId: rawToCafeId, reason = '', conditionAtTransfer = 'GOOD' } = request.body || {};
 
@@ -548,6 +564,7 @@ const transferAsset = asyncHandler(async (request, response) => {
 
 // 7. POST /api/v1/assets/:assetId/safety-hold
 const toggleSafetyHold = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const normAssetId = normalizeId(request.params.assetId);
   const { isHoldActive, reason = '' } = request.body || {};
 
@@ -597,6 +614,7 @@ const toggleSafetyHold = asyncHandler(async (request, response) => {
 
 // 8. POST /api/v1/assets/:assetId/retire (Primary Master authorized for final capital retirement)
 const retireAsset = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const normAssetId = normalizeId(request.params.assetId);
   const { reason = 'End of Life', disposalMethod = 'Scrapped', notes = '' } = request.body || {};
 
@@ -607,10 +625,16 @@ const retireAsset = asyncHandler(async (request, response) => {
 
   if (!asset) throw new ApiError(404, 'ASSET_NOT_FOUND', 'Asset not found.');
 
-  const isPrimary = request.auth.isPrimaryMaster === true;
+  const isPrimary =
+    request.auth.role === 'MASTER' &&
+    request.auth.isPrimaryMaster === true;
 
-  if (!isPrimary && request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Only Primary Master holds authority for capital asset retirement and write-off.');
+  if (!isPrimary) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only Primary Master holds authority for capital asset retirement and write-off.'
+    );
   }
 
   asset.operationalStatus = 'RETIRED';
@@ -645,6 +669,7 @@ const retireAsset = asyncHandler(async (request, response) => {
 
 // 9. Work Orders Endpoints
 const listWorkOrders = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const filter = { organisationId: request.auth.organisationId };
   if (request.query.cafeId) {
     const normCafe = normalizeId(request.query.cafeId);
@@ -666,6 +691,7 @@ const listWorkOrders = asyncHandler(async (request, response) => {
 });
 
 const createWorkOrder = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const {
     assetId: rawAssetId,
     title,
@@ -736,6 +762,7 @@ const createWorkOrder = asyncHandler(async (request, response) => {
 });
 
 const updateWorkOrder = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   const normWoId = normalizeId(request.params.workOrderId);
   const workOrder = await WorkOrder.findOne({
     workOrderId: normWoId,
@@ -780,6 +807,7 @@ const updateWorkOrder = asyncHandler(async (request, response) => {
 
 // 10. Maintenance Plans Endpoints
 const listMaintenancePlans = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view maintenance plans.');
   }
@@ -808,6 +836,7 @@ const listMaintenancePlans = asyncHandler(async (request, response) => {
 });
 
 const createMaintenancePlan = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to create maintenance plans.');
   }
@@ -883,6 +912,7 @@ const createMaintenancePlan = asyncHandler(async (request, response) => {
 
 // 11. Maintenance Backlog & Queue
 const getMaintenanceBacklog = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view maintenance schedules.');
   }
@@ -911,6 +941,7 @@ const getMaintenanceBacklog = asyncHandler(async (request, response) => {
 
 // 12. Maintenance Service History
 const getMaintenanceHistory = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view maintenance history.');
   }
@@ -954,6 +985,7 @@ const getMaintenanceHistory = asyncHandler(async (request, response) => {
 
 // 13. Complete Maintenance Job
 const completeMaintenanceJob = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to complete maintenance.');
   }
@@ -1016,6 +1048,7 @@ const completeMaintenanceJob = asyncHandler(async (request, response) => {
 
 // 14. Reschedule Maintenance Job
 const rescheduleMaintenanceJob = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to reschedule maintenance.');
   }
@@ -1079,6 +1112,7 @@ const rescheduleMaintenanceJob = asyncHandler(async (request, response) => {
 
 // 15. Cancel Maintenance Plan
 const cancelMaintenancePlan = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to cancel maintenance plans.');
   }
@@ -1122,6 +1156,7 @@ const cancelMaintenancePlan = asyncHandler(async (request, response) => {
 
 // 16. Evaluate Maintenance Alerts
 const runMaintenanceAlertEvaluation = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to trigger alert evaluations.');
   }
@@ -1144,6 +1179,7 @@ const runMaintenanceAlertEvaluation = asyncHandler(async (request, response) => 
 
 // Backward compatibility: Log maintenance job
 const logMaintenanceJob = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to log maintenance jobs.');
   }
@@ -1205,6 +1241,7 @@ const logMaintenanceJob = asyncHandler(async (request, response) => {
 });
 
 const recordInspection = asyncHandler(async (request, response) => {
+  assertValidMasterContext(request);
   if (request.auth.role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to record inspections.');
   }
