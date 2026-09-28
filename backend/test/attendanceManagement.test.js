@@ -85,7 +85,7 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'malformed MASTER claim',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
@@ -234,8 +234,8 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
     assert.equal(res.data.data.attendance.length, 1);
   });
 
-  // 3. POST /api/v1/attendance/master-manual (Normal Master marks manual punch)
-  await t.test('Normal Master can record manual attendance for ANY employee across ANY cafe', async () => {
+  // 3. POST /api/v1/attendance/master-manual (malformed MASTER claim marks manual punch)
+  await t.test('malformed MASTER claim can record manual attendance for ANY employee across ANY cafe', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
