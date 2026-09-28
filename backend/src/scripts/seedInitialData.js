@@ -2106,8 +2106,7 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   // 3. Seed Canonical Role Accounts for Complete Role Recognition
   const defaultPasswordHash = await bcrypt.hash('PK@NilaVega_8427!Cedar', 10);
 
-  // Note: Normal Master role and window have been abolished.
-  // There is strictly only one Master: the Primary Master (MU-0001 / Pradeesh K).
+  // There is strictly one MASTER account: the designated Primary Master.
 
 
   // Owner Account (Distinct from Primary Master Pradeesh K)
