@@ -189,7 +189,7 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
 
     await t.test('2.2 Role Hierarchy Scoping: MASTER vs OWNER vs STAFF', () => {
       const org = 'ORG-001';
-      const masterUser = { organisationId: org, role: 'MASTER', assignedCafeIds: [] };
+      const masterUser = { organisationId: org, role: 'MASTER', isPrimaryMaster: true, assignedCafeIds: [] };
       const ownerUser = { organisationId: org, role: 'OWNER', assignedCafeIds: [] };
       const staffUser = { organisationId: org, role: 'STAFF', assignedCafeIds: ['ZC-0001'] };
 
