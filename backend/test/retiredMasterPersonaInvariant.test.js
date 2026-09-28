@@ -568,5 +568,35 @@ test('Malformed non-primary MASTER cannot use offline POS review governance', as
       return true;
     }
   );
+
+  await assert.rejects(
+    () => invokeController(posController.getActiveOrders, {
+      auth: malformedMaster,
+      params: { cafeId: 'ZC-0001' },
+      query: {},
+      body: {},
+      headers: {},
+    }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => invokeController(posController.getOrderStatusByIdempotency, {
+      auth: malformedMaster,
+      params: { transactionId: 'IDEM-MALFORMED-MASTER-01' },
+      query: { cafeId: 'ZC-0001' },
+      body: {},
+      headers: {},
+    }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
 });
 
