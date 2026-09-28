@@ -119,3 +119,14 @@ test('P2 persona integrity: supported persona arithmetic stays canonical', () =>
   const docsGenerator = read('scripts/generate_supporting_files_docs.mjs');
   assert.doesNotMatch(docsGenerator, /FIVE-PERSONA/i);
 });
+
+
+test('P2 runtime authority/secret logging: malformed MASTER fails closed and bootstrap passwords are never logged', () => {
+  const frontendMain = read('frontend/src/js/main.js');
+  assert.match(frontendMain, /if \(user\?\.isPrimaryMaster !== true\)[\s\S]{0,180}role:\s*["']staff["']/);
+  assert.doesNotMatch(frontendMain, /role:\s*["']master["'][\s\S]{0,120}isPrimaryMaster:\s*false/);
+
+  const startDev = read('backend/src/scripts/startDev.js');
+  assert.doesNotMatch(startDev, /Seed complete[^\n]*\$\{masterPassword\}/);
+  assert.match(startDev, /password intentionally not logged/i);
+});
