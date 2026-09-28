@@ -78,7 +78,7 @@ const registerSessionSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      default: 'REG-01',
+      uppercase: true,
       index: true,
     },
     cashierUserId: {
@@ -170,6 +170,15 @@ const registerSessionSchema = new mongoose.Schema(
 registerSessionSchema.index(
   { organisationId: 1, cafeId: 1, registerId: 1, status: 1, businessDate: 1 },
   { name: 'register_session_scope_lookup' }
+);
+
+registerSessionSchema.index(
+  { organisationId: 1, cafeId: 1, registerId: 1 },
+  {
+    name: 'register_session_one_open_per_register',
+    unique: true,
+    partialFilterExpression: { status: 'OPEN' },
+  }
 );
 
 const RegisterSession = mongoose.model('RegisterSession', registerSessionSchema);
