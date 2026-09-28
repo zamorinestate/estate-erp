@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { validateProposedRole } = require('../src/services/userGovernanceService');
 const { authorize, canAccessCafe } = require('../src/middleware/authorize');
+const OfflineSyncService = require('../src/services/offlineSyncService');
 const { resolveEffectiveCafeScope } = require('../src/utils/cafeScope');
 const { requireCafeOperationsDevice } = require('../src/middleware/deviceAuthorization');
 const expenseController = require('../src/controllers/expenseController');
@@ -496,6 +497,42 @@ test('Organisation identity requires real Primary Master role, not a stray flag'
         auth: forgedFlagAuth,
         body: {},
       }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+});
+
+test('Malformed non-primary MASTER cannot use offline POS review governance', async () => {
+  const malformedMaster = {
+    userId: 'MU-MALFORMED-OFFLINE',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+    assignedCafeIds: [],
+  };
+
+  await assert.rejects(
+    () => OfflineSyncService.getPendingReviews({
+      organisationId: malformedMaster.organisationId,
+      authUser: malformedMaster,
+    }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => OfflineSyncService.reviewItem({
+      reviewId: 'REV-MALFORMED-MASTER',
+      action: 'ESCALATE',
+      reason: 'Must be rejected before lookup',
+      authContext: malformedMaster,
+    }),
     (err) => {
       assert.equal(err.statusCode, 403);
       assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
