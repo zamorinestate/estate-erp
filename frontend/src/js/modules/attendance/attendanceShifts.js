@@ -2856,7 +2856,18 @@ function openEditAttendanceModal(root, attendanceId) {
 async function openScopedManualAttendanceModal(root) {
   const role = state.role || state.user?.role || ROLES.MASTER;
   const isCafeAdmin = role === ROLES.CAFE_ADMIN;
-  let assignedCafe = state.user?.assignedCafeIds?.[0] || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "ZC-0001";
+  const assignedCafe =
+    state.user?.assignedCafeIds?.[0] ||
+    state.currentCafeId ||
+    cachedCafes[0]?.cafeId ||
+    cachedCafes[0]?.code ||
+    '';
+
+  if (!assignedCafe || assignedCafe === 'ALL') {
+    showToast('A valid café context is required before recording manual attendance.', 'error');
+    return;
+  }
+
   const cafeName = CAFE_NAMES[assignedCafe] || state.currentCafeName || `Outlet ${assignedCafe}`;
 
   // Fetch real employees to eliminate empty staff dropdown
