@@ -7,6 +7,26 @@ const { User } = require('../models/User');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 
+function assertValidMasterContext(user) {
+  if (user?.role === 'MASTER' && user.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER application-update access.'
+    );
+  }
+}
+
+function isPrimaryMasterUser(user) {
+  return Boolean(
+    user &&
+    (
+      user.role === 'PRIMARY_MASTER' ||
+      (user.role === 'MASTER' && user.isPrimaryMaster === true)
+    )
+  );
+}
+
 function getAudienceFilterForUser(user) {
   const role = (user.role || '').toUpperCase();
   const isPrimary = Boolean(user.isPrimaryMaster || (role === 'MASTER' && user.isPrimary));
@@ -26,6 +46,7 @@ function isUserTargeted(release, user) {
 
 // ── GET /api/v1/settings/updates ─────────────────────────────────────────────
 const listTargetedUpdates = asyncHandler(async (req, res) => {
+  assertValidMasterContext(req.user);
   const organisationId = req.user.organisationId;
   const user = req.user;
   const userAudience = getAudienceFilterForUser(user);
@@ -36,7 +57,7 @@ const listTargetedUpdates = asyncHandler(async (req, res) => {
   };
 
   // If user is not Master, filter strictly to targeted audience
-  if (user.role !== 'MASTER') {
+  if (!isPrimaryMasterUser(user)) {
     query.targetAudience = { $in: userAudience };
   }
 
@@ -78,7 +99,7 @@ const listTargetedUpdates = asyncHandler(async (req, res) => {
     data: {
       clientRole: user.role,
       isPrimaryMaster: Boolean(user.isPrimaryMaster),
-      isPublisher: user.role === 'MASTER',
+      isPublisher: isPrimaryMasterUser(user),
       currentSystemVersion: 'v1.2.0',
       latestAvailableVersion: latestRelease ? latestRelease.version : 'v1.2.0',
       unappliedCount,
@@ -91,6 +112,7 @@ const listTargetedUpdates = asyncHandler(async (req, res) => {
 
 // ── GET /api/v1/settings/updates/check ───────────────────────────────────────
 const checkForUpdates = asyncHandler(async (req, res) => {
+  assertValidMasterContext(req.user);
   const organisationId = req.user.organisationId;
   const user = req.user;
   const userAudience = getAudienceFilterForUser(user);
@@ -129,8 +151,13 @@ const checkForUpdates = asyncHandler(async (req, res) => {
 // ── POST /api/v1/settings/updates ────────────────────────────────────────────
 const publishRelease = asyncHandler(async (req, res) => {
   const user = req.user;
-  if (user.role !== 'MASTER') {
-    throw new ApiError(403, 'Only Master administrators can publish application updates.');
+  assertValidMasterContext(user);
+  if (!isPrimaryMasterUser(user)) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only Primary Master may publish application updates.'
+    );
   }
 
   const {
@@ -221,7 +248,7 @@ const publishRelease = asyncHandler(async (req, res) => {
       roleFilters.push({ role: 'MASTER', isPrimaryMaster: true });
     }
     if (validAudiences.includes('MASTER')) {
-      roleFilters.push({ role: 'MASTER' });
+      roleFilters.push({ role: 'MASTER', isPrimaryMaster: true });
     }
     if (validAudiences.includes('OWNER')) {
       roleFilters.push({ role: 'OWNER' });
@@ -296,6 +323,7 @@ const publishRelease = asyncHandler(async (req, res) => {
 
 // ── GET /api/v1/settings/updates/:releaseId/download ─────────────────────────
 const downloadPackage = asyncHandler(async (req, res) => {
+  assertValidMasterContext(req.user);
   const { releaseId } = req.params;
   const organisationId = req.user.organisationId;
   const user = req.user;
@@ -309,7 +337,7 @@ const downloadPackage = asyncHandler(async (req, res) => {
     throw new ApiError(400, `Cannot download release package with status: ${release.status}`);
   }
 
-  if (user.role !== 'MASTER' && !isUserTargeted(release, user)) {
+  if (!isPrimaryMasterUser(user) && !isUserTargeted(release, user)) {
     throw new ApiError(403, 'This update is not targeted for your active role persona.');
   }
 
@@ -341,6 +369,7 @@ const downloadPackage = asyncHandler(async (req, res) => {
 
 // ── POST /api/v1/settings/updates/:releaseId/apply ───────────────────────────
 const applyRelease = asyncHandler(async (req, res) => {
+  assertValidMasterContext(req.user);
   const { releaseId } = req.params;
   const organisationId = req.user.organisationId;
   const user = req.user;
@@ -355,7 +384,7 @@ const applyRelease = asyncHandler(async (req, res) => {
     throw new ApiError(400, `Cannot apply release with status: ${release.status}`);
   }
 
-  if (user.role !== 'MASTER' && !isUserTargeted(release, user)) {
+  if (!isPrimaryMasterUser(user) && !isUserTargeted(release, user)) {
     throw new ApiError(403, 'This update is not targeted for your active role persona.');
   }
 
@@ -397,6 +426,7 @@ const applyRelease = asyncHandler(async (req, res) => {
 
 // ── POST /api/v1/settings/updates/:releaseId/verify ──────────────────────────
 const verifyRelease = asyncHandler(async (req, res) => {
+  assertValidMasterContext(req.user);
   const { releaseId } = req.params;
   const organisationId = req.user.organisationId;
 
@@ -438,8 +468,13 @@ const verifyRelease = asyncHandler(async (req, res) => {
 // ── POST /api/v1/settings/updates/:releaseId/rollback ────────────────────────
 const rollbackRelease = asyncHandler(async (req, res) => {
   const user = req.user;
-  if (user.role !== 'MASTER') {
-    throw new ApiError(403, 'Only Master administrators can roll back application releases.');
+  assertValidMasterContext(user);
+  if (!isPrimaryMasterUser(user)) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only Primary Master may roll back application releases.'
+    );
   }
 
   const { releaseId } = req.params;
