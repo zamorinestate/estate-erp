@@ -3,7 +3,7 @@
 // Design System v2 (Ledger & Roastery Dark / Porcelain Light Theme)
 //
 // Administrative Control Plane with:
-//   - Primary Master vs Normal Master capability enforcement
+//   - Primary Master capability enforcement
 //   - 6 Main Sections: Overview, Cafés, Users, Governance, Configuration, Audit & Security
 //   - Overview KPIs & Governance Work Queue with aging tags
 //   - Café Location Portfolio with explicit lifecycle (SETUP, ACTIVE, TEMPORARILY_CLOSED, DEACTIVATED)
