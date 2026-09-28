@@ -58,6 +58,7 @@ const { PosOfflineReviewItem } = require('../src/models/PosOfflineReviewItem');
 const { syncTaxInvoiceIndexes } = require('../src/services/gstTaxService');
 const PosOrderService = require('../src/services/posOrderService');
 const OfflineSyncService = require('../src/services/offlineSyncService');
+const { syncOfflineOrders } = require('../src/controllers/posController');
 
 describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certification Suite', () => {
   let mongoReplSet;
@@ -75,6 +76,29 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     organisationId: orgId,
     assignedCafeIds: [cafeId],
   };
+
+  function invokeController(controllerFn, request) {
+    return new Promise((resolve, reject) => {
+      const response = {
+        statusCode: 200,
+        body: null,
+        status(code) {
+          this.statusCode = code;
+          return this;
+        },
+        json(body) {
+          this.body = body;
+          resolve(this);
+          return this;
+        },
+      };
+      const next = (err) => {
+        if (err) reject(err);
+        else resolve(response);
+      };
+      Promise.resolve(controllerFn(request, response, next)).catch(reject);
+    });
+  }
 
   before(async () => {
     // Multi-document transaction coverage must run against a replica set,
@@ -1008,6 +1032,163 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
 
     assert.strictEqual(res.rejectedCount, 1);
     assert.match(res.items[0].reason, /Cross-café isolation violation/);
+  });
+
+  // 30A. HTTP caller scope is enforced before offline replay.
+  it('Scenario 30A: Offline-sync controller rejects Owner, malformed MASTER, and foreign-café Staff before replay', async () => {
+    const baseRequest = {
+      params: {},
+      query: {},
+      headers: {},
+      deviceContext: null,
+      body: {
+        cafeId,
+        transactions: [{
+          clientOfflineId: 'CTRL-SCOPE-001',
+          saleAttemptId: 'ATT-CTRL-SCOPE-001',
+          idempotencyKey: 'IDEM-CTRL-SCOPE-001',
+          cafeId,
+          lineItems: [{ menuItemId: 'MENU-01', quantity: 1, unitPricePaisa: 15000 }],
+          totalPaisa: 15750,
+          paymentMethod: 'CASH',
+        }],
+      },
+    };
+
+    await assert.rejects(
+      () => invokeController(syncOfflineOrders, {
+        ...baseRequest,
+        auth: {
+          userId: 'OWNER-CTRL-01',
+          role: 'OWNER',
+          organisationId: orgId,
+          assignedCafeIds: [cafeId],
+        },
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(syncOfflineOrders, {
+        ...baseRequest,
+        auth: {
+          userId: 'MU-CTRL-MALFORMED',
+          role: 'MASTER',
+          isPrimaryMaster: false,
+          organisationId: orgId,
+          assignedCafeIds: [cafeId],
+        },
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(syncOfflineOrders, {
+        ...baseRequest,
+        body: { ...baseRequest.body, cafeId: cafeIdB },
+        auth: {
+          userId: userId,
+          role: 'STAFF',
+          organisationId: orgId,
+          assignedCafeIds: [cafeId],
+          primaryCafeId: cafeId,
+        },
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.ok(['CROSS_CAFE_RESOURCE_DENIED', 'CAFE_ACCESS_DENIED'].includes(err.code));
+        return true;
+      }
+    );
+  });
+
+  // 30B. Duplicate identities are isolated per café.
+  it('Scenario 30B: Same clientOfflineId in different cafés does not cause cross-café false deduplication', async () => {
+    const cashierA = 'ST-DUPE-A';
+    const cashierB = 'ST-DUPE-B';
+
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: cashierA },
+      {
+        userId: cashierA,
+        organisationId: orgId,
+        name: 'Duplicate Isolation Cashier A',
+        email: 'dupe.a@zamorin.test',
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeId],
+      },
+      { upsert: true }
+    );
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: cashierB },
+      {
+        userId: cashierB,
+        organisationId: orgId,
+        name: 'Duplicate Isolation Cashier B',
+        email: 'dupe.b@zamorin.test',
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeIdB],
+      },
+      { upsert: true }
+    );
+
+    const sharedClientOfflineId = 'CROSS-CAFE-SHARED-OFFLINE-ID-001';
+
+    const cafeBResult = await OfflineSyncService.syncBatch({
+      organisationId: orgId,
+      cafeId: cafeIdB,
+      userId: cashierB,
+      transactions: [{
+        clientOfflineId: sharedClientOfflineId,
+        saleAttemptId: 'ATT-DUPE-B-001',
+        idempotencyKey: 'IDEM-DUPE-B-001',
+        originatingUserId: cashierB,
+        cafeId: cafeIdB,
+        lineItems: [{ menuItemId: 'MENU-01', quantity: 1, unitPricePaisa: 15000 }],
+        totalPaisa: 15750,
+        paymentMethod: 'CASH',
+      }],
+    });
+    assert.strictEqual(cafeBResult.syncedCount, 1);
+
+    const cafeAResult = await OfflineSyncService.syncBatch({
+      organisationId: orgId,
+      cafeId,
+      userId: cashierA,
+      transactions: [{
+        clientOfflineId: sharedClientOfflineId,
+        saleAttemptId: 'ATT-DUPE-A-001',
+        idempotencyKey: 'IDEM-DUPE-A-001',
+        originatingUserId: cashierA,
+        cafeId,
+        lineItems: [{ menuItemId: 'MENU-01', quantity: 1, unitPricePaisa: 15000 }],
+        totalPaisa: 15750,
+        paymentMethod: 'CASH',
+      }],
+    });
+
+    assert.strictEqual(cafeAResult.syncedCount, 1, 'Café A sale must not be suppressed by Café B duplicate identity');
+    assert.strictEqual(cafeAResult.duplicateCount, 0);
+
+    const crossCafeBills = await Bill.find({
+      organisationId: orgId,
+      clientOfflineId: sharedClientOfflineId,
+    }).lean();
+    assert.strictEqual(crossCafeBills.length, 2);
+    assert.deepStrictEqual(
+      new Set(crossCafeBills.map((bill) => bill.cafeId)),
+      new Set([cafeId, cafeIdB])
+    );
   });
 
   // 31. REC-04B BOM reconciliation integration
