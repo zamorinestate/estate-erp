@@ -25,7 +25,7 @@ const users = {
   },
   malformedMaster: {
     userId: 'USR-NM-001',
-    name: 'Malformed MASTER User',
+    name: 'Invalid MASTER Context',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: orgId,
@@ -97,7 +97,7 @@ test.describe('Role-Targeted Application Updates & Version Control Suite', () =>
   let primaryMasterOnlyReleaseId;
   let universalReleaseId;
 
-  test('1. Master can publish a release targeted ONLY to Primary Master', async () => {
+  test('1. Primary Master can publish a release targeted ONLY to Primary Master', async () => {
     const req = {
       user: users.primaryMaster,
       body: {
@@ -128,7 +128,7 @@ test.describe('Role-Targeted Application Updates & Version Control Suite', () =>
     assert.equal(notifs[0].recipientUserId, users.primaryMaster.userId);
   });
 
-  test('2. Master can publish a release targeted ONLY to Staff / Employees', async () => {
+  test('2. Primary Master can publish a release targeted ONLY to Staff / Employees', async () => {
     const req = {
       user: users.primaryMaster,
       body: {
@@ -158,9 +158,9 @@ test.describe('Role-Targeted Application Updates & Version Control Suite', () =>
     assert.equal(notifs[0].recipientUserId, users.staff.userId);
   });
 
-  test('3. Master can publish a Universal Release (ALL personas)', async () => {
+  test('3. Primary Master can publish a Universal Release (ALL valid personas)', async () => {
     const req = {
-      user: users.malformedMaster,
+      user: users.primaryMaster,
       body: {
         version: 'v1.2.0',
         title: 'Enterprise Core Q3 Update & Design Tokens',
@@ -178,12 +178,38 @@ test.describe('Role-Targeted Application Updates & Version Control Suite', () =>
     assert.equal(res.sentBody.success, true);
     universalReleaseId = res.sentBody.data.releaseId;
 
-    // Verify notifications created for all 5 active users
+    // Verify notifications are created for all 4 valid active personas; the
+    // intentionally malformed MASTER fixture is excluded defensively.
     const notifs = await Notification.find({
       organisationId: orgId,
       sourceEntityId: universalReleaseId.toUpperCase(),
     });
-    assert.equal(notifs.length, 5);
+    assert.equal(notifs.length, 4);
+    assert.equal(
+      notifs.some((n) => n.recipientUserId === users.malformedMaster.userId),
+      false
+    );
+  });
+
+  test('3A. Malformed non-primary MASTER cannot publish application releases', async () => {
+    const req = {
+      user: users.malformedMaster,
+      body: {
+        version: 'v-malformed-denied',
+        title: 'Unauthorized malformed MASTER release',
+        releaseNotes: 'Must never be created',
+      },
+    };
+    const res = createMockResponse();
+
+    await assert.rejects(
+      () => updateController.publishRelease(req, res),
+      (err) => {
+        assert.equal(err.statusCode || err.status, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 
   test('4. Non-Master role (STAFF) cannot publish releases (403 Forbidden)', async () => {
@@ -359,5 +385,23 @@ test.describe('Role-Targeted Application Updates & Version Control Suite', () =>
 
     const rel = await AppRelease.findOne({ releaseId: staffOnlyReleaseId });
     assert.equal(rel.status, 'ROLLED_BACK');
+  });
+
+  test('13A. Malformed non-primary MASTER cannot roll back a release', async () => {
+    const req = {
+      user: users.malformedMaster,
+      params: { releaseId: universalReleaseId },
+      body: { reason: 'Unauthorized rollback attempt' },
+    };
+    const res = createMockResponse();
+
+    await assert.rejects(
+      () => updateController.rollbackRelease(req, res),
+      (err) => {
+        assert.equal(err.statusCode || err.status, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 });
