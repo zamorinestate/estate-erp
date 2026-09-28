@@ -46,6 +46,20 @@ const DANGEROUS_EXTENSIONS = new Set([
 
 const DEFAULT_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024; // 15MB hard boundary
 
+function hasPrimaryMasterAuthority(auth = {}) {
+  return auth.role === 'MASTER' && auth.isPrimaryMaster === true;
+}
+
+function rejectMalformedMasterContext(auth = {}) {
+  if (auth.role === 'MASTER' && !hasPrimaryMasterAuthority(auth)) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER document access.'
+    );
+  }
+}
+
 class DocumentAttachmentService {
   static getStorageAdapter() {
     return documentStorageAdapter;
@@ -197,7 +211,8 @@ class DocumentAttachmentService {
     }
 
     const role = auth.role;
-    const isMaster = role === 'MASTER';
+    rejectMalformedMasterContext(auth);
+    const isMaster = hasPrimaryMasterAuthority(auth);
     const isOwner = role === 'OWNER';
     const isRegional = role === 'REGIONAL_MANAGER';
     const isCafeAdmin = role === 'CAFE_ADMIN';
@@ -1484,8 +1499,9 @@ class DocumentAttachmentService {
    * Verify or reject a business document.
    */
   static async verifyDocument({ documentId, organisationId, decision, reason = '', auth }) {
-    if (auth.role !== 'MASTER' && auth.role !== 'OWNER') {
-      throw new ApiError(403, 'VERIFICATION_DENIED', 'Only Master and Owner can verify business documents.');
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth) && auth.role !== 'OWNER') {
+      throw new ApiError(403, 'VERIFICATION_DENIED', 'Only Primary Master and Owner can verify business documents.');
     }
 
     const doc = await BusinessDocument.findOne({
@@ -1536,8 +1552,9 @@ class DocumentAttachmentService {
    * Soft delete a document with mandatory reason.
    */
   static async deleteDocument({ documentId, organisationId, reason, auth }) {
-    if (auth.role !== 'MASTER' && auth.role !== 'OWNER') {
-      throw new ApiError(403, 'DELETE_DENIED', 'Only Master and Owner can remove business documents.');
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth) && auth.role !== 'OWNER') {
+      throw new ApiError(403, 'DELETE_DENIED', 'Only Primary Master and Owner can remove business documents.');
     }
 
     if (!reason || reason.trim().length < 5) {
@@ -1678,8 +1695,12 @@ class DocumentAttachmentService {
     reason,
     auth,
   }) {
-    if (!auth || auth.role !== 'MASTER') {
-      throw new ApiError(403, 'UNAUTHORIZED_RETENTION_CHANGE', 'Only MASTER can update statutory retention policies or legal holds.');
+    if (!auth) {
+      throw new ApiError(403, 'UNAUTHORIZED_RETENTION_CHANGE', 'Only Primary Master can update statutory retention policies or legal holds.');
+    }
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth)) {
+      throw new ApiError(403, 'UNAUTHORIZED_RETENTION_CHANGE', 'Only Primary Master can update statutory retention policies or legal holds.');
     }
     if (!reason || reason.trim().length < 5) {
       throw new ApiError(400, 'REASON_REQUIRED', 'A detailed audit reason (min 5 chars) is mandatory to modify retention policy.');
@@ -1896,8 +1917,9 @@ class DocumentAttachmentService {
    * Restores a historical document revision without mutating the historical GridFS binary.
    */
   static async restoreVersion({ documentId, organisationId, versionNumber, reason, auth }) {
-    if (auth.role !== 'MASTER' && auth.role !== 'OWNER') {
-      throw new ApiError(403, 'RESTORE_DENIED', 'Only Master and Owner can restore document revisions.');
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth) && auth.role !== 'OWNER') {
+      throw new ApiError(403, 'RESTORE_DENIED', 'Only Primary Master and Owner can restore document revisions.');
     }
     if (!reason || reason.trim().length < 5) {
       throw new ApiError(400, 'REASON_REQUIRED', 'A detailed reason (min 5 chars) is mandatory to restore a version.');
