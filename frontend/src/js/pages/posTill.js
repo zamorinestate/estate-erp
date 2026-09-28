@@ -6,7 +6,7 @@
 //   - Cafe Operations / CAFE_ADMIN (Strict single-cafe scope, Operator Session attribution,
 //     no void authority, fixed device context)
 // =============================================================================
-import { apiGet, apiPost } from "../apiClient.js";
+import { apiGet, apiPost, getCanonicalDeviceId } from "../apiClient.js";
 import { showToast, openModal, closeModal, confirmAction } from "../components.js";
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
@@ -48,7 +48,7 @@ function getOperatorSession() {
     role: user.role || state.role || "CAFE_ADMIN",
     primaryCafeId: resolvedCafe,
     primaryCafeName: user.primaryCafeName || (resolvedCafe ? `Outlet ${resolvedCafe}` : "Café Outlet"),
-    deviceId: user.deviceId || "DEV-POS-01",
+    deviceId: user.deviceId || state.deviceId || getCanonicalDeviceId() || "",
     businessDate: new Date().toISOString().slice(0, 10),
   };
 }
@@ -921,8 +921,11 @@ export async function wirePOS(root) {
     const openRes = await apiGet("/bills/tickets/open");
     if (openRes?.data?.tickets) openTicketsList = openRes.data.tickets;
 
-    const sessionRes = await apiGet("/bills/register/session/current");
-    if (sessionRes?.data) activeRegisterSession = sessionRes.data;
+    const registerId = getOperatorSession().deviceId;
+    if (registerId) {
+      const sessionRes = await apiGet(`/bills/register/session/current?registerId=${encodeURIComponent(registerId)}`);
+      if (sessionRes?.data) activeRegisterSession = sessionRes.data;
+    }
 
     // REC-13: Fetch pending offline sales count from IndexedDB
     const cafeId = resolvePosCafeId();
@@ -1888,7 +1891,7 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       guestCovers,
       discountPaisa: effectiveDiscountPaisa,
       paymentMethod: tender,
-      registerId: "REG-01",
+      registerId: activeRegisterSession?.registerId || getOperatorSession().deviceId || "",
       registerSessionId: activeRegisterSession?.registerSessionId || "",
       idempotencyKey,
       saleAttemptId,
@@ -1999,9 +2002,9 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
           }
         }
       } else {
-        // Route definitively absent (rolling deployment) — safe to use legacy endpoint
-        console.warn("[POS] /pos/orders/commit not found on this server version (HTTP " + status + "), using /bills fallback");
-        res = await apiPost("/bills", payload);
+        throw new Error(
+          "Canonical POS commit endpoint is unavailable on this server version. Sale was not submitted through a legacy fallback."
+        );
       }
     }
 
