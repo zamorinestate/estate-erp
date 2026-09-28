@@ -77,3 +77,13 @@ test('P2 runtime credential invariant: application source contains no built-in r
   assert.doesNotMatch(frontendMain, /userId\s*===\s*["']MU-0001["']\s*&&[\s\S]{0,160}email/i);
   assert.match(frontendMain, /isPrimaryMaster:\s*user\?\.isPrimaryMaster\s*===\s*true/);
 });
+
+
+test('P2 forensic hygiene: obsolete live-like credential utilities stay retired', () => {
+  for (const rel of [
+    'backend/scripts/audit_vercel_comprehensive.mjs',
+    'backend/scripts/certify_final_real_data_gate.mjs',
+  ]) {
+    assert.equal(fs.existsSync(path.join(ROOT, rel)), false, `${rel} must remain retired`);
+  }
+});
