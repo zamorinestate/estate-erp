@@ -637,21 +637,43 @@ test('REC-04A — POS Transaction-Integrity Reconciliation & Certification', asy
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TC-A25: MASTER role bypasses IDOR
+  // TC-A25: PRIMARY MASTER bypasses café IDOR; malformed MASTER fails closed
   // ═══════════════════════════════════════════════════════════════════════════
-  await t.test('TC-A25: MASTER role can access any café bill — no IDOR restriction', async () => {
+  await t.test('TC-A25: Primary Master can access any café bill — no café IDOR restriction', async () => {
     const existingBill = mockBills.find(b => b.cafeId === CAFE);
-    if (!existingBill) return; // Skip if no bills committed yet (should not happen after TC-A03)
-    const masterAuth = {
-      userId: 'EMP-MASTER-01', role: 'MASTER', organisationId: ORG, assignedCafeIds: [],
+    assert.ok(existingBill, 'Prerequisite: a committed bill must exist from prior tests');
+    const primaryMasterAuth = {
+      userId: 'MU-0001',
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      organisationId: ORG,
+      assignedCafeIds: [],
     };
-    let idorThrew = false;
-    try {
-      await PosOrderService.printCommittedBill(existingBill.billId, masterAuth);
-    } catch (err) {
-      if (err?.code === 'CROSS_CAFE_RESOURCE_DENIED' || err?.code === 'CAFE_ACCESS_DENIED') idorThrew = true;
-    }
-    assert.ok(!idorThrew, 'MASTER role must NOT receive IDOR denial');
+    await assert.doesNotReject(
+      () => PosOrderService.printCommittedBill(existingBill.billId, primaryMasterAuth)
+    );
+  });
+
+  await t.test('TC-A25B: Malformed non-primary MASTER cannot access any café bill', async () => {
+    const existingBill = mockBills.find(b => b.cafeId === CAFE);
+    assert.ok(existingBill, 'Prerequisite: a committed bill must exist from prior tests');
+    const malformedMasterAuth = {
+      userId: 'MU-MALFORMED-01',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      organisationId: ORG,
+      assignedCafeIds: [CAFE],
+      primaryCafeId: CAFE,
+    };
+
+    await assert.rejects(
+      () => PosOrderService.printCommittedBill(existingBill.billId, malformedMasterAuth),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
