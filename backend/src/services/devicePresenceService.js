@@ -176,9 +176,34 @@ class DevicePresenceService {
   /**
    * Queries presence of a specific device.
    */
-  getDevicePresence(deviceId, organisationId, cafeId = null) {
+  async getDevicePresence(deviceId, organisationId, cafeId = null) {
     const scope = this.buildPresenceKey({ deviceId, organisationId, cafeId });
-    return this.ephemeralPresence.get(scope.scopeKey) || null;
+    const local = this.ephemeralPresence.get(scope.scopeKey);
+    if (local) {
+      return local;
+    }
+
+    if (!this.redisClient) {
+      return null;
+    }
+
+    try {
+      const raw = await this.redisClient.get(`zamorin:presence:${scope.scopeKey}`);
+      if (!raw) return null;
+
+      const distributed = JSON.parse(raw);
+      const normalized = {
+        ...distributed,
+        deviceId: scope.device,
+        organisationId: scope.org,
+        cafeId: scope.cafe,
+      };
+
+      this.ephemeralPresence.set(scope.scopeKey, normalized);
+      return normalized;
+    } catch (_) {
+      return null;
+    }
   }
 
   /**
