@@ -53,7 +53,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const bcrypt = require('bcrypt');
 
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'a_very_secure_and_long_jwt_access_secret_32bytes_long!';
@@ -108,8 +108,34 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
   let secondBranchCafeId; // For same-GSTIN branch linkage testing
 
   t.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
-    await mongoose.connect(mongoServer.getUri());
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+    await mongoose.connect(mongoServer.getUri(), {
+      autoIndex: false,
+      autoCreate: false,
+    });
+
+    // Provisioning and lifecycle transactions should run against explicitly
+    // created collections, not rely on first-write collection creation.
+    for (const model of [
+      Cafe,
+      CafeAccess,
+      CafeGatewayContext,
+      SequenceCounter,
+      User,
+      GlobalInventoryItem,
+      CafeInventoryConfig,
+      AuditEvent,
+      Bill,
+      CashTransaction,
+      MenuItem,
+      BusinessDocument,
+      PurchaseOrder,
+      Asset,
+      DeviceRegistration,
+      OperatorSession,
+    ]) {
+      await model.createCollection();
+    }
 
     cafeAccessCryptoService.verifySecretKeys();
     const passwordHash = await bcrypt.hash('SecurePassword#2026', 10);
