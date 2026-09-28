@@ -284,3 +284,18 @@ test('P2-02: distributed auth rate limiter enforces atomic adapter denial', asyn
     else process.env.NODE_ENV = previousNodeEnv;
   }
 });
+
+
+test('P2-02: live vendor binding overrides stale token claims', () => {
+  const middleware = fs.readFileSync(
+    path.join(ROOT, 'backend', 'src', 'middleware', 'authenticate.js'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(
+    middleware,
+    /vendorId:\s*user\.vendorId\s*\|\|\s*payload\.vid/i,
+    'JWT vendor claim must never restore authority removed from the live user record'
+  );
+  assert.match(middleware, /vendorId:\s*user\.vendorId\s*\|\|\s*null/);
+});
