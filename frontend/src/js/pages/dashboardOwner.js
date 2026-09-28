@@ -1709,6 +1709,7 @@ async function openCashDrawerManagement() {
         try {
           const postRes = await apiPost("/bills/register/session/event", {
             registerSessionId: currentSession.registerSessionId,
+            registerId: currentSession.registerId,
             eventType,
             amountPaisa: Math.round(amountRupees * 100),
             reason,
@@ -1755,6 +1756,7 @@ async function openCashDrawerManagement() {
             try {
               const closeRes = await apiPost("/bills/register/session/close", {
                 registerSessionId: currentSession.registerSessionId,
+                registerId: currentSession.registerId,
                 countedCashPaisa: countedPaisa,
                 closingDeclarationNote: note,
               });
