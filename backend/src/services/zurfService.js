@@ -14,8 +14,12 @@ const { CompanyIdentityService } = require('./companyIdentityService');
  * Backward-compatibility shim. Returns resolved branding via CompanyIdentityService.
  * Callers that used the static COMPANY_CONFIG must await this function.
  */
-async function getCompanyConfig({ cafeId = null, sensitivityLevel = 'INTERNAL' } = {}) {
-  return CompanyIdentityService.resolveExportBranding({ cafeId, sensitivityLevel });
+async function getCompanyConfig({ organisationId, cafeId = null, sensitivityLevel = 'INTERNAL' } = {}) {
+  return CompanyIdentityService.resolveExportBranding({
+    organisationId,
+    cafeId,
+    sensitivityLevel,
+  });
 }
 
 // Kept for legacy synchronous callers that have not yet migrated to async
@@ -71,10 +75,11 @@ class ZurfService {
     columns = [],
     rows = [],
     notes = '',
+    organisationId,
     cafeId = null,
     sensitivityLevel = 'INTERNAL',
   }) {
-    const branding = await getCompanyConfig({ cafeId, sensitivityLevel });
+    const branding = await getCompanyConfig({ organisationId, cafeId, sensitivityLevel });
     const finalRunId = runId || this.generateRunId();
     const generatedAt = new Date().toLocaleString('en-IN', {
       timeZone: 'Asia/Kolkata',
@@ -325,8 +330,8 @@ class ZurfService {
    * Generates clean machine-readable CSV with separate metadata manifest
    * and strict formula injection sanitization.
    */
-  static async renderCsv({ reportTitle, scope, period, columns = [], rows = [], cafeId = null, sensitivityLevel = 'INTERNAL', runId = null }) {
-    const branding = await getCompanyConfig({ cafeId, sensitivityLevel });
+  static async renderCsv({ reportTitle, scope, period, columns = [], rows = [], organisationId, cafeId = null, sensitivityLevel = 'INTERNAL', runId = null }) {
+    const branding = await getCompanyConfig({ organisationId, cafeId, sensitivityLevel });
     const headerRow = columns.map((c) => `"${c.label.replace(/"/g, '""')}"`).join(',');
     const dataRows = rows.map((r) =>
       columns.map((c) => sanitizeCsvCell(r[c.key], c.isNum)).join(',')
@@ -358,8 +363,8 @@ class ZurfService {
   /**
    * Generates a standard binary PDF Buffer conforming to %PDF-1.4
    */
-  static async renderBinaryPdf({ reportTitle, reportCode, qrCodeData, scope, period, columns = [], rows = [], kpiCards = [], cafeId = null, sensitivityLevel = 'INTERNAL', runId = null }) {
-    const branding = await getCompanyConfig({ cafeId, sensitivityLevel });
+  static async renderBinaryPdf({ reportTitle, reportCode, qrCodeData, scope, period, columns = [], rows = [], kpiCards = [], organisationId, cafeId = null, sensitivityLevel = 'INTERNAL', runId = null }) {
+    const branding = await getCompanyConfig({ organisationId, cafeId, sensitivityLevel });
     const { generatePdf } = require('../utils/exportGenerators');
     return generatePdf({
       reportTitle,
@@ -378,8 +383,8 @@ class ZurfService {
   /**
    * Generates a standard binary Microsoft Excel OpenXML package (.xlsx)
    */
-  static async renderXlsx({ sheetName = 'Report', reportTitle = 'Export', columns = [], rows = [], sheets = null, cafeId = null, sensitivityLevel = 'INTERNAL', runId = null }) {
-    const branding = await getCompanyConfig({ cafeId, sensitivityLevel });
+  static async renderXlsx({ sheetName = 'Report', reportTitle = 'Export', columns = [], rows = [], sheets = null, organisationId, cafeId = null, sensitivityLevel = 'INTERNAL', runId = null }) {
+    const branding = await getCompanyConfig({ organisationId, cafeId, sensitivityLevel });
     const { generateXlsx } = require('../utils/exportGenerators');
     return generateXlsx({
       sheetName,

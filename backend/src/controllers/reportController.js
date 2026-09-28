@@ -3610,6 +3610,8 @@ const generateZurfExport = asyncHandler(async (request, response) => {
 
     const [html, branding, binaryPdf] = await Promise.all([
       ZurfService.renderZurfHtml({
+        organisationId: baseFilter.organisationId,
+        cafeId: baseFilter.cafeId || null,
         reportTitle,
         scope: resolvedScope,
         period: period || 'August 2026',
@@ -3620,8 +3622,13 @@ const generateZurfExport = asyncHandler(async (request, response) => {
         rows,
         notes: exportNotes,
       }),
-      getCompanyConfig(),
+      getCompanyConfig({
+        organisationId: baseFilter.organisationId,
+        cafeId: baseFilter.cafeId || null,
+      }),
       ZurfService.renderBinaryPdf({
+        organisationId: baseFilter.organisationId,
+        cafeId: baseFilter.cafeId || null,
         reportTitle,
         reportCode: reportId ? `ZURF-${reportId.toUpperCase()}` : 'ZURF-STD-01',
         scope: resolvedScope,
@@ -3671,6 +3678,8 @@ const generateZurfExport = asyncHandler(async (request, response) => {
 
   if (canonicalFormat === 'XLSX') {
     const xlsxResult = await ZurfService.renderXlsx({
+      organisationId: baseFilter.organisationId,
+      cafeId: baseFilter.cafeId || null,
       sheetName: 'Operations Summary',
       reportTitle,
       columns,

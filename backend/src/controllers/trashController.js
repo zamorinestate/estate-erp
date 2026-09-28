@@ -769,7 +769,9 @@ const getDispositionCertificatePdf = asyncHandler(async (request, response) => {
 
   if (!cert) throw new ApiError(404, 'NOT_FOUND', 'Certificate not found.');
 
-  const html = ZurfService.renderZurfHtml({
+  const html = await ZurfService.renderZurfHtml({
+    organisationId: orgId,
+    cafeId: cert.cafeId || null,
     reportTitle: `CERTIFICATE OF PERMANENT DATA DISPOSITION — ${cert.certificateId}`,
     scope: `Café: ${cert.cafeId} · Module: ${cert.sourceModule}`,
     period: `Executed: ${new Date(cert.executedAt).toLocaleDateString('en-IN')}`,
