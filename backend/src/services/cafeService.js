@@ -1362,27 +1362,57 @@ class CafeService {
   }) {
     requireMasterCreationAuthority(auth);
 
-    const cleanOrg = String(organisationId).toUpperCase();
-    const cleanCafe = String(cafeId).toUpperCase();
-
-    const cafe = await Cafe.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
-    if (!cafe) {
-      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+    const cleanOrg = String(organisationId || '').trim().toUpperCase();
+    const cleanCafe = String(cafeId || '').trim().toUpperCase();
+    if (!cleanOrg || !cleanCafe) {
+      throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'Organisation and café scope are required for provisioning.');
     }
 
-    // Set stage to PROVISIONING
-    cafe.lifecycleStage = 'PROVISIONING';
-    cafe.lifecycleHistory.push({
-      fromStage: cafe.lifecycleStage || 'CREATED',
-      toStage: 'PROVISIONING',
-      transitionedAt: new Date(),
-      transitionedBy: auth.userId,
-      reason: 'Subsystem provisioning initiated.',
-    });
-    await cafe.save();
-
+    let session = null;
     try {
-      // 1. Invoice and Receipt Sequences in SequenceCounter
+      if (
+        mongoose.connection &&
+        mongoose.connection.readyState === 1 &&
+        typeof mongoose.connection.startSession === 'function'
+      ) {
+        session = await mongoose.connection.startSession();
+        session.startTransaction();
+      }
+    } catch {
+      session = null;
+    }
+
+    if (!session) {
+      throw new ApiError(
+        503,
+        'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
+        'Café subsystem provisioning requires MongoDB transaction support.'
+      );
+    }
+
+    let cafe = null;
+    try {
+      cafe = await Cafe.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
+      if (!cafe) {
+        throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+      }
+
+      const previousStage = cafe.lifecycleStage || 'CREATED';
+      cafe.lifecycleStage = 'PROVISIONING';
+      cafe.lifecycleHistory.push({
+        fromStage: previousStage,
+        toStage: 'PROVISIONING',
+        transitionedAt: new Date(),
+        transitionedBy: auth.userId,
+        reason: 'Subsystem provisioning initiated.',
+      });
+      await cafe.save({ session });
+
+      // 1. Invoice and Receipt Sequences
       const fyInfo = resolveFinancialYear();
       const gstinClean = (cafe.registrations?.gstin || '').toUpperCase();
       const invoiceSeqKey = gstinClean
@@ -1400,7 +1430,7 @@ class CafeService {
             minimumDigits: 5,
           },
         },
-        { upsert: true }
+        { upsert: true, session }
       );
 
       const receiptSeqKey = `RECEIPT_${cleanOrg}_${cleanCafe}_${fyInfo.fyShort}`;
@@ -1415,48 +1445,53 @@ class CafeService {
             minimumDigits: 5,
           },
         },
-        { upsert: true }
+        { upsert: true, session }
       );
 
-      // 2. Inventory Provisioning: Neutral locations, zero fake stock
+      // 2. Inventory Provisioning: neutral locations, zero fake stock.
       const { GlobalInventoryItem } = require('../models/GlobalInventoryItem');
       const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
-      const activeItems = await GlobalInventoryItem.find({ organisationId: cleanOrg, status: 'ACTIVE' }).lean();
+      const activeItems = await GlobalInventoryItem.find({
+        organisationId: cleanOrg,
+        status: 'ACTIVE',
+      }).session(session).lean();
 
-      if (activeItems.length > 0) {
-        for (const itm of activeItems) {
-          await CafeInventoryConfig.findOneAndUpdate(
-            { organisationId: cleanOrg, cafeId: cleanCafe, itemId: itm.itemId },
-            {
-              $setOnInsert: {
-                organisationId: cleanOrg,
-                cafeId: cleanCafe,
-                itemId: itm.itemId,
-                currentQuantityBase: 0, // Strict zero fake stock
-                availableQuantityBase: 0,
-                reservedQuantityBase: 0,
-                quarantinedQuantityBase: 0,
-                expiredQuantityBase: 0,
-                inTransitQuantityBase: 0,
-                incomingQuantityBase: 0,
-                minQuantityBase: 10,
-                parQuantityBase: 25,
-                maxQuantityBase: 50,
-                safetyStockBase: 5,
-                stockedHere: true,
-                replenishmentEnabled: true,
-                primaryLocation: 'Main Store',
-                storageLocations: ['Main Store', 'Cold Room'],
-                status: 'ACTIVE',
-              },
+      for (const itm of activeItems) {
+        await CafeInventoryConfig.findOneAndUpdate(
+          { organisationId: cleanOrg, cafeId: cleanCafe, itemId: itm.itemId },
+          {
+            $setOnInsert: {
+              organisationId: cleanOrg,
+              cafeId: cleanCafe,
+              itemId: itm.itemId,
+              currentQuantityBase: 0,
+              availableQuantityBase: 0,
+              reservedQuantityBase: 0,
+              quarantinedQuantityBase: 0,
+              expiredQuantityBase: 0,
+              inTransitQuantityBase: 0,
+              incomingQuantityBase: 0,
+              minQuantityBase: 10,
+              parQuantityBase: 25,
+              maxQuantityBase: 50,
+              safetyStockBase: 5,
+              stockedHere: true,
+              replenishmentEnabled: true,
+              primaryLocation: 'Main Store',
+              storageLocations: ['Main Store', 'Cold Room'],
+              status: 'ACTIVE',
             },
-            { upsert: true }
-          );
-        }
+          },
+          { upsert: true, session }
+        );
       }
 
-      // 3. CafeAccess Provisioning (Zero PIN, QR + Link only)
-      let access = await CafeAccess.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
+      // 3. Café access provisioning inside the same transaction.
+      let access = await CafeAccess.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
       if (!access) {
         const qrToken = generateOpaqueToken();
         let linkToken = generateOpaqueToken();
@@ -1464,38 +1499,53 @@ class CafeService {
           linkToken = generateOpaqueToken();
         }
 
-        access = await CafeAccess.create({
-          organisationId: cleanOrg,
-          cafeId: cleanCafe,
-          accessStatus: 'ACTIVE',
-          provisioningStatus: 'READY',
-          qrCredentialHash: hashOpaqueToken(qrToken),
-          qrTokenEncrypted: encryptSecret(qrToken),
-          qrVersion: 1,
-          qrEnabled: true,
-          qrCreatedAt: new Date(),
-          linkCredentialHash: hashOpaqueToken(linkToken),
-          linkTokenEncrypted: encryptSecret(linkToken),
-          linkVersion: 1,
-          linkEnabled: true,
-          linkCreatedAt: new Date(),
-          createdBy: auth.userId,
-          updatedBy: auth.userId,
-        });
+        [access] = await CafeAccess.create(
+          [{
+            organisationId: cleanOrg,
+            cafeId: cleanCafe,
+            accessStatus: 'ACTIVE',
+            provisioningStatus: 'READY',
+            qrCredentialHash: hashOpaqueToken(qrToken),
+            qrTokenEncrypted: encryptSecret(qrToken),
+            qrVersion: 1,
+            qrEnabled: true,
+            qrCreatedAt: new Date(),
+            linkCredentialHash: hashOpaqueToken(linkToken),
+            linkTokenEncrypted: encryptSecret(linkToken),
+            linkVersion: 1,
+            linkEnabled: true,
+            linkCreatedAt: new Date(),
+            createdBy: auth.userId,
+            updatedBy: auth.userId,
+          }],
+          { session }
+        );
       }
 
-      // 4. Café Admin Assignment if requested
+      // 4. Optional Café Admin assignment is part of the same transaction.
       if (options.adminUserId) {
-        const adminUser = await User.findOne({ userId: options.adminUserId, organisationId: cleanOrg });
-        if (adminUser) {
-          await User.updateOne(
-            { userId: adminUser.userId, organisationId: cleanOrg },
-            { $addToSet: { assignedCafeIds: cleanCafe } }
+        const adminUserId = String(options.adminUserId).trim().toUpperCase();
+        const adminUser = await User.findOne({
+          userId: adminUserId,
+          organisationId: cleanOrg,
+        }).session(session);
+
+        if (!adminUser) {
+          throw new ApiError(
+            400,
+            'CAFE_ADMIN_NOT_FOUND',
+            'Requested Café Admin assignment could not be resolved.'
           );
         }
+
+        await User.updateOne(
+          { userId: adminUser.userId, organisationId: cleanOrg },
+          { $addToSet: { assignedCafeIds: cleanCafe } },
+          { session }
+        );
       }
 
-      // 5. Complete PROVISIONED transition
+      // 5. Complete lifecycle transition only after every subsystem write succeeds.
       cafe.lifecycleStage = 'PROVISIONED';
       cafe.lifecycleHistory.push({
         fromStage: 'PROVISIONING',
@@ -1504,8 +1554,14 @@ class CafeService {
         transitionedBy: auth.userId,
         reason: 'All branch subsystems provisioned successfully.',
       });
-      await cafe.save();
+      await cafe.save({ session });
 
+      await commitWithRetry(session);
+      await session.endSession();
+      session = null;
+
+      // Audit is intentionally after commit so no success event can exist for
+      // a transaction that later aborts.
       await auditService.recordAuditEvent({
         organisationId: cleanOrg,
         cafeId: cleanCafe,
@@ -1515,7 +1571,7 @@ class CafeService {
         action: 'CAFE_PROVISIONED',
         entityType: 'CAFE',
         entityId: cleanCafe,
-        reason: 'Subsystems provisioned with zero fake stock, FY sequence, and retired PIN.',
+        reason: 'Subsystems provisioned atomically with zero fake stock and FY sequences.',
         result: 'SUCCESS',
         riskClassification: 'HIGH',
         correlationId,
@@ -1525,17 +1581,42 @@ class CafeService {
 
       return { cafe, provisioningStatus: 'PROVISIONED' };
     } catch (err) {
-      cafe.lifecycleStage = 'PROVISIONING_FAILED';
-      cafe.lifecycleHistory.push({
-        fromStage: 'PROVISIONING',
-        toStage: 'PROVISIONING_FAILED',
-        transitionedAt: new Date(),
-        transitionedBy: auth.userId,
-        reason: `Provisioning failed: ${err.message}`,
-      });
-      await cafe.save().catch(() => {});
+      if (session) {
+        await session.abortTransaction().catch(() => {});
+        await session.endSession().catch(() => {});
+        session = null;
+      }
 
-      throw new ApiError(500, 'PROVISIONING_FAILED', `Provisioning failed: ${err.message}`);
+      // Record the failed lifecycle outside the aborted transaction. No
+      // subsystem artifacts from the failed attempt are allowed to survive.
+      try {
+        const failedCafe = await Cafe.findOne({
+          organisationId: cleanOrg,
+          cafeId: cleanCafe,
+        });
+        if (failedCafe) {
+          const fromStage = failedCafe.lifecycleStage || 'CREATED';
+          failedCafe.lifecycleStage = 'PROVISIONING_FAILED';
+          failedCafe.lifecycleHistory.push({
+            fromStage,
+            toStage: 'PROVISIONING_FAILED',
+            transitionedAt: new Date(),
+            transitionedBy: auth.userId,
+            reason: `Provisioning failed atomically: ${err.message}`,
+          });
+          await failedCafe.save();
+        }
+      } catch (_) {}
+
+      if (err instanceof ApiError && [400, 404, 503].includes(err.statusCode)) {
+        throw err;
+      }
+
+      throw new ApiError(
+        500,
+        'PROVISIONING_FAILED',
+        `Provisioning failed atomically: ${err.message}`
+      );
     }
   }
 
