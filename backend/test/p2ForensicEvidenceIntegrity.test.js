@@ -106,3 +106,16 @@ test('P2 credential integrity: seed PINs must never be source-code defaults', ()
     assert.match(seed, new RegExp(name));
   }
 });
+
+
+test('P2 persona integrity: supported persona arithmetic stays canonical', () => {
+  const routeAudit = read('scripts/audit_final_route_set.mjs');
+  assert.match(routeAudit, /const PERSONAS_COUNT = 4;/);
+  assert.doesNotMatch(routeAudit, /const PERSONAS_COUNT = 5;/);
+
+  const personaAudit = read('scripts/audit_all_supported_personas.mjs');
+  assert.doesNotMatch(personaAudit, /FIVE-PERSONA/i);
+
+  const docsGenerator = read('scripts/generate_supporting_files_docs.mjs');
+  assert.doesNotMatch(docsGenerator, /FIVE-PERSONA/i);
+});
