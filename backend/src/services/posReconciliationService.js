@@ -226,9 +226,12 @@ class PosReconciliationService {
       if (job.effectType === 'REGISTER_SESSION') {
         const payload = job.payloadSnapshot || {};
         const registerSessionId = normalizeId(payload.registerSessionId);
-        const registerId = normalizeId(payload.registerId || 'REG-01');
+        const registerId = normalizeId(payload.registerId);
         if (!registerSessionId) {
           throw new ApiError(400, 'REGISTER_SESSION_ID_REQUIRED', 'Register reconciliation requires registerSessionId.');
+        }
+        if (!registerId) {
+          throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'Register reconciliation requires registerId.');
         }
 
         const scope = {
