@@ -161,6 +161,25 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
         createdByUserId: 'SYSTEM_ADMIN',
       },
     ]);
+
+    // Canonical active cashier used by the baseline offline-sync scenarios.
+    // REC-13 must exercise live authority, not rely on an unbacked token/userId.
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId },
+      {
+        userId,
+        organisationId: orgId,
+        name: 'REC-13 Canonical Cashier',
+        email: 'rec13.cashier@zamorin.test',
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        lifecycleStatus: 'CONFIRMED',
+        employmentStatus: 'ACTIVE',
+        assignedCafeIds: [cafeId],
+        primaryCafeId: cafeId,
+      },
+      { upsert: true }
+    );
   });
 
 
@@ -1603,12 +1622,12 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
   // Test H1: stale allowed-role token cannot inherit a more privileged live role
   it('REC-13A Test H1: stale Café Admin token cannot inherit newly promoted Primary-Master authority', async () => {
     await User.findOneAndUpdate(
-      { organisationId: orgId, userId: 'MU-PROMOTED-01' },
+      { organisationId: orgId, userId: 'MU-PRIMARY-01' },
       {
-        userId: 'MU-PROMOTED-01',
+        userId: 'MU-PRIMARY-01',
         organisationId: orgId,
-        name: 'REC-13 Promoted Primary Master',
-        email: 'rec13.promoted.primary@zamorin.test',
+        name: 'REC-13 Primary Master',
+        email: 'rec13.primary.master@zamorin.test',
         role: 'MASTER',
         isPrimaryMaster: true,
         accountStatus: 'ACTIVE',
@@ -1618,7 +1637,7 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     );
 
     const staleAdminContext = {
-      userId: 'MU-PROMOTED-01',
+      userId: 'MU-PRIMARY-01',
       role: 'CAFE_ADMIN',
       organisationId: orgId,
       assignedCafeIds: [cafeId],
