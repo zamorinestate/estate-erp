@@ -2132,8 +2132,10 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   } else {
     let changed = false;
     if (!existingOwner.assignedCafeIds || existingOwner.assignedCafeIds.length === 0) {
-      existingOwner.primaryCafeId = existingOwner.primaryCafeId || 'ZC-0001';
       existingOwner.assignedCafeIds = ['ZC-0001', 'ZC-0002'];
+      if (!existingOwner.primaryCafeId) {
+        existingOwner.primaryCafeId = existingOwner.assignedCafeIds[0];
+      }
       changed = true;
     }
     if (!existingOwner.designation) {
