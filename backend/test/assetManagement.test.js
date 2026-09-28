@@ -78,8 +78,8 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
-    userId: 'MU-NORMAL-01',
+  const malformedMasterUser = {
+    userId: 'MU-MALFORMED-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
@@ -90,8 +90,8 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isMalformed = token === 'token_malformed_master';
+    const activeUser = isMalformed ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -114,8 +114,8 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   });
 
   t.mock.method(User, 'findOne', async (query) => {
-    if (query?.userId === 'MU-NORMAL-01') {
-      return { ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser };
+    if (query?.userId === 'MU-MALFORMED-01') {
+      return { ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser };
     }
     return { ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser };
   });
@@ -248,7 +248,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'GET',
       path: '/api/v1/assets/overview',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -263,7 +263,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'POST',
       path: '/api/v1/assets',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         name: 'Mahlkönig EK43 Commercial Grinder',
         category: 'GRINDERS_MILLS',
@@ -288,7 +288,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'POST',
       path: '/api/v1/assets',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         name: 'Duplicate Espresso Machine',
         cafeId: 'ZC-0001',
@@ -306,7 +306,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'POST',
       path: '/api/v1/assets/AST-0001/commission',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -320,7 +320,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'POST',
       path: '/api/v1/assets/AST-0001/transfer',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         toCafeId: 'ZC-0002',
         reason: 'Equipment capacity balancing',
@@ -338,7 +338,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'POST',
       path: '/api/v1/assets/AST-0001/safety-hold',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         isHoldActive: true,
         reason: 'Boiler pressure valve leak detected',
@@ -356,7 +356,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'POST',
       path: '/api/v1/assets/work-orders',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         assetId: 'AST-0001',
         title: 'Group Head Gasket Replacement',

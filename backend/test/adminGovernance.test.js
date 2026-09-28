@@ -78,8 +78,8 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
-    userId: 'MU-NORMAL-01',
+  const malformedMasterUser = {
+    userId: 'MU-MALFORMED-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
@@ -92,8 +92,8 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
   let currentUser = primaryMasterUser;
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isMalformed = token === 'token_malformed_master';
+    const activeUser = isMalformed ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -116,12 +116,12 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
   });
 
   t.mock.method(User, 'findOne', async (query) => {
-    if (query?.userId === 'MU-NORMAL-01') {
+    if (query?.userId === 'MU-MALFORMED-01') {
       return {
-        ...normalMasterUser,
+        ...malformedMasterUser,
         isPrimaryMaster: false,
         save: async () => {},
-        toObject: () => normalMasterUser,
+        toObject: () => malformedMasterUser,
       };
     }
     return {
@@ -135,7 +135,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
   t.mock.method(User, 'find', () => ({
     lean: async () => [
       primaryMasterUser,
-      normalMasterUser,
+      malformedMasterUser,
       { userId: 'AD-0001', role: 'CAFE_ADMIN', isPrimaryMaster: false, accountStatus: 'ACTIVE', assignedCafeIds: ['ZC-0001'] },
       { userId: 'ST-0001', role: 'STAFF', isPrimaryMaster: false, accountStatus: 'ACTIVE', assignedCafeIds: ['ZC-0001'] },
     ],
@@ -164,7 +164,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
             title: 'New Regional Ops Master',
             reason: 'Needed for North region expansion',
             status: 'SUBMITTED',
-            requestedByUserId: 'MU-NORMAL-01',
+            requestedByUserId: 'MU-MALFORMED-01',
             submittedAt: new Date(),
           },
         ],
@@ -240,7 +240,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
       port,
       method: 'POST',
       path: '/api/v1/admin/requests',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         requestType: 'CREATE_MASTER_USER',
         title: 'New Regional Ops Master',
@@ -259,7 +259,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
       port,
       method: 'PATCH',
       path: '/api/v1/admin/requests/REQ-0001/decision',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         decision: 'APPROVED',
         comment: 'Self approval attempt',
@@ -324,7 +324,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
       port,
       method: 'POST',
       path: '/api/v1/cafes',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         name: 'Dawn Roast — HSR Layout',
         displayName: 'HSR Layout Branch',

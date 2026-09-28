@@ -19,7 +19,7 @@
  *  8. Staff-to-Staff IDOR (cross-user profile/payslip/preferences denied)
  *  9. Café Admin cross-café IDOR (foreign café bills/inventory denied)
  * 10. Cross-org IDOR (foreign organisation data strictly unreachable)
- * 11. Personal Ledger restriction (Master/Owner authority, normal Master denied)
+ * 11. Personal Ledger restriction (Primary Master/Owner authority; malformed non-primary MASTER denied)
  * 12. Expense approval restriction (Staff/Admin cannot approve, Master/Owner required)
  * 13. Expense paid/reversal restriction (strictly Master-only)
  * 14. POS foreign bill denial (cannot reprint/refund bill from another café)

@@ -79,8 +79,8 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
-    userId: 'MU-NORMAL-01',
+  const malformedMasterUser = {
+    userId: 'MU-MALFORMED-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
@@ -91,8 +91,8 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isMalformed = token === 'token_malformed_master';
+    const activeUser = isMalformed ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -115,8 +115,8 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
   });
 
   t.mock.method(User, 'findOne', async (query) => {
-    if (query?.userId === 'MU-NORMAL-01') {
-      return { ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser };
+    if (query?.userId === 'MU-MALFORMED-01') {
+      return { ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser };
     }
     return { ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser };
   });
@@ -211,7 +211,7 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
       port,
       method: 'GET',
       path: '/api/v1/attendance/overview',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -226,7 +226,7 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
       port,
       method: 'GET',
       path: '/api/v1/attendance/live',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
@@ -240,7 +240,7 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
       port,
       method: 'POST',
       path: '/api/v1/attendance/master-manual',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         userId: 'EMP-001',
         cafeId: 'ZC-0001',
@@ -260,7 +260,7 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
       port,
       method: 'GET',
       path: '/api/v1/attendance/calendar-360/EMP-001?year=2026&month=8',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
     assert.equal(res.status, 200);
