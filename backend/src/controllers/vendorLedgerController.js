@@ -27,6 +27,13 @@ function assertFinanceRoleAccess(request, requiredLevel = 'READ') {
   if (!role) {
     throw new ApiError(401, 'UNAUTHORIZED', 'Authentication required.');
   }
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER vendor-finance access.'
+    );
+  }
 
   const capabilities = request.auth?.capabilities || [];
   const hasAccountsRead =
@@ -63,7 +70,14 @@ function assertFinanceRoleAccess(request, requiredLevel = 'READ') {
 function assertCafeAccess(request, cafeId) {
   if (!cafeId || cafeId === 'ORGANISATION_WIDE' || cafeId === 'GLOBAL') return;
   const role = request.auth.role;
-  if (role === 'MASTER') return;
+  if (role === 'MASTER') {
+    if (request.auth.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER vendor-finance access.'
+    );
+  }
 
   const assigned = (request.auth.assignedCafeIds || []).map((c) => c.toUpperCase());
   const target = cafeId.trim().toUpperCase();
