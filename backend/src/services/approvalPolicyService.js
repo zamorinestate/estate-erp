@@ -113,8 +113,19 @@ class ApprovalPolicyService {
     reason = '',
     auth,
   }) {
-    if (!auth || (auth.role !== 'MASTER' && auth.role !== 'OWNER')) {
-      throw new ApiError(403, 'POLICY_UPDATE_DENIED', 'Only Master and Owner can configure approval policies.');
+    const isOwner = auth?.role === 'OWNER';
+    const isPrimaryMaster =
+      auth?.role === 'MASTER' &&
+      auth?.isPrimaryMaster === true;
+
+    if (!isOwner && !isPrimaryMaster) {
+      throw new ApiError(
+        403,
+        auth?.role === 'MASTER'
+          ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+          : 'POLICY_UPDATE_DENIED',
+        'Only Primary Master and Owner can configure approval policies.'
+      );
     }
 
     const normRole = String(role || '').trim().toUpperCase();
