@@ -150,8 +150,8 @@ export function getIsPrimaryMaster() {
   if (state.user?.isPrimaryMaster !== undefined) return Boolean(state.user.isPrimaryMaster);
   if (state.isPrimaryMaster !== undefined) return Boolean(state.isPrimaryMaster);
 
-  // Verified identity with MASTER role: grant Primary Master by default
-  if (state.role === ROLES.MASTER || state.role === "master") return true;
+  // Never infer Primary-Master authority from role alone. An authenticated
+  // MASTER state without an explicit Primary-Master flag fails closed.
   return false;
 }
 
@@ -166,7 +166,7 @@ export function navigate(route) {
   const isVendor = state.role === ROLES.VENDOR || state.role === "vendor";
   const isAllowed = isVendor
     ? isRouteAllowed(state.role, route, false)
-    : (route === "notifications" || isRouteAllowed(state.role, route, isPrimary));
+    : isRouteAllowed(state.role, route, isPrimary);
 
   if (!isAllowed) {
     setState({ route: "__blocked__" });

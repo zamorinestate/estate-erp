@@ -69,7 +69,7 @@ export function renderSidebar() {
 
   let rolePillLabel = ROLE_LABELS[currentRole] || "Workspace";
   if (currentRole === ROLES.MASTER) {
-    rolePillLabel = isPrimary ? "Primary Master" : "Master (Operational)";
+    rolePillLabel = isPrimary ? "Primary Master" : "Invalid Master Context";
   }
 
   const sectionsHtml = Object.entries(grouped)
@@ -665,7 +665,7 @@ export function renderTopbar({ scopeChip } = {}) {
             if (isPrimary) return "Primary Master";
             if (user.designation) return user.designation;
             const uRole = String(user.role || (isPrimary ? "MASTER" : role)).toLowerCase();
-            if (uRole === ROLES.MASTER || uRole === "master") return "Primary Master";
+            if (uRole === ROLES.MASTER || uRole === "master") return "Invalid Master Context";
             if (uRole === ROLES.OWNER || uRole === "owner") return "Café Owner";
             if (uRole === ROLES.CAFE_ADMIN || uRole === "cafe_admin") return "Café Administrator";
             return ROLE_LABELS[uRole] || "Staff Member";

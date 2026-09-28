@@ -292,6 +292,13 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
     return VENDOR_ALLOWED_ROUTES.has(route);
   }
 
+  // A MASTER context is valid only when explicitly identified as the Primary Master.
+  // Fail closed before implicit/internal route handling so stale or malformed
+  // MASTER client state cannot inherit any authenticated workspace routes.
+  if ((role === ROLES.MASTER || role === 'master') && isPrimaryMaster !== true) {
+    return false;
+  }
+
   // Implicit routes allowed for all authenticated internal roles
   if (IMPLICIT_ROUTES_ALL.has(route)) return true;
 
@@ -396,6 +403,10 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
 
 // ─── Grouped navigation for sidebar rendering ─────────────────────────────────
 export function getGroupedNavItems(role, isPrimaryMaster = false) {
+  if ((role === ROLES.MASTER || role === 'master') && isPrimaryMaster !== true) {
+    return {};
+  }
+
   const navConfig = NAVIGATION[role];
   if (!navConfig) return {};
 

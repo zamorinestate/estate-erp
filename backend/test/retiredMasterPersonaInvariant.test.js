@@ -73,3 +73,26 @@ test('Retired secondary MASTER persona is absent from the repository', () => {
       findings.map((f) => `- ${f.file}: ${f.hits.join(', ')}`).join('\n')
   );
 });
+
+test('Malformed non-primary MASTER frontend context fails closed', async () => {
+  const { isRouteAllowed, getGroupedNavItems } = await import('../../frontend/src/js/navigation.js');
+
+  for (const route of ['dashboard', 'passbook', 'admin', 'notifications', 'staff-home']) {
+    assert.equal(
+      isRouteAllowed('master', route, false),
+      false,
+      `non-primary MASTER must be denied route ${route}`
+    );
+  }
+
+  assert.deepEqual(
+    getGroupedNavItems('master', false),
+    {},
+    'non-primary MASTER must receive no sidebar navigation groups'
+  );
+
+  assert.equal(isRouteAllowed('master', 'dashboard', true), true);
+  assert.equal(isRouteAllowed('master', 'passbook', true), true);
+  assert.ok(Object.keys(getGroupedNavItems('master', true)).length > 0);
+});
+
