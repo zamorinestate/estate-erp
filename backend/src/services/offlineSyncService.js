@@ -538,7 +538,7 @@ class OfflineSyncService {
 
   /**
    * REC-13A / REC-13B: Retrieves pending offline review items scoped by organisation and café.
-   * Enforces Policy A: Only Assigned CAFE_ADMIN and MASTER are permitted.
+   * Enforces Policy A: Only Assigned CAFE_ADMIN and the Primary Master are permitted.
    * OWNER and STAFF are strictly barred with 403 AUTHORIZATION_DENIED (Segregation of Duties).
    */
   static async getPendingReviews({ organisationId, cafeId = null, authUser }) {
@@ -567,6 +567,14 @@ class OfflineSyncService {
       err.statusCode = 403;
       err.errorCode = 'AUTHORIZATION_DENIED';
       err.code = 'AUTHORIZATION_DENIED';
+      throw err;
+    }
+
+    if (role === 'MASTER' && authUser?.isPrimaryMaster !== true) {
+      const err = new Error('Primary Master authority is required for MASTER offline queue review.');
+      err.statusCode = 403;
+      err.errorCode = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
       throw err;
     }
 
@@ -611,7 +619,7 @@ class OfflineSyncService {
    * Actions: APPROVE_AND_FINALIZE, REJECT, ESCALATE.
    *
    * Enforces:
-   * - Strict Policy A authorization: Assigned CAFE_ADMIN, MASTER (OWNER and STAFF strictly denied with 403)
+   * - Strict Policy A authorization: Assigned CAFE_ADMIN or Primary Master (OWNER, STAFF and malformed MASTER strictly denied)
    * - Cross-café denial (Foreign Café Admin denied with 403)
    * - Re-checks reviewer current status and role against database at execution time
    * - Atomic transition (PENDING_REVIEW -> APPROVING -> APPROVED_FINALIZED) to prevent race conditions
@@ -668,6 +676,14 @@ class OfflineSyncService {
       throw err;
     }
 
+    if (reviewerRole === 'MASTER' && authContext?.isPrimaryMaster !== true) {
+      const err = new Error('Primary Master authority is required for MASTER offline review execution.');
+      err.statusCode = 403;
+      err.errorCode = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      throw err;
+    }
+
     // 2. Lookup Review Item
     const reviewItem = await PosOfflineReviewItem.findOne({
       organisationId: cleanOrg,
@@ -715,6 +731,14 @@ class OfflineSyncService {
         err.statusCode = 403;
         err.errorCode = 'AUTHORIZATION_DENIED';
         err.code = 'AUTHORIZATION_DENIED';
+        throw err;
+      }
+
+      if (activeRole === 'MASTER' && canonicalReviewer.isPrimaryMaster !== true) {
+        const err = new Error('Primary Master authority is required for MASTER offline review execution.');
+        err.statusCode = 403;
+        err.errorCode = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+        err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
         throw err;
       }
 
@@ -927,14 +951,10 @@ class OfflineSyncService {
         offlineCreatedAt: reviewItem.capturedAtClient,
         catalogVersion: reviewItem.catalogVersion,
         lineItems: mappedLineItems,
-        tenders: tx.tenders || [
-          {
-            paymentMethod: tx.paymentMethod || 'CASH',
-            amountPaisa: totalPaisa,
-            provider: 'CASH_REGISTER',
-            paymentReference: tx.paymentReference || `CASH-${reviewItem.clientOfflineId}`,
-          },
-        ],
+        tenders:
+          Array.isArray(tx.tenders) && tx.tenders.length > 0
+            ? tx.tenders
+            : undefined,
         isImmediateCompletion: true,
         isOfflineReplay: true,
         reviewedByUserId,
@@ -943,12 +963,32 @@ class OfflineSyncService {
         reviewId: reviewItem.reviewId,
       };
 
-      // Keep original cashier as the originating identity
+      // Commit under the authorized reviewer's current authority, while the
+      // canonical POS service records the originating cashier separately.
+      const canonicalAssignedCafeIds = canonicalReviewer
+        ? [
+            ...(canonicalReviewer.assignedCafeIds || []),
+            canonicalReviewer.primaryCafeId || canonicalReviewer.cafeId,
+          ]
+            .filter(Boolean)
+            .map((c) => String(c).trim().toUpperCase())
+        : [
+            ...(authContext?.assignedCafeIds || []),
+            authContext?.primaryCafeId || authContext?.cafeId,
+          ]
+            .filter(Boolean)
+            .map((c) => String(c).trim().toUpperCase());
+
       const commitAuthContext = {
         organisationId: cleanOrg,
         cafeId: itemCafeId,
-        userId: reviewItem.originatingUserId,
-        role: 'STAFF',
+        userId: reviewerUserId,
+        role: reviewerRole,
+        isPrimaryMaster:
+          reviewerRole === 'MASTER' &&
+          (canonicalReviewer?.isPrimaryMaster === true || authContext?.isPrimaryMaster === true),
+        assignedCafeIds: canonicalAssignedCafeIds,
+        primaryCafeId: canonicalReviewer?.primaryCafeId || authContext?.primaryCafeId || null,
       };
 
       const commitResult = await PosOrderService.processOrder(
@@ -960,6 +1000,7 @@ class OfflineSyncService {
           clientOfflineId: reviewItem.clientOfflineId,
           reviewedByUserId,
           reviewedByRole,
+          originatingCashierUserId: reviewItem.originatingUserId,
           reviewReason: reason,
           reviewId: reviewItem.reviewId,
         }
