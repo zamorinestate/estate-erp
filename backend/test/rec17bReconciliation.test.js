@@ -7,8 +7,8 @@
  * Covers:
  * 01. PO Approval Matrix: Primary Master (ALLOW)
  * 02. PO Approval Separation of Duties: PO approval does NOT grant payment authority
- * 03. Payment & AP Authority Matrix: Master (ALLOW), Owner (DENY write), Staff (DENY)
- * 04. Accounts Model B Reconciliation: Master is functional owner of payment release
+ * 03. Payment & AP Authority Matrix: Primary Master (ALLOW), Owner/Staff (DENY)
+ * 04. Accounts Model B Reconciliation: Primary Master is functional owner of payment release
  * 05. Personal Ledger Invariant: Primary Master + Owner ALLOW; Admin, Staff DENY
  * 06. Full Cash/Bank Smoke Test: ₹1,000 payable -> ₹500 payment -> ₹500 outstanding
  * 07. Canonical CashTransaction Posting: Exactly once per disbursement, zero duplication
@@ -224,8 +224,57 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
     );
   });
 
-  // 05. PAYMENT AUTHORITY: MASTER (PRIMARY & NORMAL) CAN RELEASE PAYMENTS
-  it('05. Payment Authority: Master (both Primary & Normal) has payment release authority', async () => {
+  // 05A. MALFORMED MASTER: DIRECT CONTROLLER CALLS FAIL CLOSED
+  it('05A. Malformed non-primary MASTER cannot release/reverse vendor payments or set opening balances', async () => {
+    const malformedAuth = {
+      userId: 'MU-MALFORMED-01',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      organisationId: ORG_ID,
+      assignedCafeIds: [CAFE_ID],
+    };
+
+    const cases = [
+      {
+        controller: vendorLedgerController.recordPayment,
+        req: {
+          auth: malformedAuth,
+          body: { vendorId: 'VEN-0001', paymentAmountPaisa: 10000 },
+        },
+      },
+      {
+        controller: vendorLedgerController.reversePayment,
+        req: {
+          auth: malformedAuth,
+          params: { paymentId: 'PAY-MALFORMED-001' },
+          body: { reason: 'Malformed master reversal attempt' },
+        },
+      },
+      {
+        controller: vendorLedgerController.setOpeningBalance,
+        req: {
+          auth: malformedAuth,
+          params: { vendorId: 'VEN-0001' },
+          body: { amountPaisa: 10000, isCredit: true, reason: 'Opening balance attempt' },
+        },
+      },
+    ];
+
+    for (const { controller, req } of cases) {
+      const res = createMockResponse();
+      await assert.rejects(
+        async () => invokeController(controller, req, res),
+        (err) => {
+          assert.strictEqual(err.statusCode, 403);
+          assert.strictEqual(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+          return true;
+        }
+      );
+    }
+  });
+
+  // 05. PAYMENT AUTHORITY: PRIMARY MASTER ONLY
+  it('05. Payment Authority: Primary Master has payment release authority', async () => {
     await Vendor.create({
       organisationId: ORG_ID,
       vendorId: 'VEN-0001',
