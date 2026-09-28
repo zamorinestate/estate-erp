@@ -16,7 +16,7 @@
  *  05. Staff POS access
  *  06. Staff admin denial
  *  07. Primary Master Personal Ledger (ALLOW)
- *  08. Normal Master Personal Ledger denial (DENY)
+ *  08. Malformed MASTER Personal Ledger denial (DENY)
  *  09. Owner Personal Ledger (ALLOW)
  *  10. Owner PO denial (DENY)
  *  11. Master PO approval (ALLOW)
@@ -314,9 +314,9 @@ test('EXT-14 — Real Café Shadow Pilot, Operator UAT & Reconciliation Suite (4
       role: 'MASTER',
       isPrimaryMaster: true,
     }),
-    normalMaster: makeAuthContext({
+    malformedMaster: makeAuthContext({
       userId: 'EMP-PILOT-NM-01',
-      name: 'Pilot Normal Master',
+      name: 'Pilot Malformed MASTER',
       role: 'MASTER',
       isPrimaryMaster: false,
     }),
@@ -351,7 +351,7 @@ test('EXT-14 — Real Café Shadow Pilot, Operator UAT & Reconciliation Suite (4
 
   await t.test('04. Role fixtures: all 6 canonical pilot personas configured', () => {
     assert.equal(personas.primaryMaster.isPrimaryMaster, true);
-    assert.equal(personas.normalMaster.isPrimaryMaster, false);
+    assert.equal(personas.malformedMaster.isPrimaryMaster, false);
     assert.equal(personas.owner.role, 'OWNER');
     assert.equal(personas.cafeAdmin.role, 'CAFE_ADMIN');
     assert.equal(personas.staff.role, 'STAFF');
@@ -394,10 +394,10 @@ test('EXT-14 — Real Café Shadow Pilot, Operator UAT & Reconciliation Suite (4
   });
 
   // -------------------------------------------------------------------------
-  // 08. Normal Master Personal Ledger Denial
+  // 08. Malformed MASTER Personal Ledger Denial
   // -------------------------------------------------------------------------
-  await t.test('08. Normal Master Personal Ledger denial: Normal Master is strictly DENIED Personal Ledger', () => {
-    assert.equal(canAccessPersonalLedger(personas.normalMaster), false);
+  await t.test('08. Malformed MASTER Personal Ledger denial: Malformed MASTER is strictly DENIED Personal Ledger', () => {
+    assert.equal(canAccessPersonalLedger(personas.malformedMaster), false);
   });
 
   // -------------------------------------------------------------------------
@@ -424,9 +424,9 @@ test('EXT-14 — Real Café Shadow Pilot, Operator UAT & Reconciliation Suite (4
   // -------------------------------------------------------------------------
   // 11. Master PO Approval
   // -------------------------------------------------------------------------
-  await t.test('11. Master PO approval: Primary Master & Normal Master can approve PO (ALLOW)', () => {
+  await t.test('11. Master PO approval: Primary Master & Malformed MASTER can approve PO (ALLOW)', () => {
     assert.equal(canApprovePurchaseOrder(personas.primaryMaster), true);
-    assert.equal(canApprovePurchaseOrder(personas.normalMaster), true);
+    assert.equal(canApprovePurchaseOrder(personas.malformedMaster), true);
   });
 
   // -------------------------------------------------------------------------

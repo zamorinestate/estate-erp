@@ -438,16 +438,16 @@ describe('EXT-05 — Zero-Cost Disaster Recovery Exercise & Business Continuity 
     const inv = orchestrator.verifyPostRecoverySecurityInvariants();
     assert.equal(inv.personalLedgerPolicy.PRIMARY_MASTER, 'ALLOW');
     assert.equal(inv.personalLedgerPolicy.OWNER, 'ALLOW');
-    assert.equal(inv.personalLedgerPolicy.NORMAL_MASTER, 'DENY');
+    assert.equal(inv.personalLedgerPolicy.MALFORMED_MASTER, 'DENY');
     assert.equal(inv.personalLedgerPolicy.CAFE_ADMIN, 'DENY');
     assert.equal(inv.personalLedgerPolicy.STAFF, 'DENY');
   });
 
   // 27 post-recovery PO authority
-  test('27. Post-recovery PO Approval permanent authority remains: Primary & Normal Master ALLOW, others DENY', () => {
+  test('27. Post-recovery PO Approval permanent authority remains: Primary & Malformed MASTER ALLOW, others DENY', () => {
     const inv = orchestrator.verifyPostRecoverySecurityInvariants();
     assert.equal(inv.poApprovalPolicy.PRIMARY_MASTER, 'ALLOW');
-    assert.equal(inv.poApprovalPolicy.NORMAL_MASTER, 'ALLOW');
+    assert.equal(inv.poApprovalPolicy.MALFORMED_MASTER, 'ALLOW');
     assert.equal(inv.poApprovalPolicy.OWNER, 'DENY');
     assert.equal(inv.poApprovalPolicy.CAFE_ADMIN, 'DENY');
     assert.equal(inv.poApprovalPolicy.STAFF, 'DENY');

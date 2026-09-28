@@ -914,7 +914,7 @@ describe('EXT-08 — External CA / Tax / Statutory Review Preparation (42-Point 
   // =========================================================================
   // TEST 38 — PO Approval Regression
   // =========================================================================
-  it('38. PO Approval absolute regression: Primary & Normal Master ALLOW; Owner, Admin, Staff DENY', () => {
+  it('38. PO Approval absolute regression: Primary & Malformed MASTER ALLOW; Owner, Admin, Staff DENY', () => {
     // Verify the PO approval regression suite is present
     assert.ok(
       fs.existsSync(path.join(__dirname, 'poApprovalPermissionPolicy.test.js')) ||

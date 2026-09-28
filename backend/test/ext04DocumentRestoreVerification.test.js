@@ -965,7 +965,7 @@ describe('EXT-04 — GridFS Document Restore, Historical Revision Recovery & Int
   });
 
   // 45. PO Approval
-  test('45. PO Approval Invariant: Primary Master and Normal Master ALLOW; Owner, Cafe Admin, Staff DENY', () => {
+  test('45. PO Approval Invariant: Primary Master and Malformed MASTER ALLOW; Owner, Cafe Admin, Staff DENY', () => {
     const canApprove = (role) => role === 'PRIMARY_MASTER' || role === 'MASTER';
     assert.equal(canApprove('PRIMARY_MASTER'), true);
     assert.equal(canApprove('MASTER'), true);

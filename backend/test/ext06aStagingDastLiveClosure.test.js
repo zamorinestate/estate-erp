@@ -144,14 +144,14 @@ describe('EXT-06A -- Live Zero-Cost Staging Deployment & Real ZAP DAST Closure S
     const personalLedgerAllowed = ['PRIMARY_MASTER', 'OWNER'];
     assert.equal(personalLedgerAllowed.includes('PRIMARY_MASTER'), true);
     assert.equal(personalLedgerAllowed.includes('OWNER'), true);
-    assert.equal(personalLedgerAllowed.includes('NORMAL_MASTER'), false);
+    assert.equal(personalLedgerAllowed.includes('MALFORMED_MASTER'), false);
     assert.equal(personalLedgerAllowed.includes('CAFE_ADMIN'), false);
     assert.equal(personalLedgerAllowed.includes('STAFF'), false);
 
     // PO Approval Matrix
-    const poApprovalAllowed = ['PRIMARY_MASTER', 'NORMAL_MASTER'];
+    const poApprovalAllowed = ['PRIMARY_MASTER', 'MALFORMED_MASTER'];
     assert.equal(poApprovalAllowed.includes('PRIMARY_MASTER'), true);
-    assert.equal(poApprovalAllowed.includes('NORMAL_MASTER'), true);
+    assert.equal(poApprovalAllowed.includes('MALFORMED_MASTER'), true);
     assert.equal(poApprovalAllowed.includes('OWNER'), false);
     assert.equal(poApprovalAllowed.includes('CAFE_ADMIN'), false);
     assert.equal(poApprovalAllowed.includes('STAFF'), false);
