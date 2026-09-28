@@ -150,7 +150,7 @@ async function authenticate(
       name: user.name || user.email,
       organisationId: user.organisationId,
       role: user.role,
-      vendorId: user.vendorId || payload.vid || null,
+      vendorId: user.vendorId || null,
       isPrimaryMaster: Boolean(user.isPrimaryMaster),
       assignedCafeIds,
       primaryCafeId:
