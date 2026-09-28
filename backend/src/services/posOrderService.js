@@ -842,7 +842,15 @@ class PosOrderService {
       .reduce((sum, t) => sum + t.amountPaisa, 0);
     const isTraining = Boolean(orderPayload.isTraining || options.isTraining);
     const registerSessionId = normalizeId(orderPayload.registerSessionId || '');
-    const registerId = normalizeId(orderPayload.registerId || 'REG-01') || 'REG-01';
+    const registerId = normalizeId(orderPayload.registerId || '');
+
+    if (registerSessionId && !registerId) {
+      throw new ApiError(
+        400,
+        'REGISTER_ID_REQUIRED',
+        'registerId is required whenever registerSessionId is supplied.'
+      );
+    }
 
     if (!isTraining && registerSessionId) {
       const scopedSession = await RegisterSession.findOne({
@@ -1355,7 +1363,7 @@ class PosOrderService {
     const normBillId = normalizeId(billId);
     const bill = await Bill.findOne({
       $or: [{ billId: normBillId }, { invoiceNumber: normBillId }],
-      organisationId: authContext.organisationId || 'ORG-ZAMORIN',
+      organisationId: requireOrganisationId(authContext),
     });
 
     if (!bill) {
@@ -1404,7 +1412,7 @@ class PosOrderService {
     const normBillId = normalizeId(billId);
     const bill = await Bill.findOne({
       $or: [{ billId: normBillId }, { invoiceNumber: normBillId }],
-      organisationId: authContext.organisationId || 'ORG-ZAMORIN',
+      organisationId: requireOrganisationId(authContext),
     });
 
     if (!bill) {
