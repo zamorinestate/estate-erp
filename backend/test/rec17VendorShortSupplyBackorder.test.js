@@ -128,7 +128,7 @@ describe('REC-17 — Vendor Short Supply, Backorder & Receiving Certification Su
   const cafeIdA = 'ZC-CAF-01';
   const cafeIdB = 'ZC-CAF-02';
 
-  const masterAuth = { userId: 'USR-MASTER-01', role: 'MASTER', organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
+  const masterAuth = { userId: 'USR-MASTER-01', role: 'MASTER', isPrimaryMaster: true, organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
   const ownerAuth = { userId: 'USR-OWNER-01', role: 'OWNER', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const cafeAdminAAuth = { userId: 'USR-ADMIN-01', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const cafeAdminBAuth = { userId: 'USR-ADMIN-02', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdB, assignedCafeIds: [cafeIdB] };
