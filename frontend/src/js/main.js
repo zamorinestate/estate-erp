@@ -1072,7 +1072,7 @@ async function boot() {
     if (isDirectDashboardAllowed() && (params?.get("role") || params?.get("devRole") || (typeof localStorage !== "undefined" && localStorage.getItem("zamorin-dev-role")))) {
       const devKey = getRequestedDevRole();
       const devUser = DEV_PREVIEW_USERS[devKey] || DEV_PREVIEW_USERS.master;
-      const canonicalRole = devKey === "master_normal" ? "master" : devKey;
+      const canonicalRole = DEV_PREVIEW_USERS[devKey] ? devKey : "master";
       const isPrimary = Boolean(devUser?.isPrimaryMaster);
       const roleNavigation = NAVIGATION[canonicalRole] || NAVIGATION.master;
       const defaultRoute = roleNavigation?.items?.[0]?.route || (canonicalRole === "staff" ? "staff-home" : "dashboard");
