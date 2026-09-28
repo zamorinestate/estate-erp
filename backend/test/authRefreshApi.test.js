@@ -286,3 +286,58 @@ test('POST /auth/refresh revokes session when live role differs from issued role
   assert.equal(session.status, 'REVOKED');
   assert.equal(session.revocationReason, 'ROLE_CHANGED');
 });
+
+
+test('POST /auth/refresh detects replay older than the former ten-token window', async (t) => {
+  const replayedToken = 'refresh-token-very-old';
+  const currentRefreshToken = 'refresh-token-current-after-many-rotations';
+  const history = [
+    hashToken(replayedToken),
+    ...Array.from({ length: 15 }, (_, index) => hashToken(`rotated-history-${index}`)),
+  ];
+  const session = makeSession(currentRefreshToken, {
+    previousRefreshTokenHashes: history,
+    sessionVersion: history.length,
+  });
+
+  t.mock.method(Session, 'findOne', () => query(session));
+
+  const server = await startServer(t);
+  const response = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken: replayedToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error?.code, 'INVALID_REFRESH_SESSION');
+  assert.equal(session.status, 'COMPROMISED');
+  assert.match(session.compromiseDetails, /previously rotated refresh token/i);
+});
+
+test('POST /auth/refresh bounds token-lineage growth by forcing renewal at rotation limit', async (t) => {
+  const refreshToken = 'refresh-token-at-rotation-limit';
+  const user = makeUser();
+  const session = makeSession(refreshToken, {
+    sessionVersion: 1024,
+    previousRefreshTokenHashes: Array.from(
+      { length: 1024 },
+      (_, index) => hashToken(`bounded-history-${index}`)
+    ),
+  });
+
+  t.mock.method(Session, 'findOne', () => query(session));
+  t.mock.method(User, 'findOne', () => query(user));
+
+  const server = await startServer(t);
+  const response = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error?.code, 'INVALID_REFRESH_SESSION');
+  assert.equal(session.status, 'REVOKED');
+  assert.equal(session.revocationReason, 'SESSION_EXPIRED');
+});
