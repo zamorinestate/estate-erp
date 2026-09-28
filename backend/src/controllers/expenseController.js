@@ -48,7 +48,14 @@ function ensureCafeAccess(request, cafeId) {
     throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'You do not have access to this cafe in the current workspace scope.');
   }
   const role = request?.auth?.role;
-  if (role === 'MASTER') return;
+  if (role === 'MASTER') {
+    if (request.auth?.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER expense access.'
+    );
+  }
   if (role === 'OWNER') {
     const assignedCafeIds = (request?.auth?.assignedCafeIds || []).map((c) => String(c).trim().toUpperCase());
     if (!assignedCafeIds.includes(cleanCafe)) {
@@ -214,8 +221,7 @@ const getExpense = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, expense.cafeId);
 
-  const isPrimary = request.auth.role === 'MASTER' && request.auth.isPrimaryMaster;
-  const isMaster = request.auth.role === 'MASTER';
+  const isPrimary = request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true;
   const isSubmitter = request.auth.userId === expense.ownerUserId || request.auth.userId === expense.preparerUserId;
 
   const allowedActions = [];
@@ -223,7 +229,7 @@ const getExpense = asyncHandler(async (request, response) => {
     allowedActions.push('EDIT', 'SUBMIT', 'DELETE');
   }
   if (expense.status === 'SUBMITTED' || expense.status === 'PENDING_APPROVAL') {
-    if (isMaster && request.auth.userId !== expense.ownerUserId) {
+    if (isPrimary && request.auth.userId !== expense.ownerUserId) {
       allowedActions.push('APPROVE', 'RETURN', 'REJECT');
     }
     if (isSubmitter) {
@@ -231,7 +237,7 @@ const getExpense = asyncHandler(async (request, response) => {
     }
   }
   if (expense.status === 'APPROVED') {
-    if (isMaster) {
+    if (isPrimary) {
       allowedActions.push('RECORD_PAYMENT', 'REVERSE', 'GENERATE_VOUCHER');
     }
   }
@@ -935,8 +941,12 @@ const reverseExpense = asyncHandler(async (request, response) => {
   const { expenseId } = request.params;
   const { reason = '' } = request.body;
 
-  if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'MASTER_AUTHORITY_REQUIRED', 'Only Master may reverse an expense.');
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only Primary Master may reverse an expense.'
+    );
   }
 
   const expense = await Expense.findOne({ organisationId, expenseId });
@@ -1123,8 +1133,12 @@ const listOperationalAdvances = asyncHandler(async (request, response) => {
 
 const createOperationalAdvance = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'MASTER_AUTHORITY_REQUIRED', 'Only Master may issue operational advances.');
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only Primary Master may issue operational advances.'
+    );
   }
 
   const { recipientUserId, cafeId, purpose, amount, returnDueDate } = request.body;
