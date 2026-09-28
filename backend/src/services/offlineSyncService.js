@@ -578,12 +578,60 @@ class OfflineSyncService {
       throw err;
     }
 
+    const reviewerUserId = String(authUser?.userId || '').trim().toUpperCase();
+    if (!reviewerUserId) {
+      const err = new Error('Canonical reviewer identity is required for offline queue review.');
+      err.statusCode = 403;
+      err.errorCode = 'AUTHORIZATION_DENIED';
+      err.code = 'AUTHORIZATION_DENIED';
+      throw err;
+    }
+
+    const canonicalReviewer = await User.findOne({
+      userId: reviewerUserId,
+      organisationId: cleanOrg,
+    }).lean();
+
+    if (!canonicalReviewer) {
+      const err = new Error('Offline queue review authority could not be verified against the canonical user record.');
+      err.statusCode = 403;
+      err.errorCode = role === 'MASTER' ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED' : 'AUTHORIZATION_DENIED';
+      err.code = err.errorCode;
+      throw err;
+    }
+
+    const accountStatus = String(canonicalReviewer.accountStatus || canonicalReviewer.status || 'ACTIVE').toUpperCase();
+    if (['DISABLED', 'TERMINATED', 'SUSPENDED', 'DEACTIVATED', 'ARCHIVED', 'LOCKED', 'EXITED'].includes(accountStatus)) {
+      const err = new Error(`Reviewer account ${reviewerUserId} is currently ${accountStatus}. Offline queue review denied.`);
+      err.statusCode = 403;
+      err.errorCode = 'AUTHORIZATION_DENIED';
+      err.code = 'AUTHORIZATION_DENIED';
+      throw err;
+    }
+
+    const activeRole = String(canonicalReviewer.role || '').toUpperCase();
+    if (activeRole !== role) {
+      const err = new Error('Reviewer authorization context is stale because the canonical role has changed. Re-authentication is required.');
+      err.statusCode = 403;
+      err.errorCode = 'AUTHORIZATION_CONTEXT_STALE';
+      err.code = 'AUTHORIZATION_CONTEXT_STALE';
+      throw err;
+    }
+
+    if (activeRole === 'MASTER' && canonicalReviewer.isPrimaryMaster !== true) {
+      const err = new Error('Primary Master authority is required for MASTER offline queue review.');
+      err.statusCode = 403;
+      err.errorCode = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      throw err;
+    }
+
     const query = { organisationId: cleanOrg, status: 'PENDING_REVIEW' };
 
-    if (role === 'CAFE_ADMIN') {
+    if (activeRole === 'CAFE_ADMIN') {
       const assignedCafes = [
-        ...(authUser?.assignedCafeIds || []),
-        authUser?.primaryCafeId || authUser?.cafeId,
+        ...(canonicalReviewer.assignedCafeIds || []),
+        canonicalReviewer.primaryCafeId || canonicalReviewer.cafeId,
       ].filter(Boolean).map((c) => String(c).trim().toUpperCase());
 
       if (assignedCafes.length === 0) {
@@ -707,14 +755,14 @@ class OfflineSyncService {
       organisationId: cleanOrg,
     }).lean();
 
-    // MASTER authority must be backed by a live canonical user record. A stale,
-    // forged, or orphaned token/context must never self-assert Primary-Master
-    // authority for a financial review operation.
-    if (!canonicalReviewer && reviewerRole === 'MASTER') {
-      const err = new Error('Primary Master authority could not be verified against the canonical user record.');
+    // Financial review authority must always be backed by a live canonical
+    // user record. Token-supplied roles or café assignments are never an
+    // authorization fallback for offline financial governance.
+    if (!canonicalReviewer) {
+      const err = new Error('Offline review authority could not be verified against the canonical user record.');
       err.statusCode = 403;
-      err.errorCode = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
-      err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+      err.errorCode = reviewerRole === 'MASTER' ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED' : 'AUTHORIZATION_DENIED';
+      err.code = err.errorCode;
       throw err;
     }
 
@@ -729,6 +777,13 @@ class OfflineSyncService {
       }
 
       const activeRole = String(canonicalReviewer.role || '').toUpperCase();
+      if (activeRole !== reviewerRole) {
+        const err = new Error('Reviewer authorization context is stale because the canonical role has changed. Re-authentication is required.');
+        err.statusCode = 403;
+        err.errorCode = 'AUTHORIZATION_CONTEXT_STALE';
+        err.code = 'AUTHORIZATION_CONTEXT_STALE';
+        throw err;
+      }
       reviewedByRole = activeRole;
       if (activeRole === 'OWNER') {
         const err = new Error('Owner role does not possess offline POS review authorization (Segregation of Duties).');
@@ -767,19 +822,6 @@ class OfflineSyncService {
           err.code = 'CAFE_ACCESS_DENIED';
           throw err;
         }
-      }
-    } else if (reviewerRole === 'CAFE_ADMIN') {
-      const assignedCafes = [
-        ...(authContext?.assignedCafeIds || []),
-        authContext?.primaryCafeId || authContext?.cafeId,
-      ].filter(Boolean).map((c) => String(c).trim().toUpperCase());
-
-      if (!assignedCafes.includes(itemCafeId)) {
-        const err = new Error(`Café Admin ${reviewerUserId} is not authorized for café ${itemCafeId}.`);
-        err.statusCode = 403;
-        err.errorCode = 'CAFE_ACCESS_DENIED';
-        err.code = 'CAFE_ACCESS_DENIED';
-        throw err;
       }
     }
 
