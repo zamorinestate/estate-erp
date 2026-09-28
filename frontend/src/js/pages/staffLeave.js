@@ -1208,7 +1208,7 @@ function printLeaveStatement() {
     <div class="meta-item"><span>Employee ID:</span><strong>${u.userId || 'STAFF'}</strong></div>
     <div class="meta-item"><span>Employee Name:</span><strong>${u.name || 'Staff Member'}</strong></div>
     <div class="meta-item"><span>Designation:</span><strong>${u.designation || 'Team Member'}</strong></div>
-    <div class="meta-item"><span>Assigned Outlet:</span><strong>${u.primaryCafeName || u.primaryCafeId || 'ZC-0001'}</strong></div>
+    <div class="meta-item"><span>Assigned Outlet:</span><strong>${u.primaryCafeName || u.primaryCafeId || 'Unassigned Outlet'}</strong></div>
   </div>
 
   <div class="section-title">Leave Entitlements &amp; Balances</div>
