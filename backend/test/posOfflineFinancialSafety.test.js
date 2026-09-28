@@ -27,6 +27,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { Bill } = require('../src/models/Bill');
 const { TaxInvoice } = require('../src/models/TaxInvoice');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
+const { MenuItem } = require('../src/models/MenuItem');
 const { PosOrderService } = require('../src/services/posOrderService');
 const { allocateInvoiceNumber, syncTaxInvoiceIndexes } = require('../src/services/gstTaxService');
 const OfflineSyncService = require('../src/services/offlineSyncService');
@@ -57,10 +58,37 @@ describe('STAGE 11.36 — POS Offline Financial Safety & Statutory Numbering Inv
 
     // Transactions should test financial behavior, not implicitly create
     // MongoDB collections on their first write.
-    for (const model of [Bill, TaxInvoice, SequenceCounter]) {
+    for (const model of [Bill, TaxInvoice, SequenceCounter, MenuItem]) {
       await model.createCollection();
     }
     await syncTaxInvoiceIndexes(TaxInvoice.collection);
+
+    await MenuItem.create([
+      {
+        menuItemId: 'MENU-9001',
+        organisationId: orgId,
+        name: 'Zamorin Filter Coffee',
+        nameLower: 'zamorin filter coffee',
+        category: 'COFFEE',
+        currentPricePaisa: 6000,
+        taxRatePercent: 5,
+        status: 'ACTIVE',
+        availableCafeIds: [cafeId],
+        createdByUserId: 'SYSTEM_TEST',
+      },
+      {
+        menuItemId: 'MENU-9002',
+        organisationId: orgId,
+        name: 'Butter Croissant',
+        nameLower: 'butter croissant',
+        category: 'BAKERY',
+        currentPricePaisa: 15000,
+        taxRatePercent: 5,
+        status: 'ACTIVE',
+        availableCafeIds: [cafeId],
+        createdByUserId: 'SYSTEM_TEST',
+      },
+    ]);
   });
 
   after(async () => {
@@ -108,7 +136,7 @@ describe('STAGE 11.36 — POS Offline Financial Safety & Statutory Numbering Inv
       paymentMethod: 'CASH',
       idempotencyKey,
       lineItems: [
-        { menuItemId: 'MNU-COFFEE', name: 'Zamorin Filter Coffee', quantity: 2, unitPricePaisa: 6000 },
+        { menuItemId: 'MENU-9001', name: 'Zamorin Filter Coffee', quantity: 2, unitPricePaisa: 6000 },
       ],
     };
 
@@ -149,7 +177,7 @@ describe('STAGE 11.36 — POS Offline Financial Safety & Statutory Numbering Inv
       paymentMethod: 'CASH',
       idempotencyKey,
       lineItems: [
-        { menuItemId: 'MNU-CROISSANT', name: 'Butter Croissant', quantity: 1, unitPricePaisa: 15000 },
+        { menuItemId: 'MENU-9002', name: 'Butter Croissant', quantity: 1, unitPricePaisa: 15000 },
       ],
     };
 
