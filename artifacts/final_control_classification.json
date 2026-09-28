@@ -23,12 +23,6 @@
       "blocked": 2,
       "total": 1470
     },
-    "NORMAL_MASTER": {
-      "visibleWorking": 1410,
-      "policyHidden": 58,
-      "blocked": 2,
-      "total": 1470
-    },
     "OWNER": {
       "visibleWorking": 1430,
       "policyHidden": 38,
