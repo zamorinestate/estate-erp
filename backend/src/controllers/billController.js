@@ -886,14 +886,11 @@ const voidBill = asyncHandler(async (request, response) => {
   }
 
   const isPrimary = request.auth.isPrimaryMaster === true;
-  const isMaster = request.auth.role === 'MASTER';
-  const isToday = bill.businessDate === getIstBusinessDate();
-
-  if (!isPrimary && (!isMaster || !isToday)) {
+  if (!isPrimary) {
     throw new ApiError(
       403,
       'VOID_FORBIDDEN',
-      'Normal Master can only void same-day invoices. Historical day voids require Primary Master authority.'
+      'Invoice voiding requires Primary Master authority.'
     );
   }
 
