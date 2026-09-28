@@ -313,7 +313,7 @@ const syncOfflineOrders = asyncHandler(async (request, response) => {
 /**
  * GET /api/v1/pos/offline-reviews/pending
  * REC-13A / REC-13B: Lists pending offline review items scoped by cafe and authorization.
- * Role-enforced: Only Assigned CAFE_ADMIN and MASTER are permitted.
+ * Role-enforced: Only Assigned CAFE_ADMIN and the Primary Master are permitted.
  * OWNER and STAFF are strictly barred (Segregation of Duties).
  */
 const getPendingOfflineReviews = asyncHandler(async (request, response) => {
@@ -339,6 +339,20 @@ const getPendingOfflineReviews = asyncHandler(async (request, response) => {
       `Role ${role} is not authorized for offline queue review.`
     );
   }
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for offline POS review.'
+    );
+  }
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for offline POS review.'
+    );
+  }
 
   const { organisationId } = request.auth;
   const cafeId = normalizeId(request.query?.cafeId || request.params?.cafeId || '');
@@ -360,7 +374,7 @@ const getPendingOfflineReviews = asyncHandler(async (request, response) => {
 /**
  * POST /api/v1/pos/offline-reviews/:reviewId/review
  * REC-13A / REC-13B: Executes authorized review decision (APPROVE_AND_FINALIZE, REJECT, ESCALATE).
- * Role-enforced: Only Assigned CAFE_ADMIN and MASTER are permitted.
+ * Role-enforced: Only Assigned CAFE_ADMIN and the Primary Master are permitted.
  * OWNER and STAFF are strictly barred (Segregation of Duties).
  */
 const reviewOfflineOrder = asyncHandler(async (request, response) => {
