@@ -2092,10 +2092,13 @@ class CafeService {
   }) {
     requireGovernanceAuthority(auth);
 
+    const cleanOrg = String(organisationId || '').trim().toUpperCase();
+    const cleanCafe = String(cafeId || '').trim().toUpperCase();
+
     if (currentPassword) {
       const user = await User.findOne({
         userId: auth.userId,
-        organisationId: String(organisationId).toUpperCase(),
+        organisationId: cleanOrg,
       }).select('+passwordHash');
       if (user && user.passwordHash) {
         const ok = await verifyPassword(currentPassword, user.passwordHash);
@@ -2103,69 +2106,108 @@ class CafeService {
       }
     }
 
-    const access = await CafeAccess.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    });
+    const revokeReason = reason || 'Revoked by governance authority';
+    const { UniversalQrService } = require('./universalQrService');
 
-    if (!access) {
-      throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
-    }
+    const result = await executeTransactionWithRetry(async (session) => {
+      if (!session) {
+        throw new ApiError(
+          503,
+          'CAFE_QR_TRANSACTION_REQUIRED',
+          'Café QR revocation requires MongoDB transaction support.'
+        );
+      }
 
-    if (!access.qrEnabled) {
+      const access = await CafeAccess.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
+      if (!access) {
+        throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
+      }
+
+      const cafe = await Cafe.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
+      if (!cafe) {
+        throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found.');
+      }
+
+      if (cafe.qrLoginContext?.qrRecordId) {
+        try {
+          await UniversalQrService.revokeQrRecord(
+            cafe.qrLoginContext.qrRecordId,
+            revokeReason,
+            auth.userId,
+            session
+          );
+        } catch (err) {
+          if (err?.code !== 'QR_NOT_FOUND') throw err;
+        }
+      }
+
+      if (!Array.isArray(access.qrHistory)) access.qrHistory = [];
+      if (access.qrEnabled) {
+        access.qrHistory.push({
+          version: access.qrVersion || 1,
+          action: 'REVOKED',
+          actionAt: new Date(),
+          actorUserId: auth.userId,
+          actorRole: auth.role,
+          reason: revokeReason,
+        });
+      }
+
+      access.qrEnabled = false;
+      access.qrRevokedAt = access.qrRevokedAt || new Date();
+      access.qrRevokedBy = auth.userId;
+      access.qrRevokeReason = revokeReason;
+      access.updatedBy = auth.userId;
+      await access.save({ session });
+
+      const existingContext = cafe.qrLoginContext || {};
+      cafe.qrLoginContext = {
+        ...existingContext,
+        status: 'REVOKED',
+      };
+      cafe.updatedBy = auth.userId;
+      await cafe.save({ session });
+
       return {
-        cafeId,
+        cafeId: cleanCafe,
         qrVersion: access.qrVersion,
         qrEnabled: false,
         qrRevokedAt: access.qrRevokedAt,
+        qrRevokedBy: access.qrRevokedBy,
         qrRevokeReason: access.qrRevokeReason,
+        qrRecordId: cafe.qrLoginContext?.qrRecordId || null,
       };
-    }
-
-    if (!access.qrHistory) access.qrHistory = [];
-    access.qrHistory.push({
-      version: access.qrVersion || 1,
-      action: 'REVOKED',
-      actionAt: new Date(),
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      reason: reason || 'QR credential revoked by Master governance',
     });
 
-    access.qrEnabled = false;
-    access.qrRevokedAt = new Date();
-    access.qrRevokedBy = auth.userId;
-    access.qrRevokeReason = reason || 'Revoked by governance authority';
-    access.updatedBy = auth.userId;
-    await access.save();
-
     await auditService.recordAuditEvent({
-      organisationId,
-      cafeId,
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
       actorUserId: auth.userId,
       actorRole: auth.role,
       module: 'CAFE_OPERATIONS',
       action: 'CAFE_QR_REVOKED',
       entityType: 'CAFE_ACCESS',
-      entityId: cafeId,
-      reason: reason || `QR access credential revoked for version ${access.qrVersion}. Gateway disabled.`,
+      entityId: cleanCafe,
+      reason: revokeReason,
       result: 'SUCCESS',
       riskClassification: 'CRITICAL',
       ipAddress: clientIp,
       userAgent,
       metadata: {
-        qrVersion: access.qrVersion,
+        qrVersion: result.qrVersion,
+        qrRecordId: result.qrRecordId,
       },
-    });
+    }).catch(() => {});
 
-    return {
-      cafeId,
-      qrVersion: access.qrVersion,
-      qrEnabled: false,
-      qrRevokedAt: access.qrRevokedAt,
-      qrRevokedBy: access.qrRevokedBy,
-      qrRevokeReason: access.qrRevokeReason,
-    };
+    return result;
   }
 
   /**
