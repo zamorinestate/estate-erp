@@ -349,7 +349,7 @@ async function main() {
 
   // Step 12: Cafe Admin Expense Claim Workflow
   console.log('\n12. Testing Cafe Admin Expense Claim Workflow...');
-  const cafeAdmin = await loginUser(CAFE_ADMIN_EMAIL, STAFF_PASSWORD);
+  const cafeAdmin = await loginUser(CAFE_ADMIN_EMAIL, CAFE_ADMIN_PASSWORD);
   console.log(`   ✓ Cafe Admin logged in: ${cafeAdmin.user.userId}`);
 
   const expensePayload = {
