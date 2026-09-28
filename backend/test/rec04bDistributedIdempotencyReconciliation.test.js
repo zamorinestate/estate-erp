@@ -73,6 +73,29 @@ function makeOrder(overrides = {}) {
   };
 }
 
+function invokeController(controllerFn, request) {
+  return new Promise((resolve, reject) => {
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+        resolve(this);
+        return this;
+      },
+    };
+    const next = (err) => {
+      if (err) reject(err);
+      else resolve(response);
+    };
+    Promise.resolve(controllerFn(request, response, next)).catch(reject);
+  });
+}
+
 test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Reconciliation', async (t) => {
   // Shared mock in-memory stores simulating MongoDB collections
   const mockBills = [];
@@ -498,6 +521,49 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
     // Assert: status for B must be NOT_RECEIVED, NOT Customer A's bill!
     assert.equal(controllerResponse.status, 'NOT_RECEIVED');
     assert.notEqual(controllerResponse.billId, billAId, 'Must NEVER return prior customer bill');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B05A/B: Recovery scope is mandatory and café-isolated
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B05A: Unknown-outcome recovery fails closed when cafeId is omitted', async () => {
+    const auth = makeAuth();
+    await assert.rejects(
+      () => invokeController(getOrderStatusByIdempotency, {
+        params: { transactionId: K('IDEM-NO-CAFE') },
+        query: {},
+        auth,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'CAFE_ID_REQUIRED');
+        return true;
+      }
+    );
+  });
+
+  await t.test('TC-B05B: Unknown-outcome recovery denies a foreign-cafe caller even with a valid transaction identity', async () => {
+    const order = makeOrder();
+    const commitRes = await PosOrderService.processOrder(order, makeAuth(), 'SAVE_AND_PRINT');
+    assert.equal(commitRes.success, true);
+
+    const foreignAuth = makeAuth('CAFE_ADMIN', 'ZC-REC04B-FOREIGN');
+
+    await assert.rejects(
+      () => invokeController(getOrderStatusByIdempotency, {
+        params: { transactionId: order.idempotencyKey },
+        query: { cafeId: CAFE },
+        auth: foreignAuth,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.ok(
+          ['CROSS_CAFE_RESOURCE_DENIED', 'CAFE_ACCESS_DENIED'].includes(err.code),
+          `Unexpected cross-café denial code: ${err.code}`
+        );
+        return true;
+      }
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
