@@ -31,6 +31,9 @@ let prodBaseUrl;
 
 const SYNTHETIC_STAGE4_MASTER_PASSWORD = ['Master', 'Password4@Secure'].join('');
 
+process.env.NODE_ENV = 'test';
+process.env.ALLOW_TEST_AUTH_HEADERS = 'true';
+
 async function startTestServers() {
   initRepositories('memory');
   rateLimitService._reset();
