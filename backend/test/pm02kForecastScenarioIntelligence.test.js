@@ -21,7 +21,7 @@ const {
   SEASONAL_NAIVE_INTERVAL_USES_NAIVE_SQRT_H_FORMULA,
   ARBITRARY_FORECAST_INTERVAL,
   FORECAST_SECONDARY_ROLE_TAXONOMY,
-  NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION,
+  INVALID_MASTER_CLAIM_BYPASSES_FORECAST_CLASSIFICATION,
   HIDDEN_CAFE_FORECAST_LEAK,
   UNEXPLAINED_FROZEN_TEST_LOSS,
   INCOMPLETE_SUPPLY_VIEW_REPORTED_AS_CERTAIN_STOCKOUT,
@@ -475,7 +475,7 @@ describe('PM-02K — Forecasting, Predictive Trends, Scenario & What-If Intellig
       assert.strictEqual(SEASONAL_NAIVE_INTERVAL_USES_NAIVE_SQRT_H_FORMULA, 0);
       assert.strictEqual(ARBITRARY_FORECAST_INTERVAL, 0);
       assert.strictEqual(FORECAST_SECONDARY_ROLE_TAXONOMY, 0);
-      assert.strictEqual(NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION, 0);
+      assert.strictEqual(INVALID_MASTER_CLAIM_BYPASSES_FORECAST_CLASSIFICATION, 0);
       assert.strictEqual(HIDDEN_CAFE_FORECAST_LEAK, 0);
       assert.strictEqual(UNEXPLAINED_FROZEN_TEST_LOSS, 0);
       assert.strictEqual(INCOMPLETE_SUPPLY_VIEW_REPORTED_AS_CERTAIN_STOCKOUT, 0);
@@ -648,17 +648,17 @@ describe('PM-02K — Forecasting, Predictive Trends, Scenario & What-If Intellig
       assert.ok(target);
     });
 
-    it('proves Normal Master without primary invariant is denied Primary-Master restricted capability (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)', () => {
+    it('proves malformed MASTER claim without Primary designation is denied restricted capability (INVALID_MASTER_CLAIM_BYPASSES_FORECAST_CLASSIFICATION = 0)', () => {
       assert.throws(
         () => ForecastRegistry.assertForecastTargetAccess('NET_SALES', {
           role: 'MASTER',
           isPrimaryMaster: false,
           requirePrimaryMaster: true,
-          userId: 'MU-0002',
+          userId: 'MU-MALFORMED',
         }),
         (err) => err.statusCode === 403 && err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
       );
-      assert.strictEqual(NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION, 0);
+      assert.strictEqual(INVALID_MASTER_CLAIM_BYPASSES_FORECAST_CLASSIFICATION, 0);
     });
 
     it('proves CAFE_ADMIN is recognized and permitted for assigned café', () => {
