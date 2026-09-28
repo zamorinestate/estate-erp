@@ -245,8 +245,22 @@ const getBillsOverview = asyncHandler(async (request, response) => {
       cEntry.taxCollected += b.taxPaisa || 0;
       cEntry.billsCount++;
 
-      const method = b.paymentMethod && cEntry.tenders[b.paymentMethod] !== undefined ? b.paymentMethod : 'UPI';
-      cEntry.tenders[method] = (cEntry.tenders[method] || 0) + b.totalPaisa;
+      const completedTenders = Array.isArray(b.tenders)
+        ? b.tenders.filter((t) => t && t.status !== 'FAILED' && Number(t.amountPaisa) > 0)
+        : [];
+
+      if (completedTenders.length > 0) {
+        for (const tender of completedTenders) {
+          const tenderMethod = normalizeId(tender.paymentMethod);
+          const bucket = cEntry.tenders[tenderMethod] !== undefined ? tenderMethod : 'SPLIT';
+          cEntry.tenders[bucket] = (cEntry.tenders[bucket] || 0) + Number(tender.amountPaisa || 0);
+        }
+      } else {
+        const legacyMethod = b.paymentMethod && cEntry.tenders[b.paymentMethod] !== undefined
+          ? b.paymentMethod
+          : 'SPLIT';
+        cEntry.tenders[legacyMethod] = (cEntry.tenders[legacyMethod] || 0) + b.totalPaisa;
+      }
 
       if (b.refundedTotalPaisa && b.refundedTotalPaisa > 0) {
         refundsPaisa += b.refundedTotalPaisa;
@@ -1280,7 +1294,7 @@ const getPastOrdersSummary = asyncHandler(async (request, response) => {
     thisYear: { orderCount: 0, grossSalesPaisa: 0, netSalesPaisa: 0, refundsPaisa: 0, discountsPaisa: 0, taxPaisa: 0 },
     currentFY: { label: fyLabel, orderCount: 0, grossSalesPaisa: 0, netSalesPaisa: 0, refundsPaisa: 0, discountsPaisa: 0, taxPaisa: 0 },
     byServiceMode: { QUICK_SALE: 0, DINE_IN: 0, TAKEAWAY: 0, DELIVERY: 0 },
-    byPaymentMethod: { UPI: 0, CASH: 0, CARD: 0, SPLIT: 0 },
+    byPaymentMethod: { UPI: 0, CASH: 0, CARD: 0, MIXED: 0, SPLIT: 0 },
   };
 
   for (const b of bills) {
