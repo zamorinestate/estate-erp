@@ -770,19 +770,26 @@ class PosOrderService {
         );
       }
 
+      const authoritativeTaxRate =
+        Number.isFinite(Number(catalogItem.taxRatePercent))
+          ? Number(catalogItem.taxRatePercent)
+          : 5;
+
+      const explicitTaxClassification = normalizeId(catalogItem.taxClassification || '');
+      const taxClassification =
+        ['GST_5', 'GST_12', 'GST_18', 'GST_28', 'EXEMPT', 'NIL'].includes(explicitTaxClassification)
+          ? explicitTaxClassification
+          : ([5, 12, 18, 28].includes(authoritativeTaxRate)
+              ? `GST_${authoritativeTaxRate}`
+              : (authoritativeTaxRate === 0 ? 'NIL' : 'GST_5'));
+
       return {
         ...li,
         menuItemId,
         itemNameSnapshot: catalogItem.name || catalogItem.receiptName || catalogItem.posShortName || menuItemId,
         unitPricePaisa: authoritativeUnitPrice,
-        taxRatePercent:
-          Number.isFinite(Number(catalogItem.taxRatePercent))
-            ? Number(catalogItem.taxRatePercent)
-            : 5,
-        taxClassification:
-          catalogItem.taxClassification ||
-          catalogItem.taxCategoryRef ||
-          'GST_5',
+        taxRatePercent: authoritativeTaxRate,
+        taxClassification,
       };
     });
 
