@@ -57,8 +57,8 @@ async function authenticate(
       if (String(request.auth.role || '').toUpperCase() === 'MASTER' && request.auth.isPrimaryMaster !== true) {
         return sendAuthenticationError(
           response,
-          'NORMAL_MASTER_RUNTIME_DISABLED',
-          'Normal Master runtime access is retired.'
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER access.'
         );
       }
       return next();
@@ -167,8 +167,8 @@ async function authenticate(
     if (String(user.role || '').toUpperCase() === 'MASTER' && user.isPrimaryMaster !== true) {
       return sendAuthenticationError(
         response,
-        'NORMAL_MASTER_RUNTIME_DISABLED',
-        'Normal Master runtime access is retired. Sign in with the Primary Master account.'
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER access.'
       );
     }
 
