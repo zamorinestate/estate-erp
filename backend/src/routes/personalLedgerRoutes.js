@@ -6,7 +6,7 @@
  * AUTHORIZATION:
  *   - PRIMARY MASTER (role = MASTER && isPrimaryMaster === true): Full authority.
  *   - OWNER (role = OWNER): Authorized according to authorized Owner-account scope.
- *   - NORMAL MASTER, CAFE_ADMIN, STAFF: Strictly DENIED (403/404).
+ *   - CAFE_ADMIN and STAFF: Strictly DENIED (403/404). Malformed MASTER claims fail closed upstream.
  *
  * Mounted at: /api/v1/personal-ledger (registered in routes/index.js)
  */
