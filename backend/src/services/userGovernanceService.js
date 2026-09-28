@@ -84,7 +84,11 @@ async function loadTarget(request, userId, { allowArchived = false } = {}) {
  * Returns true/false — does NOT throw.
  */
 function actorIsPrimaryMaster(actorDocument) {
-  return actorDocument.isPrimaryMaster === true;
+  return Boolean(
+    actorDocument &&
+      String(actorDocument.role || '').trim().toUpperCase() === 'MASTER' &&
+      actorDocument.isPrimaryMaster === true
+  );
 }
 
 // ─── Primary Master protection ───────────────────────────────────────────────
@@ -103,7 +107,11 @@ function actorIsPrimaryMaster(actorDocument) {
  * 7. Throw PRIMARY_MASTER_ATTACK_SUSPENDED (403).
  */
 async function handlePrimaryMasterAttack({ request, actorDocument, target, operationDescription }) {
-  if (!target.isPrimaryMaster || actorDocument.isPrimaryMaster) {
+  if (
+    !target?.isPrimaryMaster ||
+    actorIsPrimaryMaster(actorDocument) ||
+    String(actorDocument?.role || '').trim().toUpperCase() !== 'MASTER'
+  ) {
     return;
   }
 
@@ -211,7 +219,11 @@ async function handlePrimaryMasterAttack({ request, actorDocument, target, opera
  */
 function assertNotPrimaryMasterTarget(target, operationDescription, { request = null, actorDocument = null } = {}) {
   if (target && target.isPrimaryMaster) {
-    if (actorDocument && !actorDocument.isPrimaryMaster) {
+    if (
+      actorDocument &&
+      String(actorDocument.role || '').trim().toUpperCase() === 'MASTER' &&
+      !actorIsPrimaryMaster(actorDocument)
+    ) {
       handlePrimaryMasterAttack({
         request,
         actorDocument,
@@ -239,7 +251,7 @@ function assertMayRestoreAccount(actorDocument, target) {
       (typeof target.statusReason === 'string' &&
         target.statusReason.includes('PRIMARY_MASTER_PROTECTION_TRIGGERED')))
   ) {
-    if (!actorDocument.isPrimaryMaster) {
+    if (!actorIsPrimaryMaster(actorDocument)) {
       throw new ApiError(
         403,
         'PRIMARY_MASTER_AUTHORITY_REQUIRED',
@@ -254,7 +266,7 @@ function assertMayRestoreAccount(actorDocument, target) {
  * for the Primary Master.
  */
 function assertPrimaryMasterAuthority(actorDocument, operationDescription) {
-  if (!actorDocument.isPrimaryMaster) {
+  if (!actorIsPrimaryMaster(actorDocument)) {
     throw new ApiError(
       403,
       'PRIMARY_MASTER_AUTHORITY_REQUIRED',
@@ -268,7 +280,7 @@ function assertPrimaryMasterAuthority(actorDocument, operationDescription) {
  * A malformed non-primary MASTER context has zero governance authority.
  */
 function assertMayActOnMasterTarget(actorDocument, target) {
-  if (target.role === 'MASTER' && !actorDocument.isPrimaryMaster) {
+  if (target.role === 'MASTER' && !actorIsPrimaryMaster(actorDocument)) {
     throw new ApiError(
       403,
       'MASTER_ROLE_GOVERNANCE_FORBIDDEN',
