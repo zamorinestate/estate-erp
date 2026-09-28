@@ -21,8 +21,8 @@ const OVERLAP_COUNT = 6;           // URL aliases resolving to existing base def
 
 // Canonical Unique Destinations = (Base definitions) + (Settings Subroutes) + (Internal Module Views)
 const UNIQUE_CANONICAL_DESTINATIONS = ROUTER_DEFINITIONS + SETTINGS_VIEWS + INTERNAL_MODULE_VIEWS; // 170
-const PERSONAS_COUNT = 5;
-const PERSONA_DESTINATION_TEST_CASES = UNIQUE_CANONICAL_DESTINATIONS * PERSONAS_COUNT; // 850 test cases
+const PERSONAS_COUNT = 4;
+const PERSONA_DESTINATION_TEST_CASES = UNIQUE_CANONICAL_DESTINATIONS * PERSONAS_COUNT; // derived from 4 supported personas
 
 async function auditRouteSet() {
   console.log('╔══════════════════════════════════════════════════════════════════════╗');
