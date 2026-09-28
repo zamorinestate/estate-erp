@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const { validateProposedRole } = require('../src/services/userGovernanceService');
 const { authorize, canAccessCafe } = require('../src/middleware/authorize');
+const { resolveEffectiveCafeScope } = require('../src/utils/cafeScope');
+const { requireCafeOperationsDevice } = require('../src/middleware/deviceAuthorization');
 const expenseController = require('../src/controllers/expenseController');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -252,3 +254,76 @@ test('Malformed non-primary MASTER direct expense mutations fail closed', async 
     }
   );
 });
+
+test('Malformed non-primary MASTER shared scope/device helpers fail closed', () => {
+  const malformedAuth = {
+    userId: 'MU-MALFORMED-SCOPE',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+    assignedCafeIds: ['ZC-0001'],
+    primaryCafeId: 'ZC-0001',
+  };
+
+  assert.throws(
+    () => resolveEffectiveCafeScope({
+      auth: malformedAuth,
+      query: { cafeId: 'ZC-0001' },
+      body: {},
+      params: {},
+      headers: {},
+    }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+
+  let nextCalled = false;
+  let statusCode = null;
+  let payload = null;
+  const response = {
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(body) {
+      payload = body;
+      return this;
+    },
+  };
+
+  requireCafeOperationsDevice(
+    { auth: malformedAuth, params: {}, query: {}, body: {} },
+    response,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(statusCode, 403);
+  assert.equal(payload?.error, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+
+  nextCalled = false;
+  statusCode = null;
+  payload = null;
+  requireCafeOperationsDevice(
+    {
+      auth: { ...malformedAuth, isPrimaryMaster: true },
+      params: {},
+      query: {},
+      body: {},
+    },
+    response,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(statusCode, null);
+  assert.equal(payload, null);
+});
+

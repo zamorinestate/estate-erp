@@ -344,9 +344,9 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   });
 
   // ===========================================================================
-  // 1. MASTER ALLOWED GOVERNANCE ACTION
+  // 1. PRIMARY MASTER ALLOWED GOVERNANCE ACTION
   // ===========================================================================
-  await t.test('1. Master Governance: Master has organisation-wide authority for café governance', async () => {
+  await t.test('1. Primary Master Governance: Primary Master has organisation-wide authority for café governance', async () => {
     // Master can view and verify all cafe access bindings across org
     const binding = await cafeService.verifyCafeAccessBinding({
       userId: primaryMasterUser.userId,
@@ -358,6 +358,25 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
     });
     assert.equal(binding.authorized, true);
     assert.equal(binding.targetCafeId, CAFE_A1);
+  });
+
+  await t.test('1A. Malformed non-primary MASTER has zero café binding authority', async () => {
+    await assert.rejects(
+      () => cafeService.verifyCafeAccessBinding({
+        userId: 'MU-MALFORMED-BINDING',
+        role: 'MASTER',
+        organisationId: ORG_A,
+        assignedCafeIds: [CAFE_A1],
+        primaryCafeId: CAFE_A1,
+        targetCafeId: CAFE_A1,
+        isPrimaryMaster: false,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 
   // ===========================================================================

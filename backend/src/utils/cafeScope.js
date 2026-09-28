@@ -26,6 +26,14 @@ function resolveEffectiveCafeScope(request) {
 
   const { role, assignedCafeIds, deviceContext } = request.auth;
 
+  if (role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER café scope.'
+    );
+  }
+
   const requestedCafe = (
     request.query?.cafeId ||
     request.body?.cafeId ||
@@ -61,7 +69,7 @@ function resolveEffectiveCafeScope(request) {
     if (!boundCafe) {
       if (requestedCafe && requestedCafe !== 'ALL') {
         const isAuthorizedForRequested =
-          role === 'MASTER' ||
+          (role === 'MASTER' && request.auth.isPrimaryMaster === true) ||
           (role === 'OWNER' && (assignedCafeIds?.includes(requestedCafe) || request.auth.primaryCafeId === requestedCafe)) ||
           (Array.isArray(assignedCafeIds) && assignedCafeIds.includes(requestedCafe)) ||
           request.auth.primaryCafeId === requestedCafe;
@@ -110,8 +118,8 @@ function resolveEffectiveCafeScope(request) {
     return boundCafe;
   }
 
-  // 2. MASTER_WORKSPACE GOVERNANCE MODE:
-  // MASTER has global portfolio governance access across the organisation
+  // 2. PRIMARY MASTER GOVERNANCE MODE:
+  // Only the designated Primary Master has global portfolio governance access.
   if (role === 'MASTER') {
     return requestedCafe && requestedCafe !== 'ALL' ? requestedCafe : null;
   }

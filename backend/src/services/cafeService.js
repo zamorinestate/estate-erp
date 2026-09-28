@@ -2641,10 +2641,16 @@ class CafeService {
 
     // 2. Role-based authorization binding check
     if (cleanRole === 'MASTER') {
-      // Master is authorised across the organisation's cafés
+      if (isPrimaryMaster !== true) {
+        throw new ApiError(
+          403,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER café binding.'
+        );
+      }
       return {
         authorized: true,
-        isPrimaryMaster: Boolean(isPrimaryMaster),
+        isPrimaryMaster: true,
         cafeId: cleanTargetCafeId,
         targetCafeId: cleanTargetCafeId,
         cafeName: cafe.name,
