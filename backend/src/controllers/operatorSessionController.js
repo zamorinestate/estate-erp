@@ -163,6 +163,7 @@ class OperatorSessionController {
       targetUserId: targetUserId || req.auth.userId,
       actorUserId: req.auth.userId,
       actorRole: req.auth.role,
+      actorIsPrimaryMaster: req.auth.isPrimaryMaster === true,
       newPin,
     });
 
@@ -178,6 +179,7 @@ class OperatorSessionController {
       cafeId,
       actorUserId: req.auth.userId,
       actorRole: req.auth.role,
+      actorIsPrimaryMaster: req.auth.isPrimaryMaster === true,
       newPin,
     });
 
