@@ -2722,10 +2722,18 @@ class CafeService {
   async runAccessHealthCheck({ organisationId, cafeId, auth }) {
     requireGovernanceAuthority(auth);
 
+    const cleanOrg = String(organisationId || '').trim().toUpperCase();
+    const cleanCafe = String(cafeId || '').trim().toUpperCase();
+    if (!cleanOrg || !cleanCafe) {
+      throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'Organisation and café scope are required.');
+    }
+
     const access = await CafeAccess.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    }).select('+permanentCafePinEncrypted +permanentCafePinLookupHash');
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
+    }).select(
+      '+permanentCafePinEncrypted +permanentCafePinLookupHash +qrCredentialHash +linkCredentialHash'
+    );
 
     if (!access) {
       throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
@@ -2743,7 +2751,10 @@ class CafeService {
 
     // Test 1: PIN posture (one-way bcrypt hash)
     try {
-      const cafeDoc = await Cafe.findOne({ cafeId: cleanCafe }).select('+operationsPinHash').lean();
+      const cafeDoc = await Cafe.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).select('+operationsPinHash').lean();
       if (cafeDoc?.operationsPinHash) {
         results.permanentPin = 'PASS';
         results.pinPosture = 'BCRYPT_ONE_WAY';
