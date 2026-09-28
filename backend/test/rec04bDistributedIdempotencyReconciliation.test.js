@@ -29,6 +29,7 @@ const { StockMovement } = require('../src/models/StockMovement');
 const { CashTransaction } = require('../src/models/CashTransaction');
 const { PosReconciliationJob } = require('../src/models/PosReconciliationJob');
 const { OperationalAlert } = require('../src/models/OperationalAlert');
+const { User } = require('../src/models/User');
 const auditService = require('../src/services/auditService');
 
 const ORG = 'ORG-ZAMORIN';
@@ -115,6 +116,36 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
   // ─── AUDIT SERVICE ────────────────────────────────────────────────────────
   t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
   t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
+
+  // ─── REC-04B CANONICAL REVIEWER USERS ─────────────────────────────────────
+  t.mock.method(User, 'findOne', (q = {}) => ({
+    lean: async () => {
+      const userId = String(q.userId || '').trim().toUpperCase();
+      if (userId === 'EMP-B04-01') {
+        return {
+          userId,
+          organisationId: ORG,
+          role: 'CAFE_ADMIN',
+          accountStatus: 'ACTIVE',
+          assignedCafeIds: [CAFE],
+          primaryCafeId: CAFE,
+          isPrimaryMaster: false,
+        };
+      }
+      if (userId === 'EMP-B04-FOREIGN') {
+        return {
+          userId,
+          organisationId: ORG,
+          role: 'CAFE_ADMIN',
+          accountStatus: 'ACTIVE',
+          assignedCafeIds: ['ZC-REC04B-FOREIGN'],
+          primaryCafeId: 'ZC-REC04B-FOREIGN',
+          isPrimaryMaster: false,
+        };
+      }
+      return null;
+    },
+  }));
 
   // ─── SEQUENCE COUNTER ─────────────────────────────────────────────────────
   t.mock.method(SequenceCounter, 'generateId', async ({ prefix }) => {
@@ -724,5 +755,118 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
     await getPendingReconciliations(req, res);
     assert.equal(controllerResponse.success, true);
     assert.ok(controllerResponse.count >= 1);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B13: Reconciliation list requires explicit café scope for Café Admin
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B13: Café Admin cannot list organisation-wide reconciliation jobs without cafeId', async () => {
+    await assert.rejects(
+      () => invokeController(getPendingReconciliations, {
+        query: {},
+        auth: makeAuth(),
+        params: {},
+        body: {},
+        headers: {},
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'CAFE_ID_REQUIRED');
+        return true;
+      }
+    );
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B14: Retry governance rejects Owner, malformed MASTER and foreign Admin
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B14: Reconciliation retry is restricted to live assigned Café Admin or Primary Master', async () => {
+    const targetJob = mockReconJobs.find((job) =>
+      ['PENDING_RECONCILIATION', 'MANUAL_REVIEW_REQUIRED', 'RESOLVED'].includes(job.status)
+    );
+    assert.ok(targetJob, 'At least one reconciliation job must exist for governance testing');
+
+    await assert.rejects(
+      () => PosReconciliationService.retryJob(targetJob.jobId, {
+        userId: 'OW-B04-01',
+        organisationId: ORG,
+        role: 'OWNER',
+        assignedCafeIds: [CAFE],
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => PosReconciliationService.retryJob(targetJob.jobId, {
+        userId: 'MU-B04-MALFORMED',
+        organisationId: ORG,
+        role: 'MASTER',
+        isPrimaryMaster: false,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => PosReconciliationService.retryJob(targetJob.jobId, {
+        userId: 'EMP-B04-FOREIGN',
+        organisationId: ORG,
+        role: 'CAFE_ADMIN',
+        assignedCafeIds: ['ZC-REC04B-FOREIGN'],
+        primaryCafeId: 'ZC-REC04B-FOREIGN',
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CAFE_ACCESS_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(retryReconciliation, {
+        auth: {
+          userId: 'OW-B04-01',
+          organisationId: ORG,
+          role: 'OWNER',
+          assignedCafeIds: [CAFE],
+        },
+        params: { jobId: targetJob.jobId },
+        query: {},
+        body: {},
+        headers: {},
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(retryReconciliation, {
+        auth: {
+          userId: 'MU-B04-MALFORMED',
+          organisationId: ORG,
+          role: 'MASTER',
+          isPrimaryMaster: false,
+        },
+        params: { jobId: targetJob.jobId },
+        query: {},
+        body: {},
+        headers: {},
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 });
