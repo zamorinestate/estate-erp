@@ -100,7 +100,7 @@ ${tableRows}
 
 // 3. docs/FINAL_FIVE_PERSONA_SUPPORTING_FILE_MATRIX.md
 function generateFivePersonaMatrix() {
-  return `# ZAMORIN CAFÉ ERP — FINAL FIVE-PERSONA SUPPORTING FILE MATRIX
+  return `# ZAMORIN CAFÉ ERP — FINAL FOUR-PERSONA SUPPORTING FILE MATRIX
 
 ## 1. Overview
 The Zamorin Café ERP implements strict multi-tenant, role-based boundary isolation across 5 distinct runtime personas. Every persona's available views, navigation links, export permissions, upload limits, and backend authorizations are fully reconciled.
