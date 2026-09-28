@@ -397,7 +397,7 @@ test('CAFÉ OPS-04 — Final Cross-Role Release-Candidate Validation Suite', asy
   // ===========================================================================
   // 2. OWNER INTEGRATION & RESTRICTIONS
   // ===========================================================================
-  await t.test('RC-02: Owner accesses canonical cash data for assigned cafe, but cannot reverse cash (403 MASTER_ACCESS_REQUIRED)', async () => {
+  await t.test('RC-02: Owner accesses canonical cash data for assigned cafe, but cannot reverse cash (403 PRIMARY_MASTER_AUTHORITY_REQUIRED)', async () => {
     t.mock.method(CashTransaction, 'find', () => createQueryMock([]));
 
     // Owner can view cash transactions for assigned cafe
@@ -425,7 +425,7 @@ test('CAFÉ OPS-04 — Final Cross-Role Release-Candidate Validation Suite', asy
       },
     });
     assert.equal(resOwnerReverse.status, 403);
-    assert.equal(resOwnerReverse.data.error?.code, 'MASTER_ACCESS_REQUIRED');
+    assert.equal(resOwnerReverse.data.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
   });
 
   // ===========================================================================
@@ -446,7 +446,7 @@ test('CAFÉ OPS-04 — Final Cross-Role Release-Candidate Validation Suite', asy
       },
     });
     assert.equal(resStaffReverse.status, 403);
-    assert.equal(resStaffReverse.data.error?.code, 'MASTER_ACCESS_REQUIRED');
+    assert.equal(resStaffReverse.data.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
   });
 
   // ===========================================================================
