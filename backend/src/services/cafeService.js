@@ -196,13 +196,17 @@ function requireGovernanceAuthority(auth) {
   }
 
   const role = auth.role.toUpperCase();
-  const isAllowed = role === 'MASTER' || role === 'OWNER';
+  const isPrimaryMaster =
+    role === 'MASTER' && auth.isPrimaryMaster === true;
+  const isOwner = role === 'OWNER';
 
-  if (!isAllowed) {
+  if (!isPrimaryMaster && !isOwner) {
     throw new ApiError(
       403,
-      'GOVERNANCE_ACCESS_REQUIRED',
-      'Only Master and Owner roles may perform this governance operation.'
+      role === 'MASTER'
+        ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+        : 'GOVERNANCE_ACCESS_REQUIRED',
+      'Only the Primary Master or Owner may perform this governance operation.'
     );
   }
 }
