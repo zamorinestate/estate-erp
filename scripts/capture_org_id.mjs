@@ -1,14 +1,18 @@
 import puppeteer from 'puppeteer-core';
 import path from 'path';
+import fs from 'fs';
 
-const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const ARTIFACT_PATH = "C:/Users/chris/.gemini/antigravity-ide/brain/8c2920d5-b21a-4786-8c0a-ce2bcaeb3bce/login_with_organisation_id.png";
+const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const ARTIFACTS_DIR = process.env.E2E_ARTIFACTS_DIR || path.join(process.cwd(), 'artifacts', 'e2e');
+const CHROME_PROFILE_DIR = process.env.E2E_CHROME_PROFILE_DIR || path.join(ARTIFACTS_DIR, 'chrome_temp_profile');
+fs.mkdirSync(CHROME_PROFILE_DIR, { recursive: true });
+const ARTIFACT_PATH = path.join(ARTIFACTS_DIR, 'login_with_organisation_id.png');
 
 async function run() {
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--user-data-dir=C:/Users/chris/.gemini/antigravity-ide/brain/8c2920d5-b21a-4786-8c0a-ce2bcaeb3bce/chrome_temp_profile']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', `--user-data-dir=${CHROME_PROFILE_DIR}`]
   });
 
   const page = await browser.newPage();
