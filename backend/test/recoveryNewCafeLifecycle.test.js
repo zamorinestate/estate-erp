@@ -43,7 +43,7 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
     isPrimaryMaster: true,
   };
 
-  const normalMasterUser = {
+  const malformedMasterUser = {
     userId: 'US-MASTER-02',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
@@ -133,9 +133,9 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
     assert.match(draftRes.cafe.cafeId, /^ZC-\d{4}$/);
     assert.equal(draftRes.cafe.lifecycleStage, 'DRAFT');
 
-    // 1.2 Normal Master allowed
-    const normalMasterDraft = await cafeService.createCafeDraft({
-      auth: normalMasterUser,
+    // 1.2 Malformed MASTER allowed
+    const malformedMasterDraft = await cafeService.createCafeDraft({
+      auth: malformedMasterUser,
       cafeData: {
         name: 'Zamorin Wayanad Hills',
         displayName: 'Wayanad Retreat',
@@ -148,7 +148,7 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
         email: 'wayanad@zamorin.cafe',
       },
     });
-    assert.ok(normalMasterDraft.cafe);
+    assert.ok(malformedMasterDraft.cafe);
 
     // 1.3 Owner rejected (403)
     await assert.rejects(

@@ -14,7 +14,7 @@ test('Primary Master + Cafe A device, same org => PASS (no cafe-assignment looku
   assert.equal(evaluateMasterCafeOperationsAccess({ device: device(), master: master() }).granted, true);
 });
 
-test('Normal Master + Cafe A device, same org => PASS', () => {
+test('Malformed MASTER + Cafe A device, same org => PASS', () => {
   assert.equal(evaluateMasterCafeOperationsAccess({ device: device(), master: master({ role: 'MASTER_NORMAL' }) }).granted, true);
 });
 

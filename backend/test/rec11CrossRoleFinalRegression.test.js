@@ -101,7 +101,7 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   const CAFE_B1 = 'ZC-2001';
 
   let primaryMasterUser;
-  let normalMasterUser;
+  let malformedMasterUser;
   let ownerUser;
   let adminA1User;
   let adminA2User;
@@ -207,11 +207,11 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
       createdBy: 'SYSTEM',
     });
 
-    normalMasterUser = await User.create({
+    malformedMasterUser = await User.create({
       userId: 'MU-9002',
       organisationId: ORG_A,
-      name: 'Normal Master Operator',
-      email: 'normal.master@zamorin.cafe',
+      name: 'Malformed MASTER Operator',
+      email: 'malformed.master@zamorin.cafe',
       role: 'MASTER',
       isPrimaryMaster: false,
       accountStatus: 'ACTIVE',
@@ -542,12 +542,12 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   // ===========================================================================
   // 11. PERSONAL LEDGER RESTRICTION (REC-11B AUTHORITATIVE RULE)
   // ===========================================================================
-  await t.test('11. Personal Ledger Authority: Primary Master & Owner ALLOWED; Normal Master, Café Admin & Staff DENIED', async () => {
+  await t.test('11. Personal Ledger Authority: Primary Master & Owner ALLOWED; Malformed MASTER, Café Admin & Staff DENIED', async () => {
     function authorizePersonalLedger(authCtx) {
       const { role, isPrimaryMaster } = authCtx || {};
       if (role === 'MASTER') {
         if (!isPrimaryMaster) {
-          throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'This action requires Primary Master authority. Normal Masters are denied access.');
+          throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'This action requires Primary Master authority. Malformed MASTERs are denied access.');
         }
         return 'PRIMARY_MASTER';
       }
@@ -565,9 +565,9 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
     const ownerAccess = authorizePersonalLedger({ role: 'OWNER', isPrimaryMaster: false, userId: ownerUser.userId });
     assert.equal(ownerAccess, 'OWNER');
 
-    // 3. Normal Master (role = MASTER, isPrimaryMaster = false) is DENIED (403)
+    // 3. Malformed MASTER (role = MASTER, isPrimaryMaster = false) is DENIED (403)
     assert.throws(
-      () => authorizePersonalLedger({ role: 'MASTER', isPrimaryMaster: false, userId: normalMasterUser.userId }),
+      () => authorizePersonalLedger({ role: 'MASTER', isPrimaryMaster: false, userId: malformedMasterUser.userId }),
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
@@ -595,7 +595,7 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
       }
     );
 
-    // 6. Execution-Time Role Change: Primary Master demoted to Normal Master -> DENIED
+    // 6. Execution-Time Role Change: Primary Master demoted to Malformed MASTER -> DENIED
     const stalePmCtx = { role: 'MASTER', isPrimaryMaster: false };
     assert.throws(
       () => authorizePersonalLedger(stalePmCtx),
@@ -651,7 +651,7 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
     assert.equal(payAllowedRoles.includes(ownerUser.role), false);
     assert.equal(payAllowedRoles.includes(adminA1User.role), false);
     assert.equal(payAllowedRoles.includes(staffA1User.role), false);
-    assert.equal(payAllowedRoles.includes(normalMasterUser.role), true);
+    assert.equal(payAllowedRoles.includes(malformedMasterUser.role), true);
   });
 
   // ===========================================================================

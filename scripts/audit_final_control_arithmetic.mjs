@@ -70,7 +70,7 @@ async function runArithmeticAudit() {
     counts: CLASSIFICATION_COUNTS,
     personaBreakdown: {
       PRIMARY_MASTER: { visibleWorking: 1468, policyHidden: 0, blocked: 2, total: 1470 },
-      NORMAL_MASTER:  { visibleWorking: 1410, policyHidden: 58, blocked: 2, total: 1470 },
+      MALFORMED_MASTER:  { visibleWorking: 1410, policyHidden: 58, blocked: 2, total: 1470 },
       OWNER:          { visibleWorking: 1430, policyHidden: 38, blocked: 2, total: 1470 },
       CAFE_ADMIN:     { visibleWorking: 1000, policyHidden: 468, blocked: 2, total: 1470 },
       STAFF:          { visibleWorking: 240,  policyHidden: 1228, blocked: 2, total: 1470 },

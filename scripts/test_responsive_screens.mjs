@@ -170,7 +170,7 @@ async function main() {
 
   const ROLES_TO_TEST = [
     { role: 'master', isPrimary: true, name: 'PRIMARY MASTER' },
-    { role: 'master', isPrimary: false, name: 'NORMAL MASTER' },
+    { role: 'master', isPrimary: false, name: 'MALFORMED MASTER' },
     { role: 'owner', isPrimary: false, name: 'OWNER' },
     { role: 'cafe_admin', isPrimary: false, name: 'CAFE OPERATIONS' },
     { role: 'staff', isPrimary: false, name: 'STAFF' },
