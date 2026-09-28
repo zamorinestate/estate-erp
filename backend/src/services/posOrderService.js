@@ -911,7 +911,10 @@ class PosOrderService {
       printStatus: action === 'SAVE_AND_PRINT' ? 'PRINT_PENDING' : 'NOT_REQUESTED',
       printJobs: [],
       businessDate,
-      cashierUserId: authContext.userId || 'CASHIER-01',
+      cashierUserId:
+        options.originatingCashierUserId ||
+        authContext.userId ||
+        'CASHIER-01',
       correlationId: idempotencyKey || null,
       saleAttemptId: orderPayload.saleAttemptId || null,
       isOfflineReplay: Boolean(orderPayload.isOfflineReplay || options.isOfflineReplay),
@@ -1073,7 +1076,9 @@ class PosOrderService {
               cashPaidPaisa,
               upiPaidPaisa,
               cardPaidPaisa,
-              cashierUserId: authContext.userId,
+              cashierUserId:
+                options.originatingCashierUserId ||
+                authContext.userId,
               businessDate,
             },
           });
@@ -1127,7 +1132,9 @@ class PosOrderService {
               amount: Math.max(0.01, cashPaidPaisa / 100),
               invoiceNumber,
               businessDate,
-              cashierUserId: authContext.userId,
+              cashierUserId:
+                options.originatingCashierUserId ||
+                authContext.userId,
             },
           });
         } catch (recErr) {
