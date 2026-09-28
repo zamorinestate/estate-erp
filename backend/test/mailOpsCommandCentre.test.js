@@ -109,7 +109,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
   };
 
   const malformedMaster = {
-    userId: 'USR-NORMAL-MASTER',
+    userId: 'USR-MALFORMED-MASTER',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
     isPrimaryMaster: false,
@@ -186,7 +186,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'USR-PRIMARY-MASTER') return primaryMaster;
-    if (query?.userId === 'USR-NORMAL-MASTER') return malformedMaster;
+    if (query?.userId === 'USR-MALFORMED-MASTER') return malformedMaster;
     if (query?.userId === 'USR-ADMIN-KORA') return cafeAdminKora;
     return null;
   });

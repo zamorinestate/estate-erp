@@ -208,7 +208,7 @@ test('AUTH-02: Malformed MASTER can generate rotating challenge across organisat
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0002',
     requestedByRole: 'MASTER',
-    requestedByUserId: 'NORMAL-MASTER-02',
+    requestedByUserId: 'MALFORMED-MASTER-02',
   });
 
   assert.ok(challenge);

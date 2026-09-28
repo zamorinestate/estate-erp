@@ -5,7 +5,7 @@
  *
  * Validates:
  * 1. Server-side User -> Employee identity resolution for Self-Service
- * 2. Normal MASTER Privacy Firewall (403 blocked from all loan endpoints)
+ * 2. Malformed non-primary MASTER Privacy Firewall (403 blocked from all loan endpoints)
  * 3. Primary MASTER Organisation-Wide Governance & Approvals
  * 4. Distinct Loan vs Salary Advance Lifecycle
  * 5. Immutable Ledger-First Balance & Amortization Schedules
@@ -119,7 +119,7 @@ test('SCR-014: My Loans & Advances — Comprehensive Integration Suite', async (
   };
 
   const malformedMaster = {
-    userId: 'USR-NORMAL-MASTER',
+    userId: 'USR-MALFORMED-MASTER',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
     isPrimaryMaster: false,
@@ -234,7 +234,7 @@ test('SCR-014: My Loans & Advances — Comprehensive Integration Suite', async (
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'USR-PRIMARY-MASTER') return primaryMaster;
-    if (query?.userId === 'USR-NORMAL-MASTER') return malformedMaster;
+    if (query?.userId === 'USR-MALFORMED-MASTER') return malformedMaster;
     if (query?.userId === 'ST-0001') return staffRahul;
     if (query?.userId === 'ST-0002') return staffPriya;
     if (query?.userId === 'USR-ADMIN-KORA') return cafeAdminKora;
@@ -313,7 +313,7 @@ test('SCR-014: My Loans & Advances — Comprehensive Integration Suite', async (
   });
 
   // ── 1. Self-Service Identity & Malformed MASTER Privacy Firewall ─────────────
-  await t.test('1. Normal MASTER is blocked with 403 on ALL loan endpoints (Privacy Firewall)', async () => {
+  await t.test('1. Malformed non-primary MASTER is blocked with 403 on ALL loan endpoints (Privacy Firewall)', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
