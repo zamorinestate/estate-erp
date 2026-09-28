@@ -111,6 +111,7 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
     bomThrows: false,
     bomAlreadyDepleted: false,
     cashSaveThrows: false,
+    catalogMode: 'ACTIVE',
   };
 
   // ─── AUDIT SERVICE ────────────────────────────────────────────────────────
@@ -166,12 +167,25 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
 
   // ─── MENU ITEM ────────────────────────────────────────────────────────────
   t.mock.method(MenuItem, 'find', () => ({
-    lean: async () => [{
-      menuItemId: 'MNU-B04-COFFEE',
-      name: 'Zamorin B04 Filter Coffee',
-      currentPricePaisa: 15000,
-      taxRatePercent: 5,
-    }],
+    lean: async () => {
+      if (behavior.catalogMode === 'THROW') {
+        throw new Error('Simulated catalog database outage');
+      }
+      if (behavior.catalogMode === 'MISSING') return [];
+
+      return [{
+        menuItemId: 'MNU-B04-COFFEE',
+        name: 'Zamorin B04 Filter Coffee',
+        currentPricePaisa: 15000,
+        taxRatePercent: 5,
+        taxClassification: 'GST_5',
+        status: behavior.catalogMode === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+        availableCafeIds:
+          behavior.catalogMode === 'FOREIGN_CAFE'
+            ? ['ZC-REC04B-FOREIGN']
+            : [],
+      }];
+    },
   }));
 
   // ─── REGISTER SESSION ─────────────────────────────────────────────────────
@@ -408,6 +422,94 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
     mockAlerts.push(this);
     return this;
   };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B00A-E: Server-authoritative catalog identity, price, tax and café scope
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B00A: Canonical catalog overrides client item name, price and tax', async () => {
+    behavior.catalogMode = 'ACTIVE';
+    const order = makeOrder({
+      lineItems: [makeLine({
+        name: 'Client Forged Name',
+        unitPricePaisa: 1,
+        taxRatePercent: 0,
+        taxClassification: 'GST_0',
+      })],
+    });
+
+    const result = await PosOrderService.processOrder(order, makeAuth(), 'SAVE');
+    assert.equal(result.success, true);
+
+    const line = result.bill.lineItems[0];
+    assert.equal(line.itemNameSnapshot, 'Zamorin B04 Filter Coffee');
+    assert.equal(line.unitPricePaisa, 15000);
+    assert.equal(line.taxRatePercent, 5);
+    assert.equal(line.taxClassification, 'GST_5');
+  });
+
+  await t.test('TC-B00B: Unknown menu item cannot fall back to client-supplied price', async () => {
+    behavior.catalogMode = 'MISSING';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 409);
+          assert.equal(err.code, 'POS_CATALOG_ITEM_NOT_FOUND');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
+
+  await t.test('TC-B00C: Inactive menu item cannot be financially committed', async () => {
+    behavior.catalogMode = 'INACTIVE';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 409);
+          assert.equal(err.code, 'POS_CATALOG_ITEM_UNAVAILABLE');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
+
+  await t.test('TC-B00D: Menu item restricted to another café cannot be sold locally', async () => {
+    behavior.catalogMode = 'FOREIGN_CAFE';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 409);
+          assert.equal(err.code, 'POS_CATALOG_ITEM_NOT_AVAILABLE_AT_CAFE');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
+
+  await t.test('TC-B00E: Catalog lookup failure fails closed instead of trusting client prices', async () => {
+    behavior.catalogMode = 'THROW';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 503);
+          assert.equal(err.code, 'POS_CATALOG_UNAVAILABLE');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TC-B01: Process restart simulation — in-memory cache wiped, DB protects
