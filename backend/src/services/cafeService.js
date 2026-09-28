@@ -1390,10 +1390,11 @@ class CafeService {
         }).session(session);
 
         if (!transactionalCafe) {
-        throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
-      }
+          throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+        }
 
-      const previousStage = cafe.lifecycleStage || 'CREATED';
+        const cafe = transactionalCafe;
+        const previousStage = cafe.lifecycleStage || 'CREATED';
       cafe.lifecycleStage = 'PROVISIONING';
       cafe.lifecycleHistory.push({
         fromStage: previousStage,
