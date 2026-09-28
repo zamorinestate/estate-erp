@@ -96,7 +96,16 @@ function ensureCafeAccess(
   const role = request?.auth?.role;
   const rawWorkspace = request?.headers?.['x-workspace'] || request?.auth?.workspaceMode || '';
   const workspaceMode = String(rawWorkspace).trim().toUpperCase();
-  if (role === 'MASTER' && workspaceMode !== 'CAFE_OPERATIONS') return;
+  if (role === 'MASTER') {
+    if (request.auth?.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER cash-book access.'
+      );
+    }
+    if (workspaceMode !== 'CAFE_OPERATIONS') return;
+  }
   if (role === 'OWNER') {
     const assignedCafeIds = (request?.auth?.assignedCafeIds || []).map((c) => String(c).trim().toUpperCase());
     if (assignedCafeIds.length === 0 || !assignedCafeIds.includes(cleanCafe)) {
@@ -119,26 +128,35 @@ function ensureCafeAccess(
 }
 
 function requireCashEntryRole(request) {
-  if (
-    ![
-      'MASTER',
-      'CAFE_ADMIN',
-    ].includes(request.auth.role)
-  ) {
+  if (request.auth.role === 'MASTER') {
+    if (request.auth.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER cash-entry access.'
+      );
+    }
+    return;
+  }
+
+  if (request.auth.role !== 'CAFE_ADMIN') {
     throw new ApiError(
       403,
       'CASH_ENTRY_ACCESS_DENIED',
-      'Only MASTER and Café Admin roles may record cash transactions.'
+      'Only Primary Master and Café Admin roles may record cash transactions.'
     );
   }
 }
 
 function requireMaster(request) {
-  if (request.auth.role !== 'MASTER') {
+  if (
+    request.auth.role !== 'MASTER' ||
+    request.auth.isPrimaryMaster !== true
+  ) {
     throw new ApiError(
       403,
-      'MASTER_ACCESS_REQUIRED',
-      'Only the MASTER role may reverse cash transactions.'
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may reverse cash transactions.'
     );
   }
 }
