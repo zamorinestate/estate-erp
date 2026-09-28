@@ -8,9 +8,11 @@ const {
 } = require('../src/models/User');
 
 const {
+  actorIsPrimaryMaster,
   handlePrimaryMasterAttack,
   assertNotPrimaryMasterTarget,
   assertMayRestoreAccount,
+  assertPrimaryMasterAuthority,
 } = require('../src/services/userGovernanceService');
 
 const { ApiError } = require('../src/utils/ApiError');
@@ -86,6 +88,117 @@ test('Primary Master Security Countermeasure — malformed non-primary MASTER ne
     assert.equal(pm.accountStatus, 'ACTIVE');
     assert.equal(pm.isPrimaryMaster, true);
     assert.equal(pm.role, 'MASTER');
+  });
+
+  await t.test('stray Primary-Master flag on a non-MASTER role grants zero Primary-Master authority', async () => {
+    const corruptedOwner = new User({
+      userId: 'OW-CORRUPT-01',
+      organisationId: 'ORG-0001',
+      name: 'Corrupted Owner Flag',
+      role: 'OWNER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    });
+
+    const protectedSuspension = new User({
+      userId: 'MU-MALFORMED-01',
+      organisationId: 'ORG-0001',
+      name: 'Protected Suspension Target',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      accountStatus: 'SUSPENDED',
+      primaryMasterProtectionSuspension: true,
+      statusReason: 'PRIMARY_MASTER_PROTECTION_TRIGGERED: Attempted illegal action',
+    });
+
+    assert.equal(actorIsPrimaryMaster(corruptedOwner), false);
+
+    assert.throws(
+      () => assertPrimaryMasterAuthority(corruptedOwner, 'execute Primary Master governance'),
+      (err) => err instanceof ApiError &&
+        err.statusCode === 403 &&
+        err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+    );
+
+    assert.throws(
+      () => assertMayRestoreAccount(corruptedOwner, protectedSuspension),
+      (err) => err instanceof ApiError &&
+        err.statusCode === 403 &&
+        err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+    );
+  });
+
+  await t.test('non-MASTER actor targeting Primary Master is denied without malformed-MASTER auto-suspension', async () => {
+    const pm = new User({
+      userId: 'MU-0001',
+      organisationId: 'ORG-0001',
+      name: 'Primary Master',
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+      primaryMasterDesignatedAt: new Date(),
+      primaryMasterDesignatedBy: 'SYSTEM_BOOTSTRAP',
+      primaryMasterDesignationReason: 'Initial bootstrap',
+    });
+
+    const owner = new User({
+      userId: 'OW-0001',
+      organisationId: 'ORG-0001',
+      name: 'Owner',
+      role: 'OWNER',
+      isPrimaryMaster: false,
+      accountStatus: 'ACTIVE',
+      sessionVersion: 3,
+      permissionsVersion: 4,
+    });
+
+    let ownerSaved = false;
+    owner.save = async function () {
+      ownerSaved = true;
+    };
+
+    const directResult = await handlePrimaryMasterAttack({
+      request: {
+        auth: {
+          userId: owner.userId,
+          organisationId: owner.organisationId,
+          role: owner.role,
+        },
+      },
+      actorDocument: owner,
+      target: pm,
+      operationDescription: 'attempt protected Primary Master mutation',
+    });
+
+    assert.equal(directResult, undefined);
+    assert.equal(ownerSaved, false);
+    assert.equal(owner.accountStatus, 'ACTIVE');
+    assert.equal(owner.sessionVersion, 3);
+    assert.equal(owner.permissionsVersion, 4);
+
+    assert.throws(
+      () => assertNotPrimaryMasterTarget(
+        pm,
+        'profile cannot be administratively modified',
+        {
+          request: {
+            auth: {
+              userId: owner.userId,
+              organisationId: owner.organisationId,
+              role: owner.role,
+            },
+          },
+          actorDocument: owner,
+        }
+      ),
+      (err) => err instanceof ApiError &&
+        err.statusCode === 403 &&
+        err.code === 'PRIMARY_MASTER_PROTECTED'
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ownerSaved, false);
+    assert.equal(owner.accountStatus, 'ACTIVE');
   });
 
   await t.test('malformed non-primary MASTER cannot restore an account suspended for Primary Master attack', async () => {
