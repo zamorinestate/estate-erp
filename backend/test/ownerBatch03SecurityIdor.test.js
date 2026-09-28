@@ -15,6 +15,7 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 // Stage 11
 const CustomerComplaintModule = require('../src/models/CustomerComplaint');
@@ -62,15 +63,28 @@ describe('BATCH 03 — Multi-Tenant Security & IDOR Isolation Suite (Stages 11-1
   let testMeetingId;
 
   let origEnableLoyalty;
+  let mongoReplSet;
 
   before(async () => {
     origEnableLoyalty = process.env.ENABLE_LOYALTY;
     process.env.ENABLE_LOYALTY = 'true';
 
-    if (mongoose.connection.readyState === 0) {
-      const uri = process.env.MONGO_URI || 'mongodb://localhost:27017/zamorin_erp_test';
-      await mongoose.connect(uri);
-    }
+    mongoReplSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+    await mongoose.connect(mongoReplSet.getUri(), {
+      autoIndex: true,
+      autoCreate: true,
+    });
+
+    await Promise.all([
+      CustomerComplaint.init(),
+      MenuItem.init(),
+      Recipe.init(),
+      Customer.init(),
+      LoyaltyLedger?.init?.() || Promise.resolve(),
+      UtilityMeter.init(),
+      GovernanceMeeting.init(),
+      DelegationOfAuthority.init(),
+    ]);
 
     // 1. Seed Stage 11 Complaint in TEST_ORG
     const c = await ownerComplaintsService.createComplaint(TEST_ORG, {
@@ -162,6 +176,9 @@ describe('BATCH 03 — Multi-Tenant Security & IDOR Isolation Suite (Stages 11-1
 
     process.env.ENABLE_LOYALTY = origEnableLoyalty;
     await mongoose.disconnect();
+    if (mongoReplSet) {
+      await mongoReplSet.stop();
+    }
   });
 
   test('1. Stage 11 IDOR: Foreign org cannot view or update complaints of TEST_ORG', async () => {
