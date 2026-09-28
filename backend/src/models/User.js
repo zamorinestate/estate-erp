@@ -1429,6 +1429,13 @@ userSchema.pre('validate', function normalizeUserFields() {
     );
   }
 
+  if (this.role === 'MASTER' && this.isPrimaryMaster !== true) {
+    this.invalidate(
+      'isPrimaryMaster',
+      'Every MASTER account must be the designated Primary Master.'
+    );
+  }
+
   if (this.isPrimaryMaster) {
     if (this.role !== 'MASTER') {
       this.invalidate(
@@ -1478,7 +1485,7 @@ userSchema.methods.canAccessCafe = function canAccessCafe(cafeId) {
   }
 
   if (this.role === 'MASTER') {
-    return true;
+    return this.isPrimaryMaster === true;
   }
 
   const normalizedCafeId = cafeId.trim().toUpperCase();
