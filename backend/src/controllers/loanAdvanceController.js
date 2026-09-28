@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
  * Provides:
  * 1. Authenticated Employee Self-Service (My Loans, My Salary Advances, Schedules, Requests, Settlements)
  * 2. Primary MASTER Organisation-Wide Loan Governance (Approvals, Disbursements, Ledger Postings, Integrity)
- * 3. Complete Privacy Firewall against Normal MASTER access.
+ * 3. Complete privacy firewall for invalid MASTER authority.
  */
 
 const {
@@ -28,10 +28,10 @@ const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { extractIdempotencyKey, acquireLock } = require('../utils/idempotencyHelper');
 
-function assertNotNormalMaster(request) {
+function assertValidMasterAuthority(request) {
   const { role, isPrimaryMaster } = request.auth;
   if (role === 'MASTER' && !isPrimaryMaster) {
-    throw new ApiError(403, 'PRIVACY_FIREWALL_NORMAL_MASTER_DENIED', 'Normal Master is restricted from employee loan records.');
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for MASTER loan access.');
   }
 }
 
@@ -45,7 +45,7 @@ function requirePrimaryMaster(request) {
 // ── 1. Self-Service Endpoints ────────────────────────────────────────────────
 
 const listMyLoanAdvances = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { type, status, limit = 50, page = 1 } = request.query;
 
@@ -121,7 +121,7 @@ const listMyLoanAdvances = asyncHandler(async (request, response) => {
 });
 
 const getMyLoanAdvance = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
 
@@ -154,7 +154,7 @@ const getMyLoanAdvance = asyncHandler(async (request, response) => {
 });
 
 const requestLoan = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId, fullName, assignedCafeIds } = request.auth;
   const {
     requestedAmountPaise,
@@ -331,7 +331,7 @@ const requestLoan = asyncHandler(async (request, response) => {
 });
 
 const requestSalaryAdvance = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId, fullName, assignedCafeIds } = request.auth;
   const { requestedAmountPaise, requestedAmount, reason = '' } = request.body;
 
@@ -499,7 +499,7 @@ const requestSalaryAdvance = asyncHandler(async (request, response) => {
 });
 
 const withdrawMyRequest = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
 
@@ -550,7 +550,7 @@ const withdrawMyRequest = asyncHandler(async (request, response) => {
 });
 
 const reportManualRepayment = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
   const { amountPaise, amount, paymentReference = '', notes = '' } = request.body;
@@ -588,7 +588,7 @@ const reportManualRepayment = asyncHandler(async (request, response) => {
 });
 
 const requestRepaymentPause = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
   const { fromPeriod, resumePeriod, reason = '' } = request.body;
@@ -612,7 +612,7 @@ const requestRepaymentPause = asyncHandler(async (request, response) => {
 });
 
 const getMySettlementQuote = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
 
@@ -624,7 +624,7 @@ const getMySettlementQuote = asyncHandler(async (request, response) => {
 });
 
 const requestEarlySettlement = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
   const { paymentReference = '', notes = '', paymentMode = 'BANK_TRANSFER' } = request.body || {};
@@ -1047,7 +1047,7 @@ const postLoanSettlement = asyncHandler(async (request, response) => {
 });
 
 const decideRepaymentPause = asyncHandler(async (request, response) => {
-  assertNotNormalMaster(request);
+  assertValidMasterAuthority(request);
   const { organisationId, userId } = request.auth;
   const { loanAdvanceId } = request.params;
   const { decision, decisionNotes = '' } = request.body || {};
