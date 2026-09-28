@@ -278,13 +278,41 @@ const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
  */
 const getPendingReconciliations = asyncHandler(async (request, response) => {
   const role = (request.auth?.role || '').toUpperCase();
-  if (role === 'STAFF') {
-    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view reconciliation queues.');
+
+  if (!['CAFE_ADMIN', 'MASTER', 'OWNER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'This role is not authorized to view POS reconciliation queues.'
+    );
   }
-  const { cafeId, status } = request.query;
+
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER reconciliation access.'
+    );
+  }
+
+  const cafeId = normalizeId(request.query?.cafeId || '');
+  const status = request.query?.status || null;
+
+  if (role !== 'MASTER' && !cafeId) {
+    throw new ApiError(
+      400,
+      'CAFE_ID_REQUIRED',
+      'cafeId is required for Café Admin or Owner reconciliation views.'
+    );
+  }
+
+  if (cafeId) {
+    assertCafeAccess(request, cafeId);
+  }
+
   const result = await PosReconciliationService.getPendingReconciliations({
     organisationId: request.auth.organisationId,
-    cafeId,
+    cafeId: cafeId || null,
     status,
   });
   return response.status(200).json(result);
@@ -296,10 +324,28 @@ const getPendingReconciliations = asyncHandler(async (request, response) => {
  */
 const retryReconciliation = asyncHandler(async (request, response) => {
   const role = (request.auth?.role || '').toUpperCase();
-  if (role === 'STAFF') {
-    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to retry reconciliation jobs.');
+
+  if (role === 'OWNER' || role === 'STAFF' || !['CAFE_ADMIN', 'MASTER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Only an assigned Café Admin or the Primary Master may retry POS reconciliation jobs.'
+    );
   }
-  const jobId = normalizeId(request.params.jobId);
+
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to retry POS reconciliation jobs.'
+    );
+  }
+
+  const jobId = normalizeId(request.params?.jobId || '');
+  if (!jobId) {
+    throw new ApiError(400, 'RECONCILIATION_JOB_ID_REQUIRED', 'jobId is required to retry reconciliation.');
+  }
+
   const result = await PosReconciliationService.retryJob(jobId, request.auth);
   return response.status(200).json(result);
 });
@@ -362,13 +408,6 @@ const getPendingOfflineReviews = asyncHandler(async (request, response) => {
       403,
       'AUTHORIZATION_DENIED',
       `Role ${role} is not authorized for offline queue review.`
-    );
-  }
-  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
-    throw new ApiError(
-      403,
-      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
-      'Primary Master authority is required for offline POS review.'
     );
   }
   if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
