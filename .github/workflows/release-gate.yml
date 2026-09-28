@@ -81,7 +81,7 @@ jobs:
         run: npm ci
 
       - name: Scan Repository for Committed Secrets
-        run: node scripts/scan_secrets.mjs
+        run: node scripts/scan_secrets.mjs && node scripts/scan_repository_secrets.mjs
 
       - name: Verify Frontend Router Imports
         run: node frontend/verifyRouterImports.mjs
