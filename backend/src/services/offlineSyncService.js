@@ -420,14 +420,17 @@ class OfflineSyncService {
         offlineCreatedAt: tx.offlineCreatedAt ? new Date(tx.offlineCreatedAt) : (tx.capturedAtClient ? new Date(tx.capturedAtClient) : new Date()),
         catalogVersion: tx.catalogVersion || null,
         lineItems: mappedLineItems,
-        tenders: tx.tenders || [
-          {
-            paymentMethod: tx.paymentMethod || 'CASH',
-            amountPaisa: totalPaisa,
-            provider: 'CASH_REGISTER',
-            paymentReference: tx.paymentReference || `CASH-${clientOfflineId}`,
-          },
-        ],
+        // Preserve explicit split/recorded tenders when the offline client
+        // actually captured them. Otherwise omit tenders entirely and let the
+        // canonical POS pipeline derive a single settlement tender from the
+        // server-authoritative catalog price, tax and payable rounding. Never
+        // synthesize a ₹0/incorrect tender from optional client totalPaisa.
+        tenders:
+          Array.isArray(tx.tenders) && tx.tenders.length > 0
+            ? tx.tenders
+            : undefined,
+        provider: tx.provider || 'CASH_REGISTER',
+        paymentReference: tx.paymentReference || `CASH-${clientOfflineId}`,
         isImmediateCompletion: true,
         isOfflineReplay: true,
       };
