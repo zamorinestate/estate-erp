@@ -14,6 +14,7 @@ const procurementController = require('../src/controllers/procurementController'
 const vendorController = require('../src/controllers/vendorController');
 const cashController = require('../src/controllers/cashController');
 const companyIdentityController = require('../src/controllers/companyIdentityController');
+const posController = require('../src/controllers/posController');
 const { ApprovalPolicyService } = require('../src/services/approvalPolicyService');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -532,6 +533,34 @@ test('Malformed non-primary MASTER cannot use offline POS review governance', as
       action: 'ESCALATE',
       reason: 'Must be rejected before lookup',
       authContext: malformedMaster,
+    }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => invokeController(posController.getPendingOfflineReviews, {
+      auth: malformedMaster,
+      query: {},
+      params: {},
+      body: {},
+    }),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => invokeController(posController.reviewOfflineOrder, {
+      auth: malformedMaster,
+      params: { reviewId: 'REV-MALFORMED-MASTER' },
+      query: {},
+      body: { action: 'ESCALATE', reason: 'Must be rejected at controller boundary' },
     }),
     (err) => {
       assert.equal(err.statusCode, 403);
