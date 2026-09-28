@@ -283,17 +283,18 @@ class OfflineSyncService {
       const originatingUserId = (tx.originatingUserId || tx.cashierUserId || userId || '').trim().toUpperCase();
       let isOperatorDisabled = false;
       let disabledReason = '';
+      let canonicalOriginatingUser = null;
       if (originatingUserId && originatingUserId !== 'OFFLINE_CASHIER') {
         try {
-          const userDoc = await User.findOne({
+          canonicalOriginatingUser = await User.findOne({
             organisationId: cleanOrg,
             userId: originatingUserId,
           }).lean();
 
-          if (userDoc) {
-            const accStatus = String(userDoc.accountStatus || '').toUpperCase();
-            const lifeStatus = String(userDoc.lifecycleStatus || '').toUpperCase();
-            const empStatus = String(userDoc.employmentStatus || '').toUpperCase();
+          if (canonicalOriginatingUser) {
+            const accStatus = String(canonicalOriginatingUser.accountStatus || '').toUpperCase();
+            const lifeStatus = String(canonicalOriginatingUser.lifecycleStatus || '').toUpperCase();
+            const empStatus = String(canonicalOriginatingUser.employmentStatus || '').toUpperCase();
 
             if (['DISABLED', 'TERMINATED', 'SUSPENDED', 'DEACTIVATED', 'ARCHIVED', 'LOCKED'].includes(accStatus) ||
                 ['TERMINATED', 'SEPARATED', 'SUSPENDED', 'RETIRED'].includes(lifeStatus) ||
@@ -435,11 +436,42 @@ class OfflineSyncService {
         isOfflineReplay: true,
       };
 
+      const liveAssignedCafeIds = canonicalOriginatingUser
+        ? [
+            ...(canonicalOriginatingUser.assignedCafeIds || []),
+            canonicalOriginatingUser.primaryCafeId,
+          ]
+            .filter(Boolean)
+            .map((id) => String(id).trim().toUpperCase())
+        : [];
+
+      const liveRole = String(canonicalOriginatingUser?.role || 'STAFF').trim().toUpperCase();
+      const isPrimaryMaster =
+        liveRole === 'MASTER' && canonicalOriginatingUser?.isPrimaryMaster === true;
+
+      if (
+        canonicalOriginatingUser &&
+        !isPrimaryMaster &&
+        !liveAssignedCafeIds.includes(cleanCafe)
+      ) {
+        results.conflictCount++;
+        results.items.push({
+          clientOfflineId,
+          status: 'CONFLICT_REVIEW_REQUIRED',
+          reason: `Originating user ${originatingUserId} is no longer assigned to café ${cleanCafe}. Offline replay requires authorized review.`,
+          errorCode: 'CAFE_ACCESS_REVOKED',
+        });
+        continue;
+      }
+
       const authContext = {
         organisationId: cleanOrg,
         cafeId: cleanCafe,
-        userId: tx.originatingUserId || tx.cashierUserId || userId || 'OFFLINE_CASHIER',
-        role: 'STAFF',
+        userId: originatingUserId || 'OFFLINE_CASHIER',
+        role: liveRole,
+        isPrimaryMaster,
+        assignedCafeIds: liveAssignedCafeIds,
+        primaryCafeId: canonicalOriginatingUser?.primaryCafeId || null,
       };
 
       try {
