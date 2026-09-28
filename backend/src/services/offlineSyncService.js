@@ -610,6 +610,14 @@ class OfflineSyncService {
     }
 
     const activeRole = String(canonicalReviewer.role || '').toUpperCase();
+    if (!['CAFE_ADMIN', 'MASTER'].includes(activeRole)) {
+      const err = new Error(`Current role ${activeRole} is not authorized for offline queue review.`);
+      err.statusCode = 403;
+      err.errorCode = 'AUTHORIZATION_DENIED';
+      err.code = 'AUTHORIZATION_DENIED';
+      throw err;
+    }
+
     if (activeRole !== role) {
       const err = new Error('Reviewer authorization context is stale because the canonical role has changed. Re-authentication is required.');
       err.statusCode = 403;
@@ -777,13 +785,6 @@ class OfflineSyncService {
       }
 
       const activeRole = String(canonicalReviewer.role || '').toUpperCase();
-      if (activeRole !== reviewerRole) {
-        const err = new Error('Reviewer authorization context is stale because the canonical role has changed. Re-authentication is required.');
-        err.statusCode = 403;
-        err.errorCode = 'AUTHORIZATION_CONTEXT_STALE';
-        err.code = 'AUTHORIZATION_CONTEXT_STALE';
-        throw err;
-      }
       reviewedByRole = activeRole;
       if (activeRole === 'OWNER') {
         const err = new Error('Owner role does not possess offline POS review authorization (Segregation of Duties).');
@@ -798,6 +799,14 @@ class OfflineSyncService {
         err.statusCode = 403;
         err.errorCode = 'AUTHORIZATION_DENIED';
         err.code = 'AUTHORIZATION_DENIED';
+        throw err;
+      }
+
+      if (activeRole !== reviewerRole) {
+        const err = new Error('Reviewer authorization context is stale because the canonical role has changed. Re-authentication is required.');
+        err.statusCode = 403;
+        err.errorCode = 'AUTHORIZATION_CONTEXT_STALE';
+        err.code = 'AUTHORIZATION_CONTEXT_STALE';
         throw err;
       }
 
