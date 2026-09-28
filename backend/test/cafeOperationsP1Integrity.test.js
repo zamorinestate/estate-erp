@@ -323,7 +323,7 @@ test('CAFÉ OPS-02 — P1 Functional Integrity & Reliability Suite (P1-1 to P1-6
     assert.equal(res.data.error.code, 'CROSS_CAFE_RESOURCE_DENIED');
   });
 
-  await t.test('P1-1.3: Master in Café Operations workspace is clamped to effective cafe', async () => {
+  await t.test('P1-1.3: Primary Master in Café Operations workspace is clamped to effective cafe', async () => {
     t.mock.method(Bill, 'aggregate', async (pipeline) => {
       const matchStage = pipeline.find((s) => s.$match)?.$match || {};
       assert.equal(matchStage.cafeId, 'ZC-0001');
