@@ -78,8 +78,8 @@ function assertCafeAccess(authContext = {}, cafeId) {
     if (authContext.isPrimaryMaster === true) return;
     throw new ApiError(
       403,
-      'NORMAL_MASTER_RUNTIME_DISABLED',
-      'Normal Master runtime access is retired. Primary Master authority is required.'
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER POS access.'
     );
   }
 
