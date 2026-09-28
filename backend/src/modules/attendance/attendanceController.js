@@ -317,7 +317,7 @@ const getLiveAttendance = asyncHandler(async (request, response) => {
   });
 });
 
-// 3. POST /api/v1/attendance/master-manual (Primary AND Normal Master authority)
+// 3. POST /api/v1/attendance/master-manual (Primary Master or authorized Café Admin)
 const recordMasterManualAttendance = asyncHandler(async (request, response) => {
   const {
     userId: rawUserId,
@@ -330,7 +330,10 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
   } = request.body || {};
 
   if (!['MASTER', 'CAFE_ADMIN'].includes(request.auth.role)) {
-    throw new ApiError(403, 'PERMISSION_DENIED', 'Only Master or Café Admin can record manual attendance.');
+    throw new ApiError(403, 'PERMISSION_DENIED', 'Only Primary Master or Café Admin can record manual attendance.');
+  }
+  if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for MASTER attendance access.');
   }
 
   ensureCafeOperationsAllowed(request);
@@ -721,7 +724,7 @@ const listShiftsForRoster = asyncHandler(async (request, response) => {
   });
 });
 
-// 6. Overtime Decision (CAFE_ADMIN verify -> Normal Master review -> Primary Master final decision)
+// 6. Overtime Decision (CAFE_ADMIN verification -> Primary Master final decision)
 const decideOvertime = asyncHandler(async (request, response) => {
   const { attendanceId: rawAttId, decision, approvedMinutes = 0, reason = '' } = request.body || {};
   const attendanceId = normalizeIdentifier(rawAttId);
@@ -738,7 +741,7 @@ const decideOvertime = asyncHandler(async (request, response) => {
   const isPrimary = request.auth.isPrimaryMaster === true;
 
   if (decision === 'APPROVE') {
-    if (!isPrimary && request.auth.role !== 'MASTER') {
+    if (!isPrimary) {
       throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for final Overtime decision.');
     }
     attendance.overtimeStatus = 'APPROVED_BY_PRIMARY';
