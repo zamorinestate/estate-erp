@@ -499,7 +499,7 @@ export function printQrCard({ cafeName, cafeId, qrUrl, qrVersion = 1, city = '' 
  * Opens a rich modal viewer for the generated Café QR Code.
  * Supports: View, Full Screen (responsive, high-contrast, Escape closes), Download SVG, and Print Card.
  */
-export function openQrViewerModal({ cafeName = 'Zamorin Café', cafeId = 'ZC-0001', qrUrl, qrVersion = 1, isFullScreen = false } = {}) {
+export function openQrViewerModal({ cafeName = 'Zamorin Café', cafeId, qrUrl, qrVersion = 1, isFullScreen = false } = {}) {
   let modalMount = document.getElementById('zamorin-qr-viewer-mount');
   if (!modalMount) {
     modalMount = document.createElement('div');
@@ -507,7 +507,9 @@ export function openQrViewerModal({ cafeName = 'Zamorin Café', cafeId = 'ZC-000
     document.body.appendChild(modalMount);
   }
 
-  const cleanCafeId = String(cafeId).trim().toUpperCase();
+  const cleanCafeId = String(cafeId || '').trim().toUpperCase();
+  if (!cleanCafeId) throw new Error('cafeId is required to open the Café QR viewer.');
+  if (!qrUrl) throw new Error('qrUrl is required to open the Café QR viewer.');
   const safeFilename = `ZAMORIN_${cleanCafeId.replace(/[^A-Za-z0-9_-]/g, '')}_QR_V${qrVersion || 1}.svg`;
 
   if (isFullScreen) {
