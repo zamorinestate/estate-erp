@@ -56,7 +56,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const bcrypt = require('bcrypt');
 
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'a_very_secure_and_long_jwt_access_secret_32bytes_long!';
@@ -101,7 +101,6 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   const CAFE_B1 = 'ZC-2001';
 
   let primaryMasterUser;
-  let malformedMasterUser;
   let ownerUser;
   let adminA1User;
   let adminA2User;
@@ -116,7 +115,7 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   let billA2Id;
 
   t.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri());
 
     cafeAccessCryptoService.verifySecretKeys();
@@ -202,18 +201,6 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
       primaryMasterDesignatedAt: new Date(),
       primaryMasterDesignatedBy: 'SYSTEM',
       primaryMasterDesignationReason: 'REC-11 Primary Master Bootstrap',
-      accountStatus: 'ACTIVE',
-      passwordHash,
-      createdBy: 'SYSTEM',
-    });
-
-    malformedMasterUser = await User.create({
-      userId: 'MU-9002',
-      organisationId: ORG_A,
-      name: 'Malformed MASTER Operator',
-      email: 'malformed.master@zamorin.cafe',
-      role: 'MASTER',
-      isPrimaryMaster: false,
       accountStatus: 'ACTIVE',
       passwordHash,
       createdBy: 'SYSTEM',
@@ -567,7 +554,7 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
 
     // 3. Malformed MASTER (role = MASTER, isPrimaryMaster = false) is DENIED (403)
     assert.throws(
-      () => authorizePersonalLedger({ role: 'MASTER', isPrimaryMaster: false, userId: malformedMasterUser.userId }),
+      () => authorizePersonalLedger({ role: 'MASTER', isPrimaryMaster: false, userId: 'MU-MALFORMED-9002' }),
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
@@ -647,11 +634,14 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   // 13. EXPENSE PAID/REVERSAL RESTRICTION
   // ===========================================================================
   await t.test('13. Expense Pay / Reversal: Strictly Master-only (Owner, Admin, Staff denied)', async () => {
-    const payAllowedRoles = ['MASTER'];
-    assert.equal(payAllowedRoles.includes(ownerUser.role), false);
-    assert.equal(payAllowedRoles.includes(adminA1User.role), false);
-    assert.equal(payAllowedRoles.includes(staffA1User.role), false);
-    assert.equal(payAllowedRoles.includes(malformedMasterUser.role), true);
+    const canPayExpense = (authCtx) =>
+      authCtx?.role === 'MASTER' && authCtx?.isPrimaryMaster === true;
+
+    assert.equal(canPayExpense({ role: ownerUser.role, isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: adminA1User.role, isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: staffA1User.role, isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: 'MASTER', isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: 'MASTER', isPrimaryMaster: true }), true);
   });
 
   // ===========================================================================
