@@ -82,3 +82,56 @@ test('P2-02: backend authentication middleware has no dev-role identity lookup p
   assert.doesNotMatch(middleware, /x-dev-role|DEV-LOCAL-SESSION|roleEmailMap|explicitDevRole/);
   assert.match(middleware, /AUTHENTICATION_REQUIRED/);
 });
+
+
+test('P2-02: mock governance headers are test-only, opt-in, and loopback-bound', () => {
+  const middlewarePath = require.resolve('../src/cafe-operations/middleware/requireGovernanceRole');
+  delete require.cache[middlewarePath];
+  const {
+    resolveCallerFromRequest,
+    allowExplicitTestIdentityHeaders,
+  } = require(middlewarePath);
+
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousFlag = process.env.ALLOW_TEST_AUTH_HEADERS;
+
+  const makeRequest = (remoteAddress = '127.0.0.1') => ({
+    headers: {
+      'x-mock-user-role': 'MASTER_PRIMARY',
+      'x-mock-user-id': 'TEST-MASTER',
+      'x-mock-user-is-primary': 'true',
+    },
+    socket: { remoteAddress },
+  });
+
+  try {
+    process.env.NODE_ENV = 'staging';
+    process.env.ALLOW_TEST_AUTH_HEADERS = 'true';
+    assert.equal(allowExplicitTestIdentityHeaders(makeRequest()), false);
+    assert.equal(resolveCallerFromRequest(makeRequest()), null);
+
+    process.env.NODE_ENV = 'production';
+    assert.equal(allowExplicitTestIdentityHeaders(makeRequest()), false);
+    assert.equal(resolveCallerFromRequest(makeRequest()), null);
+
+    process.env.NODE_ENV = 'test';
+    delete process.env.ALLOW_TEST_AUTH_HEADERS;
+    assert.equal(allowExplicitTestIdentityHeaders(makeRequest()), false);
+    assert.equal(resolveCallerFromRequest(makeRequest()), null);
+
+    process.env.ALLOW_TEST_AUTH_HEADERS = 'true';
+    assert.equal(allowExplicitTestIdentityHeaders(makeRequest('203.0.113.8')), false);
+    assert.equal(resolveCallerFromRequest(makeRequest('203.0.113.8')), null);
+
+    assert.equal(allowExplicitTestIdentityHeaders(makeRequest('127.0.0.1')), true);
+    const caller = resolveCallerFromRequest(makeRequest('127.0.0.1'));
+    assert.equal(caller?.canonicalRole, 'MASTER');
+    assert.equal(caller?.isPrimaryMaster, true);
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+
+    if (previousFlag === undefined) delete process.env.ALLOW_TEST_AUTH_HEADERS;
+    else process.env.ALLOW_TEST_AUTH_HEADERS = previousFlag;
+  }
+});
