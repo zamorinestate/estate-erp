@@ -96,7 +96,7 @@ export const DEV_PREVIEW_USERS = Object.freeze({
     _id: "MU-0001",
     id: "MU-0001",
     name: "Zamorin Primary Master",
-    email: "pradeeshk331@gmail.com",
+    email: "primary-master@local.zamorin.test",
     role: "MASTER",
     designation: "Primary Master",
     position: "Primary Master",
@@ -370,14 +370,11 @@ function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
   if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
-    // ⚠️ PRIMARY MASTER LOCK: Only the single administrator account
-    // (MU-0001 / pradeeshk331@gmail.com) holds the MASTER role and window.
-    const isHardcodedPrimaryMaster =
-      user?.userId === "MU-0001" &&
-      String(user?.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+    // MASTER authority is valid only when the authenticated server context
+    // explicitly marks the singleton Primary Master.
     return {
       role: "master",
-      isPrimaryMaster: isHardcodedPrimaryMaster,
+      isPrimaryMaster: user?.isPrimaryMaster === true,
     };
   }
 
@@ -1094,36 +1091,9 @@ async function boot() {
 
       renderShell();
 
-      // Automatically acquire authentic JWT session for this persona
-      const DEV_CREDENTIALS = {
-        master: { email: "pradeeshk331@gmail.com", password: "PRADEESHK@94309" },
-        owner: { email: "owner@example.com", password: "PK@NilaVega_8427!Cedar" },
-        cafe_admin: { email: "admin@example.com", password: "PK@NilaVega_8427!Cedar" },
-        admin: { email: "admin@example.com", password: "PK@NilaVega_8427!Cedar" },
-        staff: { email: "staff@example.com", password: "PK@NilaVega_8427!Cedar" },
-      };
-      const creds = DEV_CREDENTIALS[devKey] || DEV_CREDENTIALS.master;
-      apiPost("/auth/login", {
-        email: creds.email,
-        password: creds.password,
-        organisationId: "ZAMORIN",
-        device: {
-          deviceId: getOrCreateDeviceId(),
-          deviceName: "Browser Dev Client",
-          deviceType: "DESKTOP",
-        },
-      }).then((res) => {
-        const token = res?.data?.accessToken || res?.data?.token;
-        if (token) {
-          setAccessToken(token);
-        }
-        if (res?.data?.user) {
-          setState({
-            auth: { authenticated: true, loading: false, user: res.data.user, authentication: null, error: null },
-            user: res.data.user,
-          });
-        }
-        loadAvailableCafes().catch(() => {});
+      // Local preview state is UI-only. Real authenticated browser tests must
+      // sign in explicitly with environment-supplied credentials.
+      loadAvailableCafes().catch(() => {});
       }).catch((err) => {
         console.warn("[Dev Auth] Background token acquisition:", err.message);
       });

@@ -1057,7 +1057,7 @@ async function seedSystemCommunicationSettings({ organisationId, masterEmail }) 
     settings = await SystemCommunicationSettings.create({
       organisationId,
       operationsEmail: 'zamorinestatepvtltd.erp@gmail.com',
-      primaryMasterEmail: masterEmail || 'pradeeshk331@gmail.com',
+      primaryMasterEmail: masterEmail,
       identityType: 'SYSTEM_OPERATIONS_MAILBOX',
       applicationRole: 'NONE',
       canLoginToERP: false,
@@ -1934,6 +1934,7 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   const { DeviceRegistration } = require('../models/DeviceRegistration');
   const { User } = require('../models/User');
   const bcrypt = require('bcrypt');
+  const demoPassword = requireEnvironmentValue('SEED_DEMO_PASSWORD');
 
   // 0. Seed Active Cafes with 6-digit Operations PIN (default: 123456)
   const defaultCafePinHash = await bcrypt.hash('123456', 10);
@@ -2066,7 +2067,7 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       accountStatus: 'ACTIVE',
       primaryCafeId: 'ZC-0001',
       assignedCafeIds: ['ZC-0001'],
-      passwordHash: await bcrypt.hash('PK@NilaVega_8427!Cedar', 10),
+      passwordHash: await bcrypt.hash(demoPassword, 10),
       operatorPinHash: pin1Hash,
       operatorPinSetAt: new Date(),
       isPrimaryMaster: false,
@@ -2090,7 +2091,7 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       accountStatus: 'ACTIVE',
       primaryCafeId: 'ZC-0002',
       assignedCafeIds: ['ZC-0002'],
-      passwordHash: await bcrypt.hash('PK@NilaVega_8427!Cedar', 10),
+      passwordHash: await bcrypt.hash(demoPassword, 10),
       operatorPinHash: pin2Hash,
       operatorPinSetAt: new Date(),
       isPrimaryMaster: false,
@@ -2104,7 +2105,7 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   }
 
   // 3. Seed Canonical Role Accounts for Complete Role Recognition
-  const defaultPasswordHash = await bcrypt.hash('PK@NilaVega_8427!Cedar', 10);
+  const defaultPasswordHash = await bcrypt.hash(demoPassword, 10);
 
   // There is strictly one MASTER account: the designated Primary Master.
 
@@ -2194,11 +2195,11 @@ async function runSeed() {
     const master = await seedMasterUser({
       organisationId,
       masterName: env.initialMasterName || 'Zamorin Master',
-      masterEmail: env.initialMasterEmail || 'master@example.com',
-      masterPassword: env.initialMasterPassword || 'PK@NilaVega_8427!Cedar',
+      masterEmail: requireEnvironmentValue('INITIAL_MASTER_EMAIL'),
+      masterPassword: requireEnvironmentValue('INITIAL_MASTER_PASSWORD'),
     });
     await seedPermissionRules({ organisationId, masterUserId: master.userId });
-    await seedSystemCommunicationSettings({ organisationId, masterEmail: env.initialMasterEmail || 'master@example.com' });
+    await seedSystemCommunicationSettings({ organisationId, masterEmail: requireEnvironmentValue('INITIAL_MASTER_EMAIL') });
 
     const isMinimal = process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false' || process.env.NODE_ENV === 'production';
     if (!isMinimal) {

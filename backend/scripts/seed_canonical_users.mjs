@@ -2,6 +2,12 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/zamorin_cafe_erp';
+const PRIMARY_MASTER_EMAIL = String(process.env.INITIAL_MASTER_EMAIL || '').trim();
+const DEMO_PASSWORD = String(process.env.SEED_DEMO_PASSWORD || '').trim();
+
+if (!PRIMARY_MASTER_EMAIL || !DEMO_PASSWORD) {
+  throw new Error('INITIAL_MASTER_EMAIL and SEED_DEMO_PASSWORD are required; canonical seed credentials must not be embedded in source.');
+}
 
 async function seedUsers() {
   console.log(`Connecting to MongoDB (${MONGODB_URI.replace(/:([^:@]+)@/, ':***@')})...`);
@@ -9,13 +15,13 @@ async function seedUsers() {
   const db = mongoose.connection.db;
   const usersColl = db.collection('users');
 
-  const defaultPasswordHash = await bcrypt.hash('PRADEESHK@94309', 10);
+  const defaultPasswordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
 
   // 1. Master (ensure active & clean)
-  const master = await usersColl.findOne({ email: 'pradeeshk331@gmail.com' });
+  const master = await usersColl.findOne({ email: PRIMARY_MASTER_EMAIL });
   if (master) {
     await usersColl.updateOne(
-      { email: 'pradeeshk331@gmail.com' },
+      { email: PRIMARY_MASTER_EMAIL },
       {
         $set: {
           accountStatus: 'ACTIVE',

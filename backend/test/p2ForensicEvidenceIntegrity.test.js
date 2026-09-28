@@ -56,3 +56,24 @@ test('P2 forensic credential integrity: executable scripts cannot bypass hardcod
     assert.doesNotMatch(source, /password\s*:\s*['"][^'"]{8,}['"]/i, `${rel} must not embed a reusable password literal`);
   }
 });
+
+
+test('P2 runtime credential invariant: application source contains no built-in reusable login credentials', () => {
+  const runtimeFiles = [
+    'backend/src/config/environment.js',
+    'backend/src/scripts/startDev.js',
+    'backend/src/scripts/seedInitialData.js',
+    'frontend/src/js/main.js',
+    'backend/scripts/seed_canonical_users.mjs',
+  ];
+
+  for (const rel of runtimeFiles) {
+    const source = read(rel);
+    assert.doesNotMatch(source, /password\s*:\s*['"][^'"]{8,}['"]/i, `${rel} must not embed reusable password literals`);
+  }
+
+  const frontendMain = read('frontend/src/js/main.js');
+  assert.doesNotMatch(frontendMain, /DEV_CREDENTIALS|Automatically acquire authentic JWT session/i);
+  assert.doesNotMatch(frontendMain, /userId\s*===\s*["']MU-0001["']\s*&&[\s\S]{0,160}email/i);
+  assert.match(frontendMain, /isPrimaryMaster:\s*user\?\.isPrimaryMaster\s*===\s*true/);
+});
