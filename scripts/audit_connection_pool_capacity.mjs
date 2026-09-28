@@ -48,7 +48,7 @@ console.log('\x1b[36m[1/3] Auditing Database Connection Pool Configuration...\x1
 const env = loadEnvironment({
   NODE_ENV: 'test',
   MONGODB_URI: 'mongodb://localhost:27017/zamorin_test',
-  JWT_ACCESS_SECRET: '01234567890123456789012345678901',
+  JWT_ACCESS_SECRET: '0'.repeat(32),
   MFA_ENCRYPTION_KEY: '01234567890123456789012345678901',
 });
 
