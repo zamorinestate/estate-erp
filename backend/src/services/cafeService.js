@@ -24,7 +24,10 @@ const {
   hashOpaqueToken,
 } = require('./cafeAccessCryptoService');
 const { ApiError } = require('../utils/ApiError');
-const { commitWithRetry } = require('../utils/transactionHelper');
+const {
+  commitWithRetry,
+  executeTransactionWithRetry,
+} = require('../utils/transactionHelper');
 const { verifyPassword } = require('./authService');
 const {
   INDIAN_STATE_CODES,
@@ -299,34 +302,23 @@ class CafeService {
     let createdAccess = null;
     let universalQr = null;
 
-    // Café provisioning is a multi-document security boundary. In production,
-    // silently falling back to compensating writes is forbidden because it can
-    // leave orphaned QR/access/inventory records. Use Mongo transactions whenever
-    // the connected topology supports sessions.
-    const useMongooseTransactions =
-      mongoose.connection &&
-      mongoose.connection.readyState === 1 &&
-      typeof mongoose.connection.startSession === 'function';
-
-    let session = null;
-    if (useMongooseTransactions) {
-      try {
-        session = await mongoose.connection.startSession();
-        session.startTransaction();
-      } catch {
-        session = null;
-      }
-    }
-
-    if (process.env.NODE_ENV === 'production' && !session) {
-      throw new ApiError(
-        503,
-        'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
-        'Production café provisioning requires MongoDB transaction support.'
-      );
-    }
+    // Café provisioning is a multi-document security boundary. Use the
+    // canonical transaction runner so statement-level TransientTransactionError
+    // restarts the whole body, while UnknownTransactionCommitResult retries only
+    // commit on the same session.
+    let transactionWasAvailable = false;
 
     try {
+      await executeTransactionWithRetry(async (session) => {
+        transactionWasAvailable = transactionWasAvailable || Boolean(session);
+
+        if (process.env.NODE_ENV === 'production' && !session) {
+          throw new ApiError(
+            503,
+            'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
+            'Production café provisioning requires MongoDB transaction support.'
+          );
+        }
       // 4a. Legacy Permanent PIN reservation is retired in REC-02 (omitted)
 
       // 4b. Create Stage 02 Universal QR Record for Café Login inside the same
@@ -762,19 +754,25 @@ class CafeService {
         }
       }
 
-      if (session) {
-        await commitWithRetry(session);
-        await session.endSession();
-        session = null;
-      }
+      return {
+        cafe: createdCafe,
+        access: createdAccess,
+        universalQr,
+      };
+      });
     } catch (err) {
-      if (session) {
-        await session.abortTransaction().catch(() => {});
-        await session.endSession().catch(() => {});
-        session = null;
-      } else {
-        // Non-production standalone compensation. Production never enters this
-        // branch because transaction support is mandatory above.
+      if (
+        err?.isUnknownCommitOutcome ||
+        err?.code === 'TRANSACTION_COMMIT_OUTCOME_UNKNOWN'
+      ) {
+        // The durable outcome is intentionally not guessed and must not be
+        // compensated or automatically replayed.
+        throw err;
+      }
+
+      if (!transactionWasAvailable) {
+        // Non-production standalone compensation. Production rejects null-session
+        // provisioning before any durable write occurs.
         if (createdCafe?._id) {
           await Cafe.deleteOne({ _id: createdCafe._id }).catch(() => {});
         }
@@ -789,6 +787,13 @@ class CafeService {
           const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
           await CafeInventoryConfig.deleteMany({ organisationId, cafeId }).catch(() => {});
         } catch (_) {}
+      }
+
+      if (
+        err instanceof ApiError &&
+        err.code === 'CAFE_PROVISIONING_TRANSACTION_REQUIRED'
+      ) {
+        throw err;
       }
 
       throw new ApiError(
@@ -1368,36 +1373,23 @@ class CafeService {
       throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'Organisation and café scope are required for provisioning.');
     }
 
-    let session = null;
-    try {
-      if (
-        mongoose.connection &&
-        mongoose.connection.readyState === 1 &&
-        typeof mongoose.connection.startSession === 'function'
-      ) {
-        session = await mongoose.connection.startSession();
-        session.startTransaction();
-      }
-    } catch {
-      session = null;
-    }
-
-    if (!session) {
-      throw new ApiError(
-        503,
-        'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
-        'Café subsystem provisioning requires MongoDB transaction support.'
-      );
-    }
-
     let cafe = null;
     try {
-      cafe = await Cafe.findOne({
-        organisationId: cleanOrg,
-        cafeId: cleanCafe,
-      }).session(session);
+      cafe = await executeTransactionWithRetry(async (session) => {
+        if (!session) {
+          throw new ApiError(
+            503,
+            'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
+            'Café subsystem provisioning requires MongoDB transaction support.'
+          );
+        }
 
-      if (!cafe) {
+        const transactionalCafe = await Cafe.findOne({
+          organisationId: cleanOrg,
+          cafeId: cleanCafe,
+        }).session(session);
+
+        if (!transactionalCafe) {
         throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
       }
 
@@ -1556,9 +1548,8 @@ class CafeService {
       });
       await cafe.save({ session });
 
-      await commitWithRetry(session);
-      await session.endSession();
-      session = null;
+        return cafe;
+      });
 
       // Audit is intentionally after commit so no success event can exist for
       // a transaction that later aborts.
@@ -1581,10 +1572,11 @@ class CafeService {
 
       return { cafe, provisioningStatus: 'PROVISIONED' };
     } catch (err) {
-      if (session) {
-        await session.abortTransaction().catch(() => {});
-        await session.endSession().catch(() => {});
-        session = null;
+      if (
+        err?.isUnknownCommitOutcome ||
+        err?.code === 'TRANSACTION_COMMIT_OUTCOME_UNKNOWN'
+      ) {
+        throw err;
       }
 
       // Record the failed lifecycle outside the aborted transaction. No
