@@ -133,7 +133,7 @@ async function main() {
   await seedVendorsData({ organisationId, masterUserId: masterId });
 
   console.log(
-    `[dev] Seed complete — login: ${masterEmail} / ${masterPassword}`
+    `[dev] Seed complete — Primary Master account provisioned for ${masterEmail}; password intentionally not logged.`
   );
 
   await disconnectDatabase();
