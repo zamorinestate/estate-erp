@@ -1269,11 +1269,7 @@ function exportDirectoryCSV() {
 
 // ─── MODAL WIZARDS ────────────────────────────────────────────────────────────
 function openOnboardingWizard() {
-  const defaultCafes = [
-    { cafeId: "ZC-0001", name: "Calicut Flagship (ZC-0001)" },
-    { cafeId: "ZC-0002", name: "Kochi Hub (ZC-0002)" },
-  ];
-  const cafesToRender = (Array.isArray(liveCafes) && liveCafes.length > 0) ? liveCafes : defaultCafes;
+  const cafesToRender = Array.isArray(liveCafes) ? liveCafes.filter((c) => c?.cafeId) : [];
 
   openModal(`
     <div style="padding:24px; max-width:640px; width:100%; color:var(--ink);">
@@ -1307,7 +1303,7 @@ function openOnboardingWizard() {
           <div>
             <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Primary Café Location *</label>
             <select id="ob-cafe" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
-              ${cafesToRender.map(c => `<option value="${escapeHtml(c.cafeId)}">${escapeHtml(c.name || c.displayName || c.cafeId)}</option>`).join('')}
+              ${cafesToRender.map(c => `<option value="${escapeHtml(c.cafeId)}">${escapeHtml(c.name || c.displayName || c.cafeId)}</option>`).join('') || '<option value="" disabled selected>No authorized cafés available</option>'}
             </select>
           </div>
           <div>
@@ -1512,6 +1508,12 @@ function openOnboardingWizard() {
       return;
     }
 
+    const selectedCafeId = document.getElementById("ob-cafe")?.value?.trim() || "";
+    if (!selectedCafeId) {
+      showToast("Select an authorized café before onboarding the employee.", "coral");
+      return;
+    }
+
     if (submitBtn) {
       submitBtn.disabled = true;
       submitBtn.textContent = "Onboarding...";
@@ -1534,7 +1536,7 @@ function openOnboardingWizard() {
       preferredName: document.getElementById("ob-preferred").value.trim(),
       email: document.getElementById("ob-email").value.trim().toLowerCase(),
       phone: document.getElementById("ob-phone").value.trim(),
-      primaryCafeId: document.getElementById("ob-cafe")?.value?.trim() || "ZC-0001",
+      primaryCafeId: selectedCafeId,
       department: document.getElementById("ob-dept")?.value || "Barista",
       designation: effectiveDesignation,
       workerType: document.getElementById("ob-worker-type")?.value || "PERMANENT",
@@ -2377,7 +2379,7 @@ export function openOnboardEmployeeModal() {
             <div>
               <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">Primary Café</label>
               <select id="oe-cafe" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
-                ${liveCafes.map(c => `<option value="${c.cafeId}">${c.name || c.cafeId}</option>`).join('') || '<option value="ZC-0001">Kozhikode Roastery</option>'}
+                ${liveCafes.map(c => `<option value="${c.cafeId}">${c.name || c.cafeId}</option>`).join('') || '<option value="" disabled selected>No authorized cafés available</option>'}
               </select>
             </div>
             <div>
