@@ -1709,8 +1709,12 @@ const getRegisterSession = asyncHandler(async (request, response) => {
   const orgId = request.auth.organisationId;
   const role = request.auth.role;
   const registerId = resolveRegisterId(request, request.query.registerId);
-  if (!registerId) {
-    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required to resolve the current register session.');
+  const hasPortfolioAuthority =
+    role === 'OWNER' ||
+    (role === 'MASTER' && request.auth.isPrimaryMaster === true);
+
+  if (!registerId && !hasPortfolioAuthority) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required to resolve the current terminal register session.');
   }
   let cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
   if (role === 'CAFE_ADMIN') {
@@ -1737,12 +1741,18 @@ const getRegisterSession = asyncHandler(async (request, response) => {
   }
   assertCafeAccess(request, cafeId);
 
-  const session = await RegisterSession.findOne({
+  const sessionQuery = {
     organisationId: orgId,
     cafeId,
-    registerId,
     status: 'OPEN',
-  }).sort({ openedAt: -1 }).lean();
+  };
+  if (registerId) {
+    sessionQuery.registerId = registerId;
+  }
+
+  const session = await RegisterSession.findOne(sessionQuery)
+    .sort({ openedAt: -1 })
+    .lean();
 
   return response.status(200).json({
     success: true,
