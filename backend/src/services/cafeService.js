@@ -2060,64 +2060,21 @@ class CafeService {
       }
     }
 
-    const access = await CafeAccess.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    });
-
-    if (!access) {
-      throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
-    }
-
-    const priorVersion = access.qrVersion || 1;
-    if (!access.qrHistory) access.qrHistory = [];
-    access.qrHistory.push({
-      version: priorVersion,
-      action: 'ROTATED',
-      actionAt: new Date(),
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      reason: `QR rotated to v${priorVersion + 1}`,
-    });
-
-    const newQrToken = generateOpaqueToken();
-    access.qrCredentialHash = hashOpaqueToken(newQrToken);
-    access.qrTokenEncrypted = encryptSecret(newQrToken);
-    access.qrVersion = priorVersion + 1;
-    access.qrEnabled = true;
-    access.qrCreatedAt = new Date();
-    access.qrRevokedAt = null;
-    access.qrRevokedBy = null;
-    access.qrRevokeReason = null;
-    access.updatedBy = auth.userId;
-    await access.save();
-
-    await auditService.recordAuditEvent({
+    // One canonical QR rotation path. Universal QR, Café metadata and the
+    // authoritative CafeAccess credential are committed together.
+    const result = await this.regenerateCafeLoginQr({
       organisationId,
       cafeId,
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      module: 'CAFE_OPERATIONS',
-      action: 'CAFE_QR_REGENERATED',
-      entityType: 'CAFE_ACCESS',
-      entityId: cafeId,
-      reason: `QR access credential regenerated to version ${access.qrVersion}. Prior codes invalidated.`,
-      result: 'SUCCESS',
-      riskClassification: 'HIGH',
-      ipAddress: clientIp,
+      auth,
+      clientIp,
       userAgent,
-      metadata: {
-        qrVersion: access.qrVersion,
-      },
     });
 
-    const publicOrigin = getPublicAppOrigin();
-
     return {
-      cafeId,
-      qrVersion: access.qrVersion,
-      qrToken: newQrToken,
-      qrUrl: `${publicOrigin}/cafe-access/qr/${newQrToken}`,
+      cafeId: result.cafeId,
+      qrVersion: result.qrVersion,
+      qrToken: result.qrToken,
+      qrUrl: result.qrUrl,
     };
   }
 
