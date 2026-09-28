@@ -94,7 +94,7 @@ ${tableRows}
 - **Total Backend Routes**: 39
 - **Total Controllers**: 48
 - **Total Models**: 132
-- **Zero Missing Support Files**: Certified PASS.
+- **Zero Missing Support Files**: Static check PASS.
 `;
 }
 
@@ -147,7 +147,7 @@ All export generation complies strictly with \`EXPORT_ENGINE_COMPANY_IDENTITY_MA
 
 ## 3. Verification Score
 - **Export Engines Audited**: 10 / 10 Active
-- **Status**: 100% Certified Standard Compliant
+- **Status**: Static standard check PASS
 `;
 }
 
@@ -334,16 +334,16 @@ function generateDuplicateAuthorityReport() {
 ## 2. Domain Authority Mapping
 | Domain | Canonical Schema | Canonical Controller | Canonical Service | Single Source Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Authentication & Sessions** | \`User.js\`, \`Session.js\` | \`authController.js\` | \`TokenService.js\` | Certified Single Source |
-| **Passbook & Treasury** | \`PassbookAccount.js\` | \`passbookController.js\` | \`PassbookService.js\` | Certified Single Source |
-| **POS & Orders** | \`Order.js\`, \`Bill.js\` | \`posController.js\` | \`BillingService.js\` | Certified Single Source |
-| **Inventory & Par** | \`StockItem.js\`, \`StockMovement.js\` | \`inventoryController.js\` | \`InventoryValuationService.js\` | Certified Single Source |
-| **Payroll & Wages** | \`Employee.js\`, \`PayrollRun.js\` | \`payrollController.js\` | \`CodeOnWagesCalculator.js\` | Certified Single Source |
-| **Corporate Exports** | \`ZurfReport.js\` | \`reportController.js\` | \`ZurfService.js\` | Certified Single Source |
+| **Authentication & Sessions** | \`User.js\`, \`Session.js\` | \`authController.js\` | \`TokenService.js\` | Static single-source mapping |
+| **Passbook & Treasury** | \`PassbookAccount.js\` | \`passbookController.js\` | \`PassbookService.js\` | Static single-source mapping |
+| **POS & Orders** | \`Order.js\`, \`Bill.js\` | \`posController.js\` | \`BillingService.js\` | Static single-source mapping |
+| **Inventory & Par** | \`StockItem.js\`, \`StockMovement.js\` | \`inventoryController.js\` | \`InventoryValuationService.js\` | Static single-source mapping |
+| **Payroll & Wages** | \`Employee.js\`, \`PayrollRun.js\` | \`payrollController.js\` | \`CodeOnWagesCalculator.js\` | Static single-source mapping |
+| **Corporate Exports** | \`ZurfReport.js\` | \`reportController.js\` | \`ZurfService.js\` | Static single-source mapping |
 
 ## 3. Status
 - **Duplicate Sources of Truth**: 0
-- **Status**: 100% Single Authority Certified
+- **Status**: Static single-authority mapping PASS
 `;
 }
 
@@ -409,16 +409,16 @@ function generateClosureGateReport() {
 # FINAL FORMAL CLOSURE GATE CERTIFICATION
 
 ## 1. Executive Summary & Programme Authorization
-The Application-Wide Supporting File Integration Programme is officially **CLOSED AND CERTIFIED 100% COMPLETE**.
+The application-wide supporting-file static checks completed for the configured inventory. Production/release certification is evaluated separately.
 
 ### Programme Mandates Achieved:
-- **ZERO MISSING SUPPORT FILES**: 100% Certified.
-- **ZERO ORPHAN RUNTIME MODULES**: 100% Certified.
-- **ZERO BROKEN IMPORTS**: 100% Certified.
-- **ZERO BROKEN STATIC ASSETS**: 100% Certified.
-- **ZERO DUPLICATE SOURCES OF TRUTH**: 100% Certified.
-- **ZERO UNMOUNTED BACKEND COMPONENTS**: 100% Certified.
-- **ZERO UNTESTED MODULE DEPENDENCIES**: 100% Certified.
+- **ZERO MISSING SUPPORT FILES**: Static check PASS.
+- **ZERO ORPHAN RUNTIME MODULES**: Static check PASS.
+- **ZERO BROKEN IMPORTS**: Static check PASS.
+- **ZERO BROKEN STATIC ASSETS**: Static check PASS.
+- **ZERO DUPLICATE SOURCES OF TRUTH**: Static check PASS.
+- **ZERO UNMOUNTED BACKEND COMPONENTS**: Static check PASS.
+- **ZERO UNTESTED MODULE DEPENDENCIES**: Static check PASS.
 - **UNKNOWN = 0**: 100% Complete Closure.
 
 ## 2. Final Scorecard
