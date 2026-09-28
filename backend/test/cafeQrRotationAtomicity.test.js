@@ -12,7 +12,19 @@ const cafeService = require('../src/services/cafeService');
 
 test('Café QR rotation aborts atomically if CafeAccess update fails', async (t) => {
   const replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(replSet.getUri());
+  await mongoose.connect(replSet.getUri(), {
+    autoIndex: true,
+    autoCreate: true,
+  });
+
+  // Transactional QR tests must start only after their collections and indexes
+  // are fully created. Otherwise MongoDB can surface test-only catalog-change
+  // WriteConflict errors while a transaction is mutating UniversalQrRecord.
+  await Promise.all([
+    Cafe.init(),
+    CafeAccess.init(),
+    UniversalQrRecord.init(),
+  ]);
 
   t.after(async () => {
     await mongoose.disconnect();
@@ -103,7 +115,19 @@ test('Café QR rotation aborts atomically if CafeAccess update fails', async (t)
 
 test('successful QR rotation keeps public reference distinct from secret credential', async (t) => {
   const replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(replSet.getUri());
+  await mongoose.connect(replSet.getUri(), {
+    autoIndex: true,
+    autoCreate: true,
+  });
+
+  // Transactional QR tests must start only after their collections and indexes
+  // are fully created. Otherwise MongoDB can surface test-only catalog-change
+  // WriteConflict errors while a transaction is mutating UniversalQrRecord.
+  await Promise.all([
+    Cafe.init(),
+    CafeAccess.init(),
+    UniversalQrRecord.init(),
+  ]);
 
   t.after(async () => {
     await mongoose.disconnect();
