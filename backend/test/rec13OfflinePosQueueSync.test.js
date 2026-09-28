@@ -1619,6 +1619,41 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     );
   });
 
+  // Test H0B: missing organisation context must fail closed rather than default tenant.
+  it('REC-13A Test H0B: Offline review never defaults missing organisation context', async () => {
+    const missingOrgAdmin = {
+      userId: 'AD-001',
+      role: 'CAFE_ADMIN',
+      assignedCafeIds: [cafeId],
+    };
+
+    await assert.rejects(
+      () => OfflineSyncService.getPendingReviews({
+        cafeId,
+        authUser: missingOrgAdmin,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'ORGANISATION_CONTEXT_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => OfflineSyncService.reviewItem({
+        reviewId: 'REV-ATT-FOR-CAFE-001',
+        action: 'ESCALATE',
+        reason: 'Missing tenant context must fail closed',
+        authContext: missingOrgAdmin,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'ORGANISATION_CONTEXT_REQUIRED');
+        return true;
+      }
+    );
+  });
+
   // Test H1: stale allowed-role token cannot inherit a more privileged live role
   it('REC-13A Test H1: stale Café Admin token cannot inherit newly promoted Primary-Master authority', async () => {
     await User.findOneAndUpdate(
