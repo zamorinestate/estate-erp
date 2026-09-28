@@ -91,7 +91,7 @@ describe('REC-17 ADD-ON — Vendor Accounts Payable Ledger & Lifecycle Suite', (
   const ownerAuth = { userId: 'USR-OWNER-01', role: 'OWNER', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const cafeAdminAAuth = { userId: 'USR-ADMIN-01', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const staffAuth = { userId: 'USR-STAFF-01', role: 'STAFF', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
-  const orgBMasterAuth = { userId: 'USR-ORGB-MASTER', role: 'MASTER', organisationId: orgIdB, assignedCafeIds: ['GLOBAL'] };
+  const orgBMasterAuth = { userId: 'USR-ORGB-MASTER', role: 'MASTER', isPrimaryMaster: true, organisationId: orgIdB, assignedCafeIds: ['GLOBAL'] };
 
   before(async () => {
     mongoServer = await MongoMemoryServer.create();
