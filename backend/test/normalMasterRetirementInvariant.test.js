@@ -22,11 +22,11 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 const FORBIDDEN = [
-  /Normal Master/g,
-  /NORMAL MASTER/g,
-  /NORMAL_MASTER/g,
-  /master_normal/g,
-  /normal\.master/g,
+  new RegExp(['Normal', 'Master'].join(' '), 'g'),
+  new RegExp(['NORMAL', 'MASTER'].join(' '), 'g'),
+  new RegExp(['NORMAL', 'MASTER'].join('_'), 'g'),
+  new RegExp(['master', 'normal'].join('_'), 'g'),
+  new RegExp(['normal', 'master'].join('\\.'), 'g'),
 ];
 
 function walk(dir, findings) {
@@ -63,14 +63,14 @@ function walk(dir, findings) {
   }
 }
 
-test('Retired Normal Master persona is absent from the repository', () => {
+test('Retired secondary MASTER persona is absent from the repository', () => {
   const findings = [];
   walk(REPO_ROOT, findings);
 
   assert.deepEqual(
     findings,
     [],
-    'Retired Normal Master persona references remain:\n' +
+    'Retired secondary MASTER persona references remain:\n' +
       findings.map((f) => `- ${f.file}: ${f.hits.join(', ')}`).join('\n')
   );
 });
