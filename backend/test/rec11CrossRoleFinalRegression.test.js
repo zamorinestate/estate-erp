@@ -385,13 +385,41 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   await t.test('2. Owner Denied POS Mutation: Owner cannot process POS transactions (strict read-only)', async () => {
     await assert.rejects(
       async () => {
-        // Owner context rejected at offline/review or operational level
+        // Owner context rejected at offline/review governance level.
         await OfflineSyncService.reviewItem({
           reviewId: 'REV-DUMMY-01',
           action: 'APPROVE_AND_FINALIZE',
           authContext: { role: 'OWNER', userId: ownerUser.userId, organisationId: ORG_A },
         });
       },
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    // Even an artificially over-scoped Owner token must not gain operational
+    // POS mutation authority merely because a café assignment is present.
+    await assert.rejects(
+      () => PosOrderService.processOrder({
+        cafeId: CAFE_A1,
+        orderType: 'QUICK_SALE',
+        paymentMethod: 'CASH',
+        idempotencyKey: 'IDEM-OWNER-MUTATION-DENIED-01',
+        lineItems: [{
+          menuItemId: 'MENU-101',
+          name: 'Malabar Cold Brew',
+          quantity: 1,
+          unitPricePaisa: 20000,
+        }],
+      }, {
+        role: 'OWNER',
+        userId: ownerUser.userId,
+        organisationId: ORG_A,
+        assignedCafeIds: [CAFE_A1],
+        primaryCafeId: CAFE_A1,
+      }),
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.equal(err.code, 'AUTHORIZATION_DENIED');
