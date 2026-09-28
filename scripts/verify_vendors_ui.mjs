@@ -1,8 +1,10 @@
 import puppeteer from 'puppeteer-core';
 import path from 'path';
+import fs from 'fs';
 
-const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const ARTIFACTS_DIR = "C:/Users/chris/.gemini/antigravity-ide/brain/ff6054b5-2d4d-407e-a4d8-dc7e5ce32d2b";
+const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const ARTIFACTS_DIR = process.env.E2E_ARTIFACTS_DIR || path.join(process.cwd(), 'artifacts', 'e2e');
+fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
 
 async function run() {
   console.log("Launching Chrome with puppeteer-core...");
