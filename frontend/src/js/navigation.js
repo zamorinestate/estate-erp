@@ -6,8 +6,8 @@
 //   - Items not listed for a role here are unreachable by that role anywhere.
 //   - Navigation is structured in logical groups (COMMAND, OPERATIONS, PEOPLE,
 //     FINANCE, COMMERCIAL, INSIGHTS, ADMINISTRATION, SYSTEM).
-//   - Primary Master vs Normal Master distinction is enforced here and in
-//     router.js — no 5th/6th role is created.
+//   - MASTER navigation is reserved for the designated Primary Master and
+//     is enforced again in router.js.
 //   - User-facing CAFE_ADMIN terminology is "Cafe Operations" / "Operator".
 //   - My Profile, My Payslip → Avatar menu / Settings (not main sidebar).
 //   - My Payslips, My Loans & Advances → Settings → My Employment (not STAFF sidebar).
