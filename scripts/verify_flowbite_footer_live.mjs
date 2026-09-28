@@ -1,5 +1,18 @@
+import path from 'path';
+import fs from 'fs';
 import puppeteer from 'puppeteer-core';
-const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const ARTIFACTS_DIR = process.env.E2E_ARTIFACTS_DIR || path.join(process.cwd(), 'artifacts', 'e2e');
+fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; E2E credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
 
 async function test() {
   console.log('[Test] Launching Chrome...');
@@ -29,10 +42,10 @@ async function test() {
   await page.type('#l2-org-id', 'ZAMORIN');
 
   await page.click('#l2-email', { clickCount: 3 });
-  await page.type('#l2-email', 'pradeeshk331@gmail.com');
+  await page.type('#l2-email', PRIMARY_MASTER_EMAIL);
 
   await page.click('#l2-password', { clickCount: 3 });
-  await page.type('#l2-password', 'PRADEESHK@94309');
+  await page.type('#l2-password', PRIMARY_MASTER_PASSWORD);
 
   await page.click('#l2-submit-btn');
 
@@ -63,14 +76,14 @@ async function test() {
   // Take screenshot of the footer element itself
   const footerEl = await page.$('#app-footer-container footer');
   if (footerEl) {
-    await footerEl.screenshot({ path: 'C:/Users/chris/.gemini/antigravity-ide/brain/9439e03a-5a2f-493b-9288-e514e6dec44c/flowbite_footer_element.png' });
+    await footerEl.screenshot({ path: path.join(ARTIFACTS_DIR, 'flowbite_footer_element.png') });
     console.log('[Test] Footer element screenshot saved!');
   }
 
   // Scroll to bottom of window to view footer in viewport context
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await new Promise(r => setTimeout(r, 600));
-  await page.screenshot({ path: 'C:/Users/chris/.gemini/antigravity-ide/brain/9439e03a-5a2f-493b-9288-e514e6dec44c/dashboard_bottom_viewport.png' });
+  await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'dashboard_bottom_viewport.png') });
   console.log('[Test] Dashboard bottom viewport screenshot saved!');
 
   // Navigate to another page (e.g. #procurement) to verify persistence
@@ -95,7 +108,7 @@ async function test() {
   });
   console.log('[Test] Footer on #settings:', settingsFooter);
 
-  const settingsScreenshotPath = 'C:/Users/chris/.gemini/antigravity-ide/brain/9439e03a-5a2f-493b-9288-e514e6dec44c/settings_with_flowbite_footer.png';
+  const settingsScreenshotPath = path.join(ARTIFACTS_DIR, 'settings_with_flowbite_footer.png');
   await page.screenshot({ path: settingsScreenshotPath, fullPage: true });
   console.log('[Test] Settings Screenshot saved to:', settingsScreenshotPath);
 
@@ -120,11 +133,11 @@ async function test() {
 
   const darkFooterEl = await page.$('#app-footer-container footer');
   if (darkFooterEl) {
-    await darkFooterEl.screenshot({ path: 'C:/Users/chris/.gemini/antigravity-ide/brain/9439e03a-5a2f-493b-9288-e514e6dec44c/flowbite_footer_dark_element.png' });
+    await darkFooterEl.screenshot({ path: path.join(ARTIFACTS_DIR, 'flowbite_footer_dark_element.png') });
     console.log('[Test] Dark Footer element screenshot saved!');
   }
 
-  await page.screenshot({ path: 'C:/Users/chris/.gemini/antigravity-ide/brain/9439e03a-5a2f-493b-9288-e514e6dec44c/settings_dark_with_flowbite_footer.png', fullPage: true });
+  await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'settings_dark_with_flowbite_footer.png'), fullPage: true });
   console.log('[Test] Dark Settings Screenshot saved!');
 
   await browser.close();
