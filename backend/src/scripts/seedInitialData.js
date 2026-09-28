@@ -1935,9 +1935,22 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   const { User } = require('../models/User');
   const bcrypt = require('bcrypt');
   const demoPassword = requireEnvironmentValue('SEED_DEMO_PASSWORD');
+  const cafeOperationsPin = requireEnvironmentValue('SEED_CAFE_OPERATIONS_PIN');
+  const operatorPin1 = requireEnvironmentValue('SEED_OPERATOR_PIN_1');
+  const operatorPin2 = requireEnvironmentValue('SEED_OPERATOR_PIN_2');
 
-  // 0. Seed Active Cafes with 6-digit Operations PIN (default: 123456)
-  const defaultCafePinHash = await bcrypt.hash('123456', 10);
+  for (const [name, value] of [
+    ['SEED_CAFE_OPERATIONS_PIN', cafeOperationsPin],
+    ['SEED_OPERATOR_PIN_1', operatorPin1],
+    ['SEED_OPERATOR_PIN_2', operatorPin2],
+  ]) {
+    if (!/^\d{6}$/.test(value)) {
+      throw new Error(`${name} must contain exactly 6 digits.`);
+    }
+  }
+
+  // 0. Seed Active Cafes with environment-supplied 6-digit Operations PIN
+  const defaultCafePinHash = await bcrypt.hash(cafeOperationsPin, 10);
 
   const cafe1 = await Cafe.findOne({ organisationId, cafeId: 'ZC-0001' });
   if (!cafe1) {
@@ -2053,8 +2066,8 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   }
 
   // 2. Seed Sample Operator Users with 6-digit PIN
-  const pin1Hash = await bcrypt.hash('147258', 10);
-  const pin2Hash = await bcrypt.hash('258369', 10);
+  const pin1Hash = await bcrypt.hash(operatorPin1, 10);
+  const pin2Hash = await bcrypt.hash(operatorPin2, 10);
 
   const existingAdmin1 = await User.findOne({ organisationId, userId: 'AD-0001' });
   if (!existingAdmin1) {
