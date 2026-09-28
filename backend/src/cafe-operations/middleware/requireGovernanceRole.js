@@ -14,7 +14,8 @@ try {
   // Fallback for standalone preview if canonical tree is detached
   canAccessCafe = (auth, cafeId) => {
     if (!auth) return false;
-    if (auth.role === 'MASTER' || auth.role === 'OWNER') return true;
+    if (auth.role === 'MASTER' && auth.isPrimaryMaster === true) return true;
+    if (auth.role === 'OWNER') return true;
     if (auth.role === 'CAFE_ADMIN') return String(auth.assignedCafeId || auth.cafeId) === String(cafeId);
     return false;
   };
@@ -31,7 +32,7 @@ function resolveCallerFromRequest(req) {
       employeeId: req.headers['x-mock-user-id'] || 'MOCK_GOVERNANCE_CALLER',
       userId: req.headers['x-mock-user-id'] || 'MOCK_GOVERNANCE_CALLER',
       role,
-      canonicalRole: role === 'MASTER_PRIMARY' || role === 'MASTER_NORMAL' ? 'MASTER' : role,
+      canonicalRole: role === 'MASTER_PRIMARY' ? 'MASTER' : role,
       organisationId: req.headers['x-mock-org-id'] || 'ORG_ZAMORIN',
       isPrimaryMaster: isPrimary,
       assignedCafeId: req.headers['x-mock-cafe-id'] || null,
@@ -39,7 +40,7 @@ function resolveCallerFromRequest(req) {
       status: req.headers['x-mock-user-status'] || 'ACTIVE',
       rawAuth: {
         userId: req.headers['x-mock-user-id'] || 'MOCK_GOVERNANCE_CALLER',
-        role: role === 'MASTER_PRIMARY' || role === 'MASTER_NORMAL' ? 'MASTER' : role,
+        role: role === 'MASTER_PRIMARY' ? 'MASTER' : role,
         isPrimaryMaster: isPrimary,
         organisationId: req.headers['x-mock-org-id'] || 'ORG_ZAMORIN',
         status: req.headers['x-mock-user-status'] || 'ACTIVE',
@@ -49,7 +50,7 @@ function resolveCallerFromRequest(req) {
   if (req.auth) {
     const isPrimary = req.auth.isPrimaryMaster === true || req.auth.isPrimary === true;
     const role = req.auth.role === 'MASTER'
-      ? (isPrimary ? 'MASTER_PRIMARY' : 'MASTER_NORMAL')
+      ? (isPrimary ? 'MASTER_PRIMARY' : 'INVALID_MASTER')
       : req.auth.role;
     return {
       employeeId: req.auth.userId || req.auth.id || req.auth._id,
@@ -67,7 +68,7 @@ function resolveCallerFromRequest(req) {
   if (req.authenticatedUser) {
     const isPrimary = req.authenticatedUser.isPrimaryMaster === true;
     const role = req.authenticatedUser.role === 'MASTER'
-      ? (isPrimary ? 'MASTER_PRIMARY' : 'MASTER_NORMAL')
+      ? (isPrimary ? 'MASTER_PRIMARY' : 'INVALID_MASTER')
       : req.authenticatedUser.role;
     return {
       employeeId: req.authenticatedUser.userId || req.authenticatedUser._id,
@@ -88,7 +89,7 @@ function resolveCallerFromRequest(req) {
       employeeId: req.user.employeeId || req.user.userId || req.user.id || req.user._id,
       userId: req.user.employeeId || req.user.userId || req.user.id || req.user._id,
       role: req.user.role,
-      canonicalRole: req.user.role === 'MASTER_PRIMARY' || req.user.role === 'MASTER_NORMAL' ? 'MASTER' : req.user.role,
+      canonicalRole: req.user.role === 'MASTER_PRIMARY' ? 'MASTER' : req.user.role,
       organisationId: req.user.organisationId,
       isPrimaryMaster: isPrimary,
       assignedCafeId: req.user.assignedCafeId || req.user.cafeId,
@@ -102,7 +103,6 @@ function resolveCallerFromRequest(req) {
 
 const KNOWN_GOVERNANCE_ROLES = new Set([
   'MASTER_PRIMARY',
-  'MASTER_NORMAL',
   'MASTER',
   'OWNER',
   'CAFE_ADMIN',
@@ -130,7 +130,7 @@ function requireGovernanceRole(...allowedRoles) {
     const matchesRole = allowedRoles.some((allowed) => {
       if (allowed === caller.role) return true;
       if (allowed === caller.canonicalRole) return true;
-      if (allowed === 'MASTER' && (caller.role === 'MASTER_PRIMARY' || caller.role === 'MASTER_NORMAL')) return true;
+      if (allowed === 'MASTER' && caller.role === 'MASTER_PRIMARY') return true;
       return false;
     });
 
