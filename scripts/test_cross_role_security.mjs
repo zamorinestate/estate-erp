@@ -92,7 +92,7 @@ async function main() {
   const staff = await loginUser(STAFF_EMAIL, STAFF_PASSWORD);
   console.log(`   ✓ Staff authenticated: ${staff.user.userId} (${staff.user.role})`);
 
-  const admin = await loginUser(CAFE_ADMIN_EMAIL, STAFF_PASSWORD);
+  const admin = await loginUser(CAFE_ADMIN_EMAIL, CAFE_ADMIN_PASSWORD);
   console.log(`   ✓ Cafe Admin authenticated: ${admin.user.userId} (${admin.user.role})`);
 
   const vendor = await loginUser(VENDOR_EMAIL, VENDOR_PASSWORD);
