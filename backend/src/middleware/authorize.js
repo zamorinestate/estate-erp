@@ -300,8 +300,8 @@ function enforceSensitiveRequirements({
 
 /**
  * requirePrimaryMaster — standalone middleware that ensures the authenticated
- * user is a MASTER with isPrimaryMaster === true. Normal Masters, Owners,
- * Admins, and Staff all receive 403 PRIMARY_MASTER_AUTHORITY_REQUIRED.
+ * user is a MASTER with isPrimaryMaster === true. All other callers receive
+ * 403 PRIMARY_MASTER_AUTHORITY_REQUIRED.
  */
 function requirePrimaryMaster(
   request,
