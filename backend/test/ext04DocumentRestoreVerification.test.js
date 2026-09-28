@@ -622,7 +622,7 @@ describe('EXT-04 — GridFS Document Restore, Historical Revision Recovery & Int
     assert.throws(
       () =>
         DocumentAttachmentService.assertDocumentAuthorization({
-          auth: { role: 'MASTER', organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'M1' },
+          auth: { role: 'MASTER', isPrimaryMaster: true, organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'MU-0001' },
           doc,
           action: 'DOWNLOAD',
         }),
@@ -643,7 +643,7 @@ describe('EXT-04 — GridFS Document Restore, Historical Revision Recovery & Int
     assert.throws(
       () =>
         DocumentAttachmentService.assertDocumentAuthorization({
-          auth: { role: 'MASTER', organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'M1' },
+          auth: { role: 'MASTER', isPrimaryMaster: true, organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'MU-0001' },
           doc,
           action: 'PREVIEW',
         }),
