@@ -271,7 +271,7 @@ describe('REC-17C — PO Approval Authority, Accounts Capabilities & AP Aging Su
         (err) => {
           assert.strictEqual(err.statusCode, 403);
           assert.strictEqual(err.code, 'FORBIDDEN_ROLE');
-          assert.match(err.message, /Only Master has authority to approve purchase orders/);
+          assert.match(err.message, /Only Primary Master has authority to approve purchase orders/);
           return true;
         }
       );
@@ -296,7 +296,7 @@ describe('REC-17C — PO Approval Authority, Accounts Capabilities & AP Aging Su
         (err) => {
           assert.strictEqual(err.statusCode, 403);
           assert.strictEqual(err.code, 'FORBIDDEN_ROLE');
-          assert.match(err.message, /Only Master has authority to approve purchase orders/);
+          assert.match(err.message, /Only Primary Master has authority to approve purchase orders/);
           return true;
         }
       );
