@@ -63,6 +63,7 @@ import { mountPublicCafeGateway, getActiveGatewayContextToken } from "./pages/ca
 // ── Stage-2 Login Integration: Terminal auth screens (additive, no backend auth change) ──
 import { renderCafeMasterSignIn, wireCafeMasterSignIn, resetCafeMasterSignInUi } from "./pages/cafeMasterSignIn.js";
 import { renderCafeDeviceEnroll, wireCafeDeviceEnroll, resetCafeDeviceEnrollUi } from "./pages/cafeDeviceEnroll.js";
+import { getNativeDeviceAttestationIdentity } from "./utils/deviceAttestation.js";
 import { renderCafeTerminalWelcome, wireCafeTerminalWelcome } from "./pages/cafeTerminalWelcome.js";
 import { renderOrgIdentity, wireOrgIdentity } from "./pages/organisationIdentity.js";
 import { renderSystemHealthPage, initSystemHealthPage } from "./pages/systemHealth.js";
@@ -966,12 +967,19 @@ async function renderPage() {
       content.innerHTML = renderCafeDeviceEnroll();
       wireCafeDeviceEnroll(content, {
         onEnroll: async ({ enrollmentCode, deviceDisplayName }) => {
+          const signingIdentity = await getNativeDeviceAttestationIdentity({
+            requiredForNative: true,
+          });
+          const platform = String(signingIdentity.platform || 'WEB').toLowerCase();
           const res = await apiPost('/cafe-ops/devices/enroll', {
             enrollmentCode,
             displayName: deviceDisplayName,
-            platform: 'Web',
+            platform,
             appVersion: '1.0.0',
             osVersion: navigator.userAgent || 'Unknown',
+            publicSigningKey: signingIdentity.capable ? signingIdentity.publicKeyJwk : null,
+            signingKeyAlgorithm: signingIdentity.capable ? signingIdentity.algorithm : null,
+            signingKeyProvider: signingIdentity.capable ? signingIdentity.provider : null,
           });
           const data = res?.data || res;
           if (data?.deviceToken) {
