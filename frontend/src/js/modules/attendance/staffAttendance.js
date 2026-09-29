@@ -786,90 +786,112 @@ function renderTimecardRows() {
 
 // ── 4. CORRECTIONS & ISSUES TAB ──────────────────────────────────────────────
 function renderCorrectionsTab() {
-  return `
-    <div style="margin-bottom:24px;">
-      <!-- Action Required Exceptions Banner -->
+  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const missingPunch = cachedHistory
+    .filter((r) =>
+      r?.businessDate &&
+      String(r.businessDate) < todayKey &&
+      Boolean(r.checkInAt) &&
+      !r.checkOutAt &&
+      ["CHECKED_IN", "ON_BREAK", "MISSED_PUNCH"].includes(String(r.status || "").toUpperCase())
+    )
+    .slice()
+    .sort((a, b) => String(b.businessDate).localeCompare(String(a.businessDate)))[0] || null;
+
+  const missingPunchHtml = missingPunch
+    ? `
       <div class="card" style="padding:18px 20px; background:rgba(239,122,133,0.08); border:1px solid rgba(239,122,133,0.25); border-radius:var(--radius-lg); margin-bottom:20px;">
         <div class="flex items-center justify-between flex-wrap gap-sm">
           <div>
             <div style="font-size:13px; font-weight:700; color:var(--color-accent-coral); margin-bottom:2px; display:flex; align-items:center; gap:6px;">
-              <span>⚡</span>
-              <span>Pending Action: Missing Check-Out Recorded</span>
+              <span>⚡</span><span>Pending Action: Missing Check-Out</span>
             </div>
             <div style="font-size:12px; color:var(--text-secondary);">
-              Your shift on <strong>14 Aug 2026</strong> has an unclosed punch. Submit a correction request with your actual exit time.
+              Your attendance record for <strong>${escapeHtml(formatDateStr(`${missingPunch.businessDate}T00:00:00+05:30`))}</strong> has a check-in but no check-out.
             </div>
           </div>
-          <button class="btn btn-sm btn-primary" id="btn-fix-missing-punch">
+          <button class="btn btn-sm btn-primary" id="btn-fix-missing-punch" data-att-id="${escapeHtml(missingPunch.attendanceId || "")}">
             Fix Missing Punch
           </button>
         </div>
       </div>
+    `
+    : "";
 
-      <!-- Corrections Tracking Table -->
+  const requestRows = cachedCorrections.length
+    ? cachedCorrections.map((req) => {
+        const status = String(req.status || "PENDING").toUpperCase();
+        const badgeClass = status === "APPROVED"
+          ? "badge-mint"
+          : status === "REJECTED"
+            ? "badge-coral"
+            : status === "CANCELLED"
+              ? "badge-subtle"
+              : "badge-gold";
+        const requestedParts = [];
+        if (req.requestedCheckInAt) requestedParts.push(`Check-In: ${formatTimeStr(req.requestedCheckInAt)}`);
+        if (req.requestedCheckOutAt) requestedParts.push(`Check-Out: ${formatTimeStr(req.requestedCheckOutAt)}`);
+        if (Number(req.requestedBreakMinutes || 0) > 0) requestedParts.push(`Break: ${Number(req.requestedBreakMinutes)}m`);
+        if (!requestedParts.length) requestedParts.push(String(req.issueType || "Attendance correction").replace(/_/g, " "));
+
+        const submitted = req.submittedAt || req.createdAt;
+        const decisionLabel = req.reviewedAt
+          ? `Reviewed ${formatDateStr(req.reviewedAt)}`
+          : submitted
+            ? `Submitted ${formatDateStr(submitted)}`
+            : "Submitted";
+
+        return `
+          <div class="flex items-center justify-between flex-wrap gap-sm" style="padding:12px 16px; background:var(--bg-surface-2); border-radius:var(--radius-md); border:1px solid var(--border-subtle);">
+            <div>
+              <div class="flex items-center gap-xs">
+                <span style="font-size:13px; font-weight:700; color:var(--text-primary);">${escapeHtml(req.businessDate ? formatDateStr(`${req.businessDate}T00:00:00+05:30`) : "Date unavailable")}</span>
+                <span class="badge ${badgeClass}" style="font-size:10px;">${escapeHtml(status.replace(/_/g, " "))}</span>
+              </div>
+              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                ${escapeHtml(requestedParts.join(" · "))} · Reason: “${escapeHtml(req.reason || "No reason recorded")}”
+              </div>
+              ${req.reviewRemarks || req.reviewReason ? `<div style="font-size:11.5px; color:var(--text-muted); margin-top:3px;">Decision note: ${escapeHtml(req.reviewRemarks || req.reviewReason)}</div>` : ""}
+            </div>
+            <span style="font-size:11.5px; color:var(--text-muted);">${escapeHtml(decisionLabel)}</span>
+          </div>
+        `;
+      }).join("")
+    : `<div style="padding:20px; text-align:center; color:var(--text-muted); font-size:12.5px;">No correction requests found for this period.</div>`;
+
+  const decisionHistory = cachedCorrections
+    .filter((req) => req.submittedAt || req.createdAt || req.reviewedAt)
+    .slice(0, 10)
+    .map((req) => {
+      const ref = req.correctionRequestId || req.requestId || "Correction";
+      const submitted = req.submittedAt || req.createdAt;
+      const status = String(req.status || "PENDING").replace(/_/g, " ");
+      return `
+        <div class="flex items-center justify-between flex-wrap gap-xs" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
+          <span>${escapeHtml(ref)} · ${escapeHtml(req.businessDate || "")}</span>
+          <span style="color:var(--text-muted);">${escapeHtml(status)}${submitted ? ` · ${escapeHtml(formatDateStr(submitted))}` : ""}</span>
+        </div>
+      `;
+    }).join("") || `<div style="padding:12px; color:var(--text-muted);">No correction history for this period.</div>`;
+
+  return `
+    <div style="margin-bottom:24px;">
+      ${missingPunchHtml}
+
       <div class="card" style="padding:22px; background:var(--bg-surface-1); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); border:1px solid var(--border-subtle); margin-bottom:20px;">
         <div class="flex items-center justify-between" style="margin-bottom:16px;">
           <div>
-            <div style="font-size:15px; font-weight:800; color:var(--text-primary);">
-              Attendance Correction Requests
-            </div>
-            <div style="font-size:12px; color:var(--text-muted);">
-              Track formal requests submitted for check-in/out adjustments.
-            </div>
+            <div style="font-size:15px; font-weight:800; color:var(--text-primary);">Attendance Correction Requests</div>
+            <div style="font-size:12px; color:var(--text-muted);">Your submitted correction requests for the selected attendance period.</div>
           </div>
-          <button class="btn btn-sm btn-secondary" id="btn-new-correction">
-            + New Correction Request
-          </button>
+          <button class="btn btn-sm btn-secondary" id="btn-new-correction">+ New Correction Request</button>
         </div>
-
-        <div style="display:flex; flex-direction:column; gap:10px;">
-          <div class="flex items-center justify-between flex-wrap gap-sm" style="padding:12px 16px; background:var(--bg-surface-2); border-radius:var(--radius-md); border:1px solid var(--border-subtle);">
-            <div>
-              <div class="flex items-center gap-xs">
-                <span style="font-size:13px; font-weight:700; color:var(--text-primary);">14 Aug 2026</span>
-                <span class="badge badge-gold" style="font-size:10px;">PENDING REVIEW</span>
-              </div>
-              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
-                Requested Check-Out: <strong>5:30 PM</strong> · Reason: "Biometric reader was offline at closing"
-              </div>
-            </div>
-            <span style="font-size:11.5px; color:var(--text-muted);">Submitted 15 Aug, 10:00 AM</span>
-          </div>
-
-          <div class="flex items-center justify-between flex-wrap gap-sm" style="padding:12px 16px; background:var(--bg-surface-2); border-radius:var(--radius-md); border:1px solid var(--border-subtle);">
-            <div>
-              <div class="flex items-center gap-xs">
-                <span style="font-size:13px; font-weight:700; color:var(--text-primary);">08 Aug 2026</span>
-                <span class="badge badge-mint" style="font-size:10px;">APPROVED</span>
-              </div>
-              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
-                Adjusted Check-In: <strong>9:00 AM</strong> · Decision by Café Admin / Master
-              </div>
-            </div>
-            <span style="font-size:11.5px; color:var(--text-muted);">Approved on 09 Aug</span>
-          </div>
-        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">${requestRows}</div>
       </div>
 
-      <!-- Employee-Safe Audit Change History (P2 Option) -->
       <div class="card" style="padding:20px; background:var(--bg-surface-1); border-radius:var(--radius-lg); border:1px solid var(--border-subtle);">
-        <div style="font-size:14px; font-weight:800; color:var(--text-primary); margin-bottom:12px;">
-          📜 Attendance Record Change History
-        </div>
-        <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
-          <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-            <span>08 Aug 2026: Shift checked-in at 09:30 AM (Late)</span>
-            <span style="color:var(--text-muted);">Original punch</span>
-          </div>
-          <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-            <span>09 Aug 2026: Correction submitted requesting 09:00 AM</span>
-            <span style="color:var(--brand-gold);">Employee submitted</span>
-          </div>
-          <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-            <span>09 Aug 2026: Correction approved by Master · Worked hours updated</span>
-            <span style="color:var(--color-accent-mint);">Approved</span>
-          </div>
-        </div>
+        <div style="font-size:14px; font-weight:800; color:var(--text-primary); margin-bottom:12px;">📜 Correction Decision History</div>
+        <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">${decisionHistory}</div>
       </div>
     </div>
   `;
@@ -993,11 +1015,12 @@ export function wireStaffAttendance(root) {
   // 2. Fetch server time, today's status & weekly roster
   async function loadInitialData() {
     try {
-      const [timeRes, todayRes, historyRes, scheduleRes] = await Promise.all([
+      const [timeRes, todayRes, historyRes, scheduleRes, correctionsRes] = await Promise.all([
         apiGet("/attendance/server-time").catch(() => null),
         apiGet("/attendance/today").catch(() => null),
         apiGet(`/attendance/history?month=${currentMonth}`).catch(() => null),
         apiGet("/shifts/me/schedule").catch(() => null),
+        apiGet(`/attendance/corrections/mine?month=${currentMonth}`).catch(() => null),
       ]);
 
       if (timeRes?.data?.utc) {
@@ -1013,6 +1036,9 @@ export function wireStaffAttendance(root) {
       }
       if (scheduleRes?.data?.schedule) {
         cachedSchedule = scheduleRes.data.schedule || [];
+      }
+      if (correctionsRes?.data) {
+        cachedCorrections = correctionsRes.data.requests || [];
       }
 
       refreshTabContent();
@@ -1157,10 +1183,16 @@ export function wireStaffAttendance(root) {
       const prev = new Date(y, m - 2, 1);
       currentMonth = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
       try {
-        const historyRes = await apiGet(`/attendance/history?month=${currentMonth}`);
+        const [historyRes, correctionsRes] = await Promise.all([
+          apiGet(`/attendance/history?month=${currentMonth}`),
+          apiGet(`/attendance/corrections/mine?month=${currentMonth}`).catch(() => null),
+        ]);
         if (historyRes?.data) {
           cachedHistory = historyRes.data.records || [];
           cachedSummary = historyRes.data.summary;
+        }
+        if (correctionsRes?.data) {
+          cachedCorrections = correctionsRes.data.requests || [];
         }
       } catch {}
       refreshTabContent();
@@ -1172,10 +1204,16 @@ export function wireStaffAttendance(root) {
       const next = new Date(y, m, 1);
       currentMonth = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
       try {
-        const historyRes = await apiGet(`/attendance/history?month=${currentMonth}`);
+        const [historyRes, correctionsRes] = await Promise.all([
+          apiGet(`/attendance/history?month=${currentMonth}`),
+          apiGet(`/attendance/corrections/mine?month=${currentMonth}`).catch(() => null),
+        ]);
         if (historyRes?.data) {
           cachedHistory = historyRes.data.records || [];
           cachedSummary = historyRes.data.summary;
+        }
+        if (correctionsRes?.data) {
+          cachedCorrections = correctionsRes.data.requests || [];
         }
       } catch {}
       refreshTabContent();
@@ -1184,7 +1222,8 @@ export function wireStaffAttendance(root) {
 
     // History filter
     container.querySelector("#sel-history-filter")?.addEventListener("change", (e) => {
-      showToast(`Filter applied: ${e.target.value}`, "info");
+      historyFilterStatus = e.target.value || "ALL";
+      refreshTabContent();
     });
 
     // Shift reminder toggle
