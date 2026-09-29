@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const { pathToFileURL } = require('node:url');
+const os = require('node:os');
+const fsp = require('node:fs/promises');
 const attestationService = require('../src/services/deviceAttestationService');
 const { PosOrderService } = require('../src/services/posOrderService');
 const { PrintJob } = require('../src/models/PrintJob');
@@ -1325,4 +1327,270 @@ test('REC-04E drawer evidence distinguishes command transport from physical draw
   assert.match(source, /DRAWER_TRANSPORT_NOT_CONFIGURED/);
   assert.doesNotMatch(source, /drawerState: 'OPEN'/);
   assert.doesNotMatch(source, /drawerHardwareVerified: true/);
+});
+
+
+test('REC-04E journaled raw transport is idempotent and never resends an accepted PrintJob', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-bridge-idem-'));
+  const journalPath = path.join(tempDir, 'journal.json');
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const bytes = Buffer.from('journaled canonical receipt');
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const payload = {
+    printJobId: 'PJ-REC04E-JOURNAL-001',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: true,
+  };
+  const printerConfig = {
+    endpointFingerprint: 'f'.repeat(64),
+    endpointPinned: true,
+    printerId: 'TEST-THERMAL',
+    host: '127.0.0.1',
+    port: 9100,
+  };
+
+  let dispatchCount = 0;
+  const dispatchFn = async (_buffer, options) => {
+    dispatchCount += 1;
+    await options.onWriteStarted();
+    return { transportAccepted: true, bytesDispatched: bytes.length };
+  };
+
+  const first = await bridgeModule.processJournaledPrint(payload, printerConfig, {
+    journalPath,
+    dispatchFn,
+  });
+  const replay = await bridgeModule.processJournaledPrint(payload, printerConfig, {
+    journalPath,
+    dispatchFn,
+  });
+
+  assert.equal(first.idempotentReplay, false);
+  assert.equal(replay.idempotentReplay, true);
+  assert.equal(dispatchCount, 1, 'accepted PrintJob must never be written twice');
+  assert.equal(replay.drawerCommandTransportAccepted, true);
+
+  const journal = await bridgeModule.readJournal(journalPath);
+  assert.equal(journal.jobs[payload.printJobId].state, 'TRANSPORT_ACCEPTED');
+});
+
+test('REC-04E journal blocks payload substitution and ambiguous automatic resend', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-bridge-conflict-'));
+  const journalPath = path.join(tempDir, 'journal.json');
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const bytes = Buffer.from('original payload');
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const payload = {
+    printJobId: 'PJ-REC04E-JOURNAL-002',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: false,
+  };
+  const printerConfig = {
+    endpointFingerprint: 'e'.repeat(64),
+    endpointPinned: true,
+    printerId: 'TEST-THERMAL',
+    host: '127.0.0.1',
+    port: 9100,
+  };
+
+  await bridgeModule.writeJournalAtomic({
+    version: 1,
+    jobs: {
+      [payload.printJobId]: {
+        printJobId: payload.printJobId,
+        payloadSha256: digest,
+        payloadBytes: bytes.length,
+        drawerKickRequested: false,
+        endpointFingerprint: printerConfig.endpointFingerprint,
+        state: 'WRITE_STARTED',
+        transportAccepted: false,
+        bytesDispatched: 0,
+      },
+    },
+  }, journalPath);
+
+  let dispatchCount = 0;
+  await assert.rejects(
+    () => bridgeModule.processJournaledPrint(payload, printerConfig, {
+      journalPath,
+      dispatchFn: async () => { dispatchCount += 1; },
+    }),
+    (err) => err.code === 'PRINT_TRANSPORT_OUTCOME_UNKNOWN'
+  );
+  assert.equal(dispatchCount, 0, 'unknown prior outcome must not auto-resend');
+
+  const mutatedBytes = Buffer.from('mutated payload');
+  const mutatedDigest = crypto.createHash('sha256').update(mutatedBytes).digest('hex');
+  await assert.rejects(
+    () => bridgeModule.processJournaledPrint({
+      ...payload,
+      printBufferBase64: mutatedBytes.toString('base64'),
+      expectedPayloadSha256: mutatedDigest,
+      expectedPayloadBytes: mutatedBytes.length,
+    }, printerConfig, { journalPath }),
+    (err) => err.code === 'PRINT_JOB_PAYLOAD_CONFLICT'
+  );
+});
+
+test('REC-04E write failure after durable WRITE_STARTED becomes OUTCOME_UNKNOWN and survives restart', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-bridge-unknown-'));
+  const journalPath = path.join(tempDir, 'journal.json');
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const bytes = Buffer.from('uncertain transport payload');
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const payload = {
+    printJobId: 'PJ-REC04E-JOURNAL-003',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: true,
+  };
+  const printerConfig = {
+    endpointFingerprint: 'd'.repeat(64),
+    endpointPinned: true,
+    printerId: 'TEST-THERMAL',
+    host: '127.0.0.1',
+    port: 9100,
+  };
+
+  await assert.rejects(
+    () => bridgeModule.processJournaledPrint(payload, printerConfig, {
+      journalPath,
+      dispatchFn: async (_buffer, options) => {
+        await options.onWriteStarted();
+        const err = new Error('SIMULATED_DROP_AFTER_WRITE_STARTED');
+        err.code = 'PRINTER_TRANSPORT_WRITE_FAILED';
+        throw err;
+      },
+    }),
+    (err) => err.code === 'PRINT_TRANSPORT_OUTCOME_UNKNOWN'
+  );
+
+  const reloaded = await bridgeModule.readJournal(journalPath);
+  assert.equal(reloaded.jobs[payload.printJobId].state, 'OUTCOME_UNKNOWN');
+
+  let resendCount = 0;
+  await assert.rejects(
+    () => bridgeModule.processJournaledPrint(payload, printerConfig, {
+      journalPath,
+      dispatchFn: async () => { resendCount += 1; },
+    }),
+    (err) => err.code === 'PRINT_TRANSPORT_OUTCOME_UNKNOWN'
+  );
+  assert.equal(resendCount, 0);
+});
+
+test('REC-04E failure before WRITE_STARTED remains safely retryable', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-bridge-retry-'));
+  const journalPath = path.join(tempDir, 'journal.json');
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const bytes = Buffer.from('safe retry payload');
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const payload = {
+    printJobId: 'PJ-REC04E-JOURNAL-004',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: false,
+  };
+  const printerConfig = {
+    endpointFingerprint: 'c'.repeat(64),
+    endpointPinned: true,
+    printerId: 'TEST-THERMAL',
+    host: '127.0.0.1',
+    port: 9100,
+  };
+
+  await assert.rejects(
+    () => bridgeModule.processJournaledPrint(payload, printerConfig, {
+      journalPath,
+      dispatchFn: async () => {
+        const err = new Error('SIMULATED_CONNECT_FAILURE');
+        err.code = 'PRINTER_TRANSPORT_WRITE_FAILED';
+        throw err;
+      },
+    }),
+    (err) => err.code === 'PRINTER_TRANSPORT_WRITE_FAILED'
+  );
+
+  let retryWrites = 0;
+  const result = await bridgeModule.processJournaledPrint(payload, printerConfig, {
+    journalPath,
+    dispatchFn: async (_buffer, options) => {
+      retryWrites += 1;
+      await options.onWriteStarted();
+      return { transportAccepted: true, bytesDispatched: bytes.length };
+    },
+  });
+
+  assert.equal(result.transportAccepted, true);
+  assert.equal(retryWrites, 1);
+});
+
+test('REC-04E concurrent duplicate bridge requests serialize to one physical transport write', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-bridge-race-'));
+  const journalPath = path.join(tempDir, 'journal.json');
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const bytes = Buffer.from('concurrent identical payload');
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const payload = {
+    printJobId: 'PJ-REC04E-JOURNAL-005',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: false,
+  };
+  const printerConfig = {
+    endpointFingerprint: 'b'.repeat(64),
+    endpointPinned: true,
+    printerId: 'TEST-THERMAL',
+    host: '127.0.0.1',
+    port: 9100,
+  };
+
+  let writes = 0;
+  const dispatchFn = async (_buffer, options) => {
+    writes += 1;
+    await options.onWriteStarted();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return { transportAccepted: true, bytesDispatched: bytes.length };
+  };
+
+  const results = await Promise.all([
+    bridgeModule.processJournaledPrint(payload, printerConfig, { journalPath, dispatchFn }),
+    bridgeModule.processJournaledPrint(payload, printerConfig, { journalPath, dispatchFn }),
+  ]);
+
+  assert.equal(writes, 1);
+  assert.equal(results.filter((result) => result.idempotentReplay === false).length, 1);
+  assert.equal(results.filter((result) => result.idempotentReplay === true).length, 1);
 });

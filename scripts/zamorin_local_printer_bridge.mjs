@@ -13,12 +13,22 @@
 import http from 'http';
 import net from 'net';
 import crypto from 'crypto';
+import os from 'os';
+import path from 'path';
+import { mkdir, readFile, rename, unlink, writeFile } from 'fs/promises';
 
 const PORT = 9199;
 const HOST = '127.0.0.1';
 const MAX_ESC_POS_BYTES = 128 * 1024;
 const MAX_PAYLOAD_BYTES = 256 * 1024;
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+const JOURNAL_VERSION = 1;
+const DEFAULT_JOURNAL_PATH = path.join(
+  os.homedir(),
+  '.zamorin-cafe-erp',
+  'printer-bridge-journal.json'
+);
+const printJobLocks = new Map();
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:3000',
@@ -160,6 +170,97 @@ function validatePrintRequest(payload = {}) {
   };
 }
 
+function resolveJournalPath(env = process.env) {
+  const configured = String(env.ZAMORIN_BRIDGE_STATE_FILE || '').trim();
+  return configured ? path.resolve(configured) : DEFAULT_JOURNAL_PATH;
+}
+
+async function readJournal(journalPath = resolveJournalPath()) {
+  try {
+    const raw = await readFile(journalPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (
+      !parsed ||
+      parsed.version !== JOURNAL_VERSION ||
+      !parsed.jobs ||
+      typeof parsed.jobs !== 'object' ||
+      Array.isArray(parsed.jobs)
+    ) {
+      const err = new Error('PRINT_JOURNAL_INVALID');
+      err.code = 'PRINT_JOURNAL_INVALID';
+      throw err;
+    }
+    return parsed;
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      return { version: JOURNAL_VERSION, jobs: {} };
+    }
+    if (err?.code === 'PRINT_JOURNAL_INVALID') throw err;
+    const wrapped = new Error('PRINT_JOURNAL_READ_FAILED');
+    wrapped.code = 'PRINT_JOURNAL_READ_FAILED';
+    wrapped.cause = err;
+    throw wrapped;
+  }
+}
+
+async function writeJournalAtomic(journal, journalPath = resolveJournalPath()) {
+  const directory = path.dirname(journalPath);
+  await mkdir(directory, { recursive: true });
+  const tempPath = `${journalPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, JSON.stringify(journal, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    await rename(tempPath, journalPath);
+  } catch (err) {
+    try { await unlink(tempPath); } catch (_) {}
+    const wrapped = new Error('PRINT_JOURNAL_WRITE_FAILED');
+    wrapped.code = 'PRINT_JOURNAL_WRITE_FAILED';
+    wrapped.cause = err;
+    throw wrapped;
+  }
+}
+
+function transportJournalIdentity(validated, printerConfig) {
+  return {
+    printJobId: validated.printJobId,
+    payloadSha256: validated.expectedPayloadSha256,
+    payloadBytes: validated.expectedPayloadBytes,
+    drawerKickRequested: validated.drawerKickRequested === true,
+    endpointFingerprint: printerConfig.endpointFingerprint,
+  };
+}
+
+function assertJournalIdentityMatches(record, identity) {
+  if (
+    !record ||
+    record.payloadSha256 !== identity.payloadSha256 ||
+    Number(record.payloadBytes) !== Number(identity.payloadBytes) ||
+    record.drawerKickRequested === true !== (identity.drawerKickRequested === true) ||
+    record.endpointFingerprint !== identity.endpointFingerprint
+  ) {
+    const err = new Error('PRINT_JOB_PAYLOAD_CONFLICT');
+    err.code = 'PRINT_JOB_PAYLOAD_CONFLICT';
+    throw err;
+  }
+}
+
+async function withPrintJobLock(printJobId, operation) {
+  const key = String(printJobId || '').trim();
+  const prior = printJobLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  printJobLocks.set(key, prior.then(() => current));
+  await prior;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (printJobLocks.get(key) === current) printJobLocks.delete(key);
+  }
+}
+
 async function dispatchNetworkPrint(
   buffer,
   {
@@ -167,6 +268,7 @@ async function dispatchNetworkPrint(
     port,
     printerId,
     connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
+    onWriteStarted = null,
   } = {}
 ) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) {
@@ -201,11 +303,21 @@ async function dispatchNetworkPrint(
       finish(err);
     }, Math.max(250, Number(connectTimeoutMs) || DEFAULT_CONNECT_TIMEOUT_MS));
 
-    socket.once('connect', () => {
-      socket.write(buffer, () => {
-        writeAccepted = true;
-        socket.end();
-      });
+    socket.once('connect', async () => {
+      try {
+        if (typeof onWriteStarted === 'function') {
+          await onWriteStarted();
+        }
+        socket.write(buffer, () => {
+          writeAccepted = true;
+          socket.end();
+        });
+      } catch (cause) {
+        const err = new Error(cause?.code || 'PRINT_JOURNAL_WRITE_FAILED');
+        err.code = cause?.code || 'PRINT_JOURNAL_WRITE_FAILED';
+        err.cause = cause;
+        finish(err);
+      }
     });
     socket.once('error', (cause) => {
       const err = new Error('PRINTER_TRANSPORT_WRITE_FAILED');
@@ -221,6 +333,160 @@ async function dispatchNetworkPrint(
         });
       }
     });
+  });
+}
+
+async function processJournaledPrint(
+  payload,
+  printerConfig,
+  {
+    journalPath = resolveJournalPath(),
+    dispatchFn = dispatchNetworkPrint,
+  } = {}
+) {
+  const validated = validatePrintRequest(payload);
+
+  return await withPrintJobLock(validated.printJobId, async () => {
+    const identity = transportJournalIdentity(validated, printerConfig);
+    let journal = await readJournal(journalPath);
+    const prior = journal.jobs[validated.printJobId] || null;
+
+    if (prior) {
+      assertJournalIdentityMatches(prior, identity);
+
+      if (prior.state === 'TRANSPORT_ACCEPTED') {
+        return {
+          success: true,
+          idempotentReplay: true,
+          printJobId: validated.printJobId,
+          dispatched: true,
+          acknowledged: false,
+          transportAccepted: true,
+          bytesDispatched: Number(prior.bytesDispatched || validated.expectedPayloadBytes),
+          payloadSha256: validated.expectedPayloadSha256,
+          payloadBytes: validated.expectedPayloadBytes,
+          printerTarget: validated.printerTarget,
+          transportMode: 'LOCAL_RAW_ESC_POS',
+          evidenceLevel: 'CONTENT_BOUND_TRANSPORT',
+          contentBindingVerified: true,
+          printerIdentity: printerConfig.printerId,
+          printerEndpointFingerprint: printerConfig.endpointFingerprint,
+          printerEndpointPinned: printerConfig.endpointPinned === true,
+          printerIdentityVerified: false,
+          physicalCompletionVerified: false,
+          drawerKickRequested: validated.drawerKickRequested,
+          drawerCommandTransportAccepted:
+            validated.drawerKickRequested && prior.transportAccepted === true,
+          drawerHardwareVerified: false,
+          drawerState: 'UNKNOWN',
+        };
+      }
+
+      if (prior.state === 'WRITE_STARTED' || prior.state === 'OUTCOME_UNKNOWN') {
+        const err = new Error('PRINT_TRANSPORT_OUTCOME_UNKNOWN');
+        err.code = 'PRINT_TRANSPORT_OUTCOME_UNKNOWN';
+        err.journalState = prior.state;
+        throw err;
+      }
+
+      if (prior.state !== 'FAILED_BEFORE_WRITE') {
+        const err = new Error('PRINT_JOURNAL_STATE_INVALID');
+        err.code = 'PRINT_JOURNAL_STATE_INVALID';
+        throw err;
+      }
+    }
+
+    const now = new Date().toISOString();
+    const baseRecord = {
+      ...identity,
+      state: 'FAILED_BEFORE_WRITE',
+      transportAccepted: false,
+      bytesDispatched: 0,
+      createdAt: prior?.createdAt || now,
+      updatedAt: now,
+    };
+    journal.jobs[validated.printJobId] = baseRecord;
+    await writeJournalAtomic(journal, journalPath);
+
+    let writeStarted = false;
+    try {
+      const transport = await dispatchFn(validated.buffer, {
+        ...printerConfig,
+        onWriteStarted: async () => {
+          writeStarted = true;
+          journal = await readJournal(journalPath);
+          const live = journal.jobs[validated.printJobId];
+          assertJournalIdentityMatches(live, identity);
+          journal.jobs[validated.printJobId] = {
+            ...live,
+            state: 'WRITE_STARTED',
+            writeStartedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          await writeJournalAtomic(journal, journalPath);
+        },
+      });
+
+      journal = await readJournal(journalPath);
+      const live = journal.jobs[validated.printJobId];
+      assertJournalIdentityMatches(live, identity);
+      journal.jobs[validated.printJobId] = {
+        ...live,
+        state: 'TRANSPORT_ACCEPTED',
+        transportAccepted: true,
+        bytesDispatched: transport.bytesDispatched,
+        acceptedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await writeJournalAtomic(journal, journalPath);
+
+      return {
+        success: true,
+        idempotentReplay: false,
+        printJobId: validated.printJobId,
+        dispatched: true,
+        acknowledged: false,
+        transportAccepted: true,
+        bytesDispatched: transport.bytesDispatched,
+        payloadSha256: validated.expectedPayloadSha256,
+        payloadBytes: validated.expectedPayloadBytes,
+        printerTarget: validated.printerTarget,
+        transportMode: 'LOCAL_RAW_ESC_POS',
+        evidenceLevel: 'CONTENT_BOUND_TRANSPORT',
+        contentBindingVerified: true,
+        printerIdentity: printerConfig.printerId,
+        printerEndpointFingerprint: printerConfig.endpointFingerprint,
+        printerEndpointPinned: printerConfig.endpointPinned === true,
+        printerIdentityVerified: false,
+        physicalCompletionVerified: false,
+        drawerKickRequested: validated.drawerKickRequested,
+        drawerCommandTransportAccepted:
+          validated.drawerKickRequested && transport.transportAccepted === true,
+        drawerHardwareVerified: false,
+        drawerState: 'UNKNOWN',
+      };
+    } catch (err) {
+      journal = await readJournal(journalPath);
+      const live = journal.jobs[validated.printJobId];
+      if (live) {
+        assertJournalIdentityMatches(live, identity);
+        journal.jobs[validated.printJobId] = {
+          ...live,
+          state: writeStarted ? 'OUTCOME_UNKNOWN' : 'FAILED_BEFORE_WRITE',
+          lastError: String(err?.code || err?.message || 'PRINT_TRANSPORT_FAILED'),
+          updatedAt: new Date().toISOString(),
+        };
+        await writeJournalAtomic(journal, journalPath);
+      }
+
+      if (writeStarted) {
+        const unknown = new Error('PRINT_TRANSPORT_OUTCOME_UNKNOWN');
+        unknown.code = 'PRINT_TRANSPORT_OUTCOME_UNKNOWN';
+        unknown.cause = err;
+        throw unknown;
+      }
+      throw err;
+    }
   });
 }
 
@@ -319,39 +585,16 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const payload = await parseJsonBody(req);
-      const validated = validatePrintRequest(payload);
-      const transport = await dispatchNetworkPrint(validated.buffer, printerConfig);
-
-      writeJson(res, 200, {
-        success: true,
-        printJobId: validated.printJobId,
-        dispatched: true,
-        acknowledged: false,
-        transportAccepted: transport.transportAccepted === true,
-        bytesDispatched: transport.bytesDispatched,
-        payloadSha256: validated.expectedPayloadSha256,
-        payloadBytes: validated.expectedPayloadBytes,
-        printerTarget: validated.printerTarget,
-        transportMode: 'LOCAL_RAW_ESC_POS',
-        evidenceLevel: 'CONTENT_BOUND_TRANSPORT',
-        contentBindingVerified: true,
-        printerIdentity: printerConfig.printerId,
-        printerEndpointFingerprint: printerConfig.endpointFingerprint,
-        printerEndpointPinned: printerConfig.endpointPinned === true,
-        printerIdentityVerified: false,
-        physicalCompletionVerified: false,
-        drawerKickRequested: validated.drawerKickRequested,
-        drawerCommandTransportAccepted:
-          validated.drawerKickRequested && transport.transportAccepted === true,
-        drawerHardwareVerified: false,
-        drawerState: 'UNKNOWN',
-      });
+      const result = await processJournaledPrint(payload, printerConfig);
+      writeJson(res, 200, result);
     } catch (err) {
       const statusCode =
         err.code === 'PAYLOAD_TOO_LARGE' ? 413 :
-          ['PRINT_BUFFER_INVALID', 'PRINT_CONTENT_BINDING_REQUIRED', 'PRINT_PAYLOAD_LENGTH_MISMATCH', 'PRINT_PAYLOAD_HASH_MISMATCH', 'UNSUPPORTED_PRINTER_TARGET'].includes(err.code)
-            ? 400
-            : 503;
+          err.code === 'PRINT_JOB_PAYLOAD_CONFLICT' ? 409 :
+            err.code === 'PRINT_TRANSPORT_OUTCOME_UNKNOWN' ? 409 :
+              ['PRINT_BUFFER_INVALID', 'PRINT_CONTENT_BINDING_REQUIRED', 'PRINT_PAYLOAD_LENGTH_MISMATCH', 'PRINT_PAYLOAD_HASH_MISMATCH', 'UNSUPPORTED_PRINTER_TARGET'].includes(err.code)
+                ? 400
+                : 503;
       writeJson(res, statusCode, {
         success: false,
         error: err.code || err.message || 'PRINT_REQUEST_FAILED',
@@ -407,6 +650,10 @@ export {
   HOST,
   printerEndpointFingerprint,
   resolveNetworkPrinterConfig,
+  resolveJournalPath,
+  readJournal,
+  writeJournalAtomic,
   validatePrintRequest,
   dispatchNetworkPrint,
+  processJournaledPrint,
 };
