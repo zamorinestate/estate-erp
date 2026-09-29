@@ -161,3 +161,19 @@ test('FINAL POS RECEIPT LINEAGE — physical acceptance evidence defaults outsid
     /args\.output \|\| 'artifacts\/rec04e-hardware'/
   );
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — generic deploy readiness cannot report fully deploy-ready without release evidence', () => {
+  const readiness = readRepo('scripts/check_deploy_readiness.mjs');
+  const releaseGate = readRepo('.github/workflows/release-gate.yml');
+
+  assert.match(readiness, /isPreflightReady: isReady/);
+  assert.match(readiness, /isDeployReady: false/);
+  assert.match(readiness, /releaseCertificationRequired: true/);
+  assert.match(readiness, /process\.exit\(result\.isPreflightReady \? 0 : 1\)/);
+
+  assert.match(releaseGate, /Run Canonical Regression Suite/);
+  assert.match(releaseGate, /run: npm test/);
+  assert.match(releaseGate, /Hardware Acceptance: EXTERNAL REC-04E CERTIFIED REPORT REQUIRED/);
+  assert.match(releaseGate, /Production Verdict : NOT ISSUED BY THIS SOFTWARE-ONLY WORKFLOW/);
+});

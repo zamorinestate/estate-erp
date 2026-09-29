@@ -83,6 +83,9 @@ jobs:
       - name: Scan Repository for Committed Secrets
         run: node scripts/scan_secrets.mjs && node scripts/scan_repository_secrets.mjs
 
+      - name: Run Canonical Regression Suite
+        run: npm test
+
       - name: Verify Frontend Router Imports
         run: node frontend/verifyRouterImports.mjs
 
@@ -101,7 +104,9 @@ jobs:
           echo " Source Branch     : main"
           echo " Commit SHA        : $(git rev-parse HEAD)"
           echo " Code Integrity    : VERIFIED"
-          echo " Automated Tests   : VERIFIED"
-          echo " Governance Gate   : PASSED"
-          echo " Deployment Action : ZERO DEPLOY (Governance evaluation only)"
+          echo " Automated Tests   : VERIFIED ON THIS RELEASE WORKFLOW"
+          echo " Software Governance: PASSED"
+          echo " Hardware Acceptance: EXTERNAL REC-04E CERTIFIED REPORT REQUIRED"
+          echo " Production Verdict : NOT ISSUED BY THIS SOFTWARE-ONLY WORKFLOW"
+          echo " Deployment Action  : ZERO DEPLOY (Governance evaluation only)"
           echo "================================================================="

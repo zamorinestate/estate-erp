@@ -118,7 +118,11 @@ export function runDeploymentReadinessCheck({ targetEnv = process.env.NODE_ENV |
 
   return {
     targetEnvironment: targetEnv,
-    isDeployReady: isReady,
+    isPreflightReady: isReady,
+    // Backward-compatible field retained only to prevent callers from treating
+    // configuration checks as complete deployment certification.
+    isDeployReady: false,
+    releaseCertificationRequired: true,
     summary: isReady
       ? 'PRE-FLIGHT CONFIGURATION PASSED — RELEASE CERTIFICATION STILL REQUIRED'
       : 'DEPLOYMENT BLOCKED BY PRE-FLIGHT CHECKS',
@@ -307,7 +311,7 @@ function runCli() {
 
   if (isJson) {
     console.log(JSON.stringify(result, null, 2));
-    process.exit(result.isDeployReady ? 0 : 1);
+    process.exit(result.isPreflightReady ? 0 : 1);
   }
 
   console.log('================================================================');
@@ -338,7 +342,7 @@ function runCli() {
   });
 
   console.log('\n================================================================');
-  process.exit(result.isDeployReady ? 0 : 1);
+  process.exit(result.isPreflightReady ? 0 : 1);
 }
 
 if (process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]))) {
