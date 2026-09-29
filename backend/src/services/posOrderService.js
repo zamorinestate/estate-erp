@@ -1278,6 +1278,10 @@ class PosOrderService {
 
       const printResult = await this.generatePrintArtifacts(savedBillData, options);
 
+      let printTrackingPersisted = false;
+      let billPrintStatePersisted = false;
+      const printTrackingWarnings = [];
+
       try {
         const pj = new PrintJob({
           printJobId,
@@ -1292,6 +1296,13 @@ class PosOrderService {
           htmlPreview: printResult.htmlPreview,
         });
         await pj.save();
+        printTrackingPersisted = true;
+      } catch (trackingErr) {
+        printTrackingWarnings.push('PRINT_JOB_PERSISTENCE_FAILED');
+        console.error('[POS Print] Failed to persist dispatched PrintJob', printJobId, trackingErr);
+      }
+
+      try {
         billDoc.printStatus = 'PRINT_DISPATCHED';
         billDoc.printJobs = billDoc.printJobs || [];
         billDoc.printJobs.push({
@@ -1301,7 +1312,11 @@ class PosOrderService {
           dispatchedAt: new Date(),
         });
         await billDoc.save();
-      } catch {}
+        billPrintStatePersisted = true;
+      } catch (billPrintErr) {
+        printTrackingWarnings.push('BILL_PRINT_STATE_PERSISTENCE_FAILED');
+        console.error('[POS Print] Failed to persist bill print dispatch state', billId, billPrintErr);
+      }
 
       return {
         success: true,
@@ -1314,6 +1329,10 @@ class PosOrderService {
         printDispatched: true,
         printStatus: 'PRINT_DISPATCHED',
         printJobId,
+        printTrackingPersisted,
+        billPrintStatePersisted,
+        printTrackingWarning: printTrackingWarnings[0] || null,
+        printTrackingWarnings,
         printBuffer: printResult.printBufferBase64,
         htmlPreview: printResult.htmlPreview,
         rawBuffer: printResult.rawBuffer,
@@ -1343,7 +1362,9 @@ class PosOrderService {
           failureCode: 'PRINTER_OFFLINE',
         });
         await billDoc.save();
-      } catch {}
+      } catch (trackingErr) {
+        console.error('[POS Print] Failed to persist printer-failure audit state', printJobId, trackingErr);
+      }
 
       return {
         success: true,
@@ -1466,6 +1487,8 @@ class PosOrderService {
     const printResult = await this.generatePrintArtifacts(billData, options);
 
     const printJobId = createPrintJobId('RECEIPT');
+    let printTrackingPersisted = false;
+    let printTrackingWarning = null;
     try {
       const pj = new PrintJob({
         printJobId,
@@ -1480,7 +1503,11 @@ class PosOrderService {
         htmlPreview: printResult.htmlPreview,
       });
       await pj.save();
-    } catch {}
+      printTrackingPersisted = true;
+    } catch (trackingErr) {
+      printTrackingWarning = 'PRINT_JOB_PERSISTENCE_FAILED';
+      console.error('[POS Print] Failed to persist standalone PrintJob', printJobId, trackingErr);
+    }
 
     return {
       success: true,
@@ -1490,6 +1517,8 @@ class PosOrderService {
       printDispatched: true,
       printStatus: 'PRINT_DISPATCHED',
       printJobId,
+      printTrackingPersisted,
+      printTrackingWarning,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
@@ -1557,6 +1586,8 @@ class PosOrderService {
     });
 
     const printJobId = createPrintJobId('REPRINT');
+    let printTrackingPersisted = false;
+    let printTrackingWarning = null;
     try {
       const pj = new PrintJob({
         printJobId,
@@ -1571,7 +1602,11 @@ class PosOrderService {
         htmlPreview: printResult.htmlPreview,
       });
       await pj.save();
-    } catch {}
+      printTrackingPersisted = true;
+    } catch (trackingErr) {
+      printTrackingWarning = 'PRINT_JOB_PERSISTENCE_FAILED';
+      console.error('[POS Print] Failed to persist reprint PrintJob', printJobId, trackingErr);
+    }
 
     return {
       success: true,
@@ -1584,6 +1619,8 @@ class PosOrderService {
       printDispatched: true,
       printStatus: 'PRINT_DISPATCHED',
       printJobId,
+      printTrackingPersisted,
+      printTrackingWarning,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
