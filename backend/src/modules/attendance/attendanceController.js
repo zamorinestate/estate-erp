@@ -2506,7 +2506,10 @@ const verifyScannedQr = asyncHandler(async (request, response) => {
     employeeRole: role,
   });
 
-  const cafe = await Cafe.findOne({ cafeId: result.resolvedCafeId }).lean();
+  const cafe = await Cafe.findOne({
+    organisationId,
+    cafeId: result.resolvedCafeId,
+  }).lean();
 
   const openAttendanceQuery = Attendance.findOne({
     organisationId,
@@ -2517,6 +2520,18 @@ const verifyScannedQr = asyncHandler(async (request, response) => {
   const openAttendance = await (typeof openAttendanceQuery?.sort === 'function'
     ? openAttendanceQuery.sort({ checkInAt: -1 })
     : openAttendanceQuery);
+
+  if (
+    openAttendance &&
+    normalizeIdentifier(openAttendance.cafeId) !== normalizeIdentifier(result.resolvedCafeId)
+  ) {
+    throw new ApiError(
+      403,
+      'CAFE_SCOPE_MISMATCH',
+      'Check-out QR must belong to the same café as the active check-in session.'
+    );
+  }
+
   const transition = openAttendance ? 'CHECK_OUT' : 'CHECK_IN';
 
   const scanGrant = attendanceQrService.issueScanGrant({
@@ -2554,9 +2569,22 @@ const verifyPunchGeofence = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'CAFE_ID_REQUIRED', 'A cafeId is required for geofence validation.');
   }
 
+  const normalizedCafeId = normalizeIdentifier(cafeId);
+  if (request.auth.role === 'STAFF') {
+    const allowedCafes = new Set([
+      ...(request.auth.assignedCafeIds || []),
+      request.auth.primaryCafeId,
+    ].filter(Boolean).map(normalizeIdentifier));
+    if (!allowedCafes.has(normalizedCafeId)) {
+      throw new ApiError(403, 'CAFE_NOT_ASSIGNED', 'Attendance geofence verification is restricted to your assigned café.');
+    }
+  } else {
+    ensureCafeAccess(request, normalizedCafeId);
+  }
+
   const geofenceResult = await attendanceQrService.verifyGeofence({
     organisationId: request.auth.organisationId,
-    cafeId: normalizeIdentifier(cafeId),
+    cafeId: normalizedCafeId,
     latitude: Number(latitude),
     longitude: Number(longitude),
     accuracyMeters: typeof accuracyMeters === 'number' ? Number(accuracyMeters) : null,
