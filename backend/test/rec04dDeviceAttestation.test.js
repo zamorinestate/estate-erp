@@ -449,3 +449,116 @@ test('REC-04D — SAVE_AND_PRINT consumes one canonical PrintJob and browser fal
   );
 });
 
+test('REC-04D — concurrent reuse of one enrollment code creates exactly one trusted device', async (t) => {
+  cafeRepositories.resetRepositories();
+  const repos = cafeRepositories.initRepositories('memory');
+  const enrollmentCode = 'REC04D-RACE-ENROLLMENT';
+  const tokenHash = crypto.createHash('sha256').update(enrollmentCode).digest('hex');
+
+  await repos.enrollmentTokens.create({
+    tokenHash,
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    cafeDisplayName: 'Race Test Cafe',
+    intendedDisplayName: 'Race POS',
+    createdByEmployeeId: 'MU-PRIMARY-01',
+    status: 'PENDING',
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+
+  t.mock.method(DeviceRegistration, 'findOneAndUpdate', async (_query, update) => ({
+    ...update,
+    save: async function save() { return this; },
+  }));
+
+  const attempts = await Promise.allSettled([
+    cafeDeviceService.enrollDevice({
+      enrollmentCodePlain: enrollmentCode,
+      displayName: 'Race POS A',
+      platform: 'android',
+    }),
+    cafeDeviceService.enrollDevice({
+      enrollmentCodePlain: enrollmentCode,
+      displayName: 'Race POS B',
+      platform: 'android',
+    }),
+  ]);
+
+  assert.equal(attempts.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(attempts.filter((r) => r.status === 'rejected').length, 1);
+  const rejected = attempts.find((r) => r.status === 'rejected');
+  assert.equal(rejected.reason.code, 'ENROLLMENT_UNAVAILABLE');
+
+  const devices = await repos.devices.listAll();
+  assert.equal(devices.length, 1, 'losing concurrent enrollment must delete its provisional device');
+
+  const token = await repos.enrollmentTokens.findByHash(tokenHash);
+  assert.equal(token.status, 'USED');
+  assert.equal(String(token.usedByDeviceId), String(devices[0].id));
+
+  cafeRepositories.resetRepositories();
+});
+
+test('REC-04D — canonical registry failure compensates provisional enrollment and restores one-time token', async (t) => {
+  cafeRepositories.resetRepositories();
+  const repos = cafeRepositories.initRepositories('memory');
+  const enrollmentCode = 'REC04D-COMPENSATION';
+  const tokenHash = crypto.createHash('sha256').update(enrollmentCode).digest('hex');
+
+  await repos.enrollmentTokens.create({
+    tokenHash,
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    cafeDisplayName: 'Compensation Cafe',
+    intendedDisplayName: 'Compensation POS',
+    createdByEmployeeId: 'MU-PRIMARY-01',
+    status: 'PENDING',
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+
+  t.mock.method(DeviceRegistration, 'findOneAndUpdate', async () => {
+    throw new Error('SIMULATED_CANONICAL_REGISTRY_FAILURE');
+  });
+
+  await assert.rejects(
+    () => cafeDeviceService.enrollDevice({
+      enrollmentCodePlain: enrollmentCode,
+      displayName: 'Compensation POS',
+      platform: 'android',
+    }),
+    (err) => {
+      assert.equal(err.code, 'CANONICAL_DEVICE_REGISTRATION_FAILED');
+      return true;
+    }
+  );
+
+  assert.equal((await repos.devices.listAll()).length, 0);
+  const restored = await repos.enrollmentTokens.findByHash(tokenHash);
+  assert.equal(restored.status, 'PENDING');
+  assert.equal(restored.usedByDeviceId, null);
+  assert.equal(restored.usedAt, null);
+
+  cafeRepositories.resetRepositories();
+});
+
+test('REC-04D — canonical trust registry resolves business IDs rather than copying CafeOps ObjectId references', () => {
+  const deviceServiceSource = fs.readFileSync(
+    path.join(root, 'backend', 'src', 'cafe-operations', 'services', 'deviceService.js'),
+    'utf8'
+  );
+  const mongoRepoSource = fs.readFileSync(
+    path.join(root, 'backend', 'src', 'cafe-operations', 'repositories', 'mongo.js'),
+    'utf8'
+  );
+
+  assert.match(deviceServiceSource, /async function resolveCanonicalDeviceScope\(device\)/);
+  assert.match(deviceServiceSource, /CafeModel\.findById\(device\.cafeId\)\.lean\(\)/);
+  assert.match(deviceServiceSource, /organisationId:\s*canonicalScope\.organisationId/);
+  assert.match(deviceServiceSource, /assignedCafeId:\s*canonicalScope\.cafeId/);
+  assert.match(deviceServiceSource, /runValidators:\s*true/);
+
+  assert.match(mongoRepoSource, /consumeIfPending\(id, patch\)/);
+  assert.match(mongoRepoSource, /status:\s*'PENDING', expiresAt:\s*\{ \$gt: new Date\(\) \}/);
+  assert.match(mongoRepoSource, /restoreIfUsedByDevice\(id, deviceId, patch = \{\}\)/);
+});
+
