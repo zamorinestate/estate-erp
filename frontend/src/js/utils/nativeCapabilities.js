@@ -17,13 +17,44 @@ export const PLATFORMS = {
   WINDOWS: 'WINDOWS',
 };
 
+export const PRINT_EVIDENCE_POLICIES = {
+  ANDROID_SIGNED_SPOOLER: 'ANDROID_SIGNED_SPOOLER',
+  SYSTEM_PRINT_UNVERIFIED: 'SYSTEM_PRINT_UNVERIFIED',
+  WEB_PRINT_UNVERIFIED: 'WEB_PRINT_UNVERIFIED',
+};
+
+function applyPrintEvidencePolicy(capabilities = {}) {
+  const platform = String(capabilities.platform || PLATFORMS.WEB).trim().toUpperCase();
+  if (platform === PLATFORMS.ANDROID) {
+    return {
+      ...capabilities,
+      canPurposeBoundPrintAttest: true,
+      printEvidencePolicy: PRINT_EVIDENCE_POLICIES.ANDROID_SIGNED_SPOOLER,
+    };
+  }
+  if (
+    [PLATFORMS.WINDOWS, PLATFORMS.IOS, PLATFORMS.MACOS].includes(platform)
+  ) {
+    return {
+      ...capabilities,
+      canPurposeBoundPrintAttest: false,
+      printEvidencePolicy: PRINT_EVIDENCE_POLICIES.SYSTEM_PRINT_UNVERIFIED,
+    };
+  }
+  return {
+    ...capabilities,
+    canPurposeBoundPrintAttest: false,
+    printEvidencePolicy: PRINT_EVIDENCE_POLICIES.WEB_PRINT_UNVERIFIED,
+  };
+}
+
 export class NativeCapabilities {
   /**
    * Resolves the active native platform and supported device capabilities.
    */
   static getCapabilities() {
     if (typeof window === 'undefined') {
-      return {
+      return applyPrintEvidencePolicy({
         platform: PLATFORMS.WEB,
         isNative: false,
         canSaveFile: false,
@@ -34,17 +65,17 @@ export class NativeCapabilities {
         canChooseFile: false,
         canShare: false,
         canHandleDeepLinks: false,
-      };
+      });
     }
 
     // Explicit runtime capability injection from native shells
     if (window.ZamorinNativeCapabilities) {
-      return window.ZamorinNativeCapabilities;
+      return applyPrintEvidencePolicy(window.ZamorinNativeCapabilities);
     }
 
     // Windows WebView2 Host Object / WebMessage Bridge
     if (window.chrome && window.chrome.webview) {
-      return {
+      return applyPrintEvidencePolicy({
         platform: PLATFORMS.WINDOWS,
         isNative: true,
         canSaveFile: true,
@@ -55,13 +86,13 @@ export class NativeCapabilities {
         canChooseFile: true,
         canShare: true,
         canHandleDeepLinks: true,
-      };
+      });
     }
 
     // Apple WKWebView Script Message Handlers (iOS / macOS)
     if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ZamorinNativeBridge) {
       const isMac = Boolean(window.ZamorinIsMac || (navigator.platform && navigator.platform.toUpperCase().indexOf('MAC') >= 0));
-      return {
+      return applyPrintEvidencePolicy({
         platform: isMac ? PLATFORMS.MACOS : PLATFORMS.IOS,
         isNative: true,
         canSaveFile: true,
@@ -72,12 +103,12 @@ export class NativeCapabilities {
         canChooseFile: true,
         canShare: true,
         canHandleDeepLinks: true,
-      };
+      });
     }
 
     // Android WebMessageListener / Native SAF Bridge
     if (window.ZamorinNativeBridge || window.ZamorinAndroidSAF || window.AndroidStorageBridge) {
-      return {
+      return applyPrintEvidencePolicy({
         platform: PLATFORMS.ANDROID,
         isNative: true,
         canSaveFile: true,
@@ -88,14 +119,14 @@ export class NativeCapabilities {
         canChooseFile: true,
         canShare: true,
         canHandleDeepLinks: true,
-      };
+      });
     }
 
     // Web / PWA fallback
     const hasFsAccess = typeof window.showSaveFilePicker === 'function' && Boolean(window.isSecureContext);
     const hasWebShare = typeof navigator !== 'undefined' && Boolean(navigator.share);
 
-    return {
+    return applyPrintEvidencePolicy({
       platform: PLATFORMS.WEB,
       isNative: false,
       canSaveFile: hasFsAccess,
@@ -106,7 +137,7 @@ export class NativeCapabilities {
       canChooseFile: true,
       canShare: hasWebShare,
       canHandleDeepLinks: false,
-    };
+    });
   }
 
   /**

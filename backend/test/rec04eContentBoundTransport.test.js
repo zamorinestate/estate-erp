@@ -1594,3 +1594,40 @@ test('REC-04E concurrent duplicate bridge requests serialize to one physical tra
   assert.equal(results.filter((result) => result.idempotentReplay === false).length, 1);
   assert.equal(results.filter((result) => result.idempotentReplay === true).length, 1);
 });
+
+
+test('REC-04E cross-platform capability policy never equates generic print support with purpose-bound attestation', () => {
+  const capabilities = fs.readFileSync(
+    path.join(root, 'frontend', 'src', 'js', 'utils', 'nativeCapabilities.js'),
+    'utf8'
+  );
+  const windows = fs.readFileSync(
+    path.join(root, 'Platform', 'Windows', 'ZamorinCafeERP', 'ZamorinNativeBridge.cs'),
+    'utf8'
+  );
+  const ios = fs.readFileSync(
+    path.join(root, 'Platform', 'Apple', 'ios', 'ZamorinCafeERP', 'ViewController.swift'),
+    'utf8'
+  );
+  const mac = fs.readFileSync(
+    path.join(root, 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'MainWindowController.swift'),
+    'utf8'
+  );
+
+  assert.match(capabilities, /ANDROID_SIGNED_SPOOLER/);
+  assert.match(capabilities, /SYSTEM_PRINT_UNVERIFIED/);
+  assert.match(capabilities, /WEB_PRINT_UNVERIFIED/);
+  assert.match(capabilities, /canPurposeBoundPrintAttest: true/);
+  assert.match(capabilities, /canPurposeBoundPrintAttest: false/);
+
+  for (const source of [windows, ios, mac]) {
+    assert.match(source, /SYSTEM_PRINT_UNVERIFIED/);
+    assert.match(source, /contentBindingVerified/);
+    assert.match(source, /printerIdentityVerified/);
+    assert.match(source, /physicalCompletionVerified/);
+  }
+
+  assert.doesNotMatch(windows, /ATTEST_PRINT_JOB_RESULT/);
+  assert.doesNotMatch(ios, /ATTEST_PRINT_JOB_RESULT/);
+  assert.doesNotMatch(mac, /ATTEST_PRINT_JOB_RESULT/);
+});

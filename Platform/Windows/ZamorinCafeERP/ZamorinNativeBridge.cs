@@ -160,7 +160,12 @@ namespace Zamorin.Cafe.ERP
                             ["printed"] = false,
                             ["printDispatched"] = printSuccess,
                             ["status"] = printSuccess ? "SYSTEM_DIALOG_OPENED" : "FAILED",
+                            ["systemPrintCompleted"] = false,
+                            ["spoolerCompletionVerified"] = false,
+                            ["contentBindingVerified"] = false,
+                            ["printerIdentityVerified"] = false,
                             ["physicalCompletionVerified"] = false,
+                            ["printEvidencePolicy"] = "SYSTEM_PRINT_UNVERIFIED",
                             ["jobName"] = jobName
                         };
                         return CreateResponse(requestId, printSuccess, res);

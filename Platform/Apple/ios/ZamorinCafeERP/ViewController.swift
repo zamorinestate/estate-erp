@@ -115,7 +115,11 @@ public class ViewController: UIViewController, WKNavigationDelegate, ZamorinNati
                     "jobName": jobName,
                     "status": status,
                     "systemPrintCompleted": completed,
-                    "physicalCompletionVerified": false
+                    "spoolerCompletionVerified": false,
+                    "contentBindingVerified": false,
+                    "printerIdentityVerified": false,
+                    "physicalCompletionVerified": false,
+                    "printEvidencePolicy": "SYSTEM_PRINT_UNVERIFIED"
                 ],
                 errorCode: error != nil ? "PRINT_FAILED" : (completed ? nil : "PRINT_CANCELLED"),
                 errorMessage: error?.localizedDescription

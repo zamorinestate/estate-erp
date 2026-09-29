@@ -133,7 +133,11 @@ public class MainWindowController: NSWindowController, WKNavigationDelegate, Zam
                 "jobName": jobName,
                 "status": systemCompleted ? "SYSTEM_COMPLETED" : "CANCELLED_OR_FAILED",
                 "systemPrintCompleted": systemCompleted,
-                "physicalCompletionVerified": false
+                "spoolerCompletionVerified": false,
+                "contentBindingVerified": false,
+                "printerIdentityVerified": false,
+                "physicalCompletionVerified": false,
+                "printEvidencePolicy": "SYSTEM_PRINT_UNVERIFIED"
             ],
             errorCode: systemCompleted ? nil : "PRINT_CANCELLED_OR_FAILED",
             errorMessage: systemCompleted ? nil : "The macOS print operation did not complete successfully."
