@@ -2020,9 +2020,17 @@ function openShiftChangeModal(onDoneCallback, prefill = {}) {
   let existing = document.getElementById("staff-shift-change-modal");
   if (existing) existing.remove();
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const defaultDate = prefill?.requestedDate || todayStr;
-  const defaultCurrentShift = prefill?.currentShift || "Morning Shift (09:00 – 17:00)";
+  const liveCurrentShift = cachedShift
+    ? [
+        cachedShift.shiftName,
+        cachedShift.scheduledStartAt || cachedShift.scheduledEndAt
+          ? `${cachedShift.scheduledStartAt ? formatTimeStr(cachedShift.scheduledStartAt) : "—"} – ${cachedShift.scheduledEndAt ? formatTimeStr(cachedShift.scheduledEndAt) : "—"}`
+          : "",
+      ].filter(Boolean).join(" · ")
+    : "";
+  const defaultCurrentShift = prefill?.currentShift || liveCurrentShift;
 
   const modal = document.createElement("div");
   modal.id = "staff-shift-change-modal";
@@ -2062,20 +2070,22 @@ function openShiftChangeModal(onDoneCallback, prefill = {}) {
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Currently Assigned Shift
           </label>
-          <input type="text" id="sc-curr-input" class="input" style="width:100%;" value="${defaultCurrentShift}" />
+          <input type="text" id="sc-curr-input" class="input" style="width:100%;" value="${escapeHtml(defaultCurrentShift)}" placeholder="No current shift resolved" />
         </div>
 
         <div>
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Requested Shift / Timing *
           </label>
-          <select id="sc-target-input" class="input" style="width:100%;">
-            <option value="MORNING">Morning Duty Shift (07:00 – 15:30)</option>
-            <option value="AFTERNOON">Standard Afternoon Shift (11:00 – 19:30)</option>
-            <option value="EVENING">Evening Rush Shift (14:30 – 23:00)</option>
-            <option value="NIGHT">Closing / Night Shift (16:00 – 00:30)</option>
-            <option value="WEEKLY_OFF_SWAP">Swap Weekly Off Day</option>
-          </select>
+          <input
+            type="text"
+            id="sc-target-input"
+            class="input"
+            style="width:100%;"
+            maxlength="200"
+            placeholder="e.g. 10:00–18:30, weekly-off swap, or published shift name"
+            value="${escapeHtml(prefill?.requestedShift || "")}"
+          />
         </div>
 
         <div>
@@ -2132,8 +2142,17 @@ function openShiftChangeModal(onDoneCallback, prefill = {}) {
 
     const endDate = modal.querySelector("#sc-enddate-input").value || null;
     const currentShift = modal.querySelector("#sc-curr-input").value.trim();
-    const requestedShift = modal.querySelector("#sc-target-input").value;
+    const requestedShift = modal.querySelector("#sc-target-input").value.trim();
     const notes = modal.querySelector("#sc-notes-input").value.trim();
+
+    if (!requestedShift) {
+      showToast("Please enter the requested shift or timing.", "coral");
+      return;
+    }
+    if (endDate && endDate < requestedDate) {
+      showToast("End date cannot be before the requested start date.", "coral");
+      return;
+    }
 
     const submitBtn = modal.querySelector("#scmodal-submit-btn");
     submitBtn.disabled = true;
