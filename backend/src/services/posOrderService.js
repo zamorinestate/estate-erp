@@ -40,8 +40,9 @@ const crypto = require('node:crypto');
 const { ApiError } = require('../utils/ApiError');
 const auditService = require('./auditService');
 const {
-  ATTESTATION_VERSION,
+  PRINT_ATTESTATION_VERSION,
   ATTESTATION_ALGORITHM,
+  PRINT_ACK_CHALLENGE_TTL_MS,
   createChallenge,
   buildPrintAckPayload,
   verifyPrintAckSignature,
@@ -1376,6 +1377,10 @@ class PosOrderService {
           dispatchedDeviceId,
           ackChallenge: attestationBinding.challenge,
           ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
+          ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+          payloadSha256: printResult.payloadSha256,
+          payloadBytes: printResult.payloadBytes,
+          printerTarget: 'DEFAULT_THERMAL',
           attestationRequired: attestationBinding.required,
           attestationKeyThumbprint: attestationBinding.keyThumbprint,
           drawerKickRequested,
@@ -1401,6 +1406,13 @@ class PosOrderService {
           dispatchedDeviceId,
           attestationRequired: attestationBinding.required,
           attestationKeyThumbprint: attestationBinding.keyThumbprint,
+          payloadSha256: printResult.payloadSha256,
+          payloadBytes: printResult.payloadBytes,
+          printerTarget: 'DEFAULT_THERMAL',
+          transportMode: 'UNBOUND',
+          evidenceLevel: 'NONE',
+          contentBindingVerified: false,
+          printerIdentityVerified: false,
           drawerKickRequested,
           drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
         });
@@ -1433,13 +1445,16 @@ class PosOrderService {
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
         ackChallenge: attestationBinding.challenge,
         attestationContext: attestationBinding.required ? {
-          version: ATTESTATION_VERSION,
+          version: PRINT_ATTESTATION_VERSION,
           algorithm: ATTESTATION_ALGORITHM,
           organisationId: orgId,
           cafeId,
           deviceId: dispatchedDeviceId,
           printJobId,
           challenge: attestationBinding.challenge,
+          expectedPayloadSha256: printResult.payloadSha256,
+          expectedPayloadBytes: printResult.payloadBytes,
+          printerTarget: 'DEFAULT_THERMAL',
         } : null,
         drawerKickRequested,
         drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
@@ -1573,6 +1588,8 @@ class PosOrderService {
     return {
       rawBuffer: escPosBuffer,
       printBufferBase64: escPosBuffer.toString('base64'),
+      payloadSha256: crypto.createHash('sha256').update(escPosBuffer).digest('hex'),
+      payloadBytes: escPosBuffer.length,
       htmlPreview: htmlReceipt,
       drawerKickIncluded: orderDataForPrinter.triggerDrawerKick === true,
     };
@@ -1710,7 +1727,20 @@ class PosOrderService {
           ? String(acknowledgement.failureReason || 'Physical print job was cancelled.').slice(0, 500)
           : '';
 
+    const currentStatus = normalizeId(job.status);
+    const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
     let attestationProof = null;
+    let transportEvidence = null;
+
+    if (
+      job.attestationRequired &&
+      !terminalStatuses.has(currentStatus) &&
+      job.ackChallengeExpiresAt &&
+      new Date(job.ackChallengeExpiresAt).getTime() <= Date.now()
+    ) {
+      throw new ApiError(409, 'PRINT_ACK_CHALLENGE_EXPIRED', 'The print acknowledgement challenge expired before a terminal result was received.');
+    }
+
     if (job.attestationRequired) {
       const registration = await DeviceRegistration.findOne({
         deviceId,
@@ -1756,6 +1786,34 @@ class PosOrderService {
         );
       }
 
+      const isContentBoundEnvelope = Boolean(job.payloadSha256);
+      if (isContentBoundEnvelope) {
+        const attestation = acknowledgement.attestation || {};
+        const transportMode = normalizeId(attestation.transportMode || '');
+        const evidenceLevel = normalizeId(attestation.evidenceLevel || '');
+        const contentBindingVerified = attestation.contentBindingVerified === true;
+        const printerIdentityVerified = attestation.printerIdentityVerified === true;
+        const platformJobId = String(attestation.platformJobId || '').trim();
+        const printerIdentity = String(attestation.printerIdentity || '').trim();
+
+        if (!transportMode || !evidenceLevel || !platformJobId) {
+          throw new ApiError(400, 'PRINT_TRANSPORT_EVIDENCE_REQUIRED', 'REC-04E acknowledgement requires transportMode, evidenceLevel, and platformJobId.');
+        }
+        if (
+          transportMode === 'ANDROID_SYSTEM_PRINT' &&
+          (evidenceLevel !== 'SPOOLER_COMPLETION' || contentBindingVerified || printerIdentityVerified)
+        ) {
+          throw new ApiError(409, 'ANDROID_PRINT_EVIDENCE_OVERCLAIM', 'Android system-print completion is spooler evidence only and cannot claim exact-byte or independently verified printer identity.');
+        }
+        if (
+          ['CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'].includes(evidenceLevel) &&
+          (!contentBindingVerified || !printerIdentityVerified || transportMode === 'ANDROID_SYSTEM_PRINT')
+        ) {
+          throw new ApiError(409, 'CONTENT_BOUND_PRINT_EVIDENCE_INSUFFICIENT', 'Content-bound thermal completion requires exact payload binding and independently verified printer identity.');
+        }
+        transportEvidence = { transportMode, platformJobId, evidenceLevel, contentBindingVerified, printerIdentity: printerIdentity || null, printerIdentityVerified };
+      }
+
       const signedPayload = buildPrintAckPayload({
         organisationId: orgId,
         cafeId: jobCafeId,
@@ -1766,6 +1824,15 @@ class PosOrderService {
         drawerKickStatus: requestedDrawerStatus || 'UNCHANGED',
         failureCode: resolvedFailureCode,
         failureReason: resolvedFailureReason,
+        expectedPayloadSha256: job.payloadSha256 || null,
+        expectedPayloadBytes: job.payloadBytes || null,
+        printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+        transportMode: transportEvidence?.transportMode || 'UNBOUND',
+        platformJobId: transportEvidence?.platformJobId || '',
+        evidenceLevel: transportEvidence?.evidenceLevel || 'NONE',
+        contentBindingVerified: transportEvidence?.contentBindingVerified === true,
+        printerIdentity: transportEvidence?.printerIdentity || '',
+        printerIdentityVerified: transportEvidence?.printerIdentityVerified === true,
       });
 
       attestationProof = verifyPrintAckSignature({
@@ -1785,8 +1852,6 @@ class PosOrderService {
       }
     }
 
-    const currentStatus = normalizeId(job.status);
-    const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
     if (terminalStatuses.has(currentStatus) && currentStatus !== ackStatus) {
       throw new ApiError(
         409,
@@ -1813,6 +1878,15 @@ class PosOrderService {
       job.acknowledgedByDeviceId = deviceId;
       job.acknowledgedAt = now;
       job.completedAt = now;
+      if (job.attestationRequired) job.ackChallengeConsumedAt = now;
+      if (transportEvidence) {
+        job.transportMode = transportEvidence.transportMode;
+        job.platformJobId = transportEvidence.platformJobId;
+        job.evidenceLevel = transportEvidence.evidenceLevel;
+        job.contentBindingVerified = transportEvidence.contentBindingVerified;
+        job.actualPrinterId = transportEvidence.printerIdentity;
+        job.printerIdentityVerified = transportEvidence.printerIdentityVerified;
+      }
 
       if (ackStatus === 'FAILED' || ackStatus === 'CANCELLED') {
         job.failureCode = resolvedFailureCode;
@@ -1871,6 +1945,15 @@ class PosOrderService {
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
           attestationVerifiedAt: job.attestationVerifiedAt || null,
           ackSignatureHash: job.ackSignatureHash || null,
+          payloadSha256: job.payloadSha256 || null,
+          payloadBytes: job.payloadBytes || null,
+          printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+          transportMode: job.transportMode || 'UNBOUND',
+          platformJobId: job.platformJobId || null,
+          evidenceLevel: job.evidenceLevel || 'NONE',
+          contentBindingVerified: job.contentBindingVerified === true,
+          actualPrinterId: job.actualPrinterId || null,
+          printerIdentityVerified: job.printerIdentityVerified === true,
           completedAt: now,
           failureCode: job.failureCode || null,
           drawerKickRequested: Boolean(job.drawerKickRequested),
@@ -1884,6 +1967,15 @@ class PosOrderService {
         billPrintJob.attestationKeyThumbprint = job.attestationKeyThumbprint || null;
         billPrintJob.attestationVerifiedAt = job.attestationVerifiedAt || null;
         billPrintJob.ackSignatureHash = job.ackSignatureHash || null;
+        billPrintJob.payloadSha256 = job.payloadSha256 || null;
+        billPrintJob.payloadBytes = job.payloadBytes || null;
+        billPrintJob.printerTarget = job.printerTarget || 'DEFAULT_THERMAL';
+        billPrintJob.transportMode = job.transportMode || 'UNBOUND';
+        billPrintJob.platformJobId = job.platformJobId || null;
+        billPrintJob.evidenceLevel = job.evidenceLevel || 'NONE';
+        billPrintJob.contentBindingVerified = job.contentBindingVerified === true;
+        billPrintJob.actualPrinterId = job.actualPrinterId || null;
+        billPrintJob.printerIdentityVerified = job.printerIdentityVerified === true;
         billPrintJob.completedAt = now;
         billPrintJob.failureCode = job.failureCode || null;
         billPrintJob.drawerKickStatus = job.drawerKickStatus || 'NOT_REQUESTED';
@@ -1924,6 +2016,15 @@ class PosOrderService {
           attestationVerified: Boolean(attestationProof),
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
           ackSignatureHash: job.ackSignatureHash || null,
+          payloadSha256: job.payloadSha256 || null,
+          payloadBytes: job.payloadBytes || null,
+          printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+          transportMode: job.transportMode || 'UNBOUND',
+          platformJobId: job.platformJobId || null,
+          evidenceLevel: job.evidenceLevel || 'NONE',
+          contentBindingVerified: job.contentBindingVerified === true,
+          actualPrinterId: job.actualPrinterId || null,
+          printerIdentityVerified: job.printerIdentityVerified === true,
           idempotentReplay: !statusChanged,
         },
       });
@@ -1943,6 +2044,15 @@ class PosOrderService {
       attestationRequired: Boolean(job.attestationRequired),
       attestationVerified: Boolean(attestationProof),
       attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+      payloadSha256: job.payloadSha256 || null,
+      payloadBytes: job.payloadBytes || null,
+      printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+      transportMode: job.transportMode || 'UNBOUND',
+      platformJobId: job.platformJobId || null,
+      evidenceLevel: job.evidenceLevel || 'NONE',
+      contentBindingVerified: job.contentBindingVerified === true,
+      actualPrinterId: job.actualPrinterId || null,
+      printerIdentityVerified: job.printerIdentityVerified === true,
       idempotentReplay: !statusChanged,
     };
   }
@@ -1987,6 +2097,10 @@ class PosOrderService {
         dispatchedDeviceId,
         ackChallenge: attestationBinding.challenge,
         ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
+        ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+        payloadSha256: printResult.payloadSha256,
+        payloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
         attestationRequired: attestationBinding.required,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
         drawerKickRequested: false,
@@ -2018,13 +2132,16 @@ class PosOrderService {
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
       ackChallenge: attestationBinding.challenge,
       attestationContext: attestationBinding.required ? {
-        version: ATTESTATION_VERSION,
+        version: PRINT_ATTESTATION_VERSION,
         algorithm: ATTESTATION_ALGORITHM,
         organisationId: normalizeId(bill.organisationId),
         cafeId: normalizeId(bill.cafeId),
         deviceId: dispatchedDeviceId,
         printJobId,
         challenge: attestationBinding.challenge,
+        expectedPayloadSha256: printResult.payloadSha256,
+        expectedPayloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
       } : null,
       drawerKickRequested: false,
       drawerKickStatus: 'NOT_REQUESTED',
@@ -2113,6 +2230,10 @@ class PosOrderService {
         dispatchedDeviceId,
         ackChallenge: attestationBinding.challenge,
         ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
+        ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+        payloadSha256: printResult.payloadSha256,
+        payloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
         attestationRequired: attestationBinding.required,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
         drawerKickRequested: false,
@@ -2147,13 +2268,16 @@ class PosOrderService {
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
       ackChallenge: attestationBinding.challenge,
       attestationContext: attestationBinding.required ? {
-        version: ATTESTATION_VERSION,
+        version: PRINT_ATTESTATION_VERSION,
         algorithm: ATTESTATION_ALGORITHM,
         organisationId: normalizeId(bill.organisationId),
         cafeId: normalizeId(bill.cafeId),
         deviceId: dispatchedDeviceId,
         printJobId,
         challenge: attestationBinding.challenge,
+        expectedPayloadSha256: printResult.payloadSha256,
+        expectedPayloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
       } : null,
       drawerKickRequested: false,
       drawerKickStatus: 'NOT_REQUESTED',

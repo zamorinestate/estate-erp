@@ -4,6 +4,7 @@ import { apiPost, getCafeOpsDeviceToken } from '../apiClient.js';
 import { NativeCapabilities } from './nativeCapabilities.js';
 
 const ATTESTATION_VERSION = 'ZAMORIN_DEVICE_ACK_V1';
+const PRINT_ATTESTATION_VERSION = 'ZAMORIN_PRINT_ACK_V2';
 const ATTESTATION_ALGORITHM = 'ES256';
 
 function normalizeToken(value, fieldName) {
@@ -199,6 +200,12 @@ async function submitPurposeBoundPrintAcknowledgement(dispatch, nativeResult) {
         keyThumbprint: nativeResult.keyThumbprint || null,
         algorithm: nativeResult.algorithm || ATTESTATION_ALGORITHM,
         provider: nativeResult.provider || 'ANDROID_KEYSTORE',
+        transportMode: nativeResult.transportMode || null,
+        platformJobId: nativeResult.platformJobId || null,
+        evidenceLevel: nativeResult.evidenceLevel || null,
+        contentBindingVerified: nativeResult.contentBindingVerified === true,
+        printerIdentity: nativeResult.printerIdentity || null,
+        printerIdentityVerified: nativeResult.printerIdentityVerified === true,
       },
     }
   );
@@ -268,6 +275,17 @@ export async function monitorAndroidPrintAndAcknowledge(
       throw err;
     }
 
+    if (
+      String(attestedResult.transportMode || '').toUpperCase() !== 'ANDROID_SYSTEM_PRINT' ||
+      String(attestedResult.evidenceLevel || '').toUpperCase() !== 'SPOOLER_COMPLETION' ||
+      attestedResult.contentBindingVerified === true ||
+      attestedResult.printerIdentityVerified === true
+    ) {
+      const err = new Error('Android system print attempted to overclaim REC-04E transport evidence.');
+      err.code = 'ANDROID_PRINT_EVIDENCE_OVERCLAIM';
+      throw err;
+    }
+
     const serverAck = await submitPurposeBoundPrintAcknowledgement(
       dispatch,
       attestedResult
@@ -294,5 +312,6 @@ export async function monitorAndroidPrintAndAcknowledge(
 
 export {
   ATTESTATION_VERSION,
+  PRINT_ATTESTATION_VERSION,
   ATTESTATION_ALGORITHM,
 };

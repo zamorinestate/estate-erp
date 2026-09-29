@@ -45,6 +45,7 @@ object ZamorinPrintManager {
         val status: String,
         val terminal: Boolean,
         val physicalCompletionVerified: Boolean,
+        val printerIdentity: String? = null,
         val error: String? = null
     )
 
@@ -219,6 +220,7 @@ object ZamorinPrintManager {
                 status = status,
                 terminal = status == "COMPLETED" || status == "FAILED" || status == "CANCELLED",
                 physicalCompletionVerified = status == "COMPLETED",
+                printerIdentity = printJob.info?.printerId?.toString(),
                 error = if (status == "FAILED") "ANDROID_PRINT_JOB_FAILED" else null
             )
         } catch (e: Exception) {

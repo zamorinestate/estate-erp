@@ -253,7 +253,7 @@ class ZamorinNativeBridge(
                             try {
                                 val version = binding.optString("version", "")
                                 val algorithm = binding.optString("algorithm", "")
-                                if (version != "ZAMORIN_DEVICE_ACK_V1" || algorithm != "ES256") {
+                                if ((version != "ZAMORIN_DEVICE_ACK_V1" && version != "ZAMORIN_PRINT_ACK_V2") || algorithm != "ES256") {
                                     throw IllegalArgumentException("Unsupported bound print attestation context.")
                                 }
 
@@ -297,18 +297,55 @@ class ZamorinNativeBridge(
                                     .digest(failureReason.toByteArray(Charsets.UTF_8))
                                     .joinToString("") { "%02x".format(it) }
 
-                                val canonicalPayload = listOf(
-                                    "ZAMORIN_DEVICE_ACK_V1",
-                                    "organisationId=${requiredToken("organisationId")}",
-                                    "cafeId=${requiredToken("cafeId")}",
-                                    "deviceId=${requiredToken("deviceId")}",
-                                    "printJobId=${requiredToken("printJobId")}",
-                                    "challenge=$challenge",
-                                    "status=$acknowledgementStatus",
-                                    "drawerKickStatus=$drawerKickStatus",
-                                    "failureCode=$failureCode",
-                                    "failureReasonSha256=$failureHash"
-                                ).joinToString("\n")
+                                val transportMode = "ANDROID_SYSTEM_PRINT"
+                                val evidenceLevel = "SPOOLER_COMPLETION"
+                                val contentBindingVerified = false
+                                val printerIdentity = statusResult.printerIdentity ?: ""
+                                val printerIdentityVerified = false
+
+                                val canonicalPayload = if (version == "ZAMORIN_PRINT_ACK_V2") {
+                                    val expectedPayloadSha256 = binding.optString("expectedPayloadSha256", "").trim().lowercase()
+                                    if (!Regex("^[a-f0-9]{64}$").matches(expectedPayloadSha256)) throw IllegalArgumentException("Bound expected payload hash is invalid.")
+                                    val expectedPayloadBytes = binding.optLong("expectedPayloadBytes", 0L)
+                                    if (expectedPayloadBytes <= 0L) throw IllegalArgumentException("Bound expected payload byte count is invalid.")
+                                    val printerTarget = requiredToken("printerTarget")
+                                    val platformJobIdHash = MessageDigest.getInstance("SHA-256").digest(platformJobId.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                                    val printerIdentityHash = MessageDigest.getInstance("SHA-256").digest(printerIdentity.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                                    listOf(
+                                        "ZAMORIN_PRINT_ACK_V2",
+                                        "organisationId=${requiredToken("organisationId")}",
+                                        "cafeId=${requiredToken("cafeId")}",
+                                        "deviceId=${requiredToken("deviceId")}",
+                                        "printJobId=${requiredToken("printJobId")}",
+                                        "challenge=$challenge",
+                                        "expectedPayloadSha256=$expectedPayloadSha256",
+                                        "expectedPayloadBytes=$expectedPayloadBytes",
+                                        "printerTarget=$printerTarget",
+                                        "transportMode=$transportMode",
+                                        "platformJobIdSha256=$platformJobIdHash",
+                                        "evidenceLevel=$evidenceLevel",
+                                        "contentBindingVerified=FALSE",
+                                        "printerIdentitySha256=$printerIdentityHash",
+                                        "printerIdentityVerified=FALSE",
+                                        "status=$acknowledgementStatus",
+                                        "drawerKickStatus=$drawerKickStatus",
+                                        "failureCode=$failureCode",
+                                        "failureReasonSha256=$failureHash"
+                                    ).joinToString("\n")
+                                } else {
+                                    listOf(
+                                        "ZAMORIN_DEVICE_ACK_V1",
+                                        "organisationId=${requiredToken("organisationId")}",
+                                        "cafeId=${requiredToken("cafeId")}",
+                                        "deviceId=${requiredToken("deviceId")}",
+                                        "printJobId=${requiredToken("printJobId")}",
+                                        "challenge=$challenge",
+                                        "status=$acknowledgementStatus",
+                                        "drawerKickStatus=$drawerKickStatus",
+                                        "failureCode=$failureCode",
+                                        "failureReasonSha256=$failureHash"
+                                    ).joinToString("\n")
+                                }
 
                                 val entry = ensureAttestationKey()
                                 val signer = Signature.getInstance("SHA256withECDSA")
@@ -328,6 +365,11 @@ class ZamorinNativeBridge(
                                     put("algorithm", "ES256")
                                     put("provider", "ANDROID_KEYSTORE")
                                     put("keyThumbprint", keyThumbprint(jwk))
+                                    put("transportMode", transportMode)
+                                    put("evidenceLevel", evidenceLevel)
+                                    put("contentBindingVerified", contentBindingVerified)
+                                    put("printerIdentity", printerIdentity)
+                                    put("printerIdentityVerified", printerIdentityVerified)
                                     put("signature", Base64.getUrlEncoder().withoutPadding().encodeToString(signature))
                                 }
                                 BridgeResponse(requestId = requestId, success = true, result = res)
