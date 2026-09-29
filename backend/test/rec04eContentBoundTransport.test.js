@@ -544,3 +544,18 @@ test('REC-04E Cafe Operations native enrollment carries the signing identity in 
   assert.match(api, /enrollDevice: async \(input\)/);
   assert.match(api, /body: await prepareEnrollmentInput\(input\)/);
 });
+
+
+test('REC-04E acknowledgement response distinguishes spooler, content-bound delivery, and physical hardware confirmation', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+
+  assert.match(source, /const spoolerCompletionVerified =/);
+  assert.match(source, /evidenceLevel \|\| 'NONE'\) === 'SPOOLER_COMPLETION'/);
+  assert.match(source, /const contentBoundDeliveryVerified =/);
+  assert.match(source, /\['CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'\]/);
+  assert.match(source, /const physicalPrintVerified =/);
+  assert.match(source, /evidenceLevel \|\| 'NONE'\) === 'HARDWARE_CONFIRMED'/);
+  assert.match(source, /spoolerCompletionVerified,/);
+  assert.match(source, /contentBoundDeliveryVerified,/);
+  assert.match(source, /physicalPrintVerified,/);
+});

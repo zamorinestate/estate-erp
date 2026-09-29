@@ -2182,6 +2182,18 @@ class PosOrderService {
       await bill.save();
     }
 
+    const spoolerCompletionVerified =
+      normalizeId(job.evidenceLevel || 'NONE') === 'SPOOLER_COMPLETION';
+    const contentBoundDeliveryVerified =
+      ['CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'].includes(
+        normalizeId(job.evidenceLevel || 'NONE')
+      ) &&
+      job.contentBindingVerified === true &&
+      job.printerIdentityVerified === true;
+    const physicalPrintVerified =
+      normalizeId(job.evidenceLevel || 'NONE') === 'HARDWARE_CONFIRMED' &&
+      contentBoundDeliveryVerified;
+
     try {
       await auditService.recordAuditEvent({
         organisationId: orgId,
@@ -2218,6 +2230,9 @@ class PosOrderService {
           transportMode: job.transportMode || 'UNBOUND',
           platformJobId: job.platformJobId || null,
           evidenceLevel: job.evidenceLevel || 'NONE',
+          spoolerCompletionVerified,
+          contentBoundDeliveryVerified,
+          physicalPrintVerified,
           contentBindingVerified: job.contentBindingVerified === true,
           actualPrinterId: job.actualPrinterId || null,
           printerIdentityVerified: job.printerIdentityVerified === true,
@@ -2233,6 +2248,9 @@ class PosOrderService {
       jobType: job.jobType,
       status: job.status,
       printed: job.status === 'PRINTED',
+      spoolerCompletionVerified,
+      contentBoundDeliveryVerified,
+      physicalPrintVerified,
       acknowledgedByDeviceId: job.acknowledgedByDeviceId,
       acknowledgedAt: job.acknowledgedAt,
       drawerKickRequested: Boolean(job.drawerKickRequested),
