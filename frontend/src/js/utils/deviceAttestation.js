@@ -275,13 +275,15 @@ export async function monitorAndroidPrintAndAcknowledge(
       throw err;
     }
 
+    const expectedEvidenceLevel =
+      status === 'PRINTED' ? 'SPOOLER_COMPLETION' : 'SPOOLER_TERMINAL_STATE';
     if (
       String(attestedResult.transportMode || '').toUpperCase() !== 'ANDROID_SYSTEM_PRINT' ||
-      String(attestedResult.evidenceLevel || '').toUpperCase() !== 'SPOOLER_COMPLETION' ||
+      String(attestedResult.evidenceLevel || '').toUpperCase() !== expectedEvidenceLevel ||
       attestedResult.contentBindingVerified === true ||
       attestedResult.printerIdentityVerified === true
     ) {
-      const err = new Error('Android system print attempted to overclaim REC-04E transport evidence.');
+      const err = new Error('Android system print attempted to overclaim or mislabel REC-04E transport evidence.');
       err.code = 'ANDROID_PRINT_EVIDENCE_OVERCLAIM';
       throw err;
     }

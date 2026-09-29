@@ -1799,19 +1799,40 @@ class PosOrderService {
         if (!transportMode || !evidenceLevel || !platformJobId) {
           throw new ApiError(400, 'PRINT_TRANSPORT_EVIDENCE_REQUIRED', 'REC-04E acknowledgement requires transportMode, evidenceLevel, and platformJobId.');
         }
-        if (
-          transportMode === 'ANDROID_SYSTEM_PRINT' &&
-          (evidenceLevel !== 'SPOOLER_COMPLETION' || contentBindingVerified || printerIdentityVerified)
-        ) {
-          throw new ApiError(409, 'ANDROID_PRINT_EVIDENCE_OVERCLAIM', 'Android system-print completion is spooler evidence only and cannot claim exact-byte or independently verified printer identity.');
+
+        // REC-04E currently has exactly one implemented purpose-bound native
+        // transport attestor: Android's application-owned system print job.
+        // Do not let an enrolled key invent a stronger or unknown transport.
+        if (transportMode !== 'ANDROID_SYSTEM_PRINT') {
+          throw new ApiError(
+            409,
+            'UNSUPPORTED_PRINT_TRANSPORT_MODE',
+            'No purpose-bound attestor is implemented for the supplied print transport mode.'
+          );
         }
+
+        const expectedAndroidEvidence =
+          ackStatus === 'PRINTED' ? 'SPOOLER_COMPLETION' : 'SPOOLER_TERMINAL_STATE';
         if (
-          ['CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'].includes(evidenceLevel) &&
-          (!contentBindingVerified || !printerIdentityVerified || transportMode === 'ANDROID_SYSTEM_PRINT')
+          evidenceLevel !== expectedAndroidEvidence ||
+          contentBindingVerified ||
+          printerIdentityVerified
         ) {
-          throw new ApiError(409, 'CONTENT_BOUND_PRINT_EVIDENCE_INSUFFICIENT', 'Content-bound thermal completion requires exact payload binding and independently verified printer identity.');
+          throw new ApiError(
+            409,
+            'ANDROID_PRINT_EVIDENCE_OVERCLAIM',
+            'Android system print may report only its actual spooler terminal evidence and cannot claim exact-byte delivery or independently verified printer identity.'
+          );
         }
-        transportEvidence = { transportMode, platformJobId, evidenceLevel, contentBindingVerified, printerIdentity: printerIdentity || null, printerIdentityVerified };
+
+        transportEvidence = {
+          transportMode,
+          platformJobId,
+          evidenceLevel,
+          contentBindingVerified,
+          printerIdentity: printerIdentity || null,
+          printerIdentityVerified,
+        };
       }
 
       const signedPayload = buildPrintAckPayload({
@@ -1867,13 +1888,35 @@ class PosOrderService {
       );
     }
 
-    if (requestedDrawerStatus) {
-      job.drawerKickStatus = requestedDrawerStatus;
-    }
-
     const now = new Date();
     const statusChanged = currentStatus !== ackStatus;
+
+    if (!statusChanged) {
+      const storedDrawerStatus = normalizeId(job.drawerKickStatus || 'NOT_REQUESTED');
+      const storedPrinterIdentity = String(job.actualPrinterId || '').trim();
+      if (
+        (requestedDrawerStatus && requestedDrawerStatus !== storedDrawerStatus) ||
+        (transportEvidence && (
+          normalizeId(job.transportMode || 'UNBOUND') !== transportEvidence.transportMode ||
+          String(job.platformJobId || '').trim() !== transportEvidence.platformJobId ||
+          normalizeId(job.evidenceLevel || 'NONE') !== transportEvidence.evidenceLevel ||
+          job.contentBindingVerified === true !== transportEvidence.contentBindingVerified ||
+          storedPrinterIdentity !== String(transportEvidence.printerIdentity || '').trim() ||
+          job.printerIdentityVerified === true !== transportEvidence.printerIdentityVerified
+        ))
+      ) {
+        throw new ApiError(
+          409,
+          'PRINT_ACK_REPLAY_EVIDENCE_MISMATCH',
+          'A finalized print job may only be retried with the same terminal evidence.'
+        );
+      }
+    }
+
     if (statusChanged) {
+      if (requestedDrawerStatus) {
+        job.drawerKickStatus = requestedDrawerStatus;
+      }
       job.status = ackStatus;
       job.acknowledgedByDeviceId = deviceId;
       job.acknowledgedAt = now;
@@ -1897,12 +1940,14 @@ class PosOrderService {
       }
     }
 
-    if (attestationProof) {
+    if (statusChanged && attestationProof) {
       job.attestationVerifiedAt = now;
       job.ackSignatureHash = attestationProof.signatureHash;
     }
 
-    await job.save();
+    if (statusChanged) {
+      await job.save();
+    }
 
     if (attestationProof) {
       await DeviceRegistration.updateOne(
@@ -1926,7 +1971,7 @@ class PosOrderService {
       cafeId: jobCafeId,
       billId: normalizeId(job.billId),
     });
-    if (bill) {
+    if (statusChanged && bill) {
       bill.printJobs = Array.isArray(bill.printJobs) ? bill.printJobs : [];
       let billPrintJob = bill.printJobs.find((entry) =>
         normalizeId(entry.printJobId) === normPrintJobId

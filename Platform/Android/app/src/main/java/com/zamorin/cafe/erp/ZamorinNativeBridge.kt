@@ -298,7 +298,11 @@ class ZamorinNativeBridge(
                                     .joinToString("") { "%02x".format(it) }
 
                                 val transportMode = "ANDROID_SYSTEM_PRINT"
-                                val evidenceLevel = "SPOOLER_COMPLETION"
+                                val evidenceLevel = if (acknowledgementStatus == "PRINTED") {
+                                    "SPOOLER_COMPLETION"
+                                } else {
+                                    "SPOOLER_TERMINAL_STATE"
+                                }
                                 val contentBindingVerified = false
                                 val printerIdentity = statusResult.printerIdentity ?: ""
                                 val printerIdentityVerified = false

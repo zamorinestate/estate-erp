@@ -44,7 +44,9 @@ test('REC-04E stores digest and replay-window state', () => {
 test('REC-04E Android spooler evidence cannot overclaim exact thermal delivery', () => {
   const bridge=fs.readFileSync(androidBridgePath,'utf8'), pm=fs.readFileSync(androidPrintManagerPath,'utf8'), front=fs.readFileSync(frontendPath,'utf8'), till=fs.readFileSync(posTillPath,'utf8');
   assert.match(bridge,/val transportMode = "ANDROID_SYSTEM_PRINT"/);
-  assert.match(bridge,/val evidenceLevel = "SPOOLER_COMPLETION"/);
+  assert.match(bridge,/acknowledgementStatus == "PRINTED"/);
+  assert.match(bridge,/"SPOOLER_COMPLETION"/);
+  assert.match(bridge,/"SPOOLER_TERMINAL_STATE"/);
   assert.match(bridge,/val contentBindingVerified = false/);
   assert.match(bridge,/val printerIdentityVerified = false/);
   assert.match(pm,/printerIdentity = printJob\.info\?\.printerId\?\.toString\(\)/);
@@ -86,4 +88,20 @@ test('REC-04E hardware state and local bridge fail closed without physical evide
   assert.match(localBridge, /emitted:\s*false/);
   assert.doesNotMatch(localBridge, /status:\s*'READY'/);
   assert.doesNotMatch(localBridge, /DRAWER_KICK_PULSE_EMITTED/);
+});
+
+
+test('REC-04E rejects invented transport evidence and freezes terminal replay evidence', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const frontend = fs.readFileSync(frontendPath, 'utf8');
+
+  assert.match(source, /UNSUPPORTED_PRINT_TRANSPORT_MODE/);
+  assert.match(source, /SPOOLER_TERMINAL_STATE/);
+  assert.match(source, /PRINT_ACK_REPLAY_EVIDENCE_MISMATCH/);
+  assert.match(source, /if \(statusChanged && attestationProof\)/);
+  assert.match(source, /if \(statusChanged\) \{\s*await job\.save\(\);\s*\}/);
+  assert.match(source, /if \(statusChanged && bill\)/);
+
+  assert.match(frontend, /expectedEvidenceLevel/);
+  assert.match(frontend, /SPOOLER_TERMINAL_STATE/);
 });

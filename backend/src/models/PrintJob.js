@@ -111,7 +111,7 @@ const printJobSchema = new mongoose.Schema(
     platformJobId: { type: String, default: null, trim: true },
     evidenceLevel: {
       type: String,
-      enum: ['NONE', 'SPOOLER_COMPLETION', 'CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'],
+      enum: ['NONE', 'SPOOLER_COMPLETION', 'SPOOLER_TERMINAL_STATE', 'CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'],
       default: 'NONE',
     },
     contentBindingVerified: { type: Boolean, default: false },
