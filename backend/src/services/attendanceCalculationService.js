@@ -115,8 +115,11 @@ function calculateAttendanceMetrics({
     }
   }
 
+  // Unknown schedule must remain unknown. Worked presence can still be
+  // calculated, but lateness, early-exit and overtime must not be inferred
+  // against a fabricated "standard" shift.
   if (!scheduledMinutes || scheduledMinutes <= 0) {
-    scheduledMinutes = 8 * 60; // Standard 480 minutes (8h) default
+    scheduledMinutes = null;
   }
 
   const effectiveGrace = typeof gracePeriodMinutes === 'number' && gracePeriodMinutes >= 0
@@ -194,8 +197,12 @@ function calculateAttendanceMetrics({
 
   const grossMinutes = Math.max(0, Math.floor((outTime - inTime) / 60000));
   const totalWorkedMinutes = Math.max(0, grossMinutes - deductibleBreakMinutes);
-  const regularMinutes = Math.min(totalWorkedMinutes, scheduledMinutes);
-  const detectedOvertimeMinutes = Math.max(0, totalWorkedMinutes - scheduledMinutes);
+  const regularMinutes = scheduledMinutes
+    ? Math.min(totalWorkedMinutes, scheduledMinutes)
+    : totalWorkedMinutes;
+  const detectedOvertimeMinutes = scheduledMinutes
+    ? Math.max(0, totalWorkedMinutes - scheduledMinutes)
+    : 0;
   const approvedOT = Number(approvedOvertimeMinutes) || 0;
 
   return {
@@ -213,7 +220,7 @@ function calculateAttendanceMetrics({
     detectedOvertimeMinutes,
     approvedOvertimeMinutes: approvedOT,
     overtimeMinutes: approvedOT || detectedOvertimeMinutes,
-    overtimeStatus: detectedOvertimeMinutes > 0 ? 'PENDING_REVIEW' : 'NONE',
+    overtimeStatus: scheduledMinutes && detectedOvertimeMinutes > 0 ? 'PENDING_REVIEW' : 'NONE',
     isOvertime: detectedOvertimeMinutes > 0,
     isLate,
     lateMinutes,
