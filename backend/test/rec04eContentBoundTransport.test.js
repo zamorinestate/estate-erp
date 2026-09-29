@@ -1631,3 +1631,30 @@ test('REC-04E cross-platform capability policy never equates generic print suppo
   assert.doesNotMatch(ios, /ATTEST_PRINT_JOB_RESULT/);
   assert.doesNotMatch(mac, /ATTEST_PRINT_JOB_RESULT/);
 });
+
+
+test('REC-04E real-hardware acceptance requires explicit observed paper/cutter identity and never upgrades runtime crypto proof', () => {
+  const runner = fs.readFileSync(
+    path.join(root, 'scripts', 'run_rec04e_hardware_acceptance.mjs'),
+    'utf8'
+  );
+  const verifier = fs.readFileSync(
+    path.join(root, 'scripts', 'verify_rec04e_hardware_acceptance.mjs'),
+    'utf8'
+  );
+  const pkg = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
+
+  assert.match(runner, /REC04E_HARDWARE_ACCEPTANCE_V1/);
+  assert.match(runner, /confirm-paper/);
+  assert.match(runner, /confirm-cut/);
+  assert.match(runner, /confirm-drawer/);
+  assert.match(runner, /printer-serial/);
+  assert.match(runner, /printer-model/);
+  assert.match(runner, /printerIdentityCryptographicallyVerified: false/);
+  assert.match(runner, /physicalPrintCryptographicallyVerified: false/);
+  assert.match(verifier, /paperOutputConfirmed !== true/);
+  assert.match(verifier, /cutterConfirmed !== true/);
+  assert.match(verifier, /report\.certified !== true/);
+  assert.match(pkg, /accept:rec04e:hardware/);
+  assert.match(pkg, /verify:rec04e:hardware/);
+});
