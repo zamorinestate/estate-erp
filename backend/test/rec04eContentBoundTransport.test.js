@@ -105,8 +105,8 @@ test('REC-04E hardware state and local bridge fail closed without physical evide
   assert.doesNotMatch(client, /return \{ success: true, method: 'WEB_USB' \}/);
   assert.doesNotMatch(client, /return \{ success: true, method: 'LOCAL_PROXY' \}/);
 
-  assert.match(localBridge, /hardwareReady: printerConfig\.configured/);
-  assert.match(localBridge, /if \(!printerConfig\.configured\)/);
+  assert.match(localBridge, /hardwareReady: printerConfig\.configured && dispatchVerifier\.ready/);
+  assert.match(localBridge, /if \(!printerConfig\.configured \|\| !dispatchVerifier\.ready\)/);
   assert.match(localBridge, /HARDWARE_TRANSPORT_NOT_CONFIGURED/);
   assert.match(localBridge, /DRAWER_TRANSPORT_NOT_CONFIGURED/);
   assert.match(localBridge, /printerEndpointPinned: printerConfig\.endpointPinned === true/);
@@ -2015,4 +2015,49 @@ test('REC-04E hardware acceptance replays a real server-authorized POS dispatch 
   assert.match(runner, /dispatch\?\.printDispatchAuthorization/);
   assert.match(runner, /serverDispatchAuthorized === true/);
   assert.doesNotMatch(runner, /function buildAcceptanceEscPos/);
+});
+
+
+test('REC-04E bridge serializes duplicate writes and releases per-job lock state after completion', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-bridge-lock-cleanup-'));
+  const journalPath = path.join(tempDir, 'journal.json');
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const bytes = Buffer.from('lock cleanup payload');
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const payload = {
+    printJobId: 'PJ-REC04E-LOCK-CLEANUP-001',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: false,
+  };
+  const printerConfig = {
+    endpointFingerprint: '9'.repeat(64),
+    endpointPinned: true,
+    printerId: 'TEST-THERMAL',
+    host: '127.0.0.1',
+    port: 9100,
+  };
+
+  let writes = 0;
+  const dispatchFn = async (_buffer, options) => {
+    writes += 1;
+    await options.onWriteStarted();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { transportAccepted: true, bytesDispatched: bytes.length };
+  };
+
+  await Promise.all([
+    bridgeModule.processJournaledPrint(payload, printerConfig, { journalPath, dispatchFn }),
+    bridgeModule.processJournaledPrint(payload, printerConfig, { journalPath, dispatchFn }),
+    bridgeModule.processJournaledPrint(payload, printerConfig, { journalPath, dispatchFn }),
+  ]);
+
+  assert.equal(writes, 1);
+  assert.equal(bridgeModule.activePrintJobLockCount(), 0);
 });

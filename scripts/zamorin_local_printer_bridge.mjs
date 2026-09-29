@@ -256,14 +256,22 @@ async function withPrintJobLock(printJobId, operation) {
   const prior = printJobLocks.get(key) || Promise.resolve();
   let release;
   const current = new Promise((resolve) => { release = resolve; });
-  printJobLocks.set(key, prior.then(() => current));
+  const chain = prior.then(() => current);
+  printJobLocks.set(key, chain);
+
   await prior;
   try {
     return await operation();
   } finally {
     release();
-    if (printJobLocks.get(key) === current) printJobLocks.delete(key);
+    if (printJobLocks.get(key) === chain) {
+      printJobLocks.delete(key);
+    }
   }
+}
+
+function activePrintJobLockCount() {
+  return printJobLocks.size;
 }
 
 async function dispatchNetworkPrint(
@@ -683,6 +691,7 @@ export {
   validatePrintRequest,
   dispatchNetworkPrint,
   processJournaledPrint,
+  activePrintJobLockCount,
   verificationKeyInfo,
   verifyPrintDispatchAuthorization,
 };
