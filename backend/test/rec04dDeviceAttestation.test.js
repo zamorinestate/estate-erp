@@ -19,6 +19,7 @@ const cafeRepositories = require('../src/cafe-operations/repositories');
 const root = path.join(__dirname, '..', '..');
 const androidBridgePath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinNativeBridge.kt');
 const androidPrintManagerPath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinPrintManager.kt');
+const androidPrintAttestationStorePath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinPrintAttestationStore.kt');
 const windowsBridgePath = path.join(root, 'Platform', 'Windows', 'ZamorinCafeERP', 'ZamorinNativeBridge.cs');
 const iosBridgePath = path.join(root, 'Platform', 'Apple', 'ios', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
 const macBridgePath = path.join(root, 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
@@ -376,23 +377,21 @@ test('REC-04D — native bridges keep private signing keys inside platform store
   assert.match(android, /AndroidKeyStore/);
   assert.match(android, /KeyGenParameterSpec/);
   assert.match(android, /SHA256withECDSA/);
-  assert.match(android, /SIGN_DEVICE_ATTESTATION/);
+  assert.match(android, /ATTEST_PRINT_JOB_RESULT/);
+  assert.match(android, /DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED/);
 
   assert.match(windows, /CngKey/);
   assert.match(windows, /ECDsaP256/);
-  assert.match(windows, /Rfc3279DerSequence/);
-  assert.match(windows, /SIGN_DEVICE_ATTESTATION/);
+  assert.match(windows, /DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED/);
 
   for (const apple of [ios, mac]) {
     assert.match(apple, /kSecAttrTokenIDSecureEnclave/);
     assert.match(apple, /SecKeyCreateRandomKey/);
-    assert.match(apple, /SecKeyCreateSignature/);
-    assert.match(apple, /ecdsaSignatureMessageX962SHA256/);
-    assert.match(apple, /SIGN_DEVICE_ATTESTATION/);
+    assert.match(apple, /DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED/);
   }
 
   assert.match(frontend, /GET_DEVICE_ATTESTATION_KEY/);
-  assert.match(frontend, /SIGN_DEVICE_ATTESTATION/);
+  assert.doesNotMatch(frontend, /SIGN_DEVICE_ATTESTATION/);
   assert.match(frontend, /DEVICE_ATTESTATION_SIGNATURE_MISSING/);
   assert.match(frontend, /ensureNativeDeviceAttestationBinding/);
   assert.match(frontend, /\/cafe-ops\/devices\/attestation\/key/);
@@ -409,6 +408,7 @@ test('REC-04D — native bridges keep private signing keys inside platform store
 test('REC-04D — Android spooler terminal state is the only native path that can produce signed PRINTED', () => {
   const printManager = fs.readFileSync(androidPrintManagerPath, 'utf8');
   const androidBridge = fs.readFileSync(androidBridgePath, 'utf8');
+  const bindingStore = fs.readFileSync(androidPrintAttestationStorePath, 'utf8');
   const frontend = fs.readFileSync(frontendAttestationPath, 'utf8');
 
   assert.match(printManager, /printJob\.isCompleted\s*->\s*"COMPLETED"/);
@@ -416,15 +416,23 @@ test('REC-04D — Android spooler terminal state is the only native path that ca
   assert.match(printManager, /printJob\.isCancelled\s*->\s*"CANCELLED"/);
   assert.match(printManager, /physicalCompletionVerified\s*=\s*status\s*==\s*"COMPLETED"/);
 
-  assert.match(androidBridge, /"GET_PRINT_JOB_STATUS"/);
+  assert.match(bindingStore, /fun bind\(/);
+  assert.match(bindingStore, /fun get\(/);
+  assert.match(bindingStore, /MAX_AGE_MS/);
+
+  assert.match(androidBridge, /"ATTEST_PRINT_JOB_RESULT"/);
+  assert.match(androidBridge, /ZamorinPrintAttestationStore\.get\(context, platformJobId\)/);
   assert.match(androidBridge, /ZamorinPrintManager\.getPrintJobStatus\(context, platformJobId\)/);
+  assert.match(androidBridge, /"COMPLETED"\s*->\s*\{/);
+  assert.match(androidBridge, /acknowledgementStatus = "PRINTED"/);
+  assert.match(androidBridge, /Signature\.getInstance\("SHA256withECDSA"\)/);
+  assert.match(androidBridge, /DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED/);
 
   assert.match(frontend, /monitorAndroidPrintAndAcknowledge/);
-  assert.match(frontend, /status\s*===\s*'COMPLETED'\s*&&\s*statusResult\.physicalCompletionVerified\s*===\s*true/);
-  assert.match(frontend, /status:\s*'PRINTED'/);
-  assert.match(frontend, /status:\s*'FAILED'/);
-  assert.match(frontend, /status:\s*'CANCELLED'/);
-  assert.match(frontend, /drawerKickStatus:\s*dispatch\?\.drawerKickRequested\s*\?\s*'UNKNOWN'/);
+  assert.match(frontend, /'ATTEST_PRINT_JOB_RESULT'/);
+  assert.match(frontend, /status === 'PRINTED'/);
+  assert.match(frontend, /attestedResult\.physicalCompletionVerified !== true/);
+  assert.doesNotMatch(frontend, /SIGN_DEVICE_ATTESTATION/);
 });
 
 test('REC-04D — SAVE_AND_PRINT consumes one canonical PrintJob and browser fallback cannot self-acknowledge', () => {
@@ -436,6 +444,8 @@ test('REC-04D — SAVE_AND_PRINT consumes one canonical PrintJob and browser fal
   assert.match(posTill, /let dispatch = pendingInitialDispatch;\s*pendingInitialDispatch = null;/);
   assert.match(posTill, /if \(pendingInitialDispatch\)[\s\S]{0,300}?printThermal\(\)/);
   assert.match(posTill, /monitorAndroidPrintAndAcknowledge\(dispatch, nativeResponse\)/);
+  assert.match(posTill, /attestationContext:[\s\S]{0,300}?dispatch\?\.attestationContext/);
+  assert.match(posTill, /drawerKickRequested:\s*Boolean\(dispatch\.drawerKickRequested\)/);
   assert.match(posTill, /window\.print\(\);[\s\S]{0,180}?physicalCompletionVerified:\s*false/);
 
   assert.doesNotMatch(
