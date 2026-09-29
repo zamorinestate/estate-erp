@@ -1113,6 +1113,7 @@ const staffCheckIn = asyncHandler(async (request, response) => {
   let geofenceResult = null;
   if (typeof latitude === 'number' && typeof longitude === 'number') {
     geofenceResult = await attendanceQrService.verifyGeofence({
+      organisationId,
       cafeId,
       latitude,
       longitude,
@@ -1502,6 +1503,7 @@ const staffCheckOut = asyncHandler(async (request, response) => {
   let geofenceResult = null;
   if (typeof latitude === 'number' && typeof longitude === 'number') {
     geofenceResult = await attendanceQrService.verifyGeofence({
+      organisationId,
       cafeId: qrValidation?.resolvedCafeId || attendance.cafeId,
       latitude,
       longitude,
@@ -2544,6 +2546,7 @@ const verifyPunchGeofence = asyncHandler(async (request, response) => {
   }
 
   const geofenceResult = await attendanceQrService.verifyGeofence({
+    organisationId: request.auth.organisationId,
     cafeId: normalizeIdentifier(cafeId),
     latitude: Number(latitude),
     longitude: Number(longitude),
