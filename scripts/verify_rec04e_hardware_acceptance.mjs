@@ -31,7 +31,8 @@ if (report.schemaVersion !== 'REC04E_HARDWARE_ACCEPTANCE_V1') failures.push('sch
 if (!/^[a-f0-9]{40}$/.test(String(report.candidateSha || '').toLowerCase())) failures.push('candidateSha');
 if (expectedSha && String(report.candidateSha || '').toLowerCase() !== expectedSha) failures.push('candidateShaMismatch');
 if (!/^REC04E-/.test(String(report.acceptanceId || ''))) failures.push('acceptanceId');
-if (!/^PJ-REC04E-/.test(String(report.printJobId || ''))) failures.push('printJobId');
+const canonicalPrintJobIdPattern = /^PJ-(?:PRT|REP)-[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/;
+if (!canonicalPrintJobIdPattern.test(String(report.printJobId || '').trim().toUpperCase())) failures.push('printJobId');
 if (!/^[a-f0-9]{64}$/.test(String(report.payload?.sha256 || ''))) failures.push('payload.sha256');
 if (!Number.isSafeInteger(Number(report.payload?.bytes)) || Number(report.payload.bytes) <= 0) failures.push('payload.bytes');
 if (report.printer?.endpointPinned !== true) failures.push('printer.endpointPinned');
