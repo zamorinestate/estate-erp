@@ -663,12 +663,12 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
 
   // Append immutable audit record
   terminal.auditEvents.push({
-    event: 'DRAWER_KICK_TRIGGERED',
+    event: 'DRAWER_KICK_PREPARED',
     timestamp: new Date(),
     actorUserId: actorUserId || 'SYSTEM',
     transactionId: transactionId || null,
     reason: reason.trim(),
-    details: `Triggered pulse on pin ${terminal.drawerConfig.pin || 2}`,
+    details: `Prepared drawer-kick pulse for pin ${terminal.drawerConfig.pin || 2}; physical emission is not yet acknowledged`,
   });
 
   await terminal.save();
@@ -680,7 +680,7 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
     actorUserId: actorUserId || 'SYSTEM',
     actorRole: actor.role || 'STAFF',
     module: 'HARDWARE_BRIDGE',
-    action: 'CASH_DRAWER_KICK',
+    action: 'CASH_DRAWER_KICK_PREPARED',
     entityType: 'HARDWARE_TERMINAL',
     entityId: terminal.terminalId,
     reason,
@@ -693,7 +693,10 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
     terminalId: terminal.terminalId,
     pin: terminal.drawerConfig.pin || 2,
     kickBuffer,
-    triggeredAt: new Date(),
+    status: 'PREPARED',
+    dispatched: false,
+    acknowledged: false,
+    preparedAt: new Date(),
   };
 }
 
