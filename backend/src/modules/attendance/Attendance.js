@@ -229,17 +229,17 @@ const attendanceSchema = new mongoose.Schema(
 
     shiftName: {
       type: String,
-      default: 'Regular Shift',
+      default: null,
     },
 
     scheduledStart: {
       type: String,
-      default: '07:00',
+      default: null,
     },
 
     scheduledEnd: {
       type: String,
-      default: '15:30',
+      default: null,
     },
 
     checkInAt: {
