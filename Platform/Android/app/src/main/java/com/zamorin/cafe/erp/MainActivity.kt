@@ -437,6 +437,12 @@ class MainActivity : AppCompatActivity(), ZamorinNativeBridge.BridgeCallbacks {
             put("requestId", requestId)
             put("success", result.success)
             put("jobName", result.jobName)
+            put("printed", false)
+            put("printDispatched", result.success)
+            put("status", result.status)
+            put("physicalCompletionVerified", false)
+            put("completed", result.completed)
+            if (result.platformJobId != null) put("platformJobId", result.platformJobId)
             if (result.error != null) put("error", result.error)
         }
         dispatchJsEvent(response.toString())
