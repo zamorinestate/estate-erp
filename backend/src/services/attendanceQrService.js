@@ -389,8 +389,15 @@ class AttendanceQrService {
    * Server-authoritative distance calculation and geofence verification against Cafe.address.
    */
   async verifyGeofence({ cafeId, latitude, longitude, accuracyMeters }) {
-    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-      throw new ApiError(400, 'COORDINATES_REQUIRED', 'Valid numeric GPS latitude and longitude are required.');
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new ApiError(400, 'COORDINATES_REQUIRED', 'Valid finite GPS latitude and longitude are required.');
     }
 
     const cafeDoc = await Cafe.findOne({ cafeId }).lean();
@@ -400,8 +407,8 @@ class AttendanceQrService {
 
     if (
       !cafeDoc.address ||
-      typeof cafeDoc.address.latitude !== 'number' ||
-      typeof cafeDoc.address.longitude !== 'number'
+      !Number.isFinite(cafeDoc.address.latitude) ||
+      !Number.isFinite(cafeDoc.address.longitude)
     ) {
       throw new ApiError(
         422,
@@ -410,7 +417,11 @@ class AttendanceQrService {
       );
     }
 
-    if (typeof accuracyMeters === 'number' && accuracyMeters > 100) {
+    if (accuracyMeters !== undefined && accuracyMeters !== null && (!Number.isFinite(accuracyMeters) || accuracyMeters < 0)) {
+      throw new ApiError(400, 'GPS_ACCURACY_INVALID', 'GPS accuracy must be a finite non-negative number.');
+    }
+
+    if (Number.isFinite(accuracyMeters) && accuracyMeters > 100) {
       throw new ApiError(
         422,
         'LOW_GPS_ACCURACY',
@@ -440,7 +451,7 @@ class AttendanceQrService {
       geofenceVerified: true,
       distanceMeters: Math.round(distance),
       allowedRadiusMeters: allowedRadius,
-      accuracyMeters: typeof accuracyMeters === 'number' ? Math.round(accuracyMeters) : null,
+      accuracyMeters: Number.isFinite(accuracyMeters) ? Math.round(accuracyMeters) : null,
       cafeId,
       cafeName: cafeDoc.name,
     };
