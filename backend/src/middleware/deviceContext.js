@@ -21,18 +21,20 @@ async function attachDeviceContext(req, res, next) {
 
     if (deviceId) {
       const now = Date.now();
-      const cached = activeDeviceCache.get(deviceId);
+      const cacheKey = `${req.auth.organisationId}:${deviceId}`;
+      const cached = activeDeviceCache.get(cacheKey);
 
       if (cached && now - cached.timestamp < DEVICE_CACHE_TTL_MS) {
         deviceRegistration = cached.doc;
-      } else if (req.auth.role !== 'STAFF') {
+      } else {
         deviceRegistration = await DeviceRegistration.findOne({
           deviceId,
+          organisationId: req.auth.organisationId,
           status: 'ACTIVE',
         }).lean();
 
         if (deviceRegistration) {
-          activeDeviceCache.set(deviceId, { doc: deviceRegistration, timestamp: now });
+          activeDeviceCache.set(`${req.auth.organisationId}:${deviceId}`, { doc: deviceRegistration, timestamp: now });
         }
       }
     }
