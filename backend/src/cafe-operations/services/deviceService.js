@@ -11,6 +11,19 @@ const {
   publicKeyThumbprint,
 } = require('../../services/deviceAttestationService');
 
+function resolveCanonicalDevicePlatform(platform, signingKeyProvider = null) {
+  const provider = String(signingKeyProvider || '').trim().toUpperCase();
+  if (provider === 'ANDROID_KEYSTORE') return 'ANDROID';
+  if (provider === 'WINDOWS_CNG') return 'DESKTOP';
+
+  const value = String(platform || '').trim().toLowerCase();
+  if (value === 'android') return 'ANDROID';
+  if (value === 'ios' || value === 'ipados') return 'IOS';
+  if (value === 'macos' || value === 'windows' || value === 'desktop') return 'DESKTOP';
+  if (value === 'web' || value === 'web_pos' || value === 'pwa') return 'WEB_POS';
+  return 'UNKNOWN';
+}
+
 async function resolveCanonicalDeviceScope(device) {
   const rawCafeId = String(device?.cafeId || '').trim();
   const rawOrganisationId = String(device?.organisationId || '').trim();
@@ -134,7 +147,7 @@ async function enrollDevice({
         deviceClass: 'CAFE_OWNED',
         assignedCafeId: canonicalScope.cafeId,
         deviceName: device.displayName,
-        platform: 'WEB_POS',
+        platform: resolveCanonicalDevicePlatform(device.platform || platform, normalizedSigningKeyProvider),
         status: 'ACTIVE',
         publicSigningKey: canonicalSigningKey,
         signingKeyThumbprint,
@@ -357,6 +370,7 @@ async function bindAttestationKey(device, {
     signingKeyAlgorithm: canonical.signingKeyAlgorithm || null,
     signingKeyProvider: canonical.signingKeyProvider || null,
     signingKeyCreatedAt: canonical.signingKeyCreatedAt || null,
+    platform: canonical.platform || 'UNKNOWN',
     metadata: { ...(canonical.metadata || {}) },
   };
 
@@ -365,6 +379,7 @@ async function bindAttestationKey(device, {
   canonical.signingKeyAlgorithm = ATTESTATION_ALGORITHM;
   canonical.signingKeyProvider = provider;
   canonical.signingKeyCreatedAt = canonical.signingKeyCreatedAt || new Date();
+  canonical.platform = resolveCanonicalDevicePlatform(device.platform, provider);
   canonical.metadata = {
     ...(canonical.metadata || {}),
     attestationCapable: true,
@@ -390,6 +405,7 @@ async function bindAttestationKey(device, {
     canonical.signingKeyAlgorithm = previousCanonical.signingKeyAlgorithm;
     canonical.signingKeyProvider = previousCanonical.signingKeyProvider;
     canonical.signingKeyCreatedAt = previousCanonical.signingKeyCreatedAt;
+    canonical.platform = previousCanonical.platform;
     canonical.metadata = previousCanonical.metadata;
     try {
       await canonical.save();

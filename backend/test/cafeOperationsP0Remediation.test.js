@@ -376,6 +376,7 @@ test('CAFÉ OPS-01 — P0 Remediation Suite (P0-1, P0-2, P0-3)', async (t) => {
     assert.ok(savedRegDoc, 'DeviceRegistration document must be created');
     assert.equal(savedRegDoc.deviceId, 'DEV-POS-0099');
     assert.equal(savedRegDoc.assignedCafeId, 'ZC-0001');
+    assert.equal(savedRegDoc.platform, 'WEB_POS');
     assert.equal(savedRegDoc.status, 'ACTIVE');
   });
 

@@ -208,3 +208,18 @@ test('REC-04E dispatch advertises purpose-bound acknowledgement only where an at
   assert.match(source, /deviceAcknowledgementSupported: attestationBinding\.supported/);
   assert.doesNotMatch(source, /deviceAcknowledgementRequired: Boolean\(dispatchedDeviceId\)/);
 });
+
+
+test('REC-04E device platform provenance cannot default or hardcode unknown devices into Android attestation', () => {
+  const deviceModel = fs.readFileSync(path.join(__dirname, '..', 'src', 'models', 'DeviceRegistration.js'), 'utf8');
+  const deviceService = fs.readFileSync(path.join(__dirname, '..', 'src', 'cafe-operations', 'services', 'deviceService.js'), 'utf8');
+  const registerDevice = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'screens', 'registerDevice.js'), 'utf8');
+
+  assert.match(deviceModel, /platform:[\s\S]{0,180}?default: 'UNKNOWN'/);
+  assert.match(deviceService, /function resolveCanonicalDevicePlatform/);
+  assert.match(deviceService, /provider === 'ANDROID_KEYSTORE'\) return 'ANDROID'/);
+  assert.doesNotMatch(deviceService, /platform: 'WEB_POS'/);
+  assert.match(registerDevice, /function resolveEnrollmentPlatform\(\)/);
+  assert.match(registerDevice, /platform: resolveEnrollmentPlatform\(\)/);
+  assert.doesNotMatch(registerDevice, /platform: 'web'/);
+});

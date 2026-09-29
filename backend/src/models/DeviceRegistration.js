@@ -66,7 +66,7 @@ const deviceRegistrationSchema = new mongoose.Schema(
     platform: {
       type: String,
       enum: ['ANDROID', 'IOS', 'WEB_POS', 'DESKTOP', 'UNKNOWN'],
-      default: 'ANDROID',
+      default: 'UNKNOWN',
     },
 
     appVersion: {

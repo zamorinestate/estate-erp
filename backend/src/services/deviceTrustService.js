@@ -466,6 +466,7 @@ class DeviceTrustService {
       deviceName: newDeviceName || `${oldReg.deviceName} (Replacement)`,
       deviceClass: 'CAFE_OWNED',
       assignedCafeId: oldReg.assignedCafeId,
+      platform: oldReg.platform || 'UNKNOWN',
       status: 'ACTIVE',
       trustLevel: 'ENROLLED',
       enrollmentApprovedBy: masterUserId,
