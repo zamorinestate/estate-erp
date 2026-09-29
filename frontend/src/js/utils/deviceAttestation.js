@@ -204,6 +204,104 @@ export async function submitPrintAcknowledgement(dispatch, acknowledgement = {})
   );
 }
 
+
+function unwrapNativeResult(response) {
+  return response?.result || response || {};
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * REC-04D Android completion monitor.
+ *
+ * Android's application PrintManager can report terminal COMPLETED / FAILED /
+ * CANCELLED states for print jobs created by this application. Only those
+ * terminal states are converted into signed server acknowledgements.
+ */
+export async function monitorAndroidPrintAndAcknowledge(
+  dispatch,
+  nativePrintResponse,
+  { pollIntervalMs = 1000, maxPolls = 120 } = {}
+) {
+  const capabilities = NativeCapabilities.getCapabilities();
+  if (!capabilities.isNative || String(capabilities.platform || '').toUpperCase() !== 'ANDROID') {
+    return { monitored: false, reason: 'ANDROID_NATIVE_REQUIRED' };
+  }
+
+  const initial = unwrapNativeResult(nativePrintResponse);
+  const platformJobId = String(initial.platformJobId || '').trim();
+  if (!platformJobId) {
+    return { monitored: false, reason: 'PLATFORM_PRINT_JOB_ID_MISSING' };
+  }
+
+  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    if (attempt > 0) await delay(pollIntervalMs);
+
+    const statusResponse = await NativeCapabilities.sendNativeMessage(
+      'GET_PRINT_JOB_STATUS',
+      { platformJobId }
+    );
+    const statusResult = unwrapNativeResult(statusResponse);
+    const status = String(statusResult.status || '').toUpperCase();
+
+    if (!statusResult.terminal) {
+      continue;
+    }
+
+    let acknowledgement;
+    if (status === 'COMPLETED' && statusResult.physicalCompletionVerified === true) {
+      acknowledgement = {
+        status: 'PRINTED',
+        drawerKickStatus: dispatch?.drawerKickRequested ? 'UNKNOWN' : null,
+      };
+    } else if (status === 'FAILED') {
+      acknowledgement = {
+        status: 'FAILED',
+        failureCode: 'ANDROID_PRINT_JOB_FAILED',
+        failureReason: statusResult.error || 'Android print spooler reported a failed print job.',
+        drawerKickStatus: dispatch?.drawerKickRequested ? 'UNKNOWN' : null,
+      };
+    } else if (status === 'CANCELLED') {
+      acknowledgement = {
+        status: 'CANCELLED',
+        failureCode: 'ANDROID_PRINT_JOB_CANCELLED',
+        failureReason: 'Android print spooler reported that the print job was cancelled.',
+        drawerKickStatus: dispatch?.drawerKickRequested ? 'UNKNOWN' : null,
+      };
+    } else {
+      return {
+        monitored: true,
+        terminal: true,
+        acknowledged: false,
+        platformJobId,
+        status,
+        reason: 'UNSUPPORTED_TERMINAL_PRINT_STATE',
+      };
+    }
+
+    const serverAck = await submitPrintAcknowledgement(dispatch, acknowledgement);
+    return {
+      monitored: true,
+      terminal: true,
+      acknowledged: true,
+      platformJobId,
+      status,
+      serverAck,
+    };
+  }
+
+  return {
+    monitored: true,
+    terminal: false,
+    acknowledged: false,
+    platformJobId,
+    status: 'PENDING',
+    reason: 'PRINT_JOB_NOT_TERMINAL_WITHIN_MONITOR_WINDOW',
+  };
+}
+
 export {
   ATTESTATION_VERSION,
   ATTESTATION_ALGORITHM,
