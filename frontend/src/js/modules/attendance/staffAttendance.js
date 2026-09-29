@@ -1445,7 +1445,16 @@ export function openVerificationModal(flowType, onDoneCallback, { preScannedQrTo
         throw new Error(res?.data?.message || "Invalid Attendance QR token.");
       }
 
-      scannedQrToken = token;
+      const serverTransition = String(res.data.transition || "").toUpperCase();
+      if (serverTransition && serverTransition !== flowType) {
+        throw new Error(
+          serverTransition === "CHECK_OUT"
+            ? "Your attendance session is already checked in. Reopen attendance to complete Check-Out."
+            : "No active check-in session was found. Reopen attendance to complete Check-In."
+        );
+      }
+
+      scannedQrToken = res.data.scanGrant || token;
       verifiedCafe = res.data;
 
       // Mark Step 1 complete with verified café identity & Company Logo
