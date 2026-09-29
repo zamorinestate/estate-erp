@@ -98,6 +98,7 @@ const ALLOWED_CAFE_CREATE_FIELDS = [
   'mapsLink',
   'latitude',
   'longitude',
+  'geofenceRadiusMetres',
   'landmark',
   'city',
   'district',
@@ -427,8 +428,15 @@ class CafeService {
               pincode: sanitized.pincode || sanitized.address?.pincode || '',
               country: sanitized.country || sanitized.address?.country || 'India',
               landmark: sanitized.landmark || sanitized.address?.landmark || '',
-              latitude: sanitized.latitude || sanitized.address?.latitude || null,
-              longitude: sanitized.longitude || sanitized.address?.longitude || null,
+              latitude: Number.isFinite(sanitized.latitude)
+                ? sanitized.latitude
+                : (Number.isFinite(sanitized.address?.latitude) ? sanitized.address.latitude : null),
+              longitude: Number.isFinite(sanitized.longitude)
+                ? sanitized.longitude
+                : (Number.isFinite(sanitized.address?.longitude) ? sanitized.address.longitude : null),
+              geofenceRadiusMetres: Number.isFinite(sanitized.geofenceRadiusMetres)
+                ? sanitized.geofenceRadiusMetres
+                : (Number.isFinite(sanitized.address?.geofenceRadiusMetres) ? sanitized.address.geofenceRadiusMetres : 100),
               doorNumber: sanitized.doorNumber || sanitized.address?.doorNumber || '',
               possessionType: sanitized.possessionType || sanitized.address?.possessionType || 'RENTED',
               leaseStartDate: sanitized.leaseStartDate || sanitized.address?.leaseStartDate || null,
@@ -953,6 +961,41 @@ class CafeService {
     const stateName = sanitized.state || address.state || '';
     const pinCode = sanitized.pincode || address.pinCode || address.pincode || '';
 
+    const rawLatitude = sanitized.latitude ?? address.latitude;
+    const rawLongitude = sanitized.longitude ?? address.longitude;
+    const hasLatitude = rawLatitude !== undefined && rawLatitude !== null && rawLatitude !== '';
+    const hasLongitude = rawLongitude !== undefined && rawLongitude !== null && rawLongitude !== '';
+    if (hasLatitude !== hasLongitude) {
+      errors.push('Café geofence latitude and longitude must be supplied together.');
+    }
+    if (hasLatitude && hasLongitude) {
+      const latitude = Number(rawLatitude);
+      const longitude = Number(rawLongitude);
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+        errors.push('Café latitude must be a finite value between -90 and 90.');
+      }
+      if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        errors.push('Café longitude must be a finite value between -180 and 180.');
+      }
+      if (Number.isFinite(latitude) && latitude >= -90 && latitude <= 90) {
+        sanitized.latitude = latitude;
+      }
+      if (Number.isFinite(longitude) && longitude >= -180 && longitude <= 180) {
+        sanitized.longitude = longitude;
+      }
+    }
+
+    const rawGeofenceRadius =
+      sanitized.geofenceRadiusMetres ??
+      address.geofenceRadiusMetres ??
+      100;
+    const geofenceRadiusMetres = Number(rawGeofenceRadius);
+    if (!Number.isFinite(geofenceRadiusMetres) || geofenceRadiusMetres < 10 || geofenceRadiusMetres > 1000) {
+      errors.push('Attendance geofence radius must be between 10 and 1000 metres.');
+    } else {
+      sanitized.geofenceRadiusMetres = geofenceRadiusMetres;
+    }
+
     let resolvedState = null;
     if (stateCode) {
       resolvedState = resolveStateByCode(stateCode);
@@ -1183,6 +1226,15 @@ class CafeService {
           stateCode: sanitized.stateCode || sanitized.address?.stateCode || '',
           pinCode: sanitized.pincode || sanitized.address?.pinCode || '',
           country: 'India',
+          latitude: Number.isFinite(sanitized.latitude)
+            ? sanitized.latitude
+            : (Number.isFinite(sanitized.address?.latitude) ? sanitized.address.latitude : null),
+          longitude: Number.isFinite(sanitized.longitude)
+            ? sanitized.longitude
+            : (Number.isFinite(sanitized.address?.longitude) ? sanitized.address.longitude : null),
+          geofenceRadiusMetres: Number.isFinite(sanitized.geofenceRadiusMetres)
+            ? sanitized.geofenceRadiusMetres
+            : (Number.isFinite(sanitized.address?.geofenceRadiusMetres) ? sanitized.address.geofenceRadiusMetres : 100),
         },
         contactProfile: {
           primaryContact: {
