@@ -19,6 +19,7 @@ const {
   getRoster,
   saveRoster,
   publishRoster,
+  listShiftsForRoster,
   decideOvertime,
   getOvertimeList,
   getExceptionList,
@@ -95,6 +96,7 @@ router.post('/preview-recalculation', previewRecalculation);
 router.get('/calendar-360/:userId', getEmployeeMonthlyCalendar);
 
 // Shift Roster
+router.get('/roster/shifts', listShiftsForRoster);
 router.get('/roster', getRoster);
 router.post('/roster', saveRoster);
 router.post('/roster/:rosterId/publish', publishRoster);
