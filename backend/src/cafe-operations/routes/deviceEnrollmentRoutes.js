@@ -2,6 +2,7 @@
 const express = require('express');
 const deviceService = require('../services/deviceService');
 const { deviceContext } = require('../middleware/deviceContext');
+const { authenticate } = require('../../middleware/authenticate');
 const sessionPolicy = require('../config/sessionPolicy');
 const { ok, fail } = require('../utils/responses');
 
@@ -51,7 +52,7 @@ router.post('/enroll', async (req, res, next) => {
   }
 });
 
-router.post('/attestation/key', deviceContext, async (req, res, next) => {
+router.post('/attestation/key', deviceContext, authenticate, async (req, res, next) => {
   try {
     const {
       publicSigningKey,
