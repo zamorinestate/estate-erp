@@ -1106,7 +1106,10 @@ function wirePOSEventListeners(root) {
     root.querySelector("#preview-receipt-btn")?.click();
   });
   root.querySelector("#pos-sd-drawer")?.addEventListener("click", () => {
-    showToast("Cash drawer kick pulse sent to thermal printer.", "info");
+    showToast(
+      "Manual cash-drawer opening is unavailable until a verified hardware transport can acknowledge drawer actuation.",
+      "warning"
+    );
   });
 
   // Subview toggle

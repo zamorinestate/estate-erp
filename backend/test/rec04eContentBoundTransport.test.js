@@ -1914,3 +1914,17 @@ test('REC-04E terminal PrintJob mutation occurs only after execution-time revali
     'terminal PrintJob mutation must happen only after execution-time authority and binding revalidation'
   );
 });
+
+
+test('REC-04E manual drawer control never reports a pulse as sent without verified transport', () => {
+  const till = fs.readFileSync(posTillPath, 'utf8');
+
+  assert.doesNotMatch(
+    till,
+    /Cash drawer kick pulse sent to thermal printer\./
+  );
+  assert.match(
+    till,
+    /Manual cash-drawer opening is unavailable until a verified hardware transport can acknowledge drawer actuation\./
+  );
+});
