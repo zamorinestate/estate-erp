@@ -15,11 +15,15 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const test = require('node:test');
+const jwt = require('jsonwebtoken');
 
 const { createApp } = require('../src/server');
 const { User } = require('../src/models/User');
 const { Session } = require('../src/models/Session');
 const authService = require('../src/services/authService');
+
+const AUTH_ME_TEST_JWT_SECRET = 'auth_me_test_jwt_secret_2026_at_least_32_chars';
+process.env.JWT_ACCESS_SECRET = AUTH_ME_TEST_JWT_SECRET;
 
 function makeUser(overrides = {}) {
   return new User({
@@ -111,6 +115,115 @@ test('GET /api/v1/auth/me returns 401 when unauthenticated', async (t) => {
   const { status, body } = await request(server, '/api/v1/auth/me');
   assert.equal(status, 401);
   assert.equal(body.error?.code, 'AUTHENTICATION_REQUIRED');
+});
+
+
+test('GET /api/v1/auth/me rejects a forged access-token signature', async (t) => {
+  const app = createApp({ allowedOrigins: ['*'], production: false });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const forgedToken = jwt.sign(
+    {
+      type: 'access',
+      sid: 'SS-FORGED-0001',
+      sub: 'MU-0001',
+      org: 'ORG-TEST',
+      role: 'MASTER',
+      sv: 0,
+      usv: 0,
+      pv: 0,
+    },
+    'different_test_secret_that_cannot_validate_the_signature',
+    {
+      algorithm: 'HS256',
+      issuer: 'zamorin-cafe-erp-api',
+      audience: 'zamorin-cafe-erp',
+      expiresIn: '5m',
+    }
+  );
+
+  const { status, body } = await request(server, '/api/v1/auth/me', {
+    token: forgedToken,
+  });
+
+  assert.equal(status, 401);
+  assert.equal(body.error?.code, 'AUTH_TOKEN_INVALID');
+});
+
+test('GET /api/v1/auth/me denies an otherwise valid live session after the user is deleted or archived', async (t) => {
+  const session = makeSession();
+
+  t.mock.method(authService, 'verifyAccessToken', async () => ({
+    payload: {
+      sub: 'MU-0001',
+      org: 'ORG-TEST',
+      role: 'MASTER',
+      sv: 0,
+      usv: 0,
+      pv: 0,
+      sid: session.sessionId,
+    },
+    session,
+  }));
+
+  t.mock.method(User, 'findOne', () => makeQueryMock(null));
+
+  const app = createApp({ allowedOrigins: ['*'], production: false });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const { status, body } = await request(server, '/api/v1/auth/me', {
+    token: 'valid-session-for-now-unavailable-user',
+  });
+
+  assert.equal(status, 401);
+  assert.equal(body.error?.code, 'USER_UNAVAILABLE');
+});
+
+test('GET /api/v1/auth/me denies a stale or forged privilege claim when the live user role is lower', async (t) => {
+  const user = makeUser({
+    userId: 'SU-0001',
+    role: 'STAFF',
+    isPrimaryMaster: false,
+    sessionVersion: 0,
+    permissionsVersion: 0,
+  });
+  const session = makeSession({
+    userId: 'SU-0001',
+    roleSnapshot: 'MASTER',
+  });
+
+  t.mock.method(authService, 'verifyAccessToken', async () => ({
+    payload: {
+      sub: 'SU-0001',
+      org: 'ORG-TEST',
+      role: 'MASTER',
+      sv: 0,
+      usv: 0,
+      pv: 0,
+      sid: session.sessionId,
+    },
+    session,
+  }));
+  t.mock.method(User, 'findOne', () => makeQueryMock(user));
+
+  const app = createApp({ allowedOrigins: ['*'], production: false });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const { status, body } = await request(server, '/api/v1/auth/me', {
+    token: 'signed-but-stale-privilege-claim',
+  });
+
+  assert.equal(status, 401);
+  assert.equal(body.error?.code, 'ROLE_CHANGED');
 });
 
 test('GET /api/v1/auth/me returns safe user identity and session metadata for authenticated MASTER', async (t) => {
