@@ -229,6 +229,38 @@ const deviceRegistrationSchema = new mongoose.Schema(
   }
 );
 
+deviceRegistrationSchema.pre('validate', function enforceHardwareTrustEvidence() {
+  const securityLevel = String(this.signingKeyHardwareSecurityLevel || 'UNKNOWN').trim().toUpperCase();
+  const hardwareEvidenceComplete =
+    this.signingKeyHardwareBackedVerified === true &&
+    ['TRUSTED_ENVIRONMENT', 'STRONGBOX'].includes(securityLevel) &&
+    Boolean(this.signingKeyHardwareAttestationVerifiedAt);
+
+  if (this.signingKeyHardwareBackedVerified === true && !hardwareEvidenceComplete) {
+    this.invalidate(
+      'signingKeyHardwareBackedVerified',
+      'Verified hardware-backed signing keys require TrustedEnvironment/StrongBox evidence and a verification timestamp.'
+    );
+  }
+
+  if (String(this.trustLevel || '').trim().toUpperCase() === 'HARDWARE_BACKED' && !hardwareEvidenceComplete) {
+    this.invalidate(
+      'trustLevel',
+      'HARDWARE_BACKED trust requires verified Android hardware key-attestation evidence.'
+    );
+  }
+});
+
+deviceRegistrationSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function blockUnceremonialHardwareTrust() {
+  const update = this.getUpdate() || {};
+  const nextTrustLevel = update?.$set?.trustLevel ?? update?.trustLevel;
+  if (String(nextTrustLevel || '').trim().toUpperCase() === 'HARDWARE_BACKED') {
+    const err = new Error('HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY');
+    err.code = 'HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY';
+    throw err;
+  }
+});
+
 deviceRegistrationSchema.index({ organisationId: 1, assignedCafeId: 1, status: 1 });
 deviceRegistrationSchema.index({ organisationId: 1, deviceClass: 1, status: 1 });
 deviceRegistrationSchema.index({ organisationId: 1, status: 1, lastSeenAt: -1 });

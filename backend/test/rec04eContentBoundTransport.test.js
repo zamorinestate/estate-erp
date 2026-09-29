@@ -445,3 +445,16 @@ test('REC-04E enrollment and diagnostics do not mislabel signing capability as h
   assert.match(enrollmentRoutes, /signingKeyHardwareBackedVerified: device\.signingKeyHardwareBackedVerified === true/);
   assert.match(enrollmentRoutes, /signingKeyHardwareSecurityLevel: device\.signingKeyHardwareSecurityLevel \|\| 'UNKNOWN'/);
 });
+
+
+test('REC-04E HARDWARE_BACKED trust cannot exist without verified hardware attestation evidence', async () => {
+  const deviceModelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'models', 'DeviceRegistration.js'), 'utf8');
+
+  assert.match(deviceModelSource, /enforceHardwareTrustEvidence/);
+  assert.match(deviceModelSource, /TRUSTED_ENVIRONMENT/);
+  assert.match(deviceModelSource, /STRONGBOX/);
+  assert.match(deviceModelSource, /signingKeyHardwareAttestationVerifiedAt/);
+  assert.match(deviceModelSource, /HARDWARE_BACKED trust requires verified Android hardware key-attestation evidence/);
+  assert.match(deviceModelSource, /HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY/);
+  assert.match(deviceModelSource, /pre\(\['updateOne', 'updateMany', 'findOneAndUpdate'\]/);
+});
