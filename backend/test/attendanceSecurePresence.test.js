@@ -175,6 +175,14 @@ test('QR-001: getActiveOrNewChallenge generates signed token with purpose ATTEND
   assert.equal(challenge.rotationIntervalSeconds, 45);
   assert.ok(challenge.qrToken);
   assert.equal(challenge.qrToken.split('.').length, 5);
+  assert.ok(challenge.opaqueToken);
+  assert.ok(challenge.attendanceUrl);
+
+  const attendanceUrl = new URL(challenge.attendanceUrl);
+  assert.equal(attendanceUrl.searchParams.get('returnTo'), 'staff-attendance');
+  assert.equal(attendanceUrl.searchParams.get('attendanceQr'), challenge.opaqueToken);
+  assert.equal(attendanceUrl.searchParams.has('cafeId'), false);
+  assert.equal(attendanceUrl.searchParams.has('organisationId'), false);
 });
 
 test('QR-002: consecutive request within 45s returns same challenge token', async () => {
@@ -362,6 +370,36 @@ test('GEO-005: verifyGeofence throws 422 GEOFENCE_NOT_CONFIGURED if Cafe has no 
       });
     },
     { statusCode: 422, code: 'GEOFENCE_NOT_CONFIGURED' }
+  );
+});
+
+test('GEO-006A: verifyGeofence rejects NaN, infinity, and impossible coordinates', async () => {
+  const invalidCoordinates = [
+    { latitude: Number.NaN, longitude: 75.3704 },
+    { latitude: 11.8745, longitude: Number.POSITIVE_INFINITY },
+    { latitude: 91, longitude: 75.3704 },
+    { latitude: 11.8745, longitude: 181 },
+  ];
+
+  for (const coords of invalidCoordinates) {
+    await assert.rejects(
+      async () => attendanceQrService.verifyGeofence({
+        cafeId: 'CAFE-KNR-01',
+        ...coords,
+        accuracyMeters: 10,
+      }),
+      { statusCode: 400, code: 'COORDINATES_REQUIRED' }
+    );
+  }
+
+  await assert.rejects(
+    async () => attendanceQrService.verifyGeofence({
+      cafeId: 'CAFE-KNR-01',
+      latitude: 11.8745,
+      longitude: 75.3704,
+      accuracyMeters: Number.NaN,
+    }),
+    { statusCode: 400, code: 'GPS_ACCURACY_INVALID' }
   );
 });
 
@@ -1005,4 +1043,38 @@ test('FROZEN-001: Rotating Attendance QR does NOT mutate CafeAccess collection',
   assert.equal(challenge.purpose, 'ATTENDANCE_PUNCH');
   assert.equal(challenge.pin, undefined);
   assert.equal(challenge.hashedPin, undefined);
+});
+
+
+test('ATTENDANCE-FLOW-001: QR deep-link, Cafe Operations kiosk, and calendars use canonical secure-presence wiring', () => {
+  const mainSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'main.js'), 'utf8');
+  const staffSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'modules', 'attendance', 'staffAttendance.js'), 'utf8');
+  const managementSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'modules', 'attendance', 'attendanceShifts.js'), 'utf8');
+  const qrPageSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'attendanceQrScannerPage.js'), 'utf8');
+  const displaySource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'cafeAttendanceDisplay.js'), 'utf8');
+  const cafeOpsKioskSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'screens', 'attendanceKiosk.js'), 'utf8');
+  const cafeOpsApiSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'api', 'cafeOpsApi.js'), 'utf8');
+
+  assert.match(qrPageSource, /res\.data\.attendanceUrl \|\| res\.data\.opaqueToken/);
+  assert.match(displaySource, /res\.data\.attendanceUrl \|\| res\.data\.qrToken/);
+  assert.match(cafeOpsApiSource, /attendanceQr: \(\) => apiRequest\('\/devices\/attendance\/qr'/);
+  assert.match(cafeOpsKioskSource, /CafeOpsApi\?\.attendanceQr/);
+  assert.match(cafeOpsKioskSource, /body\.attendanceUrl/);
+
+  assert.match(mainSource, /zamorin\.pendingAttendanceQr/);
+  assert.match(mainSource, /sessionStorage\.setItem/);
+  assert.match(mainSource, /searchParams\.delete\("attendanceQr"\)/);
+  assert.match(staffSource, /preScannedQrToken/);
+  assert.match(staffSource, /runGeofenceVerification/);
+  assert.match(staffSource, /startSelfieCapture/);
+
+  assert.doesNotMatch(staffSource, /const dateKey = `2026-08-/);
+  assert.match(staffSource, /attendanceEvidence\?\.checkIn/);
+  assert.match(staffSource, /attendanceEvidence\?\.checkOut/);
+
+  assert.doesNotMatch(managementSource, /06:42 – 15:10/);
+  assert.doesNotMatch(managementSource, /option value="2026-08"/);
+  assert.doesNotMatch(managementSource, /function openDayAttendanceDetailsModal/);
+  assert.match(managementSource, /calendar-360\/\$\{encodeURIComponent\(selectedUserId\)\}/);
+  assert.match(managementSource, /openAttendanceEvidenceViewer\(\{ attendanceId \}\)/);
 });
