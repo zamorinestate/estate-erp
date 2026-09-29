@@ -269,6 +269,7 @@
     }),
     deviceStatus: () => apiRequest('/devices/status', { method: 'GET' }),
     devicePolicy: () => apiRequest('/devices/policy', { method: 'GET' }),
+    attendanceQr: () => apiRequest('/devices/attendance/qr', { method: 'GET' }),
 
     // ---- Operator PIN --------------------------------------------------
     operatorSignIn: (pin) => apiRequest('/operator/signin', { body: { pin } }),
