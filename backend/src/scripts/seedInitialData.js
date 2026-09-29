@@ -1030,10 +1030,7 @@ async function runSeed() {
         organisationId,
         masterUserId: masterUser.userId,
       });
-      await seedCafeOperationsData({
-        organisationId,
-        masterUserId: masterUser.userId,
-      });
+      console.log('Minimal/production seed mode: demo Café Operations users, devices, PINs, and sample cafés are not created.');
     }
 
     console.log(
@@ -1928,8 +1925,16 @@ async function seedLoansData(orgOrObj, mUserId) {
 }
 
 async function seedCafeOperationsData(orgOrObj, mUserId) {
-  const organisationId = (typeof orgOrObj === 'object' ? orgOrObj.organisationId : orgOrObj) || 'ZAMORIN';
-  const masterUserId = (typeof orgOrObj === 'object' ? orgOrObj.masterUserId : mUserId) || 'MU-0001';
+  const organisationId = normalizeIdentifier(
+    String(typeof orgOrObj === 'object' && orgOrObj !== null ? orgOrObj.organisationId : orgOrObj || '')
+  );
+  const masterUserId = String(
+    typeof orgOrObj === 'object' && orgOrObj !== null ? orgOrObj.masterUserId : mUserId || ''
+  ).trim();
+
+  if (!organisationId || !masterUserId) {
+    throw new Error('seedCafeOperationsData requires explicit organisationId and masterUserId; authority fallbacks are forbidden.');
+  }
   const { Cafe } = require('../models/Cafe');
   const { DeviceRegistration } = require('../models/DeviceRegistration');
   const { User } = require('../models/User');
@@ -2197,36 +2202,6 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       createdBy: masterUserId,
       updatedBy: masterUserId,
     });
-  }
-}
-
-async function runSeed() {
-  const env = loadEnvironment();
-  await connectDatabase({ uri: env.mongodbUri });
-  try {
-    const organisationId = env.initialOrganisationId || 'ZAMORIN';
-    const master = await seedMasterUser({
-      organisationId,
-      masterName: env.initialMasterName || 'Zamorin Master',
-      masterEmail: requireEnvironmentValue('INITIAL_MASTER_EMAIL'),
-      masterPassword: requireEnvironmentValue('INITIAL_MASTER_PASSWORD'),
-    });
-    await seedPermissionRules({ organisationId, masterUserId: master.userId });
-    await seedSystemCommunicationSettings({ organisationId, masterEmail: requireEnvironmentValue('INITIAL_MASTER_EMAIL') });
-
-    const isMinimal = process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false' || process.env.NODE_ENV === 'production';
-    if (!isMinimal) {
-      await seedDepartmentOrdersData({ organisationId, masterUserId: master.userId });
-      await seedWorkforceData({ organisationId, masterUserId: master.userId });
-      await seedExpensePolicyData({ organisationId, masterUserId: master.userId });
-      await seedFinanceData({ organisationId, masterUserId: master.userId });
-      await seedInventoryData({ organisationId, masterUserId: master.userId });
-      await seedMenuData({ organisationId, masterUserId: master.userId });
-      await seedLoansData({ organisationId, masterUserId: master.userId });
-      await seedCafeOperationsData(organisationId, master.userId);
-    }
-  } finally {
-    await disconnectDatabase();
   }
 }
 
