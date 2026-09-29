@@ -135,6 +135,15 @@ const printJobSchema = new mongoose.Schema(
       enum: ['ANDROID_KEYSTORE', 'APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN', 'WINDOWS_CNG', 'WEB_CRYPTO', 'UNKNOWN', null],
       default: null,
     },
+    attestationKeyHardwareBackedVerified: {
+      type: Boolean,
+      default: false,
+    },
+    attestationKeyHardwareSecurityLevel: {
+      type: String,
+      enum: ['UNKNOWN', 'SOFTWARE', 'TRUSTED_ENVIRONMENT', 'STRONGBOX'],
+      default: 'UNKNOWN',
+    },
     attestationVerifiedAt: {
       type: Date,
       default: null,

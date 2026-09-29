@@ -406,3 +406,29 @@ test('REC-04E reprint tracking failure does not increment audited reprint count'
   assert.equal(bill.reprints.length, 0);
   assert.equal(billSaveCount, 0);
 });
+
+
+test('REC-04E keeps provider claims separate from server-verified hardware key attestation', () => {
+  const deviceModel = fs.readFileSync(path.join(__dirname, '..', 'src', 'models', 'DeviceRegistration.js'), 'utf8');
+  const cafeOpsModel = fs.readFileSync(path.join(__dirname, '..', 'src', 'cafe-operations', 'models', 'CafeOpsDevice.js'), 'utf8');
+  const deviceService = fs.readFileSync(path.join(__dirname, '..', 'src', 'cafe-operations', 'services', 'deviceService.js'), 'utf8');
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const printJobModel = fs.readFileSync(modelPath, 'utf8');
+
+  for (const model of [deviceModel, cafeOpsModel]) {
+    assert.match(model, /signingKeyHardwareBackedVerified/);
+    assert.match(model, /signingKeyHardwareSecurityLevel/);
+    assert.match(model, /signingKeyHardwareAttestationVerifiedAt/);
+  }
+
+  assert.match(deviceService, /signingKeyHardwareBackedVerified: false/);
+  assert.match(deviceService, /signingKeyHardwareSecurityLevel: 'UNKNOWN'/);
+  assert.match(deviceService, /hardwareBackedSigningKeyVerified: false/);
+  assert.match(deviceService, /hardwareBackedSigningKeyVerified: canonical\.signingKeyHardwareBackedVerified === true/);
+
+  assert.match(printJobModel, /attestationKeyHardwareBackedVerified/);
+  assert.match(printJobModel, /attestationKeyHardwareSecurityLevel/);
+  assert.match(source, /keyHardwareBackedVerified: registration\.signingKeyHardwareBackedVerified === true/);
+  assert.match(source, /attestationKeyHardwareBackedVerified: attestationBinding\.keyHardwareBackedVerified/);
+  assert.match(source, /attestationKeyHardwareSecurityLevel: attestationBinding\.keyHardwareSecurityLevel/);
+});

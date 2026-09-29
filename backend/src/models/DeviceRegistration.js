@@ -106,6 +106,22 @@ const deviceRegistrationSchema = new mongoose.Schema(
       default: null,
     },
 
+    signingKeyHardwareBackedVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    signingKeyHardwareSecurityLevel: {
+      type: String,
+      enum: ['UNKNOWN', 'SOFTWARE', 'TRUSTED_ENVIRONMENT', 'STRONGBOX'],
+      default: 'UNKNOWN',
+    },
+
+    signingKeyHardwareAttestationVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+
     signingKeyCreatedAt: {
       type: Date,
       default: null,

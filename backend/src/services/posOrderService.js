@@ -173,6 +173,8 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
       challengeExpiresAtEpochMs: null,
       keyThumbprint: null,
       keyProvider: null,
+      keyHardwareBackedVerified: false,
+      keyHardwareSecurityLevel: 'UNKNOWN',
       algorithm: null,
     };
   }
@@ -213,6 +215,8 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
       challengeExpiresAtEpochMs: null,
       keyThumbprint: null,
       keyProvider: null,
+      keyHardwareBackedVerified: false,
+      keyHardwareSecurityLevel: 'UNKNOWN',
       algorithm: null,
     };
   }
@@ -234,6 +238,8 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
       registration.signingKeyThumbprint ||
       publicKeyThumbprint(registration.publicSigningKey),
     keyProvider: signingProvider,
+    keyHardwareBackedVerified: registration.signingKeyHardwareBackedVerified === true,
+    keyHardwareSecurityLevel: normalizeId(registration.signingKeyHardwareSecurityLevel || 'UNKNOWN'),
     algorithm: ATTESTATION_ALGORITHM,
   };
 }
@@ -1425,6 +1431,8 @@ class PosOrderService {
           attestationRequired: attestationBinding.required,
           attestationKeyThumbprint: attestationBinding.keyThumbprint,
           attestationKeyProvider: attestationBinding.keyProvider,
+          attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+          attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
           drawerKickRequested,
           drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
           printBufferBase64: printResult.printBufferBase64,
@@ -1453,6 +1461,8 @@ class PosOrderService {
             attestationVersion: PRINT_ATTESTATION_VERSION,
             attestationKeyThumbprint: attestationBinding.keyThumbprint,
             attestationKeyProvider: attestationBinding.keyProvider,
+            attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+            attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
             payloadSha256: printResult.payloadSha256,
             payloadBytes: printResult.payloadBytes,
             printerTarget: 'DEFAULT_THERMAL',
@@ -1501,6 +1511,8 @@ class PosOrderService {
         attestationAlgorithm: printDispatchAuthorized ? attestationBinding.algorithm : null,
         attestationKeyThumbprint: printDispatchAuthorized ? attestationBinding.keyThumbprint : null,
         attestationKeyProvider: printDispatchAuthorized ? attestationBinding.keyProvider : null,
+        attestationKeyHardwareBackedVerified: printDispatchAuthorized && attestationBinding.keyHardwareBackedVerified === true,
+        attestationKeyHardwareSecurityLevel: printDispatchAuthorized ? attestationBinding.keyHardwareSecurityLevel : 'UNKNOWN',
         ackChallenge: printDispatchAuthorized ? attestationBinding.challenge : null,
         ackChallengeIssuedAt: printDispatchAuthorized ? attestationBinding.challengeIssuedAt : null,
         ackChallengeExpiresAt: printDispatchAuthorized ? attestationBinding.challengeExpiresAt : null,
@@ -2115,6 +2127,8 @@ class PosOrderService {
           attestationVersion: job.attestationVersion || null,
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
           attestationKeyProvider: job.attestationKeyProvider || null,
+          attestationKeyHardwareBackedVerified: job.attestationKeyHardwareBackedVerified === true,
+          attestationKeyHardwareSecurityLevel: job.attestationKeyHardwareSecurityLevel || 'UNKNOWN',
           attestationVerifiedAt: job.attestationVerifiedAt || null,
           ackSignatureHash: job.ackSignatureHash || null,
           payloadSha256: job.payloadSha256 || null,
@@ -2139,6 +2153,8 @@ class PosOrderService {
         billPrintJob.attestationVersion = job.attestationVersion || null;
         billPrintJob.attestationKeyThumbprint = job.attestationKeyThumbprint || null;
         billPrintJob.attestationKeyProvider = job.attestationKeyProvider || null;
+        billPrintJob.attestationKeyHardwareBackedVerified = job.attestationKeyHardwareBackedVerified === true;
+        billPrintJob.attestationKeyHardwareSecurityLevel = job.attestationKeyHardwareSecurityLevel || 'UNKNOWN';
         billPrintJob.attestationVerifiedAt = job.attestationVerifiedAt || null;
         billPrintJob.ackSignatureHash = job.ackSignatureHash || null;
         billPrintJob.payloadSha256 = job.payloadSha256 || null;
@@ -2191,6 +2207,8 @@ class PosOrderService {
           attestationVerified: Boolean(attestationProof),
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
           attestationKeyProvider: job.attestationKeyProvider || null,
+          attestationKeyHardwareBackedVerified: job.attestationKeyHardwareBackedVerified === true,
+          attestationKeyHardwareSecurityLevel: job.attestationKeyHardwareSecurityLevel || 'UNKNOWN',
           ackSignatureHash: job.ackSignatureHash || null,
           payloadSha256: job.payloadSha256 || null,
           payloadBytes: job.payloadBytes || null,
@@ -2222,6 +2240,8 @@ class PosOrderService {
       attestationVerified: Boolean(attestationProof),
       attestationKeyThumbprint: job.attestationKeyThumbprint || null,
       attestationKeyProvider: job.attestationKeyProvider || null,
+      attestationKeyHardwareBackedVerified: job.attestationKeyHardwareBackedVerified === true,
+      attestationKeyHardwareSecurityLevel: job.attestationKeyHardwareSecurityLevel || 'UNKNOWN',
       payloadSha256: job.payloadSha256 || null,
       payloadBytes: job.payloadBytes || null,
       printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
@@ -2283,6 +2303,8 @@ class PosOrderService {
         attestationRequired: attestationBinding.required,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
         attestationKeyProvider: attestationBinding.keyProvider,
+        attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+        attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
         drawerKickRequested: false,
         drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
@@ -2323,6 +2345,8 @@ class PosOrderService {
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
       attestationKeyProvider: attestationBinding.keyProvider,
+      attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified === true,
+      attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
       ackChallenge: attestationBinding.challenge,
       ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
       ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
@@ -2406,6 +2430,8 @@ class PosOrderService {
         attestationRequired: attestationBinding.required,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
         attestationKeyProvider: attestationBinding.keyProvider,
+        attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+        attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
         drawerKickRequested: false,
         drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
@@ -2499,6 +2525,8 @@ class PosOrderService {
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
       attestationKeyProvider: attestationBinding.keyProvider,
+      attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified === true,
+      attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
       ackChallenge: attestationBinding.challenge,
       ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
       ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,

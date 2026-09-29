@@ -22,6 +22,13 @@ const CafeOpsDeviceSchema = new Schema({
   signingKeyThumbprint: { type: String, default: null, index: true },
   signingKeyAlgorithm: { type: String, enum: ['ES256', null], default: null },
   signingKeyProvider: { type: String, default: null },
+  signingKeyHardwareBackedVerified: { type: Boolean, default: false },
+  signingKeyHardwareSecurityLevel: {
+    type: String,
+    enum: ['UNKNOWN', 'SOFTWARE', 'TRUSTED_ENVIRONMENT', 'STRONGBOX'],
+    default: 'UNKNOWN',
+  },
+  signingKeyHardwareAttestationVerifiedAt: { type: Date, default: null },
   attestationCapable: { type: Boolean, default: false },
   lastSeenAt: { type: Date },
   lastSyncAt: { type: Date },
