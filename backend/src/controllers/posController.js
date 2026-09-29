@@ -314,6 +314,7 @@ const getPendingReconciliations = asyncHandler(async (request, response) => {
     organisationId: request.auth.organisationId,
     cafeId: cafeId || null,
     status,
+    authContext: request.auth,
   });
   return response.status(200).json(result);
 });
