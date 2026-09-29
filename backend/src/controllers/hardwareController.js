@@ -92,11 +92,14 @@ const triggerDrawerKick = asyncHandler(async (req, res) => {
 
   return res.status(200).json({
     success: true,
-    message: 'Cash drawer kick pulse emitted.',
+    message: 'Cash drawer kick command prepared. Physical drawer opening is not yet acknowledged.',
     data: {
       terminalId: result.terminalId,
       pin: result.pin,
-      triggeredAt: result.triggeredAt,
+      status: result.status,
+      dispatched: result.dispatched,
+      acknowledged: result.acknowledged,
+      preparedAt: result.preparedAt,
       base64Pulse: result.kickBuffer.toString('base64'),
     },
   });
