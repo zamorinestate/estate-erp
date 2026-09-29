@@ -137,7 +137,7 @@ export class CafeAttendanceDisplayPage {
 
       if (res?.data?.qrToken) {
         this.activeChallenge = res.data;
-        this.countdownSeconds = Math.max(1, res.data.secondsRemaining || 45);
+        this.countdownSeconds = Math.max(1, res.data.remainingSeconds || res.data.secondsRemaining || 45);
 
         if (res.data.cafeName) {
           this.cafeName = res.data.cafeName;
