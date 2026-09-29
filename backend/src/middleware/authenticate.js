@@ -47,6 +47,45 @@ function sendAuthenticationError(
   });
 }
 
+function classifyTokenVerificationError(error) {
+  const name = String(error?.name || '').trim();
+  const code = String(error?.code || '').trim().toUpperCase();
+  const message = String(error?.message || '').trim();
+  const lowerMessage = message.toLowerCase();
+
+  if (name === 'TokenExpiredError') {
+    return {
+      code: 'AUTH_TOKEN_EXPIRED',
+      message: 'Your access token has expired.',
+    };
+  }
+
+  if (name === 'NotBeforeError') {
+    return {
+      code: 'AUTH_TOKEN_NOT_ACTIVE',
+      message: 'The access token is not yet active.',
+    };
+  }
+
+  if (
+    code === 'AUTH_SESSION_REVOKED' ||
+    lowerMessage.includes('session is invalid or expired') ||
+    lowerMessage.includes('session has expired or was revoked') ||
+    lowerMessage.includes('session is not active') ||
+    lowerMessage.includes('revoked')
+  ) {
+    return {
+      code: 'AUTH_SESSION_REVOKED',
+      message: 'Your session has expired or was revoked.',
+    };
+  }
+
+  return {
+    code: 'AUTH_TOKEN_INVALID',
+    message: message || 'The access token is invalid or expired.',
+  };
+}
+
 async function authenticate(
   request,
   response,
@@ -107,10 +146,11 @@ async function authenticate(
       payload = verified.payload;
       session = verified.session;
     } catch (tokenErr) {
+      const classified = classifyTokenVerificationError(tokenErr);
       return sendAuthenticationError(
         response,
-        'AUTH_TOKEN_INVALID',
-        tokenErr.message || 'The access token is invalid or expired.'
+        classified.code,
+        classified.message
       );
     }
 
