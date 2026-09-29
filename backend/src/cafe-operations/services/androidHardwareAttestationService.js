@@ -175,6 +175,13 @@ async function revocations() {
   }
   return data.entries;
 }
+
+function resetTrustCachesForTest() {
+  rootCache.value = null;
+  rootCache.expiresAt = 0;
+  revocationCache.value = null;
+  revocationCache.expiresAt = 0;
+}
 async function findAttestationExtension(certificates) {
   const { AsnConvert, Certificate } = await loadAsnModules();
   for (let index = certificates.length - 2; index >= 0; index -= 1) {
@@ -528,4 +535,13 @@ module.exports = {
   verifyExpectedHardwareAuthorizations,
   verifyAndroidHardwareAttestation,
   applyVerifiedAndroidHardwareEvidence,
+  // Narrow internal hooks used only by fault-injection tests. Production
+  // callers must use verifyAndroidHardwareAttestation(), not trust raw service data.
+  _testOnly: {
+    trustedRoots,
+    revocations,
+    rootCache,
+    revocationCache,
+    resetTrustCachesForTest,
+  },
 };

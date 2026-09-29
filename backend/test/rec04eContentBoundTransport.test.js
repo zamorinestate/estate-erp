@@ -15,6 +15,7 @@ const { getRepositories, resetRepositories } = require('../src/cafe-operations/r
 const {
   revocationLookupKeys,
   verifyExpectedHardwareAuthorizations,
+  _testOnly: androidAttestationTestOnly,
 } = require('../src/cafe-operations/services/androidHardwareAttestationService');
 const { sha256Hex } = require('../src/cafe-operations/utils/ids');
 const root = path.join(__dirname, '..', '..');
@@ -1041,4 +1042,119 @@ test('REC-04E production deployment requires explicit Android app-signing certif
   assert.match(renderConfig, /key: ZAMORIN_ANDROID_APP_PACKAGE/);
   assert.match(renderConfig, /value: com\.zamorin\.cafe\.erp/);
   assert.match(renderConfig, /key: ZAMORIN_ANDROID_APP_CERT_SHA256[\s\S]{0,80}?sync: false/);
+});
+
+
+test('REC-04E Android attestation root service fails closed when network fetch is unavailable', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    androidAttestationTestOnly.resetTrustCachesForTest();
+  });
+
+  androidAttestationTestOnly.resetTrustCachesForTest();
+  globalThis.fetch = undefined;
+
+  await assert.rejects(
+    () => androidAttestationTestOnly.trustedRoots(),
+    (err) => {
+      assert.equal(err.code, 'ANDROID_ATTESTATION_ROOTS_UNAVAILABLE');
+      assert.equal(err.statusCode, 503);
+      return true;
+    }
+  );
+});
+
+test('REC-04E Android attestation trust services fail closed on HTTP and malformed responses', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    androidAttestationTestOnly.resetTrustCachesForTest();
+  });
+
+  androidAttestationTestOnly.resetTrustCachesForTest();
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 503,
+    headers: { get: () => null },
+  });
+
+  await assert.rejects(
+    () => androidAttestationTestOnly.trustedRoots(),
+    (err) => err.code === 'ANDROID_ATTESTATION_ROOTS_UNAVAILABLE'
+  );
+
+  androidAttestationTestOnly.resetTrustCachesForTest();
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'max-age=60' },
+    json: async () => ({ not: 'a root list' }),
+  });
+
+  await assert.rejects(
+    () => androidAttestationTestOnly.trustedRoots(),
+    (err) => err.code === 'ANDROID_ATTESTATION_ROOTS_UNAVAILABLE'
+  );
+
+  androidAttestationTestOnly.resetTrustCachesForTest();
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'max-age=60' },
+    json: async () => ({ entries: null }),
+  });
+
+  await assert.rejects(
+    () => androidAttestationTestOnly.revocations(),
+    (err) => err.code === 'ANDROID_ATTESTATION_REVOCATION_STATUS_UNAVAILABLE'
+  );
+});
+
+test('REC-04E expired trust cache is never used as a stale fallback after refresh failure', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    androidAttestationTestOnly.resetTrustCachesForTest();
+  });
+
+  androidAttestationTestOnly.resetTrustCachesForTest();
+  androidAttestationTestOnly.revocationCache.value = { entries: { cached: { status: 'REVOKED' } } };
+  androidAttestationTestOnly.revocationCache.expiresAt = Date.now() - 1;
+
+  globalThis.fetch = async () => {
+    throw new Error('SIMULATED_ATTESTATION_STATUS_OUTAGE');
+  };
+
+  await assert.rejects(
+    () => androidAttestationTestOnly.revocations(),
+    (err) => {
+      assert.equal(err.code, 'ANDROID_ATTESTATION_REVOCATION_STATUS_UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('REC-04E fresh revocation cache is usable without weakening expiry semantics', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    androidAttestationTestOnly.resetTrustCachesForTest();
+  });
+
+  androidAttestationTestOnly.resetTrustCachesForTest();
+  androidAttestationTestOnly.revocationCache.value = {
+    entries: {
+      abcd: { status: 'REVOKED', reason: 'KEY_COMPROMISE' },
+    },
+  };
+  androidAttestationTestOnly.revocationCache.expiresAt = Date.now() + 60_000;
+
+  globalThis.fetch = async () => {
+    throw new Error('NETWORK_MUST_NOT_BE_USED_FOR_FRESH_CACHE');
+  };
+
+  const entries = await androidAttestationTestOnly.revocations();
+  assert.equal(entries.abcd.status, 'REVOKED');
+  assert.deepEqual(revocationLookupKeys('00:AB:CD'), ['abcd', '43981']);
 });
