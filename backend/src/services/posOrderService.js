@@ -26,6 +26,7 @@ const { SequenceCounter } = require('../models/SequenceCounter');
 const { IdempotencyRecord } = require('../models/IdempotencyRecord');
 const { PrintJob } = require('../models/PrintJob');
 const { OperatorSession } = require('../models/OperatorSession');
+const { DeviceRegistration } = require('../models/DeviceRegistration');
 const { BomDepletionService } = require('./bomDepletionService');
 const {
   allocateInvoiceNumber,
@@ -38,6 +39,13 @@ const { PosReconciliationService } = require('./posReconciliationService');
 const crypto = require('node:crypto');
 const { ApiError } = require('../utils/ApiError');
 const auditService = require('./auditService');
+const {
+  ATTESTATION_ALGORITHM,
+  createChallenge,
+  buildPrintAckPayload,
+  verifyPrintAckSignature,
+  publicKeyThumbprint,
+} = require('./deviceAttestationService');
 const {
   compileThermalReceipt,
   generateFallbackHtmlReceipt,
@@ -146,6 +154,46 @@ function resolveDispatchDeviceId(authContext = {}, cafeId) {
 function hasCashTender(billData = {}) {
   return normalizeId(billData.paymentMethod) === 'CASH' ||
     (Array.isArray(billData.tenders) && billData.tenders.some((t) => normalizeId(t.paymentMethod) === 'CASH'));
+}
+
+async function resolveAttestationBinding(authContext = {}, cafeId) {
+  const deviceId = resolveDispatchDeviceId(authContext, cafeId);
+  if (!deviceId) {
+    return {
+      required: false,
+      challenge: null,
+      keyThumbprint: null,
+      algorithm: null,
+    };
+  }
+
+  const registration = await DeviceRegistration.findOne({
+    deviceId,
+    organisationId: requireOrganisationId(authContext),
+    assignedCafeId: normalizeId(cafeId),
+    status: 'ACTIVE',
+  }).lean();
+
+  if (
+    !registration?.publicSigningKey ||
+    normalizeId(registration.signingKeyAlgorithm) !== ATTESTATION_ALGORITHM
+  ) {
+    return {
+      required: false,
+      challenge: null,
+      keyThumbprint: null,
+      algorithm: null,
+    };
+  }
+
+  return {
+    required: true,
+    challenge: createChallenge(),
+    keyThumbprint:
+      registration.signingKeyThumbprint ||
+      publicKeyThumbprint(registration.publicSigningKey),
+    algorithm: ATTESTATION_ALGORITHM,
+  };
 }
 
 const SETTLEMENT_TENDER_METHODS = new Set([
