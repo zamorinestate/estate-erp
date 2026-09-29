@@ -537,7 +537,7 @@ async function _fetchAndRenderActiveQr(container) {
       pageState.qrStatus = 'ACTIVE';
       pageState.countdownSec = res.data.remainingSeconds || 45;
 
-      const payload = res.data.opaqueToken || res.data.qrToken;
+      const payload = res.data.attendanceUrl || res.data.opaqueToken || res.data.qrToken;
       const svg = generateQrSvg(payload, { size: 260, margin: 4, includeLogo: true });
 
       if (qrBox) qrBox.innerHTML = svg;
