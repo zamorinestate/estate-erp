@@ -546,6 +546,63 @@ test('PUNCH-002: staffCheckIn records authoritative punch and sets attendanceEvi
   }
 });
 
+test('PUNCH-003A: staffCheckOut requires QR, live GPS, and fresh selfie evidence', async () => {
+  const origFindOneAttendance = Attendance.findOne;
+
+  Attendance.findOne = () => ({
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    checkInAt: new Date(Date.now() - 3600000),
+    checkOutAt: null,
+    status: 'CHECKED_IN',
+    attendanceEvidence: {
+      checkIn: { photoFileId: 'FILE-SELFIE-CHECKIN-01' },
+    },
+    save: async function () { return this; },
+  });
+
+  const baseReq = {
+    auth: {
+      userId: 'EMP-STAFF-1',
+      role: 'STAFF',
+      organisationId: 'ORG-ZAMORIN',
+      assignedCafeIds: ['CAFE-KNR-01'],
+      primaryCafeId: 'CAFE-KNR-01',
+    },
+    body: {},
+  };
+
+  try {
+    await assert.rejects(
+      async () => staffCheckOut(baseReq, createMockRes()),
+      { statusCode: 400, code: 'QR_TOKEN_REQUIRED' }
+    );
+
+    await assert.rejects(
+      async () => staffCheckOut({
+        ...baseReq,
+        body: { qrToken: 'TOKEN' },
+      }, createMockRes()),
+      { statusCode: 400, code: 'GEOLOCATION_REQUIRED' }
+    );
+
+    await assert.rejects(
+      async () => staffCheckOut({
+        ...baseReq,
+        body: {
+          qrToken: 'TOKEN',
+          latitude: 11.8745,
+          longitude: 75.3704,
+          accuracyMeters: 8,
+        },
+      }, createMockRes()),
+      { statusCode: 400, code: 'SELFIE_EVIDENCE_REQUIRED' }
+    );
+  } finally {
+    Attendance.findOne = origFindOneAttendance;
+  }
+});
+
 test('PUNCH-003: staffCheckOut strictly rejects reusing Check-In selfie for Check-Out', async () => {
   const origFindOneAttendance = Attendance.findOne;
 
