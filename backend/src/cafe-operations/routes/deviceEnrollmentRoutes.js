@@ -5,6 +5,7 @@ const { deviceContext } = require('../middleware/deviceContext');
 const { authenticate } = require('../../middleware/authenticate');
 const sessionPolicy = require('../config/sessionPolicy');
 const { ok, fail } = require('../utils/responses');
+const attendanceQrService = require('../../services/attendanceQrService');
 
 const router = express.Router();
 
@@ -142,6 +143,30 @@ router.post('/attestation/key', deviceContext, authenticate, async (req, res, ne
     }
     next(err);
   }
+});
+
+router.get('/attendance/qr', deviceContext, async (req, res, next) => {
+  try {
+    const device = req.cafeOpsDevice;
+    const challenge = await attendanceQrService.getActiveOrNewChallenge({
+      organisationId: device.organisationId,
+      cafeId: device.cafeId,
+      deviceId: device.id,
+      requestedByUserId: `DEVICE:${device.id}`,
+      requestedByRole: 'CAFE_ADMIN',
+      assignedCafeIds: [device.cafeId],
+      rotationIntervalSeconds: 45,
+    });
+
+    return ok(res, {
+      challengeId: challenge.challengeId,
+      cafeId: challenge.cafeId,
+      cafeName: challenge.cafeName || device.cafeDisplayName || null,
+      attendanceUrl: challenge.attendanceUrl,
+      expiresAt: challenge.expiresAt,
+      remainingSeconds: challenge.remainingSeconds,
+    });
+  } catch (err) { next(err); }
 });
 
 router.get('/status', deviceContext, async (req, res, next) => {
