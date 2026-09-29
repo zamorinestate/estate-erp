@@ -104,12 +104,18 @@ test('REC-04E hardware state and local bridge fail closed without physical evide
   assert.doesNotMatch(client, /return \{ success: true, method: 'WEB_USB' \}/);
   assert.doesNotMatch(client, /return \{ success: true, method: 'LOCAL_PROXY' \}/);
 
-  assert.match(localBridge, /hardwareReady:\s*false/);
+  assert.match(localBridge, /hardwareReady: printerConfig\.configured/);
+  assert.match(localBridge, /if \(!printerConfig\.configured\)/);
   assert.match(localBridge, /HARDWARE_TRANSPORT_NOT_CONFIGURED/);
   assert.match(localBridge, /DRAWER_TRANSPORT_NOT_CONFIGURED/);
-  assert.match(localBridge, /bytesDispatched:\s*0/);
-  assert.match(localBridge, /emitted:\s*false/);
-  assert.doesNotMatch(localBridge, /status:\s*'READY'/);
+  assert.match(localBridge, /printerEndpointPinned: printerConfig\.endpointPinned === true/);
+  assert.match(localBridge, /evidenceLevel: 'CONTENT_BOUND_TRANSPORT'/);
+  assert.match(localBridge, /contentBindingVerified: true/);
+  assert.match(localBridge, /printerIdentityVerified: false/);
+  assert.match(localBridge, /physicalCompletionVerified: false/);
+  assert.match(localBridge, /PRINT_TRANSPORT_OUTCOME_UNKNOWN/);
+  assert.match(localBridge, /state: 'WRITE_STARTED'/);
+  assert.match(localBridge, /state: 'TRANSPORT_ACCEPTED'/);
   assert.doesNotMatch(localBridge, /DRAWER_KICK_PULSE_EMITTED/);
 });
 
@@ -122,8 +128,11 @@ test('REC-04E rejects invented transport evidence and freezes terminal replay ev
   assert.match(source, /SPOOLER_TERMINAL_STATE/);
   assert.match(source, /PRINT_ACK_REPLAY_EVIDENCE_MISMATCH/);
   assert.match(source, /if \(statusChanged && attestationProof\)/);
-  assert.match(source, /if \(statusChanged\) \{\s*await job\.save\(\);\s*\}/);
-  assert.match(source, /if \(statusChanged && bill\)/);
+  assert.match(source, /executeTransactionWithRetry\(async \(session\) =>/);
+  assert.match(source, /PRINT_ACK_TRANSACTION_REQUIRED/);
+  assert.match(source, /await job\.save\(session \? \{ session \} : undefined\)/);
+  assert.match(source, /const billNeedsRepair =/);
+  assert.match(source, /await bill\.save\(session \? \{ session \} : undefined\)/);
 
   assert.match(frontend, /expectedEvidenceLevel/);
   assert.match(frontend, /SPOOLER_TERMINAL_STATE/);
