@@ -264,3 +264,18 @@ test('REC-04E Android purpose-bound attestation requires enrollment-time Android
   assert.match(router, /getNativeDeviceAttestationIdentity\([\s\S]{0,500}?publicSigningKey: signingIdentity\.capable \? signingIdentity\.publicKeyJwk : null/);
   assert.match(router, /DEVICE_ATTESTATION_REENROLLMENT_REQUIRED/);
 });
+
+
+test('REC-04E post-enrollment signing identity verification is read-only', () => {
+  const deviceService = fs.readFileSync(path.join(__dirname, '..', 'src', 'cafe-operations', 'services', 'deviceService.js'), 'utf8');
+  const bindStart = deviceService.indexOf('async function bindAttestationKey');
+  const bindEnd = deviceService.indexOf('module.exports', bindStart);
+  const bindSource = deviceService.slice(bindStart, bindEnd);
+
+  assert.match(bindSource, /Verification is deliberately read-only/);
+  assert.match(bindSource, /const updated = device/);
+  assert.match(bindSource, /canonical\.metadata\?\.attestationCapable !== true/);
+  assert.match(bindSource, /device\.attestationCapable !== true/);
+  assert.doesNotMatch(bindSource, /canonical\.save\(\)/);
+  assert.doesNotMatch(bindSource, /repos\.devices\.update\(device\.id/);
+});

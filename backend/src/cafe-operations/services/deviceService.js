@@ -419,65 +419,18 @@ async function bindAttestationKey(device, {
     (deviceProvider && deviceProvider !== provider) ||
     canonicalAlgorithm !== ATTESTATION_ALGORITHM ||
     (deviceAlgorithm && deviceAlgorithm !== ATTESTATION_ALGORITHM) ||
-    String(canonical.platform || 'UNKNOWN').trim().toUpperCase() !== provenance.platform
+    String(canonical.platform || 'UNKNOWN').trim().toUpperCase() !== provenance.platform ||
+    canonical.metadata?.attestationCapable !== true ||
+    device.attestationCapable !== true
   ) {
     const err = new Error('DEVICE_ATTESTATION_PROVENANCE_MISMATCH');
     err.code = 'DEVICE_ATTESTATION_PROVENANCE_MISMATCH';
     throw err;
   }
 
-  // Snapshot canonical state so a second-write failure can be compensated.
-  const previousCanonical = {
-    publicSigningKey: canonical.publicSigningKey || null,
-    signingKeyThumbprint: canonical.signingKeyThumbprint || null,
-    signingKeyAlgorithm: canonical.signingKeyAlgorithm || null,
-    signingKeyProvider: canonical.signingKeyProvider || null,
-    signingKeyCreatedAt: canonical.signingKeyCreatedAt || null,
-    platform: canonical.platform || 'UNKNOWN',
-    metadata: { ...(canonical.metadata || {}) },
-  };
-
-  canonical.publicSigningKey = canonical.publicSigningKey;
-  canonical.signingKeyThumbprint = canonical.signingKeyThumbprint;
-  canonical.signingKeyAlgorithm = canonical.signingKeyAlgorithm;
-  canonical.signingKeyProvider = canonical.signingKeyProvider;
-  canonical.signingKeyCreatedAt = canonical.signingKeyCreatedAt;
-  canonical.platform = canonical.platform;
-  canonical.metadata = {
-    ...(canonical.metadata || {}),
-    attestationCapable: true,
-  };
-  await canonical.save();
-
-  let updated;
-  try {
-    updated = await repos.devices.update(device.id, {
-      signingKeyThumbprint: keyThumbprint,
-      signingKeyAlgorithm: ATTESTATION_ALGORITHM,
-      signingKeyProvider: provider,
-      attestationCapable: true,
-      integrityState: 'READY',
-    });
-    if (!updated) {
-      throw new Error('CAFE_OPS_DEVICE_UPDATE_FAILED');
-    }
-  } catch (writeErr) {
-    // Compensating rollback: never leave canonical and CafeOps device registries split.
-    canonical.publicSigningKey = previousCanonical.publicSigningKey;
-    canonical.signingKeyThumbprint = previousCanonical.signingKeyThumbprint;
-    canonical.signingKeyAlgorithm = previousCanonical.signingKeyAlgorithm;
-    canonical.signingKeyProvider = previousCanonical.signingKeyProvider;
-    canonical.signingKeyCreatedAt = previousCanonical.signingKeyCreatedAt;
-    canonical.platform = previousCanonical.platform;
-    canonical.metadata = previousCanonical.metadata;
-    try {
-      await canonical.save();
-    } catch (rollbackErr) {
-      writeErr.rollbackError = rollbackErr;
-      writeErr.code = 'DEVICE_ATTESTATION_BIND_ROLLBACK_FAILED';
-    }
-    throw writeErr;
-  }
+  // Verification is deliberately read-only. Enrollment is the only ceremony
+  // allowed to establish or mutate the signing identity.
+  const updated = device;
 
   try {
     await auditService.record({
