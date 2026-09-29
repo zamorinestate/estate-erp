@@ -51,10 +51,8 @@
     // the real login page's window.ZAMORIN_API_BASE_URL.
     // window.ZAMORIN_API_BASE_URL = 'https://api.zamorin.example.com/v1';
     window.CAFE_OPS_APP_VERSION = '1.0.0';
-    // Set this once the real Attendance module's kiosk QR endpoint exists —
-    // see js/screens/attendanceKiosk.js for the exact expected response
-    // shape. Left unset here on purpose (see ARCHITECTURE_DECISIONS.md).
-    // window.CAFE_OPS_ATTENDANCE_QR_ENDPOINT = '/api/v1/attendance/kiosk/qr';
+    // Attendance Kiosk QR is resolved through the enrolled device-bound
+    // CafeOps API client. No public/raw attendance endpoint override is used.
   </script>
 
   <script src="js/api/cafeOpsApi.js" defer></script>
