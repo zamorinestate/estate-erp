@@ -33,7 +33,7 @@ class ZamorinNativeBridge(
 
     interface BridgeCallbacks {
         fun onRequestDirectoryPicker(requestId: String)
-        fun onOpenSystemPrint(requestId: String, jobName: String)
+        fun onOpenSystemPrint(requestId: String, jobName: String, attestationContext: JSONObject?)
         fun onOpenCamera(requestId: String)
         fun onOpenFilePicker(requestId: String, mimeType: String?, allowMultiple: Boolean)
     }
@@ -207,45 +207,143 @@ class ZamorinNativeBridge(
             }
 
             "SIGN_DEVICE_ATTESTATION" -> {
-                val signedPayload = payload.optString("payload", "")
-                if (signedPayload.isBlank()) {
-                    BridgeResponse(
-                        requestId = requestId,
-                        success = false,
-                        errorCode = "ATTESTATION_PAYLOAD_REQUIRED",
-                        errorMessage = "A canonical attestation payload is required."
-                    )
-                } else {
-                    try {
-                        val entry = ensureAttestationKey()
-                        val signer = Signature.getInstance("SHA256withECDSA")
-                        signer.initSign(entry.privateKey)
-                        signer.update(signedPayload.toByteArray(Charsets.UTF_8))
-                        val signature = signer.sign()
-                        val jwk = publicJwk(entry.certificate.publicKey as ECPublicKey)
-                        val res = JSONObject().apply {
-                            put("algorithm", "ES256")
-                            put("provider", "ANDROID_KEYSTORE")
-                            put("keyThumbprint", keyThumbprint(jwk))
-                            put("signature", Base64.getUrlEncoder().withoutPadding().encodeToString(signature))
-                        }
-                        BridgeResponse(requestId = requestId, success = true, result = res)
-                    } catch (e: Exception) {
-                        BridgeResponse(
-                            requestId = requestId,
-                            success = false,
-                            errorCode = "DEVICE_ATTESTATION_SIGN_FAILED",
-                            errorMessage = e.message ?: "Unable to sign device attestation."
-                        )
-                    }
-                }
+                BridgeResponse(
+                    requestId = requestId,
+                    success = false,
+                    errorCode = "DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED",
+                    errorMessage = "Arbitrary device-key signing is disabled. Use a purpose-bound attestation action."
+                )
             }
 
             "OPEN_SYSTEM_PRINT" -> {
                 val jobName = payload.optString("jobName", "Zamorin_Print_Job")
-                callbacks.onOpenSystemPrint(requestId, jobName)
+                val attestationContext = payload.optJSONObject("attestationContext")
+                callbacks.onOpenSystemPrint(requestId, jobName, attestationContext)
                 null // Asynchronous completion handled via callbacks
             }
+            "ATTEST_PRINT_JOB_RESULT" -> {
+                val platformJobId = payload.optString("platformJobId", "").trim()
+                if (platformJobId.isBlank()) {
+                    BridgeResponse(
+                        requestId = requestId,
+                        success = false,
+                        errorCode = "PLATFORM_PRINT_JOB_ID_REQUIRED",
+                        errorMessage = "platformJobId is required."
+                    )
+                } else {
+                    val binding = ZamorinPrintAttestationStore.get(context, platformJobId)
+                    if (binding == null) {
+                        BridgeResponse(
+                            requestId = requestId,
+                            success = false,
+                            errorCode = "PRINT_ATTESTATION_BINDING_NOT_FOUND",
+                            errorMessage = "No server acknowledgement context is bound to this Android print job."
+                        )
+                    } else {
+                        val statusResult = ZamorinPrintManager.getPrintJobStatus(context, platformJobId)
+                        if (!statusResult.terminal) {
+                            val res = JSONObject().apply {
+                                put("platformJobId", platformJobId)
+                                put("status", statusResult.status)
+                                put("terminal", false)
+                                put("physicalCompletionVerified", false)
+                            }
+                            BridgeResponse(requestId = requestId, success = true, result = res)
+                        } else {
+                            try {
+                                val version = binding.optString("version", "")
+                                val algorithm = binding.optString("algorithm", "")
+                                if (version != "ZAMORIN_DEVICE_ACK_V1" || algorithm != "ES256") {
+                                    throw IllegalArgumentException("Unsupported bound print attestation context.")
+                                }
+
+                                fun requiredToken(name: String): String {
+                                    val value = binding.optString(name, "").trim().uppercase()
+                                    if (value.isBlank() || value.contains("\n") || value.contains("\r")) {
+                                        throw IllegalArgumentException("$name is missing or invalid.")
+                                    }
+                                    return value
+                                }
+
+                                val acknowledgementStatus: String
+                                val failureCode: String
+                                val failureReason: String
+                                when (statusResult.status) {
+                                    "COMPLETED" -> {
+                                        acknowledgementStatus = "PRINTED"
+                                        failureCode = "NONE"
+                                        failureReason = ""
+                                    }
+                                    "FAILED" -> {
+                                        acknowledgementStatus = "FAILED"
+                                        failureCode = "ANDROID_PRINT_JOB_FAILED"
+                                        failureReason = statusResult.error ?: "Android print spooler reported a failed print job."
+                                    }
+                                    "CANCELLED" -> {
+                                        acknowledgementStatus = "CANCELLED"
+                                        failureCode = "ANDROID_PRINT_JOB_CANCELLED"
+                                        failureReason = "Android print spooler reported that the print job was cancelled."
+                                    }
+                                    else -> throw IllegalStateException("Unsupported terminal Android print state.")
+                                }
+
+                                val drawerKickStatus = if (binding.optBoolean("drawerKickRequested", false)) "UNKNOWN" else "UNCHANGED"
+                                val challenge = binding.optString("challenge", "").trim()
+                                if (challenge.isBlank() || challenge.contains("\n") || challenge.contains("\r")) {
+                                    throw IllegalArgumentException("Bound acknowledgement challenge is invalid.")
+                                }
+
+                                val failureHash = MessageDigest.getInstance("SHA-256")
+                                    .digest(failureReason.toByteArray(Charsets.UTF_8))
+                                    .joinToString("") { "%02x".format(it) }
+
+                                val canonicalPayload = listOf(
+                                    "ZAMORIN_DEVICE_ACK_V1",
+                                    "organisationId=${requiredToken("organisationId")}",
+                                    "cafeId=${requiredToken("cafeId")}",
+                                    "deviceId=${requiredToken("deviceId")}",
+                                    "printJobId=${requiredToken("printJobId")}",
+                                    "challenge=$challenge",
+                                    "status=$acknowledgementStatus",
+                                    "drawerKickStatus=$drawerKickStatus",
+                                    "failureCode=$failureCode",
+                                    "failureReasonSha256=$failureHash"
+                                ).joinToString("\n")
+
+                                val entry = ensureAttestationKey()
+                                val signer = Signature.getInstance("SHA256withECDSA")
+                                signer.initSign(entry.privateKey)
+                                signer.update(canonicalPayload.toByteArray(Charsets.UTF_8))
+                                val signature = signer.sign()
+                                val jwk = publicJwk(entry.certificate.publicKey as ECPublicKey)
+
+                                val res = JSONObject().apply {
+                                    put("platformJobId", platformJobId)
+                                    put("status", acknowledgementStatus)
+                                    put("terminal", true)
+                                    put("physicalCompletionVerified", statusResult.status == "COMPLETED")
+                                    put("drawerKickStatus", drawerKickStatus)
+                                    put("failureCode", failureCode)
+                                    put("failureReason", failureReason)
+                                    put("algorithm", "ES256")
+                                    put("provider", "ANDROID_KEYSTORE")
+                                    put("keyThumbprint", keyThumbprint(jwk))
+                                    put("signature", Base64.getUrlEncoder().withoutPadding().encodeToString(signature))
+                                }
+                                BridgeResponse(requestId = requestId, success = true, result = res)
+                            } catch (e: Exception) {
+                                BridgeResponse(
+                                    requestId = requestId,
+                                    success = false,
+                                    errorCode = "PRINT_ATTESTATION_SIGN_FAILED",
+                                    errorMessage = e.message ?: "Unable to attest Android print result."
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             "GET_PRINT_JOB_STATUS" -> {
                 val platformJobId = payload.optString("platformJobId", "").trim()
                 if (platformJobId.isBlank()) {
