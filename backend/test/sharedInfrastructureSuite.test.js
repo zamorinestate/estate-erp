@@ -28,6 +28,7 @@ const { DuplicateDetectionService } = require('../src/services/duplicateDetectio
 const { ExpiryRenewalService } = require('../src/services/expiryRenewalService');
 const { MandatoryReasonService } = require('../src/services/mandatoryReasonService');
 const { Bill } = require('../src/models/Bill');
+const { PrintJob } = require('../src/models/PrintJob');
 const { Cafe } = require('../src/models/Cafe');
 const { PurchaseOrder } = require('../src/models/PurchaseOrder');
 const { BusinessDocument } = require('../src/models/BusinessDocument');
@@ -118,6 +119,7 @@ test('SHARED INFRASTRUCTURE — Implementation Verification Suite', async (t) =>
 
       t.mock.method(Bill, 'findOne', async () => testBill);
       t.mock.method(testBill, 'save', async () => testBill);
+      t.mock.method(PrintJob.prototype, 'save', async function save() { return this; });
 
       // Reprint #1
       const res1 = await PosOrderService.reprintBill('BILL-REPRINT-TEST-01', auth, 'Customer request receipt lost');
