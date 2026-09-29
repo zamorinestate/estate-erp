@@ -9,6 +9,7 @@ const { DeviceSecurityEvent } = require('../models/DeviceSecurityEvent');
 const { Attendance } = require('../modules/attendance/Attendance');
 const { Cafe } = require('../models/Cafe');
 const ApiError = require('../utils/ApiError');
+const { getPublicAppOrigin } = require('./cafeAccessCryptoService');
 
 const QR_SIGNING_SECRET = process.env.QR_SIGNING_SECRET || 'zamorin_qr_master_signing_secret_key_2026_dsec';
 
@@ -161,6 +162,9 @@ class AttendanceQrService {
     const dotSig = crypto.createHmac('sha256', secret).update(dotPayload).digest('hex');
     const dotToken = `${challenge.challengeId}.${challenge.organisationId}.${challenge.cafeId}.${expiresAtSec}.${dotSig}`;
 
+    const attendanceUrl =
+      `${getPublicAppOrigin()}/?returnTo=staff-attendance&attendanceQr=${encodeURIComponent(challenge.opaqueToken)}`;
+
     return {
       challengeId: challenge.challengeId,
       purpose: challenge.purpose || 'ATTENDANCE_PUNCH',
@@ -168,6 +172,7 @@ class AttendanceQrService {
       qrToken: dotToken,
       dotToken,
       opaqueToken: challenge.opaqueToken,
+      attendanceUrl,
       qrString: JSON.stringify(envelope),
       cafeId: challenge.cafeId,
       cafeName: cafe.name,
