@@ -426,7 +426,8 @@ class ZamorinNativeBridge(
                         put("platformJobId", status.platformJobId)
                         put("status", status.status)
                         put("terminal", status.terminal)
-                        put("physicalCompletionVerified", status.physicalCompletionVerified)
+                        put("spoolerCompletionVerified", status.spoolerCompletionVerified)
+                        put("physicalCompletionVerified", false)
                         if (status.error != null) put("error", status.error)
                     }
                     BridgeResponse(

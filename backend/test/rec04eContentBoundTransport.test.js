@@ -135,7 +135,10 @@ test('REC-04E Android binding lifetime matches server challenge TTL and is clear
 
 test('REC-04E content-bound jobs cannot terminally acknowledge without cryptographic attestation', () => {
   const source = fs.readFileSync(posServicePath, 'utf8');
-  assert.match(source, /const isContentBoundJob = Boolean\(job\.payloadSha256\)/);
+  assert.match(
+    source,
+    /const isContentBoundJob =\s*normalizeId\(job\.attestationVersion\) === PRINT_ATTESTATION_VERSION \|\|\s*Boolean\(job\.payloadSha256\)/
+  );
   assert.match(source, /PRINT_ATTESTATION_REQUIRED/);
   assert.match(
     source,
@@ -183,4 +186,13 @@ test('REC-04E Android monitor window remains inside the server challenge TTL wit
   assert.match(frontend, /while \(Date\.now\(\) - monitorStartedAt < maxMonitorMs\)/);
   assert.doesNotMatch(frontend, /maxPolls = 120/);
   assert.ok(14 * 60 * 1000 < attestationService.PRINT_ACK_CHALLENGE_TTL_MS);
+});
+
+
+test('REC-04E GET_PRINT_JOB_STATUS exposes spooler evidence without physical overclaim', () => {
+  const bridge = fs.readFileSync(androidBridgePath, 'utf8');
+  assert.match(bridge, /"GET_PRINT_JOB_STATUS"/);
+  assert.match(bridge, /put\("spoolerCompletionVerified", status\.spoolerCompletionVerified\)/);
+  assert.match(bridge, /put\("physicalCompletionVerified", false\)/);
+  assert.doesNotMatch(bridge, /status\.physicalCompletionVerified/);
 });
