@@ -481,6 +481,33 @@ test('UPLOAD-002: uploadPunchSelfie rejects files larger than 5MB', async () => 
   );
 });
 
+test('UPLOAD-003: selfie upload returns canonical fileId and uploader ownership', async () => {
+  const originalCreate = PrivateFile.create;
+  PrivateFile.create = async (doc) => doc;
+
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 12,
+      buffer: Buffer.from('selfie-bytes'),
+      originalname: 'selfie.jpg',
+    },
+    body: { punchType: 'CHECK_IN' },
+  };
+  const res = createMockRes();
+
+  try {
+    await uploadPunchSelfie(req, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.data.fileId);
+    assert.equal(res.body.data.mediaId, res.body.data.fileId);
+  } finally {
+    PrivateFile.create = originalCreate;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 4. AUTHORITATIVE CHECK-IN & CHECK-OUT ATTENDANCE CONTROLLER
 // ---------------------------------------------------------------------------
