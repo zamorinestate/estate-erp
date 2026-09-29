@@ -260,7 +260,9 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
 
     assert.equal(result.success, true);
     assert.equal(result.action, 'SAVE_AND_PRINT');
-    assert.equal(result.printed, true);
+    assert.equal(result.printed, false);
+    assert.equal(result.printDispatched, true);
+    assert.equal(result.printStatus, 'PRINT_DISPATCHED');
     assert.ok(result.printBuffer);
     assert.ok(Buffer.isBuffer(result.rawBuffer));
     assert.ok(result.htmlPreview.toUpperCase().includes('ZAMORIN'));
@@ -314,7 +316,9 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
 
     assert.equal(result.success, true);
     assert.equal(result.action, 'PRINT');
-    assert.equal(result.printed, true);
+    assert.equal(result.printed, false);
+    assert.equal(result.printDispatched, true);
+    assert.equal(result.printStatus, 'PRINT_DISPATCHED');
     assert.ok(result.printBuffer);
     assert.equal(result.bill.billId, existingBill.billId);
   });
