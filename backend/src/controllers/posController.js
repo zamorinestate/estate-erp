@@ -487,6 +487,13 @@ const reviewOfflineOrder = asyncHandler(async (request, response) => {
       `Role ${role} is not authorized for offline queue review.`
     );
   }
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for offline POS review execution.'
+    );
+  }
 
   const { reviewId } = request.params;
   const { action, reason } = request.body || {};
