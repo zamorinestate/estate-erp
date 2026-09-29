@@ -4,9 +4,22 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { authorize } = require('../src/middleware/authorize');
+const { RolePermission } = require('../src/models/RolePermission');
 
 const CAFE_A = 'ZC-8801';
 const CAFE_B = 'ZC-8802';
+
+const originalFindEffectiveRules = RolePermission.findEffectiveRules;
+
+test.before(() => {
+  // Unit-boundary isolation: allow authorize() to exercise its explicit-role
+  // fallback without opening a live database permission query.
+  RolePermission.findEffectiveRules = async () => [];
+});
+
+test.after(() => {
+  RolePermission.findEffectiveRules = originalFindEffectiveRules;
+});
 
 function makeResponse() {
   return {
