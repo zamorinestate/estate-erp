@@ -29,6 +29,7 @@ test('FINAL POS FINANCIAL GATE — canonical CI executes every authoritative set
     'test/posOfflineFinancialSafety.test.js',
     'test/posOfflineReviewHttpBoundary.test.js',
     'test/pm05R1FinancialAtomicity.test.js',
+    'test/posFinalReceiptLineageGate.test.js',
     'test/posFinalFinancialIntegrityGate.test.js',
   ];
 
