@@ -659,6 +659,54 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
     throw new ApiError(400, 'DRAWER_DISABLED', `Cash drawer is disabled on terminal ${terminalId}.`);
   }
 
+  const actorRole = String(actor.role || '').trim().toUpperCase();
+  const terminalCafeId = String(terminal.cafeId || '').trim().toUpperCase();
+
+  if (actorRole === 'OWNER') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Owner role is read-only and cannot operate a physical cash drawer.'
+    );
+  }
+
+  if (actorRole === 'MASTER') {
+    if (actor.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER cash-drawer operations.'
+      );
+    }
+  } else {
+    const assignedCafeIds = Array.isArray(actor.assignedCafeIds)
+      ? actor.assignedCafeIds.map((id) => String(id || '').trim().toUpperCase())
+      : [];
+    if (!assignedCafeIds.includes(terminalCafeId)) {
+      throw new ApiError(
+        403,
+        'CROSS_CAFE_RESOURCE_DENIED',
+        'Cash-drawer operation is denied outside the operator assigned café.'
+      );
+    }
+
+    const device = actor.deviceContext || {};
+    const deviceCafeId = String(device.boundCafeId || '').trim().toUpperCase();
+    if (
+      String(device.deviceClass || '').trim().toUpperCase() !== 'CAFE_OWNED' ||
+      String(device.status || '').trim().toUpperCase() !== 'ACTIVE' ||
+      !device.deviceId ||
+      device.deviceId === 'UNKNOWN_PERSONAL_DEVICE' ||
+      deviceCafeId !== terminalCafeId
+    ) {
+      throw new ApiError(
+        403,
+        'CAFE_OWNED_DEVICE_REQUIRED',
+        'Cash-drawer operation requires an active café-owned device bound to the terminal café.'
+      );
+    }
+  }
+
   const kickBuffer = buildDrawerKickBuffer(terminal.drawerConfig.pin || 2);
 
   // Append immutable audit record
