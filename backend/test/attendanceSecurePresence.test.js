@@ -1054,6 +1054,7 @@ test('ATTENDANCE-FLOW-001: QR deep-link, Cafe Operations kiosk, and calendars us
   const displaySource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'cafeAttendanceDisplay.js'), 'utf8');
   const cafeOpsKioskSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'screens', 'attendanceKiosk.js'), 'utf8');
   const cafeOpsApiSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'api', 'cafeOpsApi.js'), 'utf8');
+  const controllerSource = fs.readFileSync(path.join(root, 'backend', 'src', 'modules', 'attendance', 'attendanceController.js'), 'utf8');
 
   assert.match(qrPageSource, /res\.data\.attendanceUrl \|\| res\.data\.opaqueToken/);
   assert.match(displaySource, /res\.data\.attendanceUrl \|\| res\.data\.qrToken/);
@@ -1065,6 +1066,8 @@ test('ATTENDANCE-FLOW-001: QR deep-link, Cafe Operations kiosk, and calendars us
   assert.match(mainSource, /sessionStorage\.setItem/);
   assert.match(mainSource, /searchParams\.delete\("attendanceQr"\)/);
   assert.match(staffSource, /preScannedQrToken/);
+  assert.match(staffSource, /uploadRes\?\.data\?\.fileId \|\| uploadRes\?\.data\?\.mediaId/);
+  assert.ok((controllerSource.match(/uploadedByUserId: userId/g) || []).length >= 2);
   assert.match(staffSource, /runGeofenceVerification/);
   assert.match(staffSource, /startSelfieCapture/);
 
