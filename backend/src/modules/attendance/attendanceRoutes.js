@@ -37,6 +37,7 @@ const {
   previewRecalculation,
   getStaffHistory,
   requestStaffCorrection,
+  getStaffCorrections,
   getPendingCorrections,
   reviewStaffCorrection,
   recordStaffAttestation,
@@ -65,6 +66,7 @@ router.post('/check-out', staffCheckOut);
 router.post('/break/start', staffStartBreak);
 router.post('/break/end', staffEndBreak);
 router.post('/corrections', requestStaffCorrection);
+router.get('/corrections/mine', getStaffCorrections);
 router.get('/corrections/pending', getPendingCorrections);
 router.post('/corrections/:requestId/review', reviewStaffCorrection);
 router.post('/attestation', recordStaffAttestation);
