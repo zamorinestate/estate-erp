@@ -20,6 +20,10 @@ const notificationService = read('backend/src/services/NotificationService.js');
 const outboxWorker = read('backend/src/services/notificationOutboxWorker.js');
 const outboxModel = read('backend/src/models/NotificationOutbox.js');
 const serverSource = read('backend/src/server.js');
+const cafeService = read('backend/src/services/cafeService.js');
+const cafeController = read('backend/src/controllers/cafeController.js');
+const cafeCreateModal = read('frontend/src/js/pages/cafeCreateModal.js');
+const administrationPage = read('frontend/src/js/pages/administration.js');
 
 test('P0-WF-001: approval notification outbox is queued, never pre-marked SENT', () => {
   const helperStart = approvalController.indexOf('async function sendNotificationAndOutbox');
@@ -142,4 +146,41 @@ test('P0-WF-013: production server lifecycle starts and stops the outbox worker'
   assert.ok(serverSource.includes('await stopNotificationOutboxWorker();'));
   assert.ok(outboxWorker.includes("JOB-NOTIFICATION-OUTBOX-DISPATCH"));
   assert.ok(outboxWorker.includes('setInterval'));
+});
+
+
+test('P0-WF-014: operational café lifecycle is fail-closed without attendance geofence', () => {
+  assert.ok(cafeService.includes("'CAFE_GEOFENCE_REQUIRED'"));
+  assert.ok(cafeService.includes('Attendance geofence coordinates are missing or invalid.'));
+  assert.ok(cafeService.includes('Café activation requires valid latitude and longitude'));
+  assert.ok(cafeService.includes('geofenceRadiusMetres < 10'));
+  assert.ok(cafeService.includes('geofenceRadiusMetres > 1000'));
+});
+
+test('P0-WF-015: café edits merge address before $set so geofence is not erased', () => {
+  const start = cafeController.indexOf('const updateCafe = asyncHandler');
+  const end = cafeController.indexOf('const changeCafeStatus = asyncHandler', start);
+  const block = cafeController.slice(start, end);
+
+  assert.ok(block.includes('...(existingCafe.address?.toObject'));
+  assert.ok(block.includes('...updates.address'));
+  assert.ok(block.includes('normalizeCafeGeofenceAddress(mergedAddress, { required: true })'));
+  assert.equal(
+    /\$set:\s*updates/.test(block),
+    true,
+    'Merged updates should be persisted only after server-side address/geofence normalization'
+  );
+});
+
+test('P0-WF-016: Primary Master café create/edit UI exposes geofence capture and radius controls', () => {
+  assert.ok(cafeCreateModal.includes('wiz-f-latitude'));
+  assert.ok(cafeCreateModal.includes('wiz-f-longitude'));
+  assert.ok(cafeCreateModal.includes('wiz-f-geofence-radius'));
+  assert.ok(cafeCreateModal.includes('wiz-use-current-location-btn'));
+  assert.ok(cafeCreateModal.includes('navigator.geolocation.getCurrentPosition'));
+
+  assert.ok(administrationPage.includes('edit-cafe-latitude'));
+  assert.ok(administrationPage.includes('edit-cafe-longitude'));
+  assert.ok(administrationPage.includes('edit-cafe-geofence-radius'));
+  assert.ok(administrationPage.includes('edit-cafe-use-location'));
 });
