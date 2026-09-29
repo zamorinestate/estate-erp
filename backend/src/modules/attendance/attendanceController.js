@@ -2906,8 +2906,8 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
       checkIn: {
         time: attendance.checkInAt,
         selfieMediaId: checkInEvidence?.selfieMediaId || attendance.selfieFileId,
-        qrVerified: checkInEvidence?.qrVerified ?? Boolean(attendance.checkInAt),
-        geofenceVerified: checkInEvidence?.geofenceVerified ?? true,
+        qrVerified: checkInEvidence?.qrVerified ?? false,
+        geofenceVerified: checkInEvidence?.geofenceVerified ?? false,
         distanceMeters: isManagement ? checkInEvidence?.distanceMeters ?? null : null,
         accuracyMeters: isManagement ? checkInEvidence?.accuracyMeters ?? null : null,
         serverTimestamp: checkInEvidence?.serverTimestamp || attendance.checkInAt,
@@ -2915,8 +2915,8 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
       checkOut: attendance.checkOutAt ? {
         time: attendance.checkOutAt,
         selfieMediaId: checkOutEvidence?.selfieMediaId || null,
-        qrVerified: checkOutEvidence?.qrVerified ?? true,
-        geofenceVerified: checkOutEvidence?.geofenceVerified ?? true,
+        qrVerified: checkOutEvidence?.qrVerified ?? false,
+        geofenceVerified: checkOutEvidence?.geofenceVerified ?? false,
         distanceMeters: isManagement ? checkOutEvidence?.distanceMeters ?? null : null,
         accuracyMeters: isManagement ? checkOutEvidence?.accuracyMeters ?? null : null,
         serverTimestamp: checkOutEvidence?.serverTimestamp || attendance.checkOutAt,
