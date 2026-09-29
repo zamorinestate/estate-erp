@@ -254,6 +254,9 @@ async function enrollDevice({
       algorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
       keyThumbprint: signingKeyThumbprint,
       provider: normalizedSigningKeyProvider,
+      hardwareBackedSigningKeyVerified: false,
+      hardwareAttestationSecurityLevel: 'UNKNOWN',
+      hardwareAttestationVerifiedAt: null,
     },
   };
 }
@@ -343,6 +346,9 @@ async function getDiagnostics(device) {
     lastSyncAt: device.lastSyncAt,
     appVersion: device.appVersion,
     integrityState: device.integrityState || 'UNKNOWN',
+    signingKeyHardwareBackedVerified: device.signingKeyHardwareBackedVerified === true,
+    signingKeyHardwareSecurityLevel: device.signingKeyHardwareSecurityLevel || 'UNKNOWN',
+    signingKeyHardwareAttestationVerifiedAt: device.signingKeyHardwareAttestationVerifiedAt || null,
   };
 }
 
@@ -446,7 +452,7 @@ async function bindAttestationKey(device, {
       deviceId: device.id,
       cafeId: device.cafeId,
       organisationId: device.organisationId,
-      reasonCode: 'DEVICE_ATTESTATION_KEY_VERIFIED',
+      reasonCode: 'DEVICE_SIGNING_KEY_IDENTITY_VERIFIED',
       metadata: {
         keyThumbprint,
         algorithm: ATTESTATION_ALGORITHM,

@@ -261,7 +261,8 @@ test('REC-04E Android purpose-bound attestation requires enrollment-time Android
   assert.match(deviceService, /NATIVE_DEVICE_ATTESTATION_REQUIRED/);
   assert.match(deviceService, /DEVICE_ATTESTATION_REENROLLMENT_REQUIRED/);
   assert.match(deviceService, /DEVICE_ATTESTATION_PROVENANCE_MISMATCH/);
-  assert.match(deviceService, /reasonCode: 'DEVICE_ATTESTATION_KEY_VERIFIED'/);
+  assert.match(deviceService, /reasonCode: 'DEVICE_SIGNING_KEY_IDENTITY_VERIFIED'/);
+  assert.doesNotMatch(deviceService, /reasonCode: 'DEVICE_ATTESTATION_KEY_VERIFIED'/);
   assert.doesNotMatch(deviceService, /reasonCode: 'DEVICE_ATTESTATION_KEY_BOUND'/);
 
   assert.match(router, /getNativeDeviceAttestationIdentity\([\s\S]{0,500}?publicSigningKey: signingIdentity\.capable \? signingIdentity\.publicKeyJwk : null/);
@@ -431,4 +432,16 @@ test('REC-04E keeps provider claims separate from server-verified hardware key a
   assert.match(source, /keyHardwareBackedVerified: registration\.signingKeyHardwareBackedVerified === true/);
   assert.match(source, /attestationKeyHardwareBackedVerified: attestationBinding\.keyHardwareBackedVerified/);
   assert.match(source, /attestationKeyHardwareSecurityLevel: attestationBinding\.keyHardwareSecurityLevel/);
+});
+
+
+test('REC-04E enrollment and diagnostics do not mislabel signing capability as hardware attestation', () => {
+  const deviceService = fs.readFileSync(path.join(__dirname, '..', 'src', 'cafe-operations', 'services', 'deviceService.js'), 'utf8');
+  const enrollmentRoutes = fs.readFileSync(path.join(__dirname, '..', 'src', 'cafe-operations', 'routes', 'deviceEnrollmentRoutes.js'), 'utf8');
+
+  assert.match(deviceService, /hardwareBackedSigningKeyVerified: false/);
+  assert.match(deviceService, /hardwareAttestationSecurityLevel: 'UNKNOWN'/);
+  assert.match(deviceService, /signingKeyHardwareBackedVerified: device\.signingKeyHardwareBackedVerified === true/);
+  assert.match(enrollmentRoutes, /signingKeyHardwareBackedVerified: device\.signingKeyHardwareBackedVerified === true/);
+  assert.match(enrollmentRoutes, /signingKeyHardwareSecurityLevel: device\.signingKeyHardwareSecurityLevel \|\| 'UNKNOWN'/);
 });

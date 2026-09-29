@@ -42,6 +42,9 @@ router.post('/enroll', async (req, res, next) => {
         lifecycleStatus: device.lifecycleStatus,
         attestationCapable: Boolean(device.attestationCapable),
         signingKeyThumbprint: device.signingKeyThumbprint || null,
+        signingKeyHardwareBackedVerified: device.signingKeyHardwareBackedVerified === true,
+        signingKeyHardwareSecurityLevel: device.signingKeyHardwareSecurityLevel || 'UNKNOWN',
+        signingKeyHardwareAttestationVerifiedAt: device.signingKeyHardwareAttestationVerifiedAt || null,
       },
     });
   } catch (err) {
