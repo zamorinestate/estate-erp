@@ -49,6 +49,40 @@ describe('EXT-10 — Production Domain, DNS, TLS/HTTPS & Hosting Readiness (24-P
         delete process.env.PUBLIC_APP_ORIGIN;
       }
     }
+
+    const previous = {
+      nodeEnv: process.env.NODE_ENV,
+      publicAppOrigin: process.env.PUBLIC_APP_ORIGIN,
+      appOrigin: process.env.APP_ORIGIN,
+      frontendUrl: process.env.FRONTEND_URL,
+    };
+    try {
+      process.env.NODE_ENV = 'production';
+      delete process.env.PUBLIC_APP_ORIGIN;
+      delete process.env.APP_ORIGIN;
+      delete process.env.FRONTEND_URL;
+      assert.equal(
+        getPublicAppOrigin(),
+        'https://zamorin-cafe-erp.vercel.app',
+        'Production fallback must resolve to the canonical HTTPS frontend, never the backend host'
+      );
+
+      const renderConfig = fs.readFileSync(path.join(WORKSPACE_ROOT, 'render.yaml'), 'utf8');
+      assert.match(
+        renderConfig,
+        /PUBLIC_APP_ORIGIN\s*\n\s*value:\s*https:\/\/zamorin-cafe-erp\.vercel\.app/,
+        'Render must explicitly configure the public frontend origin used in QR deep-links'
+      );
+    } finally {
+      if (previous.nodeEnv !== undefined) process.env.NODE_ENV = previous.nodeEnv;
+      else delete process.env.NODE_ENV;
+      if (previous.publicAppOrigin !== undefined) process.env.PUBLIC_APP_ORIGIN = previous.publicAppOrigin;
+      else delete process.env.PUBLIC_APP_ORIGIN;
+      if (previous.appOrigin !== undefined) process.env.APP_ORIGIN = previous.appOrigin;
+      else delete process.env.APP_ORIGIN;
+      if (previous.frontendUrl !== undefined) process.env.FRONTEND_URL = previous.frontendUrl;
+      else delete process.env.FRONTEND_URL;
+    }
   });
 
   // -------------------------------------------------------------------------
