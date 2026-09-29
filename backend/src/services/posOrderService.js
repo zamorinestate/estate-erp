@@ -1384,7 +1384,7 @@ class PosOrderService {
           attestationRequired: attestationBinding.required,
           attestationKeyThumbprint: attestationBinding.keyThumbprint,
           drawerKickRequested,
-          drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
+          drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
           printBufferBase64: printResult.printBufferBase64,
           htmlPreview: printResult.htmlPreview,
         });
@@ -1414,7 +1414,7 @@ class PosOrderService {
           contentBindingVerified: false,
           printerIdentityVerified: false,
           drawerKickRequested,
-          drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
+          drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
         });
         await billDoc.save();
         billPrintStatePersisted = true;
@@ -1457,7 +1457,7 @@ class PosOrderService {
           printerTarget: 'DEFAULT_THERMAL',
         } : null,
         drawerKickRequested,
-        drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
+        drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
         printBuffer: printResult.printBufferBase64,
         htmlPreview: printResult.htmlPreview,
         rawBuffer: printResult.rawBuffer,
@@ -1729,8 +1729,17 @@ class PosOrderService {
 
     const currentStatus = normalizeId(job.status);
     const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
+    const isContentBoundJob = Boolean(job.payloadSha256);
     let attestationProof = null;
     let transportEvidence = null;
+
+    if (isContentBoundJob && job.attestationRequired !== true) {
+      throw new ApiError(
+        409,
+        'PRINT_ATTESTATION_REQUIRED',
+        'Content-bound REC-04E print jobs cannot be terminally acknowledged without enrolled cryptographic device attestation.'
+      );
+    }
 
     if (
       job.attestationRequired &&
@@ -1813,6 +1822,17 @@ class PosOrderService {
 
         const expectedAndroidEvidence =
           ackStatus === 'PRINTED' ? 'SPOOLER_COMPLETION' : 'SPOOLER_TERMINAL_STATE';
+        const expectedAndroidDrawerStatus =
+          job.drawerKickRequested ? 'UNKNOWN' : 'UNCHANGED';
+        if (
+          (requestedDrawerStatus || 'UNCHANGED') !== expectedAndroidDrawerStatus
+        ) {
+          throw new ApiError(
+            409,
+            'ANDROID_DRAWER_EVIDENCE_OVERCLAIM',
+            'Android system print cannot claim cash-drawer actuation; requested drawer evidence must remain UNKNOWN until hardware acknowledgement exists.'
+          );
+        }
         if (
           evidenceLevel !== expectedAndroidEvidence ||
           contentBindingVerified ||

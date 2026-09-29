@@ -139,7 +139,7 @@ const printJobSchema = new mongoose.Schema(
     },
     drawerKickStatus: {
       type: String,
-      enum: ['NOT_REQUESTED', 'DISPATCHED', 'ACKNOWLEDGED', 'FAILED', 'UNKNOWN'],
+      enum: ['NOT_REQUESTED', 'REQUESTED', 'DISPATCHED', 'ACKNOWLEDGED', 'FAILED', 'UNKNOWN'],
       default: 'NOT_REQUESTED',
     },
     completedAt: {

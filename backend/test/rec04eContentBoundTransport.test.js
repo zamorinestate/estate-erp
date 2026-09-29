@@ -131,3 +131,29 @@ test('REC-04E Android binding lifetime matches server challenge TTL and is clear
 
   assert.match(source, /if \(statusChanged && attestationProof\) \{\s*await DeviceRegistration\.updateOne\(/);
 });
+
+
+test('REC-04E content-bound jobs cannot terminally acknowledge without cryptographic attestation', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  assert.match(source, /const isContentBoundJob = Boolean\(job\.payloadSha256\)/);
+  assert.match(source, /PRINT_ATTESTATION_REQUIRED/);
+  assert.match(
+    source,
+    /isContentBoundJob && job\.attestationRequired !== true/,
+    'A new digest-bound print job must not fall back to unsigned terminal acknowledgement'
+  );
+});
+
+test('REC-04E drawer intent stays requested until a transport can prove actuation', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const model = fs.readFileSync(modelPath, 'utf8');
+
+  assert.match(model, /'REQUESTED'/);
+  assert.match(
+    source,
+    /drawerKickStatus: drawerKickRequested \? 'REQUESTED' : 'NOT_REQUESTED'/,
+    'Persisted dispatch state must not claim the drawer pulse was physically sent'
+  );
+  assert.match(source, /ANDROID_DRAWER_EVIDENCE_OVERCLAIM/);
+  assert.match(source, /job\.drawerKickRequested \? 'UNKNOWN' : 'UNCHANGED'/);
+});

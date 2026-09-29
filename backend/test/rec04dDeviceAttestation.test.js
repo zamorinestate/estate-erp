@@ -414,7 +414,7 @@ test('REC-04D — Android spooler terminal state is the only native path that ca
   assert.match(printManager, /printJob\.isCompleted\s*->\s*"COMPLETED"/);
   assert.match(printManager, /printJob\.isFailed\s*->\s*"FAILED"/);
   assert.match(printManager, /printJob\.isCancelled\s*->\s*"CANCELLED"/);
-  assert.match(printManager, /physicalCompletionVerified\s*=\s*status\s*==\s*"COMPLETED"/);
+  assert.match(printManager, /spoolerCompletionVerified\s*=\s*status\s*==\s*"COMPLETED"/);
 
   assert.match(bindingStore, /fun bind\(/);
   assert.match(bindingStore, /fun get\(/);
@@ -431,7 +431,8 @@ test('REC-04D — Android spooler terminal state is the only native path that ca
   assert.match(frontend, /monitorAndroidPrintAndAcknowledge/);
   assert.match(frontend, /'ATTEST_PRINT_JOB_RESULT'/);
   assert.match(frontend, /status === 'PRINTED'/);
-  assert.match(frontend, /attestedResult\.physicalCompletionVerified !== true/);
+  assert.match(frontend, /attestedResult\.spoolerCompletionVerified !== true/);
+  assert.match(frontend, /ANDROID_PHYSICAL_COMPLETION_OVERCLAIM/);
   assert.doesNotMatch(frontend, /SIGN_DEVICE_ATTESTATION/);
 });
 
