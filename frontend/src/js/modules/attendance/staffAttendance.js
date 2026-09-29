@@ -591,75 +591,112 @@ function renderCalendarDays() {
 
 // ── 3. TIMECARD TAB ──────────────────────────────────────────────────────────
 function renderTimecardTab() {
+  const totalWorkedHours = cachedSummary?.totalHoursWorked ??
+    (cachedHistory.reduce((sum, r) => sum + Number(r.totalWorkedMinutes || 0), 0) / 60).toFixed(1);
+  const approvedOvertimeHours = cachedSummary?.totalOvertimeHours ??
+    (cachedHistory.reduce((sum, r) => sum + Number(r.approvedOvertimeMinutes || 0), 0) / 60).toFixed(1);
+  const daysPresent = Number(
+    cachedSummary?.daysPresent ??
+    cachedHistory.filter((r) => ["CHECKED_IN", "CHECKED_OUT", "ON_BREAK"].includes(String(r.status || "").toUpperCase())).length
+  );
+  const daysLate = Number(
+    cachedSummary?.daysLate ??
+    cachedHistory.filter((r) => r.isLate === true || Number(r.lateMinutes || 0) > 0).length
+  );
+  const exceptionsCount = Number(
+    cachedSummary?.exceptionsCount ??
+    cachedHistory.filter((r) =>
+      r.isLate === true ||
+      r.correctionRequired === true ||
+      ["MISSED_PUNCH", "ABSENT"].includes(String(r.status || "").toUpperCase())
+    ).length
+  );
+  const onTimeRate = daysPresent > 0
+    ? Math.max(0, ((daysPresent - daysLate) / daysPresent) * 100).toFixed(1)
+    : "—";
+
+  const overtimeRecords = cachedHistory
+    .filter((r) =>
+      Number(r.detectedOvertimeMinutes || 0) > 0 ||
+      Number(r.approvedOvertimeMinutes || 0) > 0 ||
+      Boolean(r.overtimeStatus)
+    )
+    .slice()
+    .sort((a, b) => String(b.businessDate || "").localeCompare(String(a.businessDate || "")));
+  const latestOvertime = overtimeRecords[0] || null;
+
+  let overtimeGovernanceHtml = `
+    <div class="card" style="padding:16px 20px; background:var(--surface); border-radius:var(--radius-card, 12px); border:1px solid var(--line); box-shadow:var(--shadow-xs); margin-bottom:20px;">
+      <div style="font-size:13px; font-weight:700; color:var(--ink);">Overtime Governance</div>
+      <div style="font-size:12px; color:var(--muted); margin-top:5px;">No overtime record exists for this period.</div>
+    </div>
+  `;
+
+  if (latestOvertime) {
+    const detectedMinutes = Number(latestOvertime.detectedOvertimeMinutes || latestOvertime.overtimeMinutes || 0);
+    const approvedMinutes = Number(latestOvertime.approvedOvertimeMinutes || 0);
+    const status = String(latestOvertime.overtimeStatus || (approvedMinutes > 0 ? "APPROVED" : "DETECTED")).replace(/_/g, " ");
+    const dateLabel = latestOvertime.businessDate
+      ? formatDateStr(`${latestOvertime.businessDate}T00:00:00+05:30`)
+      : "Recorded date unavailable";
+
+    overtimeGovernanceHtml = `
+      <div class="card" style="padding:16px 20px; background:var(--surface); border-radius:var(--radius-card, 12px); border:1px solid var(--line); box-shadow:var(--shadow-xs); margin-bottom:20px;">
+        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:8px;">
+          Overtime Governance — ${escapeHtml(dateLabel)}
+        </div>
+        <div style="display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--text-secondary);">
+          <span>Detected: <strong>${(detectedMinutes / 60).toFixed(1)}h</strong></span>
+          <span>Approved: <strong>${(approvedMinutes / 60).toFixed(1)}h</strong></span>
+          <span>Status: <strong>${escapeHtml(status)}</strong></span>
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div style="margin-bottom:24px;">
-      <!-- KPI Cards Summary (Matching Reference HRIS Design) -->
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px; margin-bottom:20px;">
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Total Worked Hours</div>
-          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">148.5h</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● +4.2h vs Last Month</div>
+          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">${escapeHtml(totalWorkedHours)}h</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">${daysPresent} recorded present day${daysPresent === 1 ? "" : "s"}</div>
         </div>
 
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Approved Overtime</div>
-          <div style="font-size:26px; font-weight:800; color:#b45309; font-family:var(--font-heading); margin-top:4px;">2.5h</div>
-          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Master Approved for Payroll</div>
+          <div style="font-size:26px; font-weight:800; color:#b45309; font-family:var(--font-heading); margin-top:4px;">${escapeHtml(approvedOvertimeHours)}h</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Server-recorded approved overtime</div>
         </div>
 
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">On-Time Arrival Rate</div>
-          <div style="font-size:26px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:4px;">94.2%</div>
-          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">2 Lates this period (-33%)</div>
+          <div style="font-size:26px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:4px;">${onTimeRate === "—" ? "—" : `${onTimeRate}%`}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">${daysLate} late arrival${daysLate === 1 ? "" : "s"} this period</div>
         </div>
 
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Period Payroll State</div>
-          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">OPEN</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Eligible for corrections</div>
+          <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Attendance Exceptions</div>
+          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">${exceptionsCount}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Late, missed-punch, absence, or correction flags</div>
         </div>
       </div>
 
-      <!-- Overtime Multi-Stage Decision Timeline Box -->
-      <div class="card" style="padding:16px 20px; background:var(--surface); border-radius:var(--radius-card, 12px); border:1px solid var(--line); box-shadow:var(--shadow-xs); margin-bottom:20px;">
-        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:10px;">
-          Overtime Governance Workflow (16 Aug 2026 · 1.5h Overtime)
-        </div>
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; font-size:12px; gap:8px;">
-          <div class="flex items-center gap-xs">
-            <span style="width:20px; height:20px; border-radius:50%; background:rgba(5,150,105,0.15); color:#059669; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:11px;">1</span>
-            <span style="font-weight:600; color:var(--ink);">Detected (1.5h)</span>
-          </div>
-          <span style="color:var(--muted);">→</span>
-          <div class="flex items-center gap-xs">
-            <span style="width:20px; height:20px; border-radius:50%; background:rgba(5,150,105,0.15); color:#059669; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:11px;">2</span>
-            <span style="font-weight:600; color:var(--ink);">Admin Verified</span>
-          </div>
-          <span style="color:var(--muted);">→</span>
-          <div class="flex items-center gap-xs">
-            <span style="width:20px; height:20px; border-radius:50%; background:rgba(180,83,9,0.15); color:#b45309; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:11px;">3</span>
-            <span style="font-weight:700; color:#b45309;">Master Approved (1.5h Payable)</span>
-          </div>
-        </div>
-      </div>
+      ${overtimeGovernanceHtml}
 
-      <!-- Timecard Table Card -->
       <div class="card" style="padding:20px; background:var(--bg-surface-1); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); border:1px solid var(--border-subtle);">
         <div class="flex items-center justify-between flex-wrap gap-sm" style="margin-bottom:16px;">
           <div style="font-size:15px; font-weight:800; color:var(--text-primary);">
-            ${new Date(currentMonth + "-01T00:00:00").toLocaleString("en-IN", { month: "long", year: "numeric" })} Detailed Daily Timecard
+            ${new Date(currentMonth + "-01T00:00:00+05:30").toLocaleString("en-IN", { month: "long", year: "numeric", timeZone: "Asia/Kolkata" })} Detailed Daily Timecard
           </div>
-          <!-- Export & Filter Controls (P2 Option) -->
           <div class="flex items-center gap-xs flex-wrap">
             <select class="input" id="sel-history-filter" style="padding:4px 8px; font-size:12px;">
-              <option value="ALL">All Records</option>
-              <option value="PRESENT">Present Only</option>
-              <option value="LATE">Late Arrivals</option>
-              <option value="EXCEPTIONS">Exceptions Only</option>
+              <option value="ALL" ${historyFilterStatus === "ALL" ? "selected" : ""}>All Records</option>
+              <option value="PRESENT" ${historyFilterStatus === "PRESENT" ? "selected" : ""}>Present Only</option>
+              <option value="LATE" ${historyFilterStatus === "LATE" ? "selected" : ""}>Late Arrivals</option>
+              <option value="EXCEPTIONS" ${historyFilterStatus === "EXCEPTIONS" ? "selected" : ""}>Exceptions Only</option>
             </select>
-            <button class="btn btn-xs btn-secondary" id="btn-export-csv">
-              CSV
-            </button>
+            <button class="btn btn-xs btn-secondary" id="btn-export-csv">CSV</button>
             <button class="btn btn-xs btn-secondary" onclick="window.print()">
               ${icon("printer", 13)} Print Statement
             </button>
@@ -691,34 +728,54 @@ function renderTimecardTab() {
 }
 
 function renderTimecardRows() {
-  if (cachedHistory.length === 0) {
-    return `<tr><td colspan="8" style="padding:24px; text-align:center; color:var(--text-muted); font-size:13px;">No timecard records found. History will appear once attendance data is synced.</td></tr>`;
+  let rows = cachedHistory.slice();
+  if (historyFilterStatus === "PRESENT") {
+    rows = rows.filter((r) => ["CHECKED_IN", "CHECKED_OUT", "ON_BREAK"].includes(String(r.status || "").toUpperCase()));
+  } else if (historyFilterStatus === "LATE") {
+    rows = rows.filter((r) => r.isLate === true || Number(r.lateMinutes || 0) > 0);
+  } else if (historyFilterStatus === "EXCEPTIONS") {
+    rows = rows.filter((r) =>
+      r.isLate === true ||
+      r.correctionRequired === true ||
+      ["MISSED_PUNCH", "ABSENT"].includes(String(r.status || "").toUpperCase())
+    );
   }
 
-  return cachedHistory.map((r) => {
-    const dateLabel = r.businessDate
-      ? new Date(r.businessDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+  if (rows.length === 0) {
+    return `<tr><td colspan="8" style="padding:24px; text-align:center; color:var(--text-muted); font-size:13px;">No timecard records match this view.</td></tr>`;
+  }
+
+  return rows.map((r) => {
+    const rawBusinessDate = String(r.businessDate || "");
+    const dateLabel = rawBusinessDate
+      ? formatDateStr(`${rawBusinessDate}T00:00:00+05:30`)
       : "—";
-    const shiftLabel = r.shiftLabel || r.shift || (r.checkInAt ? `${formatTimeStr(r.checkInAt)} – ${r.checkOutAt ? formatTimeStr(r.checkOutAt) : "Open"}` : "—");
+    const shiftLabel = r.shiftName || r.shiftLabel || r.shift ||
+      (r.scheduledStartAt || r.scheduledEndAt
+        ? `${r.scheduledStartAt ? formatTimeStr(r.scheduledStartAt) : "—"} – ${r.scheduledEndAt ? formatTimeStr(r.scheduledEndAt) : "—"}`
+        : "—");
     const checkIn = r.checkInAt ? formatTimeStr(r.checkInAt) : "—";
     const checkOut = r.checkOutAt ? formatTimeStr(r.checkOutAt) : "—";
-    const worked = r.totalWorkedMinutes > 0 ? `${Math.floor(r.totalWorkedMinutes / 60)}h ${r.totalWorkedMinutes % 60}m` : "—";
-    const ot = r.overtimeMinutes > 0 ? `${(r.overtimeMinutes / 60).toFixed(1)}h` : "—";
-    const statusLabel = (r.status || "PRESENT").replace(/_/g, " ");
-    const isLate = r.isLate || false;
-    const attId = r.id || r.attendanceId || r.businessDate || "";
+    const worked = Number(r.totalWorkedMinutes) > 0
+      ? `${Math.floor(Number(r.totalWorkedMinutes) / 60)}h ${Number(r.totalWorkedMinutes) % 60}m`
+      : "—";
+    const overtimeMinutes = Number(r.approvedOvertimeMinutes ?? r.overtimeMinutes ?? 0);
+    const ot = overtimeMinutes > 0 ? `${(overtimeMinutes / 60).toFixed(1)}h` : "—";
+    const statusLabel = String(r.status || "NO STATUS").replace(/_/g, " ");
+    const isLate = r.isLate === true || Number(r.lateMinutes || 0) > 0;
+    const attId = String(r.attendanceId || r.id || r._id || "");
 
     return `
     <tr style="border-bottom:1px solid var(--border-subtle);">
-      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${dateLabel}</td>
-      <td style="padding:10px 8px; color:var(--text-secondary);">${shiftLabel}</td>
-      <td style="padding:10px 8px; color:var(--color-accent-mint); font-weight:600;">${checkIn}</td>
-      <td style="padding:10px 8px; color:var(--brand-gold); font-weight:600;">${checkOut}</td>
-      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${worked}</td>
-      <td style="padding:10px 8px; color:var(--text-secondary);">${ot}</td>
-      <td style="padding:10px 8px;"><span class="badge ${isLate ? "badge-coral" : "badge-subtle"}" style="font-size:10.5px;">${statusLabel}</span></td>
+      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${escapeHtml(dateLabel)}</td>
+      <td style="padding:10px 8px; color:var(--text-secondary);">${escapeHtml(shiftLabel)}</td>
+      <td style="padding:10px 8px; color:var(--color-accent-mint); font-weight:600;">${escapeHtml(checkIn)}</td>
+      <td style="padding:10px 8px; color:var(--brand-gold); font-weight:600;">${escapeHtml(checkOut)}</td>
+      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${escapeHtml(worked)}</td>
+      <td style="padding:10px 8px; color:var(--text-secondary);">${escapeHtml(ot)}</td>
+      <td style="padding:10px 8px;"><span class="badge ${isLate ? "badge-coral" : "badge-subtle"}" style="font-size:10.5px;">${escapeHtml(statusLabel)}</span></td>
       <td style="padding:10px 8px; text-align:right;">
-        <button class="btn btn-xs btn-ghost btn-view-day-drilldown" data-att-id="${attId}" data-date="${dateLabel}">
+        <button class="btn btn-xs btn-ghost btn-view-day-drilldown" data-att-id="${escapeHtml(attId)}" data-date="${escapeHtml(rawBusinessDate)}">
           Details →
         </button>
       </td>
