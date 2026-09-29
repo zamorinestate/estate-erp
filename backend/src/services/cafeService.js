@@ -1755,9 +1755,30 @@ class CafeService {
 
     const failureReasons = [];
 
-    // Verify identity & address
+    // Verify identity, address, and attendance geofence readiness
     if (!cafe.name || !cafe.displayName) failureReasons.push('Café identity is incomplete.');
     if (!cafe.address?.city) failureReasons.push('Structured location city is missing.');
+
+    const latitude = Number(cafe.address?.latitude);
+    const longitude = Number(cafe.address?.longitude);
+    const geofenceRadiusMetres = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      failureReasons.push('Attendance geofence coordinates are missing or invalid.');
+    }
+    if (
+      !Number.isFinite(geofenceRadiusMetres) ||
+      geofenceRadiusMetres < 10 ||
+      geofenceRadiusMetres > 1000
+    ) {
+      failureReasons.push('Attendance geofence radius must be between 10 and 1000 metres.');
+    }
 
     // Verify sequences in SequenceCounter
     const fyInfo = resolveFinancialYear();
@@ -1843,6 +1864,37 @@ class CafeService {
         400,
         'CANNOT_ACTIVATE_UNVERIFIED_CAFE',
         `Café must be in 'VERIFIED' stage before activation. Current stage: '${cafe.lifecycleStage}'.`
+      );
+    }
+
+    const latitude = Number(cafe.address?.latitude);
+    const longitude = Number(cafe.address?.longitude);
+    const geofenceRadiusMetres = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new ApiError(
+        400,
+        'CAFE_GEOFENCE_REQUIRED',
+        'Café activation requires valid latitude and longitude for secure attendance geofencing.'
+      );
+    }
+
+    if (
+      !Number.isFinite(geofenceRadiusMetres) ||
+      geofenceRadiusMetres < 10 ||
+      geofenceRadiusMetres > 1000
+    ) {
+      throw new ApiError(
+        400,
+        'CAFE_GEOFENCE_RADIUS_INVALID',
+        'Café activation requires an attendance geofence radius between 10 and 1000 metres.'
       );
     }
 
