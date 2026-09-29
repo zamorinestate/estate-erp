@@ -61,6 +61,31 @@ async function authenticate(
           'Primary Master authority is required for MASTER access.'
         );
       }
+
+      const authenticatedUser = request.authenticatedUser;
+      const authenticatedSession = request.authenticatedSession;
+      const authUserId = String(request.auth.userId || '').trim();
+      const authOrganisationId = String(request.auth.organisationId || '').trim();
+
+      const canonicalContextVerified = Boolean(
+        authenticatedUser &&
+        authenticatedSession &&
+        authUserId &&
+        authOrganisationId &&
+        String(authenticatedUser.userId || '').trim() === authUserId &&
+        String(authenticatedUser.organisationId || '').trim() === authOrganisationId &&
+        String(authenticatedSession.userId || '').trim() === authUserId &&
+        String(authenticatedSession.organisationId || '').trim() === authOrganisationId
+      );
+
+      if (!canonicalContextVerified) {
+        return sendAuthenticationError(
+          response,
+          'AUTH_CONTEXT_UNVERIFIED',
+          'The authentication context is not backed by a verified live session.'
+        );
+      }
+
       return next();
     }
 

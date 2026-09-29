@@ -300,3 +300,18 @@ test('P2-02 attack: preloaded malformed MASTER request context cannot bypass mid
   assert.equal(result.response.statusCode, 401);
   assert.equal(result.response.body?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
 });
+
+
+test('P2-02 attack: preloaded non-MASTER auth context cannot bypass canonical session validation', async () => {
+  const result = await executeAuthenticate(null, {
+    userId: 'ST-FORGED',
+    organisationId: ORG,
+    role: 'STAFF',
+    isPrimaryMaster: false,
+    assignedCafeIds: [CAFE_A],
+  });
+
+  assert.equal(result.nextCalled, false);
+  assert.equal(result.response.statusCode, 401);
+  assert.equal(result.response.body?.error?.code, 'AUTH_CONTEXT_UNVERIFIED');
+});
