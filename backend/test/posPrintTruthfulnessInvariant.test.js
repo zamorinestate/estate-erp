@@ -40,11 +40,16 @@ test('POS print truthfulness: schemas explicitly support dispatched-but-not-comp
   assert.match(bill, /['"]PRINT_CANCELLED['"]/);
 });
 
-test('POS print truthfulness: browser flow describes backend print work as queued before local print dialog', () => {
+test('POS print truthfulness: browser flow does not overclaim physical printer delivery', () => {
   const frontend = fs.readFileSync(frontendPath, 'utf8');
 
-  assert.match(frontend, /Thermal print job dispatched to POS printer\./);
+  assert.match(frontend, /Receipt submitted to the print client\./);
   assert.match(frontend, /window\.print\(\)/);
+  assert.doesNotMatch(
+    frontend,
+    /Thermal print job dispatched to POS printer\./,
+    'Browser/native dispatch must not be described as proven physical printer delivery'
+  );
 });
 
 test('POS print audit identities are collision-resistant and not timestamp-derived', () => {

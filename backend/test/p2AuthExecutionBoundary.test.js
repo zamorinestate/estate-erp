@@ -220,10 +220,15 @@ test('P2-02 attack: malformed non-primary MASTER loses authority immediately eve
   });
   const session = await createSessionFor(user, 'MASTER');
 
-  await User.updateOne(
+  // Deliberately bypass Mongoose's immutable field protection to simulate a
+  // corrupted/legacy persisted row. authenticate() must still fail closed from
+  // the live database record rather than trusting the already-issued token.
+  const mutation = await User.collection.updateOne(
     { organisationId: ORG, userId: user.userId },
     { $set: { isPrimaryMaster: false } }
   );
+  assert.equal(mutation.matchedCount, 1);
+  assert.equal(mutation.modifiedCount, 1);
 
   const result = await executeAuthenticate(session.accessToken);
 

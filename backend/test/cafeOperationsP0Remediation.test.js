@@ -359,7 +359,12 @@ test('CAFÉ OPS-01 — P0 Remediation Suite (P0-1, P0-2, P0-3)', async (t) => {
       cafeDisplayName: 'Zamorin Flagship',
       intendedDisplayName: 'Billing Terminal 1',
     }));
-    t.mock.method(repos.enrollmentTokens, 'update', async () => ({}));
+    t.mock.method(repos.enrollmentTokens, 'consumeIfPending', async (id, usage) => ({
+      id,
+      status: 'USED',
+      usedAt: usage.usedAt,
+      usedByDeviceId: usage.usedByDeviceId,
+    }));
     t.mock.method(repos.devices, 'create', async (dev) => ({ ...dev, id: 'DEV-POS-0099' }));
 
     const { device } = await deviceService.enrollDevice({
