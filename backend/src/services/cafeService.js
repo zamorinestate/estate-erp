@@ -260,6 +260,46 @@ class CafeService {
       throw new ApiError(400, 'INVALID_CAFE_STATUS', 'The café status is invalid.');
     }
 
+    if (initialStatus === 'ACTIVE') {
+      const createAddress = sanitized.address || {};
+      const latitude = Number(sanitized.latitude ?? createAddress.latitude);
+      const longitude = Number(sanitized.longitude ?? createAddress.longitude);
+      const geofenceRadiusMetres = Number(
+        sanitized.geofenceRadiusMetres ?? createAddress.geofenceRadiusMetres ?? 100
+      );
+
+      if (
+        !Number.isFinite(latitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        !Number.isFinite(longitude) ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_REQUIRED',
+          'An ACTIVE café requires valid latitude and longitude for secure attendance geofencing.'
+        );
+      }
+
+      if (
+        !Number.isFinite(geofenceRadiusMetres) ||
+        geofenceRadiusMetres < 10 ||
+        geofenceRadiusMetres > 1000
+      ) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_RADIUS_INVALID',
+          'Attendance geofence radius must be between 10 and 1000 metres.'
+        );
+      }
+
+      sanitized.latitude = latitude;
+      sanitized.longitude = longitude;
+      sanitized.geofenceRadiusMetres = geofenceRadiusMetres;
+    }
+
     // 1. Generate sequential, collision-safe Cafe ID (e.g. ZC-0001)
     const cafeId = await SequenceCounter.generateId({
       organisationId,
@@ -1010,6 +1050,10 @@ class CafeService {
     }
 
     if (!isDraft) {
+      if (!hasLatitude || !hasLongitude) {
+        errors.push('Attendance geofence latitude and longitude are required before an operational café can be created.');
+      }
+
       if (!sanitized.addressLine1 && !address.street && !address.line1 && !address.building) {
         errors.push('Street / Premises address is required.');
       }
@@ -1370,6 +1414,33 @@ class CafeService {
         'INVALID_LIFECYCLE_TRANSITION',
         `Cannot transition café lifecycle from '${currentStage}' to '${targetStage}'. Allowed: [${allowed.join(', ')}]`
       );
+    }
+
+    if (targetStage === 'ACTIVATED') {
+      const latitude = Number(cafe.address?.latitude);
+      const longitude = Number(cafe.address?.longitude);
+      const radius = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+      if (
+        !Number.isFinite(latitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        !Number.isFinite(longitude) ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_REQUIRED',
+          'Café activation requires valid attendance geofence coordinates.'
+        );
+      }
+      if (!Number.isFinite(radius) || radius < 10 || radius > 1000) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_RADIUS_INVALID',
+          'Café activation requires an attendance geofence radius between 10 and 1000 metres.'
+        );
+      }
     }
 
     cafe.lifecycleStage = targetStage;
