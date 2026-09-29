@@ -13,6 +13,7 @@ const deviceService = require('../src/cafe-operations/services/deviceService');
 const { getRepositories, resetRepositories } = require('../src/cafe-operations/repositories');
 const {
   revocationLookupKeys,
+  verifyExpectedHardwareAuthorizations,
 } = require('../src/cafe-operations/services/androidHardwareAttestationService');
 const { sha256Hex } = require('../src/cafe-operations/utils/ids');
 const root = path.join(__dirname, '..', '..');
@@ -787,4 +788,65 @@ test('REC-04E hardware-attestation challenge issuance allows only one active cha
   assert.equal(token.hardwareAttestationChallengeConsumedAt, null);
 
   resetRepositories();
+});
+
+
+test('REC-04E hardware trust requires exact hardware-enforced key authorizations and verified boot', () => {
+  const makeList = (values) => ({
+    findProperty(name) {
+      return values[name] ?? null;
+    },
+  });
+  const base = {
+    purpose: [2, 3],
+    algorithm: 3,
+    keySize: 256,
+    ecCurve: 1,
+    digest: [4],
+    rootOfTrust: {
+      deviceLocked: true,
+      verifiedBootState: 0,
+    },
+  };
+
+  assert.deepEqual(
+    verifyExpectedHardwareAuthorizations({
+      hardwareEnforced: makeList(base),
+    }),
+    { valid: true }
+  );
+
+  assert.equal(
+    verifyExpectedHardwareAuthorizations({
+      hardwareEnforced: makeList({ ...base, purpose: [0, 2, 3] }),
+    }).reason,
+    'ANDROID_ATTESTATION_KEY_AUTHORIZATION_MISMATCH'
+  );
+
+  assert.equal(
+    verifyExpectedHardwareAuthorizations({
+      hardwareEnforced: makeList({ ...base, digest: [2, 4] }),
+    }).reason,
+    'ANDROID_ATTESTATION_KEY_AUTHORIZATION_MISMATCH'
+  );
+
+  assert.equal(
+    verifyExpectedHardwareAuthorizations({
+      hardwareEnforced: makeList({
+        ...base,
+        rootOfTrust: { deviceLocked: false, verifiedBootState: 0 },
+      }),
+    }).reason,
+    'ANDROID_ATTESTATION_VERIFIED_BOOT_REQUIRED'
+  );
+
+  assert.equal(
+    verifyExpectedHardwareAuthorizations({
+      hardwareEnforced: makeList({
+        ...base,
+        rootOfTrust: { deviceLocked: true, verifiedBootState: 2 },
+      }),
+    }).reason,
+    'ANDROID_ATTESTATION_VERIFIED_BOOT_REQUIRED'
+  );
 });

@@ -217,6 +217,97 @@ function authorizationProperty(description, propertyName) {
   }
   return null;
 }
+
+function hardwareAuthorizationProperty(description, propertyName) {
+  const lists = [];
+  if (description.hardwareEnforced) lists.push(description.hardwareEnforced);
+  if (
+    description.teeEnforced &&
+    description.teeEnforced !== description.hardwareEnforced
+  ) {
+    lists.push(description.teeEnforced);
+  }
+
+  for (const list of lists) {
+    if (!list || typeof list.findProperty !== 'function') continue;
+    try {
+      const value = list.findProperty(propertyName);
+      if (value != null) return value;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function numericAuthorizationValues(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.map(Number).filter(Number.isFinite);
+  if (
+    typeof value !== 'string' &&
+    value &&
+    typeof value[Symbol.iterator] === 'function'
+  ) {
+    return Array.from(value).map(Number).filter(Number.isFinite);
+  }
+  if (Array.isArray(value?.value)) {
+    return value.value.map(Number).filter(Number.isFinite);
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? [number] : [];
+}
+
+function verifyExpectedHardwareAuthorizations(description) {
+  const purposes = numericAuthorizationValues(
+    hardwareAuthorizationProperty(description, 'purpose')
+  ).sort((a, b) => a - b);
+  const digests = numericAuthorizationValues(
+    hardwareAuthorizationProperty(description, 'digest')
+  ).sort((a, b) => a - b);
+  const algorithm = Number(
+    hardwareAuthorizationProperty(description, 'algorithm')
+  );
+  const keySize = Number(
+    hardwareAuthorizationProperty(description, 'keySize')
+  );
+  const ecCurve = Number(
+    hardwareAuthorizationProperty(description, 'ecCurve')
+  );
+  const rootOfTrust = hardwareAuthorizationProperty(
+    description,
+    'rootOfTrust'
+  );
+
+  const exactPurpose =
+    purposes.length === 2 &&
+    purposes[0] === 2 &&
+    purposes[1] === 3;
+  const exactDigest = digests.length === 1 && digests[0] === 4;
+  const verifiedBoot =
+    rootOfTrust?.deviceLocked === true &&
+    Number(rootOfTrust?.verifiedBootState) === 0;
+
+  if (
+    !exactPurpose ||
+    algorithm !== 3 ||
+    keySize !== 256 ||
+    ecCurve !== 1 ||
+    !exactDigest
+  ) {
+    return {
+      valid: false,
+      reason: 'ANDROID_ATTESTATION_KEY_AUTHORIZATION_MISMATCH',
+    };
+  }
+
+  if (!verifiedBoot) {
+    return {
+      valid: false,
+      reason: 'ANDROID_ATTESTATION_VERIFIED_BOOT_REQUIRED',
+    };
+  }
+
+  return { valid: true };
+}
+
 async function extractApplicationIdentity(description) {
   const { AsnConvert, AttestationApplicationId } = await loadAsnModules();
   const raw = authorizationProperty(description, 'attestationApplicationId');
@@ -317,6 +408,16 @@ async function verifyAndroidHardwareAttestation({
       verified: false,
       reason: 'ANDROID_ATTESTATION_NOT_HARDWARE_BACKED',
       securityLevel: 'SOFTWARE',
+      rootSha256,
+    };
+  }
+
+  const authorizationState = verifyExpectedHardwareAuthorizations(description);
+  if (!authorizationState.valid) {
+    return {
+      verified: false,
+      reason: authorizationState.reason,
+      securityLevel: securityLevelName(Math.min(attestationLevel, keyLevel)),
       rootSha256,
     };
   }
@@ -424,6 +525,7 @@ module.exports = {
   GOOGLE_ATTESTATION_ROOTS_URL,
   GOOGLE_ATTESTATION_STATUS_URL,
   revocationLookupKeys,
+  verifyExpectedHardwareAuthorizations,
   verifyAndroidHardwareAttestation,
   applyVerifiedAndroidHardwareEvidence,
 };
