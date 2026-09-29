@@ -19,7 +19,12 @@ function yes(value) {
 
 function resolveCandidateSha(explicitSha) {
   const provided = String(explicitSha || '').trim().toLowerCase();
-  if (/^[a-f0-9]{40}$/.test(provided)) return provided;
+  if (provided) {
+    if (/^[a-f0-9]{40}$/.test(provided)) return provided;
+    const err = new Error('REC04E_CANDIDATE_SHA_INVALID');
+    err.code = 'REC04E_CANDIDATE_SHA_INVALID';
+    throw err;
+  }
 
   const gitResult = spawnSync('git', ['rev-parse', 'HEAD'], {
     encoding: 'utf8',

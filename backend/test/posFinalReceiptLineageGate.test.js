@@ -205,3 +205,16 @@ test('FINAL POS RECEIPT LINEAGE — hardware acceptance report is cryptographica
   assert.match(finalGate, /--expected-sha=\$\{expectedSha\}/);
   assert.match(finalGate, /hardwareAcceptanceCandidateShaBound: true/);
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — malformed explicit hardware candidate SHA fails closed instead of silently falling back to Git HEAD', () => {
+  const runner = readRepo('scripts/run_rec04e_hardware_acceptance.mjs');
+
+  assert.match(runner, /REC04E_CANDIDATE_SHA_INVALID/);
+  assert.match(runner, /if \(provided\) \{/);
+  assert.doesNotMatch(
+    runner,
+    /if \(\/\^\[a-f0-9\]\{40\}\$\/\.test\(provided\)\) return provided;\s*\n\s*const gitResult/,
+    'explicit invalid candidate SHA must not silently fall back to Git HEAD'
+  );
+});
