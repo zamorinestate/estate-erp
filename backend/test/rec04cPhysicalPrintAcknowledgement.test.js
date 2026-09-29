@@ -24,6 +24,7 @@ const iosBridgePath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'ios
 const iosControllerPath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'ios', 'ZamorinCafeERP', 'ViewController.swift');
 const macBridgePath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
 const macControllerPath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'MainWindowController.swift');
+const apiClientPath = path.join(__dirname, '..', '..', 'frontend', 'src', 'js', 'apiClient.js');
 
 function activeCafeDevice(deviceId = 'DV-ZC0001-POS-01', cafeId = 'ZC-0001') {
   return {
@@ -257,6 +258,10 @@ test('REC-04C — acknowledgement endpoint is authenticated and device-context p
   assert.ok(deviceIndex > authIndex);
   assert.ok(ackIndex > deviceIndex);
   assert.match(routes, /acknowledgePrintJob/);
+
+  const apiClient = fs.readFileSync(apiClientPath, 'utf8');
+  assert.match(apiClient, /const operatorSessionId = getSessionId\(\)/);
+  assert.match(apiClient, /requestHeaders\["x-operator-session-id"\] = operatorSessionId\.trim\(\)/);
 });
 
 test('REC-04C — only original sale dispatch can request a drawer kick', () => {
