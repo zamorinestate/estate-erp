@@ -221,6 +221,24 @@ class ZamorinNativeBridge(
                 callbacks.onOpenSystemPrint(requestId, jobName, attestationContext)
                 null // Asynchronous completion handled via callbacks
             }
+            "CLEAR_PRINT_ATTESTATION_BINDING" -> {
+                val platformJobId = payload.optString("platformJobId", "").trim()
+                if (platformJobId.isBlank()) {
+                    BridgeResponse(
+                        requestId = requestId,
+                        success = false,
+                        errorCode = "PLATFORM_PRINT_JOB_ID_REQUIRED",
+                        errorMessage = "platformJobId is required."
+                    )
+                } else {
+                    ZamorinPrintAttestationStore.clear(context, platformJobId)
+                    val res = JSONObject().apply {
+                        put("platformJobId", platformJobId)
+                        put("cleared", true)
+                    }
+                    BridgeResponse(requestId = requestId, success = true, result = res)
+                }
+            }
             "ATTEST_PRINT_JOB_RESULT" -> {
                 val platformJobId = payload.optString("platformJobId", "").trim()
                 if (platformJobId.isBlank()) {

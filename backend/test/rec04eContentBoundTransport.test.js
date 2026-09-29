@@ -11,6 +11,7 @@ const modelPath = path.join(__dirname, '..', 'src', 'models', 'PrintJob.js');
 const frontendPath = path.join(root, 'frontend', 'src', 'js', 'utils', 'deviceAttestation.js');
 const androidBridgePath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinNativeBridge.kt');
 const androidPrintManagerPath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinPrintManager.kt');
+const androidAttestationStorePath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinPrintAttestationStore.kt');
 const posTillPath = path.join(root, 'frontend', 'src', 'js', 'pages', 'posTill.js');
 const hardwareModelPath = path.join(__dirname, '..', 'src', 'models', 'HardwareTerminal.js');
 const hardwareServicePath = path.join(__dirname, '..', 'src', 'services', 'hardwareBridgeService.js');
@@ -104,4 +105,24 @@ test('REC-04E rejects invented transport evidence and freezes terminal replay ev
 
   assert.match(frontend, /expectedEvidenceLevel/);
   assert.match(frontend, /SPOOLER_TERMINAL_STATE/);
+});
+
+
+test('REC-04E Android binding lifetime matches server challenge TTL and is cleared only after accepted acknowledgement', () => {
+  const store = fs.readFileSync(androidAttestationStorePath, 'utf8');
+  const bridge = fs.readFileSync(androidBridgePath, 'utf8');
+  const frontend = fs.readFileSync(frontendPath, 'utf8');
+  const source = fs.readFileSync(posServicePath, 'utf8');
+
+  assert.match(store, /MAX_AGE_MS = 15L \* 60L \* 1000L/);
+  assert.equal(attestationService.PRINT_ACK_CHALLENGE_TTL_MS, 15 * 60 * 1000);
+
+  assert.match(bridge, /"CLEAR_PRINT_ATTESTATION_BINDING"/);
+  assert.match(bridge, /ZamorinPrintAttestationStore\.clear\(context, platformJobId\)/);
+
+  const serverAckIndex = frontend.indexOf('const serverAck = await submitPurposeBoundPrintAcknowledgement');
+  const clearIndex = frontend.indexOf("'CLEAR_PRINT_ATTESTATION_BINDING'");
+  assert.ok(serverAckIndex >= 0 && clearIndex > serverAckIndex, 'Local binding must clear only after server acknowledgement succeeds');
+
+  assert.match(source, /if \(statusChanged && attestationProof\) \{\s*await DeviceRegistration\.updateOne\(/);
 });

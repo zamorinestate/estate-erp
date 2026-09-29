@@ -5,12 +5,14 @@ import org.json.JSONObject
 
 /**
  * Persists the non-secret binding between an Android spooler job id and the
- * server-issued REC-04D acknowledgement context. The private signing key never
- * enters this store.
+ * server-issued REC-04D/REC-04E acknowledgement context. The private signing
+ * key never enters this store.
+ *
+ * The local binding must not outlive the server's print-ack challenge window.
  */
 object ZamorinPrintAttestationStore {
     private const val PREFS = "zamorin_print_attestation_bindings"
-    private const val MAX_AGE_MS = 24L * 60L * 60L * 1000L
+    private const val MAX_AGE_MS = 15L * 60L * 1000L
 
     fun bind(
         context: Context,

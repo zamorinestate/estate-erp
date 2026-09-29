@@ -292,6 +292,22 @@ export async function monitorAndroidPrintAndAcknowledge(
       dispatch,
       attestedResult
     );
+
+    let bindingCleared = false;
+    try {
+      const clearResponse = await NativeCapabilities.sendNativeMessage(
+        'CLEAR_PRINT_ATTESTATION_BINDING',
+        { platformJobId }
+      );
+      const clearResult = unwrapNativeResult(clearResponse);
+      bindingCleared =
+        clearResponse?.success === true &&
+        clearResult?.cleared === true;
+    } catch (_) {
+      // Server acknowledgement is authoritative. Local cleanup is best-effort,
+      // and the native store independently expires bindings at the same TTL.
+    }
+
     return {
       monitored: true,
       terminal: true,
@@ -299,6 +315,7 @@ export async function monitorAndroidPrintAndAcknowledge(
       platformJobId,
       status,
       serverAck,
+      bindingCleared,
     };
   }
 

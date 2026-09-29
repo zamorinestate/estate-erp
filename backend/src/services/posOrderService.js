@@ -1949,7 +1949,7 @@ class PosOrderService {
       await job.save();
     }
 
-    if (attestationProof) {
+    if (statusChanged && attestationProof) {
       await DeviceRegistration.updateOne(
         {
           deviceId,
