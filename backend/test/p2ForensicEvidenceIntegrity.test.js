@@ -130,3 +130,20 @@ test('P2 runtime authority/secret logging: malformed MASTER fails closed and boo
   assert.doesNotMatch(startDev, /Seed complete[^\n]*\$\{masterPassword\}/);
   assert.match(startDev, /password intentionally not logged/i);
 });
+
+
+test('P2 seed integrity: production/minimal seed cannot create demo identities and runSeed cannot be shadowed', () => {
+  const seed = read('backend/src/scripts/seedInitialData.js');
+  assert.equal((seed.match(/async function runSeed\s*\(/g) || []).length, 1, 'runSeed must have exactly one authoritative implementation');
+  assert.match(seed, /Minimal\/production seed mode: demo Café Operations users/);
+  assert.doesNotMatch(seed, /organisationId[^\n]*\|\|\s*['"]ZAMORIN['"]/);
+  assert.doesNotMatch(seed, /masterUserId[^\n]*\|\|\s*['"]MU-0001['"]/);
+
+  const startDev = read('backend/src/scripts/startDev.js');
+  assert.doesNotMatch(startDev, /masterUser\?\.userId\s*\|\|\s*['"]MU-0001['"]/);
+
+  const envTemplate = read('backend/.env.example');
+  for (const name of ['SEED_DEMO_PASSWORD', 'SEED_CAFE_OPERATIONS_PIN', 'SEED_OPERATOR_PIN_1', 'SEED_OPERATOR_PIN_2']) {
+    assert.match(envTemplate, new RegExp(name));
+  }
+});
