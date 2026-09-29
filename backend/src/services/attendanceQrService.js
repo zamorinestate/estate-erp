@@ -88,6 +88,23 @@ class AttendanceQrService {
       throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found in organisation.');
     }
 
+    const cafeLatitude = cafe.address?.latitude;
+    const cafeLongitude = cafe.address?.longitude;
+    const geofenceRadiusMetres = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+    if (
+      !Number.isFinite(cafeLatitude) ||
+      !Number.isFinite(cafeLongitude) ||
+      !Number.isFinite(geofenceRadiusMetres) ||
+      geofenceRadiusMetres < 10 ||
+      geofenceRadiusMetres > 1000
+    ) {
+      throw new ApiError(
+        422,
+        'GEOFENCE_NOT_CONFIGURED',
+        'Attendance QR is unavailable until this café has valid latitude, longitude, and geofence radius configured.'
+      );
+    }
+
     // 8-Second Pre-Expiry Threshold:
     // When querying for an active challenge, only return an existing challenge if it has > 8s remaining TTL.
     // This prevents handing a client a challenge that will expire while the employee is aligning their camera in-flight.
