@@ -10,6 +10,12 @@ const {
   canonicalPublicJwk,
   publicKeyThumbprint,
 } = require('../../services/deviceAttestationService');
+const {
+  verifyAndroidHardwareAttestation,
+  applyVerifiedAndroidHardwareEvidence,
+} = require('./androidHardwareAttestationService');
+
+const ANDROID_HARDWARE_ATTESTATION_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
 function resolveCanonicalDevicePlatform(platform, signingKeyProvider = null) {
   const provider = String(signingKeyProvider || '').trim().toUpperCase();
@@ -89,6 +95,63 @@ async function resolveCanonicalDeviceScope(device) {
   };
 }
 
+async function issueHardwareAttestationChallenge({
+  enrollmentCodePlain,
+  platform,
+}) {
+  const repos = getRepositories();
+  if (resolveCanonicalDevicePlatform(platform, null) !== 'ANDROID') {
+    const err = new Error('ANDROID_HARDWARE_ATTESTATION_ONLY');
+    err.code = 'ANDROID_HARDWARE_ATTESTATION_ONLY';
+    throw err;
+  }
+
+  const enrollment = await repos.enrollmentTokens.findByHash(
+    sha256Hex(enrollmentCodePlain)
+  );
+  if (
+    !enrollment ||
+    enrollment.status !== 'PENDING' ||
+    new Date() > new Date(enrollment.expiresAt)
+  ) {
+    const err = new Error('ENROLLMENT_UNAVAILABLE');
+    err.code = 'ENROLLMENT_UNAVAILABLE';
+    throw err;
+  }
+
+  const challenge = generateOpaqueToken();
+  const challengeId = generateOpaqueToken();
+  const issuedAt = new Date();
+  const expiresAt = new Date(
+    issuedAt.getTime() + ANDROID_HARDWARE_ATTESTATION_CHALLENGE_TTL_MS
+  );
+
+  const updated = await repos.enrollmentTokens.issueHardwareAttestationChallenge(
+    enrollment.id,
+    {
+      hardwareAttestationChallengeId: challengeId,
+      hardwareAttestationChallengeHash: sha256Hex(challenge),
+      hardwareAttestationChallengeIssuedAt: issuedAt,
+      hardwareAttestationChallengeExpiresAt: expiresAt,
+      hardwareAttestationChallengePlatform: 'ANDROID',
+      hardwareAttestationChallengeConsumedAt: null,
+    }
+  );
+
+  if (!updated) {
+    const err = new Error('ENROLLMENT_UNAVAILABLE');
+    err.code = 'ENROLLMENT_UNAVAILABLE';
+    throw err;
+  }
+
+  return {
+    challengeId,
+    challenge,
+    expiresAt: expiresAt.toISOString(),
+    algorithm: 'ANDROID_KEY_ATTESTATION_V1',
+  };
+}
+
 async function enrollDevice({
   enrollmentCodePlain,
   displayName,
@@ -98,6 +161,7 @@ async function enrollDevice({
   publicSigningKey,
   signingKeyAlgorithm,
   signingKeyProvider,
+  hardwareAttestation,
 }) {
   const repos = getRepositories();
   const tokenHash = sha256Hex(enrollmentCodePlain);
@@ -137,8 +201,51 @@ async function enrollDevice({
     throw err;
   }
 
+  let hardwareEvidence = {
+    verified: false,
+    reason: declaredPlatform === 'ANDROID'
+      ? 'ANDROID_HARDWARE_ATTESTATION_NOT_SUBMITTED'
+      : 'NOT_APPLICABLE',
+    securityLevel: 'UNKNOWN',
+    verifiedAt: null,
+  };
+
+  if (declaredPlatform === 'ANDROID' && hardwareAttestation) {
+    if (
+      !enrollment.hardwareAttestationChallengeId ||
+      !enrollment.hardwareAttestationChallengeHash ||
+      !enrollment.hardwareAttestationChallengeExpiresAt ||
+      enrollment.hardwareAttestationChallengeConsumedAt ||
+      String(enrollment.hardwareAttestationChallengePlatform || '').toUpperCase() !== 'ANDROID' ||
+      String(hardwareAttestation.challengeId || '') !==
+        String(enrollment.hardwareAttestationChallengeId)
+    ) {
+      const err = new Error('ANDROID_HARDWARE_ATTESTATION_CHALLENGE_INVALID');
+      err.code = 'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_INVALID';
+      throw err;
+    }
+
+    if (new Date() >= new Date(enrollment.hardwareAttestationChallengeExpiresAt)) {
+      const err = new Error('ANDROID_HARDWARE_ATTESTATION_CHALLENGE_EXPIRED');
+      err.code = 'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_EXPIRED';
+      throw err;
+    }
+
+    if (!Array.isArray(hardwareAttestation.certificateChain)) {
+      const err = new Error('ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID');
+      err.code = 'ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID';
+      throw err;
+    }
+
+    hardwareEvidence = await verifyAndroidHardwareAttestation({
+      certificateChain: hardwareAttestation.certificateChain,
+      expectedChallengeHash: enrollment.hardwareAttestationChallengeHash,
+      expectedPublicSigningKey: canonicalSigningKey,
+    });
+  }
+
   const deviceToken = generateOpaqueToken();
-  const device = await repos.devices.create({
+  let device = await repos.devices.create({
     deviceCode: generateDeviceCode(),
     displayName: displayName || enrollment.intendedDisplayName || 'Cafe Operations Device',
     organisationId: enrollment.organisationId,
@@ -159,9 +266,12 @@ async function enrollDevice({
     enrolledAt: new Date(),
   });
 
+  const consumedAt = new Date();
   const consumed = await repos.enrollmentTokens.consumeIfPending(enrollment.id, {
-    usedAt: new Date(),
+    usedAt: consumedAt,
     usedByDeviceId: device.id,
+    hardwareAttestationChallengeConsumedAt:
+      hardwareAttestation ? consumedAt : null,
   });
 
   if (!consumed) {
@@ -171,9 +281,9 @@ async function enrollDevice({
     throw err;
   }
 
+  const { DeviceRegistration } = require('../../models/DeviceRegistration');
   try {
     const canonicalScope = await resolveCanonicalDeviceScope(device);
-    const { DeviceRegistration } = require('../../models/DeviceRegistration');
     await DeviceRegistration.findOneAndUpdate(
       { deviceId: String(device.id) },
       {
@@ -201,12 +311,40 @@ async function enrollDevice({
           attestationCapable: Boolean(canonicalSigningKey),
           hardwareBackedSigningKeyVerified: false,
           hardwareAttestationSecurityLevel: 'UNKNOWN',
+          hardwareAttestationVerificationReason:
+            hardwareEvidence.reason || null,
         },
       },
       { upsert: true, new: true, runValidators: true }
     );
+
+    if (hardwareEvidence.verified === true) {
+      await applyVerifiedAndroidHardwareEvidence({
+        deviceId: device.id,
+        organisationId: canonicalScope.organisationId,
+        cafeId: canonicalScope.cafeId,
+        signingKeyThumbprint,
+        evidence: hardwareEvidence,
+      });
+
+      device = await repos.devices.update(device.id, {
+        signingKeyHardwareBackedVerified: true,
+        signingKeyHardwareSecurityLevel: hardwareEvidence.securityLevel,
+        signingKeyHardwareAttestationVerifiedAt: hardwareEvidence.verifiedAt,
+      });
+      if (!device) {
+        const err = new Error('ANDROID_HARDWARE_ATTESTATION_DEVICE_SYNC_FAILED');
+        err.code = 'ANDROID_HARDWARE_ATTESTATION_DEVICE_SYNC_FAILED';
+        throw err;
+      }
+    }
   } catch (canonicalErr) {
     const rollbackErrors = [];
+    try {
+      await DeviceRegistration.deleteOne({ deviceId: String(device.id) });
+    } catch (canonicalRollbackErr) {
+      rollbackErrors.push(canonicalRollbackErr);
+    }
     try {
       await repos.devices.delete(device.id);
     } catch (deviceRollbackErr) {
@@ -254,9 +392,15 @@ async function enrollDevice({
       algorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
       keyThumbprint: signingKeyThumbprint,
       provider: normalizedSigningKeyProvider,
-      hardwareBackedSigningKeyVerified: false,
-      hardwareAttestationSecurityLevel: 'UNKNOWN',
-      hardwareAttestationVerifiedAt: null,
+      hardwareBackedSigningKeyVerified: hardwareEvidence.verified === true,
+      hardwareAttestationSecurityLevel:
+        hardwareEvidence.securityLevel || 'UNKNOWN',
+      hardwareAttestationVerifiedAt:
+        hardwareEvidence.verifiedAt || null,
+      hardwareAttestationVerificationReason:
+        hardwareEvidence.reason || null,
+      hardwareAttestationRootSha256:
+        hardwareEvidence.rootSha256 || null,
     },
   };
 }
@@ -481,4 +625,11 @@ async function bindAttestationKey(device, {
   };
 }
 
-module.exports = { enrollDevice, bindAttestationKey, transitionLifecycle, reassignCafe, getDiagnostics };
+module.exports = {
+  issueHardwareAttestationChallenge,
+  enrollDevice,
+  bindAttestationKey,
+  transitionLifecycle,
+  reassignCafe,
+  getDiagnostics,
+};

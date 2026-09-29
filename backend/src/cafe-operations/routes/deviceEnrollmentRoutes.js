@@ -8,6 +8,38 @@ const { ok, fail } = require('../utils/responses');
 
 const router = express.Router();
 
+router.post('/attestation/challenge', async (req, res, next) => {
+  try {
+    const { enrollmentCode, platform } = req.body || {};
+    if (!enrollmentCode) {
+      return fail(res, 400, 'INVALID_INPUT', 'Enter your registration code.');
+    }
+    const challenge = await deviceService.issueHardwareAttestationChallenge({
+      enrollmentCodePlain: enrollmentCode,
+      platform,
+    });
+    return ok(res, challenge);
+  } catch (err) {
+    if (err.code === 'ENROLLMENT_UNAVAILABLE') {
+      return fail(
+        res,
+        400,
+        'ENROLLMENT_UNAVAILABLE',
+        'This registration code is invalid, expired, or has already been used.'
+      );
+    }
+    if (err.code === 'ANDROID_HARDWARE_ATTESTATION_ONLY') {
+      return fail(
+        res,
+        400,
+        err.code,
+        'Hardware key attestation is currently available only for Android enrollment.'
+      );
+    }
+    next(err);
+  }
+});
+
 router.post('/enroll', async (req, res, next) => {
   try {
     const {
@@ -19,6 +51,7 @@ router.post('/enroll', async (req, res, next) => {
       publicSigningKey,
       signingKeyAlgorithm,
       signingKeyProvider,
+      hardwareAttestation,
     } = req.body || {};
     if (!enrollmentCode) return fail(res, 400, 'INVALID_INPUT', 'Enter your registration code.');
     const { device, deviceToken, attestation } = await deviceService.enrollDevice({
@@ -30,6 +63,7 @@ router.post('/enroll', async (req, res, next) => {
       publicSigningKey,
       signingKeyAlgorithm,
       signingKeyProvider,
+      hardwareAttestation,
     });
     return ok(res, {
       deviceToken,
@@ -54,7 +88,9 @@ router.post('/enroll', async (req, res, next) => {
     if (
       err.code === 'NATIVE_DEVICE_ATTESTATION_REQUIRED' ||
       err.code === 'DEVICE_SIGNING_PROVENANCE_MISMATCH' ||
-      err.code === 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM'
+      err.code === 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM' ||
+      String(err.code || '').startsWith('ANDROID_ATTESTATION_') ||
+      String(err.code || '').startsWith('ANDROID_HARDWARE_ATTESTATION_')
     ) {
       return fail(res, 400, err.code, err.message);
     }

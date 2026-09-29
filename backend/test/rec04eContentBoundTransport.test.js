@@ -9,6 +9,9 @@ const { PosOrderService } = require('../src/services/posOrderService');
 const { PrintJob } = require('../src/models/PrintJob');
 const { Bill } = require('../src/models/Bill');
 const { DeviceRegistration } = require('../src/models/DeviceRegistration');
+const deviceService = require('../src/cafe-operations/services/deviceService');
+const { getRepositories, resetRepositories } = require('../src/cafe-operations/repositories');
+const { sha256Hex } = require('../src/cafe-operations/utils/ids');
 const root = path.join(__dirname, '..', '..');
 const posServicePath = path.join(__dirname, '..', 'src', 'services', 'posOrderService.js');
 const modelPath = path.join(__dirname, '..', 'src', 'models', 'PrintJob.js');
@@ -591,5 +594,81 @@ test('REC-04E query updates cannot manufacture positive hardware-attestation evi
   assert.match(
     deviceModelSource,
     /HARDWARE_ATTESTATION_EVIDENCE_REQUIRES_VERIFIED_CEREMONY/
+  );
+});
+
+
+test('REC-04E hardware attestation challenge is enrollment-scoped and hashed at rest', async () => {
+  resetRepositories();
+  const repos = getRepositories();
+  const enrollmentCode = 'REC04EHW01';
+  await repos.enrollmentTokens.create({
+    tokenHash: sha256Hex(enrollmentCode),
+    organisationId: 'ORG-REC04E',
+    cafeId: 'ZC-0001',
+    status: 'PENDING',
+    createdByEmployeeId: 'EMP-REC04E',
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  });
+
+  try {
+    const issued = await deviceService.issueHardwareAttestationChallenge({
+      enrollmentCodePlain: enrollmentCode,
+      platform: 'android',
+    });
+    assert.equal(issued.algorithm, 'ANDROID_KEY_ATTESTATION_V1');
+    assert.ok(issued.challengeId);
+    assert.ok(issued.challenge);
+    assert.ok(new Date(issued.expiresAt).getTime() > Date.now());
+
+    const stored = await repos.enrollmentTokens.findByHash(
+      sha256Hex(enrollmentCode)
+    );
+    assert.equal(stored.hardwareAttestationChallengeId, issued.challengeId);
+    assert.equal(
+      stored.hardwareAttestationChallengeHash,
+      sha256Hex(issued.challenge)
+    );
+    assert.notEqual(stored.hardwareAttestationChallengeHash, issued.challenge);
+    assert.equal(stored.hardwareAttestationChallengePlatform, 'ANDROID');
+  } finally {
+    resetRepositories();
+  }
+});
+
+test('REC-04E server hardware verifier requires Google trust, revocation, challenge, hardware level, app identity and key equality', () => {
+  const verifier = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'cafe-operations', 'services', 'androidHardwareAttestationService.js'),
+    'utf8'
+  );
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
+  );
+
+  assert.equal(pkg.dependencies['@peculiar/asn1-android'], '^2.9.4');
+  assert.equal(pkg.dependencies['@peculiar/asn1-schema'], '^2.9.4');
+  assert.equal(pkg.dependencies['@peculiar/asn1-x509'], '^2.9.4');
+  assert.match(verifier, /1\.3\.6\.1\.4\.1\.11129\.2\.1\.17/);
+  assert.match(verifier, /android\.googleapis\.com\/attestation\/root/);
+  assert.match(verifier, /android\.googleapis\.com\/attestation\/status/);
+  assert.match(verifier, /verifyChain/);
+  assert.match(verifier, /ANDROID_ATTESTATION_CHALLENGE_MISMATCH/);
+  assert.match(verifier, /canonicalPublicJwk\(attestedJwk\)/);
+  assert.match(verifier, /TRUSTED_ENVIRONMENT/);
+  assert.match(verifier, /STRONGBOX/);
+  assert.match(verifier, /AttestationApplicationId/);
+  assert.match(verifier, /ZAMORIN_ANDROID_APP_CERT_SHA256/);
+  assert.match(verifier, /ANDROID_ATTESTATION_APP_SIGNING_CERT_MISMATCH/);
+  assert.match(verifier, /applyVerifiedAndroidHardwareEvidence/);
+  assert.match(verifier, /trustLevel: 'HARDWARE_BACKED'/);
+});
+
+test('REC-04E suite is executed by canonical backend CI', () => {
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
+  );
+  assert.match(
+    pkg.scripts.test,
+    /test\/rec04eContentBoundTransport\.test\.js/
   );
 });
