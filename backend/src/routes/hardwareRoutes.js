@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { authenticate } = require('../middleware/authenticate');
+const { attachDeviceContext } = require('../middleware/deviceContext');
 const { authorize } = require('../middleware/authorize');
 const {
   getCafeTerminals,
@@ -16,6 +17,7 @@ const {
 const router = express.Router();
 
 router.use(authenticate);
+router.use(attachDeviceContext);
 
 // 1. Terminals listing per café
 router.get(
@@ -41,7 +43,7 @@ router.post(
 // 4. Cash drawer kick pulse (Authorized sale or test)
 router.post(
   '/drawer/kick',
-  authorize('POS:OPERATE', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
+  authorize('POS:OPERATE', { allowedRoles: ['MASTER', 'CAFE_ADMIN', 'STAFF'] }),
   triggerDrawerKick
 );
 
