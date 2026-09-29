@@ -321,6 +321,12 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
     assert.equal(result.printStatus, 'PRINT_DISPATCHED');
     assert.ok(result.printBuffer);
     assert.equal(result.bill.billId, existingBill.billId);
+    const printBytes = Array.from(result.rawBuffer);
+    assert.equal(
+      printBytes.some((byte, idx) => byte === 0x1B && printBytes[idx + 1] === 0x70),
+      false,
+      'PRINT of an existing cash bill must not kick the cash drawer again'
+    );
   });
 
   // TEST 6: Authorized REPRINT with watermark and copy counter
@@ -337,6 +343,12 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
     assert.equal(result.reprintCount, initialReprintCount + 1);
     assert.ok(result.printBuffer);
     assert.ok(result.htmlPreview);
+    const reprintBytes = Array.from(result.rawBuffer);
+    assert.equal(
+      reprintBytes.some((byte, idx) => byte === 0x1B && reprintBytes[idx + 1] === 0x70),
+      false,
+      'REPRINT must never re-open the cash drawer'
+    );
 
     // Verify reprint record was persisted to bill
     assert.equal(existingBill.reprints.length, initialReprintCount + 1);
