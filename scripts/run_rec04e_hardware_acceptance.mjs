@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import crypto from 'crypto';
+import { signAcceptanceReport } from './rec04e_hardware_acceptance_signature.mjs';
 
 function parseArgs(argv) {
   const out = {};
@@ -149,11 +150,18 @@ const report = {
   certified,
 };
 
+const signedReport = signAcceptanceReport(report);
 const outDir = path.resolve(args.output || '.local-evidence-storage/rec04e-hardware');
 await mkdir(outDir, { recursive: true });
 const reportPath = path.join(outDir, `${acceptanceId}.json`);
-await writeFile(reportPath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
-console.log(JSON.stringify({ reportPath, certified, acceptanceId, candidateSha }, null, 2));
+await writeFile(reportPath, JSON.stringify(signedReport, null, 2), { encoding: 'utf8', mode: 0o600 });
+console.log(JSON.stringify({
+  reportPath,
+  certified,
+  acceptanceId,
+  candidateSha,
+  integritySignatureKeyId: signedReport.integritySignature.keyId,
+}, null, 2));
 if (!certified) {
   console.error('REC-04E hardware acceptance is NOT certified. Use a real server-issued --dispatch-json and confirm observed hardware behavior.');
   process.exitCode = 2;

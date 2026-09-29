@@ -1,5 +1,6 @@
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { verifyAcceptanceReportSignature } from './rec04e_hardware_acceptance_signature.mjs';
 
 const argv = process.argv.slice(2);
 const reportArg = argv.find((arg) => !arg.startsWith('--'));
@@ -18,6 +19,13 @@ if (expectedSha && !/^[a-f0-9]{40}$/.test(expectedSha)) {
 const reportPath = path.resolve(reportArg);
 const report = JSON.parse(await readFile(reportPath, 'utf8'));
 const failures = [];
+
+let signatureVerification = null;
+try {
+  signatureVerification = verifyAcceptanceReportSignature(report);
+} catch (err) {
+  failures.push(err.code || 'integritySignature');
+}
 
 if (report.schemaVersion !== 'REC04E_HARDWARE_ACCEPTANCE_V1') failures.push('schemaVersion');
 if (!/^[a-f0-9]{40}$/.test(String(report.candidateSha || '').toLowerCase())) failures.push('candidateSha');
@@ -52,4 +60,6 @@ console.log(JSON.stringify({
   candidateSha: report.candidateSha,
   acceptanceId: report.acceptanceId,
   reportPath,
+  integritySignatureVerified: signatureVerification?.verified === true,
+  integritySignatureKeyId: signatureVerification?.keyId || null,
 }, null, 2));

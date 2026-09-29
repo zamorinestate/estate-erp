@@ -243,3 +243,18 @@ test('FINAL POS RECEIPT LINEAGE — localhost raw transport requires backend-sig
   assert.match(bridge, /serverDispatchAuthorized: true/);
   assert.match(runner, /REC04E_SERVER_DISPATCH_JSON_REQUIRED/);
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — real-hardware acceptance report is tamper-evident and signer-pinned', () => {
+  const runner = readRepo('scripts/run_rec04e_hardware_acceptance.mjs');
+  const verifier = readRepo('scripts/verify_rec04e_hardware_acceptance.mjs');
+  const signature = readRepo('scripts/rec04e_hardware_acceptance_signature.mjs');
+  const finalGate = readRepo('scripts/check_pr16_merge_readiness.mjs');
+
+  assert.match(runner, /signAcceptanceReport/);
+  assert.match(verifier, /verifyAcceptanceReportSignature/);
+  assert.match(signature, /REC04E_HARDWARE_ACCEPTANCE_PRIVATE_KEY_PKCS8_B64/);
+  assert.match(signature, /REC04E_HARDWARE_ACCEPTANCE_PUBLIC_KEY_SPKI_B64/);
+  assert.match(signature, /REC04E_HARDWARE_ACCEPTANCE_SIGNATURE_KEY_MISMATCH/);
+  assert.match(finalGate, /hardwareAcceptanceSignatureVerified: true/);
+});

@@ -2134,3 +2134,52 @@ test('REC-04E journal persistence failure after WRITE_STARTED remains outcome-un
   );
   assert.equal(resendCount, 0);
 });
+
+
+test('REC-04E hardware acceptance report signature detects post-generation tampering without upgrading physical evidence', async () => {
+  const signatureModule = await import(
+    pathToFileURL(path.join(root, 'scripts', 'rec04e_hardware_acceptance_signature.mjs')).href
+  );
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const privateKeyBase64 = privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
+  const publicKeyBase64 = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
+
+  const report = {
+    schemaVersion: 'REC04E_HARDWARE_ACCEPTANCE_V1',
+    candidateSha: 'a'.repeat(40),
+    acceptanceId: 'REC04E-SIGNED-001',
+    physicalObservation: {
+      paperOutputConfirmed: true,
+      cutterConfirmed: true,
+      drawerOpenedConfirmed: true,
+      confirmationSource: 'HUMAN_OPERATOR',
+    },
+    runtimeEvidenceBoundary: {
+      printerIdentityCryptographicallyVerified: false,
+      physicalPrintCryptographicallyVerified: false,
+    },
+    certified: true,
+  };
+
+  const signed = signatureModule.signAcceptanceReport(report, { privateKeyBase64 });
+  assert.equal(
+    signatureModule.verifyAcceptanceReportSignature(signed, { publicKeyBase64 }).verified,
+    true
+  );
+
+  assert.throws(
+    () => signatureModule.verifyAcceptanceReportSignature({
+      ...signed,
+      physicalObservation: {
+        ...signed.physicalObservation,
+        paperOutputConfirmed: false,
+      },
+    }, { publicKeyBase64 }),
+    (err) => err.code === 'REC04E_HARDWARE_ACCEPTANCE_SIGNATURE_INVALID'
+  );
+
+  assert.equal(
+    signed.runtimeEvidenceBoundary.physicalPrintCryptographicallyVerified,
+    false
+  );
+});

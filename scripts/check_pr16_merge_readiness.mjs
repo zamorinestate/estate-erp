@@ -160,6 +160,7 @@ console.log(JSON.stringify({
   repositorySecretScansVerified: true,
   hardwareAcceptanceReport: reportPath,
   hardwareAcceptanceCandidateShaBound: true,
+  hardwareAcceptanceSignatureVerified: true,
   githubExactHeadCiRequired: true,
   prMustRemainDraftUntilExplicitApproval: true,
   mergePerformed: false,
