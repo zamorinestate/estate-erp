@@ -142,49 +142,14 @@ public class ZamorinNativeBridge: NSObject, WKScriptMessageHandler {
             }
 
         case "SIGN_DEVICE_ATTESTATION":
-            guard let canonicalPayload = payload["payload"] as? String,
-                  !canonicalPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                let res = buildResponse(
-                    requestId: requestId,
-                    success: false,
-                    result: nil,
-                    errorCode: "ATTESTATION_PAYLOAD_REQUIRED",
-                    errorMessage: "A canonical attestation payload is required."
-                )
-                deliverResponse(res, completion: completion)
-                return
-            }
-            do {
-                let key = try loadOrCreateAttestationKey()
-                var signError: Unmanaged<CFError>?
-                guard let signature = SecKeyCreateSignature(
-                    key,
-                    .ecdsaSignatureMessageX962SHA256,
-                    Data(canonicalPayload.utf8) as CFData,
-                    &signError
-                ) as Data? else {
-                    throw signError?.takeRetainedValue() ?? attestationError("Unable to create device attestation signature.")
-                }
-                let res = buildResponse(
-                    requestId: requestId,
-                    success: true,
-                    result: [
-                        "algorithm": "ES256",
-                        "provider": attestationProvider(for: key),
-                        "signature": base64Url(signature)
-                    ]
-                )
-                deliverResponse(res, completion: completion)
-            } catch {
-                let res = buildResponse(
-                    requestId: requestId,
-                    success: false,
-                    result: nil,
-                    errorCode: "DEVICE_ATTESTATION_SIGN_FAILED",
-                    errorMessage: error.localizedDescription
-                )
-                deliverResponse(res, completion: completion)
-            }
+            let res = buildResponse(
+                requestId: requestId,
+                success: false,
+                result: nil,
+                errorCode: "DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED",
+                errorMessage: "Arbitrary device-key signing is disabled. Use a purpose-bound attestation action."
+            )
+            deliverResponse(res, completion: completion)
 
         case "PRINT_DOCUMENT", "OPEN_SYSTEM_PRINT":
             let jobName = payload["jobName"] as? String ?? "Zamorin_Document"
