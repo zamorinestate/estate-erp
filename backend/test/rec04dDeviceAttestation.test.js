@@ -557,6 +557,16 @@ test('REC-04D — canonical trust registry resolves business IDs rather than cop
   assert.match(deviceServiceSource, /assignedCafeId:\s*canonicalScope\.cafeId/);
   assert.match(deviceServiceSource, /runValidators:\s*true/);
 
+  const registrationModelSource = fs.readFileSync(
+    path.join(root, 'backend', 'src', 'models', 'DeviceRegistration.js'),
+    'utf8'
+  );
+  assert.match(
+    registrationModelSource,
+    /\^ZC-\(\?:CAF-\)\?\\d\{4,\}\$/,
+    'DeviceRegistration must accept every canonical Cafe.cafeId format'
+  );
+
   assert.match(mongoRepoSource, /consumeIfPending\(id, patch\)/);
   assert.match(mongoRepoSource, /status:\s*'PENDING', expiresAt:\s*\{ \$gt: new Date\(\) \}/);
   assert.match(mongoRepoSource, /restoreIfUsedByDevice\(id, deviceId, patch = \{\}\)/);
