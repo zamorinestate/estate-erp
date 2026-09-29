@@ -1013,3 +1013,32 @@ test('REC-04E finalization is transactional in production and idempotent Bill re
   assert.match(source, /if \(!statusChanged && !billNeedsRepair\) return/);
   assert.match(source, /PRINT_ACK_BILL_SYNC_FAILED/);
 });
+
+
+test('REC-04E production deployment requires explicit Android app-signing certificate policy', () => {
+  const preflight = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'scripts', 'verifyDeploymentConfig.js'),
+    'utf8'
+  );
+  const envExample = fs.readFileSync(
+    path.join(__dirname, '..', '.env.example'),
+    'utf8'
+  );
+  const renderConfig = fs.readFileSync(
+    path.join(root, 'render.yaml'),
+    'utf8'
+  );
+
+  assert.match(preflight, /ZAMORIN_ANDROID_APP_PACKAGE/);
+  assert.match(preflight, /ZAMORIN_ANDROID_APP_CERT_SHA256/);
+  assert.match(preflight, /androidCertPolicyValid/);
+  assert.match(preflight, /nodeEnv !== 'production' \|\| androidCertPolicyValid/);
+  assert.match(preflight, /one or more 64-hex SHA-256 digests/);
+
+  assert.match(envExample, /ZAMORIN_ANDROID_APP_PACKAGE=com\.zamorin\.cafe\.erp/);
+  assert.match(envExample, /ZAMORIN_ANDROID_APP_CERT_SHA256=/);
+
+  assert.match(renderConfig, /key: ZAMORIN_ANDROID_APP_PACKAGE/);
+  assert.match(renderConfig, /value: com\.zamorin\.cafe\.erp/);
+  assert.match(renderConfig, /key: ZAMORIN_ANDROID_APP_CERT_SHA256[\s\S]{0,80}?sync: false/);
+});

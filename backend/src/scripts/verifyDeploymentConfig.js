@@ -60,11 +60,42 @@ async function runPreFlightCheck() {
   const isMfaValid = mfaKey.length === 64 && /^[0-9a-fA-F]+$/.test(mfaKey);
   recordResult('MFA 64-Hex Encryption Key', isMfaValid, isMfaValid ? '64-hex key verified' : 'Must be exact 64-character hexadecimal key');
 
-  // 3. CORS & Allowed Origins Validation
-  console.log(`\n${BOLD}[3/5] Validating CORS & Domain Bindings...${RESET}`);
+  // 3. CORS, Domain & Android Attestation Policy Validation
+  console.log(`\n${BOLD}[3/5] Validating CORS, Domain Bindings & Android Attestation Policy...${RESET}`);
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
   const isCorsValid = allowedOrigins.length > 0 && !allowedOrigins.includes('*') && allowedOrigins.every((o) => o.startsWith('http://') || o.startsWith('https://'));
   recordResult('CORS Allowed Origins Policy', isCorsValid, isCorsValid ? `${allowedOrigins.length} origin(s) mapped: ${allowedOrigins.join(', ')}` : 'Must define explicit http(s) origins without wildcards');
+
+  const androidPackage = String(
+    process.env.ZAMORIN_ANDROID_APP_PACKAGE || 'com.zamorin.cafe.erp'
+  ).trim();
+  const androidCertDigests = String(
+    process.env.ZAMORIN_ANDROID_APP_CERT_SHA256 || ''
+  )
+    .split(/[,;\s]+/)
+    .map((value) => value.trim().toLowerCase().replace(/[^a-f0-9]/g, ''))
+    .filter(Boolean);
+  const androidPackageValid = /^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(androidPackage);
+  const androidCertPolicyValid =
+    androidCertDigests.length > 0 &&
+    androidCertDigests.every((value) => /^[a-f0-9]{64}$/.test(value));
+
+  recordResult(
+    'Android Application Package Policy',
+    androidPackageValid,
+    androidPackageValid
+      ? `Package: ${androidPackage}`
+      : 'ZAMORIN_ANDROID_APP_PACKAGE must be a valid Android applicationId'
+  );
+  recordResult(
+    'Android App Signing Certificate SHA-256 Policy',
+    nodeEnv !== 'production' || androidCertPolicyValid,
+    nodeEnv !== 'production'
+      ? (androidCertPolicyValid ? `${androidCertDigests.length} digest(s) configured` : 'Optional outside production')
+      : (androidCertPolicyValid
+        ? `${androidCertDigests.length} production signing digest(s) configured`
+        : 'ZAMORIN_ANDROID_APP_CERT_SHA256 must contain one or more 64-hex SHA-256 digests')
+  );
 
   // 4. Initial Master Credentials & Storage Config
   console.log(`\n${BOLD}[4/5] Auditing Initial Master Credentials & Storage Driver...${RESET}`);
