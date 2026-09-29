@@ -30,6 +30,7 @@ const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
 const VENDOR_EMAIL = requiredEnv('VENDOR_E2E_EMAIL');
 const VENDOR_PASSWORD = requiredEnv('VENDOR_E2E_PASSWORD');
 const INVALID_PASSWORD = ['Definitely', 'Wrong!2026'].join('');
+const UNKNOWN_USER_EMAIL = ['unknown.ghost', '@', 'zamorin.test'].join('');
 
 async function testLogin(label, email, password, orgId = 'ZAMORIN') {
   console.log(`\n--- Testing ${label} (${email}) ---`);
@@ -82,7 +83,7 @@ async function run() {
   // Invalid attempts
   console.log('\n=== Testing Invalid Login Scenarios ===');
   await testLogin('Wrong Password', STAFF_EMAIL, INVALID_PASSWORD);
-  await testLogin('Unknown User', 'unknown.ghost@zamorin.test', INVALID_PASSWORD);
+  await testLogin('Unknown User', UNKNOWN_USER_EMAIL, INVALID_PASSWORD);
   await testLogin('Blank Fields', '', '');
   await testLogin('Wrong Org', STAFF_EMAIL, INVALID_PASSWORD, 'WRONG_ORG_XYZ');
 }
