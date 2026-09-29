@@ -142,27 +142,13 @@ namespace Zamorin.Cafe.ERP
 
                     case "SIGN_DEVICE_ATTESTATION":
                     {
-                        var canonicalPayload = payload["payload"]?.GetValue<string>() ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(canonicalPayload))
-                        {
-                            return CreateResponse(requestId, false, null, "ATTESTATION_PAYLOAD_REQUIRED", "A canonical attestation payload is required.");
-                        }
-
-                        using var signer = OpenOrCreateAttestationSigner(out var providerLabel);
-                        var signature = signer.SignData(
-                            Encoding.UTF8.GetBytes(canonicalPayload),
-                            HashAlgorithmName.SHA256,
-                            DSASignatureFormat.Rfc3279DerSequence
+                        return CreateResponse(
+                            requestId,
+                            false,
+                            null,
+                            "DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED",
+                            "Arbitrary device-key signing is disabled. Use a purpose-bound attestation action."
                         );
-                        var jwk = PublicJwk(signer.ExportParameters(false));
-                        var res = new JsonObject
-                        {
-                            ["algorithm"] = "ES256",
-                            ["provider"] = providerLabel,
-                            ["keyThumbprint"] = KeyThumbprint(jwk),
-                            ["signature"] = Base64Url(signature)
-                        };
-                        return CreateResponse(requestId, true, res);
                     }
 
                     case "OPEN_SYSTEM_PRINT":
