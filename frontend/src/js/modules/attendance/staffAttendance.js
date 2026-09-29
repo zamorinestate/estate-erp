@@ -132,13 +132,21 @@ function renderActiveTabContent() {
 // ── 1. TODAY TAB ─────────────────────────────────────────────────────────────
 function renderTodayTab() {
   const today = cachedToday;
-  const shift = cachedShift || {
-    shiftName: "Standard Duty Shift",
-    scheduledStartAt: new Date().toISOString(),
-    scheduledEndAt: new Date().toISOString(),
-    assignedCafeName: state.user?.primaryCafeName || state.user?.primaryCafeId || "Primary Outlet",
-    unpaidBreakMinutes: 30,
-  };
+  const shift = cachedShift || null;
+  const shiftName = shift?.shiftName || "No scheduled shift information";
+  const shiftCafeName =
+    shift?.assignedCafeName ||
+    state.user?.primaryCafeName ||
+    state.user?.primaryCafeId ||
+    "Assigned café unavailable";
+  const scheduledHours =
+    shift?.scheduledStartAt || shift?.scheduledEndAt
+      ? `${shift?.scheduledStartAt ? formatTimeStr(shift.scheduledStartAt) : "—"} – ${shift?.scheduledEndAt ? formatTimeStr(shift.scheduledEndAt) : "—"}`
+      : "—";
+  const unpaidBreakMinutes = Number(shift?.unpaidBreakMinutes);
+  const unpaidBreakLabel = Number.isFinite(unpaidBreakMinutes)
+    ? `${unpaidBreakMinutes} mins`
+    : "—";
 
   const status = today ? today.status : "NOT_STARTED";
   const isCheckedIn = status === "CHECKED_IN";
@@ -170,10 +178,10 @@ function renderTodayTab() {
         </div>
 
         <div style="font-size:18px; font-weight:800; color:var(--text-primary); margin-bottom:4px;">
-          ${shift.shiftName}
+          ${shiftName}
         </div>
         <div style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-          ${shift.assignedCafeName || "Main Outlet"}
+          ${shiftCafeName}
         </div>
 
         <!-- Shift details grid -->
@@ -181,13 +189,13 @@ function renderTodayTab() {
           <div>
             <div style="font-size:11px; color:var(--text-muted);">Scheduled Hours</div>
             <div style="font-size:13px; font-weight:700; color:var(--text-primary);">
-              ${formatTimeStr(shift.scheduledStartAt)} – ${formatTimeStr(shift.scheduledEndAt)}
+              ${scheduledHours}
             </div>
           </div>
           <div>
             <div style="font-size:11px; color:var(--text-muted);">Unpaid Break</div>
             <div style="font-size:13px; font-weight:700; color:var(--text-primary);">
-              ${shift.unpaidBreakMinutes || 30} mins
+              ${unpaidBreakLabel}
             </div>
           </div>
         </div>
@@ -1127,10 +1135,24 @@ export function wireStaffAttendance(root) {
     // Request correction triggers
     container.querySelectorAll("#btn-request-correction-today, #btn-new-correction, #btn-fix-missing-punch").forEach((btn) => {
       btn.addEventListener("click", () => {
+        const attendanceId = btn.dataset.attId || "";
+        const record = attendanceId
+          ? cachedHistory.find((r) => String(r.attendanceId || r.id || r._id || "") === attendanceId)
+          : null;
+        const prefill = record
+          ? {
+              attendanceId: record.attendanceId || record.id || record._id,
+              businessDate: record.businessDate,
+              checkInAt: record.checkInAt,
+              checkOutAt: record.checkOutAt,
+              breakMinutes: record.breakMinutes,
+              issueType: !record.checkOutAt ? "MISSED_CHECK_OUT" : "OTHER",
+            }
+          : {};
         openCorrectionModal(() => {
           refreshTabContent();
           loadInitialData();
-        });
+        }, prefill);
       });
     });
 
@@ -1284,31 +1306,6 @@ export function wireStaffAttendance(root) {
     updateNavTabs();
   }
 
-  // 6. Direct click delegation on root container for reliable button handling
-  root.addEventListener("click", (e) => {
-    // Button 1: Request Attendance Correction
-    const corrBtn = e.target.closest("#btn-request-correction-today, #btn-new-correction, #btn-fix-missing-punch, .btn-trigger-correction");
-    if (corrBtn) {
-      e.preventDefault();
-      openCorrectionModal(() => {
-        refreshTabContent();
-        loadInitialData();
-      });
-      return;
-    }
-
-    // Button 5: Shift Change / Availability Request
-    const scBtn = e.target.closest("#btn-open-shift-change, .btn-trigger-shift-change");
-    if (scBtn) {
-      e.preventDefault();
-      const date = scBtn.dataset.shiftDate;
-      const shiftName = scBtn.dataset.shiftName;
-      openShiftChangeModal(() => {
-        loadInitialData();
-      }, { requestedDate: date, currentShift: shiftName });
-      return;
-    }
-  });
 
   loadInitialData();
 }
@@ -1834,12 +1831,35 @@ function openPunchReceiptModal(flowType, attendance) {
 }
 
 // ── CORRECTION REQUEST MODAL (WITH SUPPORTING ATTACHMENT) ─────────────────────
+function toIstTimeInput(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function istLocalDateTimeToIso(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const d = new Date(`${dateStr}T${timeStr}:00+05:30`);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 function openCorrectionModal(onDoneCallback, prefill = {}) {
   let existing = document.getElementById("attendance-correction-modal");
   if (existing) existing.remove();
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const defaultDate = prefill?.businessDate || (prefill?.checkInAt ? String(prefill.checkInAt).slice(0, 10) : todayStr);
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const defaultDate =
+    prefill?.businessDate ||
+    (prefill?.checkInAt ? new Date(prefill.checkInAt).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) : todayStr);
+  const defaultCheckIn = toIstTimeInput(prefill?.checkInAt);
+  const defaultCheckOut = toIstTimeInput(prefill?.checkOutAt);
+  const defaultIssueType = String(prefill?.issueType || "OTHER").toUpperCase();
 
   const modal = document.createElement("div");
   modal.id = "attendance-correction-modal";
@@ -1856,7 +1876,7 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
       </div>
 
       <div style="font-size:12.5px; color:var(--text-secondary); margin-bottom:16px;">
-        Submit an official adjustment for missed punches or reader errors. Subject to Café Admin &amp; Master approval.
+        Submit the actual attendance values that need correction. Requests are reviewed through the Primary Master approval workflow.
       </div>
 
       <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:18px;">
@@ -1864,45 +1884,60 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Attendance Shift Date *
           </label>
-          <input type="date" id="corr-date-input" class="input" style="width:100%;" value="${defaultDate}" />
+          <input type="date" id="corr-date-input" class="input" style="width:100%;" value="${escapeHtml(defaultDate)}" />
+        </div>
+
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
+            Issue Type *
+          </label>
+          <select id="corr-issue-type" class="input" style="width:100%;">
+            ${[
+              "MISSED_CHECK_IN",
+              "MISSED_CHECK_OUT",
+              "WRONG_CHECK_IN",
+              "WRONG_CHECK_OUT",
+              "WRONG_BREAK",
+              "INCORRECT_STATUS",
+              "SHIFT_MISMATCH",
+              "OTHER",
+            ].map((value) => `<option value="${value}" ${defaultIssueType === value ? "selected" : ""}>${value.replace(/_/g, " ")}</option>`).join("")}
+          </select>
         </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
-              Actual Check-In *
+              Actual Check-In (IST)
             </label>
-            <input type="time" id="corr-in-input" class="input" style="width:100%;" value="09:00" />
+            <input type="time" id="corr-in-input" class="input" style="width:100%;" value="${escapeHtml(defaultCheckIn)}" />
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
-              Actual Check-Out *
+              Actual Check-Out (IST)
             </label>
-            <input type="time" id="corr-out-input" class="input" style="width:100%;" value="17:30" />
+            <input type="time" id="corr-out-input" class="input" style="width:100%;" value="${escapeHtml(defaultCheckOut)}" />
           </div>
+        </div>
+
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
+            Correct Break Minutes
+          </label>
+          <input type="number" min="0" step="1" id="corr-break-input" class="input" style="width:100%;" value="${Number.isFinite(Number(prefill?.breakMinutes)) ? Number(prefill.breakMinutes) : 0}" />
         </div>
 
         <div>
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Mandatory Reason for Correction *
           </label>
-          <textarea id="corr-reason-input" class="input" rows="3" placeholder="Explain the reason for discrepancy (e.g. café QR scanner timeout during rush hours)..." style="width:100%; resize:none;"></textarea>
-        </div>
-
-        <!-- Optional Supporting Attachment Picker (P2 Option) -->
-        <div>
-          <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
-            Optional Supporting Attachment (PDF, JPG, PNG)
-          </label>
-          <input type="file" id="corr-file-input" class="input" accept=".pdf,.png,.jpg,.jpeg" style="width:100%; padding:6px;" />
+          <textarea id="corr-reason-input" class="input" rows="3" placeholder="Describe the attendance discrepancy and the actual event." style="width:100%; resize:none;"></textarea>
         </div>
       </div>
 
       <div class="flex justify-end gap-sm">
         <button class="btn btn-secondary" id="cmodal-cancel-btn">Cancel</button>
-        <button class="btn btn-primary" id="cmodal-submit-btn" style="font-weight:700;">
-          Submit Request
-        </button>
+        <button class="btn btn-primary" id="cmodal-submit-btn" style="font-weight:700;">Submit Request</button>
       </div>
     </div>
   `;
@@ -1919,15 +1954,29 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
   modal.querySelector("#cmodal-cancel-btn")?.addEventListener("click", close);
 
   modal.querySelector("#cmodal-submit-btn")?.addEventListener("click", async () => {
-    const reason = modal.querySelector("#corr-reason-input").value.trim();
+    const reason = modal.querySelector("#corr-reason-input")?.value?.trim() || "";
+    const reqDate = modal.querySelector("#corr-date-input")?.value || defaultDate;
+    const reqIn = modal.querySelector("#corr-in-input")?.value || "";
+    const reqOut = modal.querySelector("#corr-out-input")?.value || "";
+    const issueType = modal.querySelector("#corr-issue-type")?.value || "OTHER";
+    const requestedBreakMinutes = Number(modal.querySelector("#corr-break-input")?.value || 0);
+
     if (!reason) {
       showToast("Please provide a mandatory reason for correction.", "coral");
       return;
     }
-
-    const reqDate = modal.querySelector("#corr-date-input")?.value || defaultDate;
-    const reqIn = modal.querySelector("#corr-in-input")?.value || "09:00";
-    const reqOut = modal.querySelector("#corr-out-input")?.value || "17:30";
+    if (!reqDate) {
+      showToast("Please select the attendance shift date.", "coral");
+      return;
+    }
+    if (!reqIn && !reqOut && issueType !== "WRONG_BREAK" && issueType !== "INCORRECT_STATUS" && issueType !== "SHIFT_MISMATCH") {
+      showToast("Enter the actual Check-In or Check-Out time that requires correction.", "coral");
+      return;
+    }
+    if (!Number.isFinite(requestedBreakMinutes) || requestedBreakMinutes < 0) {
+      showToast("Break minutes must be a non-negative number.", "coral");
+      return;
+    }
 
     const submitBtn = modal.querySelector("#cmodal-submit-btn");
     submitBtn.disabled = true;
@@ -1936,26 +1985,22 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
     try {
       const payload = {
         businessDate: reqDate,
-        requestedCheckIn: `${reqDate}T${reqIn}:00.000Z`,
-        requestedCheckOut: `${reqDate}T${reqOut}:00.000Z`,
+        issueType,
+        requestedBreakMinutes,
         reason,
       };
-      if (prefill?.attendanceId) {
-        payload.attendanceId = prefill.attendanceId;
-      }
+      const requestedCheckIn = istLocalDateTimeToIso(reqDate, reqIn);
+      const requestedCheckOut = istLocalDateTimeToIso(reqDate, reqOut);
+      if (requestedCheckIn) payload.requestedCheckIn = requestedCheckIn;
+      if (requestedCheckOut) payload.requestedCheckOut = requestedCheckOut;
+      if (prefill?.attendanceId) payload.attendanceId = prefill.attendanceId;
 
       const res = await apiPost("/attendance/corrections", payload);
-      const newCorr = res?.data?.correctionRequest || {
-        requestId: `ACR-${Date.now()}`,
-        businessDate: reqDate,
-        reason,
-        status: "PENDING",
-        createdAt: new Date().toISOString(),
-      };
-      cachedCorrections.unshift(newCorr);
+      const newCorr = res?.data?.correctionRequest;
+      if (newCorr) cachedCorrections.unshift(newCorr);
 
       close();
-      showToast("Correction request submitted for administrative review ✓", "mint");
+      showToast("Correction request submitted for Primary Master review ✓", "mint");
       if (onDoneCallback) onDoneCallback();
     } catch (err) {
       submitBtn.disabled = false;
