@@ -63,7 +63,7 @@ import { mountPublicCafeGateway, getActiveGatewayContextToken } from "./pages/ca
 // ── Stage-2 Login Integration: Terminal auth screens (additive, no backend auth change) ──
 import { renderCafeMasterSignIn, wireCafeMasterSignIn, resetCafeMasterSignInUi } from "./pages/cafeMasterSignIn.js";
 import { renderCafeDeviceEnroll, wireCafeDeviceEnroll, resetCafeDeviceEnrollUi } from "./pages/cafeDeviceEnroll.js";
-import { getNativeDeviceAttestationIdentity } from "./utils/deviceAttestation.js";
+import { getNativeDeviceAttestationIdentity, ensureNativeDeviceAttestationBinding } from "./utils/deviceAttestation.js";
 import { renderCafeTerminalWelcome, wireCafeTerminalWelcome } from "./pages/cafeTerminalWelcome.js";
 import { renderOrgIdentity, wireOrgIdentity } from "./pages/organisationIdentity.js";
 import { renderSystemHealthPage, initSystemHealthPage } from "./pages/systemHealth.js";
@@ -881,8 +881,28 @@ async function renderPage() {
     case "cafe-operations/login":
     case "cafe-operations-login":
     case "cafe-operator-signin":
-      // Stop inactivity timer while sign-in UI is visible
+      // Stop inactivity timer while sign-in UI is visible.
+      // REC-04D: Existing native terminals bind their persistent signing key
+      // before an operator can enter Café Operations.
       stopCafeOpsInactivityTimer();
+      try {
+        await ensureNativeDeviceAttestationBinding();
+      } catch (attestationErr) {
+        console.error("[Device Attestation] Native terminal trust upgrade failed:", attestationErr);
+        const code = attestationErr?.code || "";
+        if (code === "DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT") {
+          showToast("This terminal signing key changed. Re-enrollment is required before Café Operations can continue.", "error");
+          navigate("cafe-device-enroll");
+          break;
+        }
+        content.innerHTML = renderModuleErrorState({
+          title: "Terminal security verification failed",
+          message: "This native terminal could not verify its device signing key. Café Operations remains locked until device security is restored.",
+          retryLabel: "Retry",
+          onRetry: () => navigate("cafe-operator-signin"),
+        });
+        break;
+      }
       content.innerHTML = renderCafeOperatorSignIn();
       wireCafeOperatorSignIn(content, {
         onSignIn: () => {
