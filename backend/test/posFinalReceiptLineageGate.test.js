@@ -258,3 +258,16 @@ test('FINAL POS RECEIPT LINEAGE — real-hardware acceptance report is tamper-ev
   assert.match(signature, /REC04E_HARDWARE_ACCEPTANCE_SIGNATURE_KEY_MISMATCH/);
   assert.match(finalGate, /hardwareAcceptanceSignatureVerified: true/);
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — final certifier verifies latest exact-head GitHub CI itself', () => {
+  const finalGate = readRepo('scripts/check_pr16_merge_readiness.mjs');
+
+  assert.match(finalGate, /actions\/runs\?head_sha=\$\{expectedSha\}&per_page=100/);
+  assert.match(finalGate, /Zamorin Cafe ERP CI/);
+  assert.match(finalGate, /Deployment Configuration & Invariant Check/);
+  assert.match(finalGate, /EXACT_HEAD_CI_EVIDENCE_MISSING/);
+  assert.match(finalGate, /EXACT_HEAD_CI_NOT_GREEN/);
+  assert.match(finalGate, /latest\.status !== 'completed' \|\| latest\.conclusion !== 'success'/);
+  assert.match(finalGate, /githubExactHeadCiVerified: true/);
+});

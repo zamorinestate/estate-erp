@@ -56,6 +56,40 @@ function fail(code, message) {
   throw err;
 }
 
+async function githubJson(url) {
+  if (typeof fetch !== 'function') {
+    fail(
+      'GITHUB_CI_EVIDENCE_UNAVAILABLE',
+      'This Node runtime does not provide fetch(), so exact-head GitHub CI cannot be verified.'
+    );
+  }
+
+  const token = String(process.env.GITHUB_TOKEN || '').trim();
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'zamorin-pr16-merge-readiness',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let response;
+  try {
+    response = await fetch(url, { headers });
+  } catch (err) {
+    fail(
+      'GITHUB_CI_EVIDENCE_UNAVAILABLE',
+      `GitHub Actions evidence could not be fetched: ${err?.message || err}`
+    );
+  }
+  if (!response.ok) {
+    fail(
+      'GITHUB_CI_EVIDENCE_UNAVAILABLE',
+      `GitHub Actions evidence request failed with HTTP ${response.status}.`
+    );
+  }
+  return await response.json();
+}
+
 const args = parseArgs(process.argv.slice(2));
 const expectedSha = String(args['expected-sha'] || '').trim().toLowerCase();
 const hardwareReport = String(args['hardware-report'] || '').trim();
@@ -107,6 +141,53 @@ for (const suite of requiredSuites) {
       `${suite} is missing from backend canonical CI.`
     );
   }
+}
+
+const githubRepository = String(
+  process.env.ZAMORIN_GITHUB_REPOSITORY || 'zamorinestate/estate-erp'
+).trim();
+if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(githubRepository)) {
+  fail(
+    'GITHUB_REPOSITORY_INVALID',
+    'ZAMORIN_GITHUB_REPOSITORY must be in owner/repository form.'
+  );
+}
+
+const ciEvidence = await githubJson(
+  `https://api.github.com/repos/${githubRepository}/actions/runs?head_sha=${expectedSha}&per_page=100`
+);
+const requiredWorkflows = [
+  'Zamorin Cafe ERP CI',
+  'Deployment Configuration & Invariant Check',
+];
+const exactHeadWorkflowEvidence = {};
+for (const workflowName of requiredWorkflows) {
+  const matching = (Array.isArray(ciEvidence?.workflow_runs) ? ciEvidence.workflow_runs : [])
+    .filter((run) => run?.name === workflowName && String(run?.head_sha || '').toLowerCase() === expectedSha)
+    .sort((a, b) => Number(b?.run_number || 0) - Number(a?.run_number || 0));
+
+  if (!matching.length) {
+    fail(
+      'EXACT_HEAD_CI_EVIDENCE_MISSING',
+      `No GitHub Actions run named "${workflowName}" was found for candidate ${expectedSha}.`
+    );
+  }
+
+  const latest = matching[0];
+  if (latest.status !== 'completed' || latest.conclusion !== 'success') {
+    fail(
+      'EXACT_HEAD_CI_NOT_GREEN',
+      `Latest exact-head workflow "${workflowName}" is ${latest.status || 'unknown'}/${latest.conclusion || 'none'} on run #${latest.run_number || 'unknown'}.`
+    );
+  }
+
+  exactHeadWorkflowEvidence[workflowName] = {
+    runId: latest.id,
+    runNumber: latest.run_number,
+    status: latest.status,
+    conclusion: latest.conclusion,
+    headSha: latest.head_sha,
+  };
 }
 
 for (const scanner of [
@@ -161,7 +242,9 @@ console.log(JSON.stringify({
   hardwareAcceptanceReport: reportPath,
   hardwareAcceptanceCandidateShaBound: true,
   hardwareAcceptanceSignatureVerified: true,
-  githubExactHeadCiRequired: true,
+  githubExactHeadCiVerified: true,
+  githubRepository,
+  exactHeadWorkflowEvidence,
   prMustRemainDraftUntilExplicitApproval: true,
   mergePerformed: false,
   deploymentPerformed: false,
