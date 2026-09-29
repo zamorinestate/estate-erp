@@ -626,7 +626,7 @@ function _bindEvents(container) {
 
 function _openDisplayModeModal(container) {
   const cleanCafeId = pageState.selectedCafeId;
-  const payload = pageState.activeChallenge?.opaqueToken || pageState.activeChallenge?.qrToken;
+  const payload = pageState.activeChallenge?.attendanceUrl || pageState.activeChallenge?.opaqueToken || pageState.activeChallenge?.qrToken;
   if (!cleanCafeId || !payload) {
     alert('No active café-scoped attendance QR is available.');
     return;
