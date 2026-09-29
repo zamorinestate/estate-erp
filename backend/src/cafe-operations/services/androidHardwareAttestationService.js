@@ -57,13 +57,22 @@ function cacheTtl(response, fallbackMs) {
     ? Math.min(seconds * 1000, 24 * 60 * 60 * 1000)
     : fallbackMs;
 }
-async function cachedJson(url, cache, fallbackMs, unavailableCode) {
+async function cachedJson(
+  url,
+  cache,
+  fallbackMs,
+  unavailableCode,
+  timeoutMs = FETCH_TIMEOUT_MS
+) {
   if (cache.value && cache.expiresAt > Date.now()) return cache.value;
   if (typeof globalThis.fetch !== 'function') {
     throw fail(unavailableCode, 'Android attestation trust service is unavailable.', 503);
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => controller.abort(),
+    Math.max(1, Number(timeoutMs) || FETCH_TIMEOUT_MS)
+  );
   try {
     const response = await globalThis.fetch(url, {
       method: 'GET',
@@ -538,6 +547,7 @@ module.exports = {
   // Narrow internal hooks used only by fault-injection tests. Production
   // callers must use verifyAndroidHardwareAttestation(), not trust raw service data.
   _testOnly: {
+    cachedJson,
     trustedRoots,
     revocations,
     rootCache,

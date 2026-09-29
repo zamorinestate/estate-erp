@@ -1859,3 +1859,41 @@ test('REC-04E concurrent print-job state drift aborts stale acknowledgement befo
   );
   assert.equal(job.status, 'DISPATCHED');
 });
+
+
+test('REC-04E Android attestation trust-service timeout aborts and fails closed without stale trust', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    androidAttestationTestOnly.resetTrustCachesForTest();
+  });
+
+  androidAttestationTestOnly.resetTrustCachesForTest();
+  globalThis.fetch = async (_url, options = {}) => (
+    await new Promise((resolve, reject) => {
+      const signal = options.signal;
+      if (signal?.aborted) {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        return;
+      }
+      signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      }, { once: true });
+    })
+  );
+
+  await assert.rejects(
+    () => androidAttestationTestOnly.cachedJson(
+      'https://android.googleapis.com/attestation/status',
+      { value: null, expiresAt: 0 },
+      60_000,
+      'ANDROID_ATTESTATION_REVOCATION_STATUS_UNAVAILABLE',
+      5
+    ),
+    (err) => {
+      assert.equal(err.code, 'ANDROID_ATTESTATION_REVOCATION_STATUS_UNAVAILABLE');
+      assert.equal(err.statusCode, 503);
+      return true;
+    }
+  );
+});
