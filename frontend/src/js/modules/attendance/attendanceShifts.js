@@ -3447,9 +3447,10 @@ export function openAttendanceQrModal({ cafeId, cafeName } = {}) {
     try {
       const res = await apiGet(`/attendance/qr/active?cafeId=${encodeURIComponent(activeCafeId)}`);
       if (res?.data?.qrToken) {
-        countdownSeconds = Math.max(1, res.data.secondsRemaining || 45);
+        countdownSeconds = Math.max(1, res.data.remainingSeconds || res.data.secondsRemaining || 45);
         if (svgWrap) {
-          const svg = generateQrSvg(res.data.qrToken, { size: 240, margin: 2 });
+          const qrPayload = res.data.attendanceUrl || res.data.opaqueToken || res.data.qrToken;
+          const svg = generateQrSvg(qrPayload, { size: 240, margin: 2 });
           svgWrap.innerHTML = svg;
         }
         if (statusEl) {
