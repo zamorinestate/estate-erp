@@ -2448,7 +2448,16 @@ const resolveException = asyncHandler(async (request, response) => {
  * Authoritative rotating QR challenge for display on authorized screens.
  */
 const getActiveCafeQr = asyncHandler(async (request, response) => {
-  const { organisationId, userId, role, assignedCafeIds, assignedCafeId, primaryCafeId } = request.auth;
+  const { organisationId, userId, role, isPrimaryMaster, assignedCafeIds, assignedCafeId, primaryCafeId } = request.auth;
+
+  if (role === 'MASTER' && isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may display attendance QR challenges from the management console.'
+    );
+  }
+
   const cafeId = normalizeIdentifier(request.query.cafeId) || assignedCafeId || primaryCafeId || (assignedCafeIds && assignedCafeIds[0]);
 
   if (!cafeId) {
