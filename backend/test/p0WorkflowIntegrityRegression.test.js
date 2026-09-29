@@ -24,6 +24,10 @@ const cafeService = read('backend/src/services/cafeService.js');
 const cafeController = read('backend/src/controllers/cafeController.js');
 const cafeCreateModal = read('frontend/src/js/pages/cafeCreateModal.js');
 const administrationPage = read('frontend/src/js/pages/administration.js');
+const staffAttendancePage = read('frontend/src/js/modules/attendance/staffAttendance.js');
+const staffHomePage = read('frontend/src/js/pages/staffHome.js');
+const attendanceRoutes = read('backend/src/modules/attendance/attendanceRoutes.js');
+const correctionModel = read('backend/src/models/AttendanceCorrectionRequest.js');
 
 test('P0-WF-001: approval notification outbox is queued, never pre-marked SENT', () => {
   const helperStart = approvalController.indexOf('async function sendNotificationAndOutbox');
@@ -183,4 +187,71 @@ test('P0-WF-016: Primary Master café create/edit UI exposes geofence capture an
   assert.ok(administrationPage.includes('edit-cafe-longitude'));
   assert.ok(administrationPage.includes('edit-cafe-geofence-radius'));
   assert.ok(administrationPage.includes('edit-cafe-use-location'));
+});
+
+
+test('P0-WF-017: staff attendance UI contains no synthetic attendance/timecard facts', () => {
+  for (const forbidden of [
+    '148.5h',
+    '94.2%',
+    '14 Aug 2026',
+    '08 Aug 2026',
+    'In Radius (8m)',
+    'ALL SIGNALS READY',
+    'retained for 90 days',
+    'Morning Shift (09:00 – 17:00)',
+  ]) {
+    assert.equal(
+      staffAttendancePage.includes(forbidden),
+      false,
+      `Synthetic attendance value must not return: ${forbidden}`
+    );
+  }
+
+  assert.ok(staffAttendancePage.includes('/attendance/policy'));
+  assert.ok(staffAttendancePage.includes('/attendance/corrections/mine?month='));
+  assert.ok(staffAttendancePage.includes('istLocalDateTimeToIso'));
+  assert.ok(staffAttendancePage.includes('T${timeStr}:00+05:30'));
+});
+
+test('P0-WF-018: employee correction read contract is self-scoped and persists break minutes', () => {
+  assert.ok(attendanceRoutes.includes("router.get('/corrections/mine', getStaffCorrections)"));
+  assert.ok(correctionModel.includes('requestedBreakMinutes'));
+  const start = attendanceController.indexOf('const getStaffCorrections = asyncHandler');
+  const end = attendanceController.indexOf('// 15b.', start);
+  const block = attendanceController.slice(start, end);
+  assert.ok(block.includes('organisationId'));
+  assert.ok(block.includes('userId'));
+  assert.ok(block.includes('businessDate'));
+});
+
+test('P0-WF-019: missing attendance evidence never defaults to verified', () => {
+  assert.ok(attendanceController.includes('qrVerified: checkInEvidence?.qrVerified ?? false'));
+  assert.ok(attendanceController.includes('geofenceVerified: checkInEvidence?.geofenceVerified ?? false'));
+  assert.ok(attendanceController.includes('qrVerified: checkOutEvidence?.qrVerified ?? false'));
+  assert.ok(attendanceController.includes('geofenceVerified: checkOutEvidence?.geofenceVerified ?? false'));
+});
+
+test('P0-WF-020: today endpoint does not manufacture a shift when roster resolution fails', () => {
+  const start = attendanceController.indexOf('const getStaffToday = asyncHandler');
+  const end = attendanceController.indexOf('// 12. POST /api/v1/attendance/check-in', start);
+  const block = attendanceController.slice(start, end);
+  assert.equal(block.includes("'SH-MRN-01'"), false);
+  assert.equal(block.includes("'Morning Roastery Shift'"), false);
+  assert.equal(block.includes('T09:00:00.000Z'), false);
+  assert.equal(block.includes('T17:30:00.000Z'), false);
+  assert.ok(block.includes('} : null;'));
+});
+
+test('P0-WF-021: staff shift-request surfaces do not submit fabricated STANDARD/MORNING values', () => {
+  const attendanceShiftStart = staffAttendancePage.indexOf('function openShiftChangeModal');
+  const attendanceShiftBlock = staffAttendancePage.slice(attendanceShiftStart);
+  assert.equal(attendanceShiftBlock.includes('Morning Shift (09:00 – 17:00)'), false);
+  assert.equal(attendanceShiftBlock.includes('Morning Duty Shift (07:00 – 15:30)'), false);
+
+  const homeShiftStart = staffHomePage.indexOf('function openScheduleRequestModal');
+  const homeShiftEnd = staffHomePage.indexOf('// ── MODAL 3:', homeShiftStart);
+  const homeShiftBlock = staffHomePage.slice(homeShiftStart, homeShiftEnd);
+  assert.equal(homeShiftBlock.includes('currentShift: "STANDARD"'), false);
+  assert.equal(homeShiftBlock.includes('prefTime || "MORNING"'), false);
 });
