@@ -94,6 +94,28 @@ const deviceRegistrationSchema = new mongoose.Schema(
       index: true,
     },
 
+    signingKeyAlgorithm: {
+      type: String,
+      enum: ['ES256', null],
+      default: null,
+    },
+
+    signingKeyProvider: {
+      type: String,
+      enum: ['ANDROID_KEYSTORE', 'APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN', 'WINDOWS_CNG', 'WEB_CRYPTO', 'UNKNOWN', null],
+      default: null,
+    },
+
+    signingKeyCreatedAt: {
+      type: Date,
+      default: null,
+    },
+
+    signingKeyLastVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+
     webAuthnCredentialIds: {
       type: [String],
       default: [],
