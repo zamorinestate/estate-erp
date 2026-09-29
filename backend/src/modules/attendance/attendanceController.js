@@ -1123,6 +1123,7 @@ const staffCheckIn = asyncHandler(async (request, response) => {
     const selfieFile = await PrivateFile.findOne({
       fileId: selfieMediaId,
       organisationId,
+      uploadedByUserId: userId,
     });
     if (!selfieFile) {
       throw new ApiError(400, 'INVALID_SELFIE_MEDIA', 'Uploaded selfie photograph was not found.');
@@ -1518,6 +1519,7 @@ const staffCheckOut = asyncHandler(async (request, response) => {
     const selfieFile = await PrivateFile.findOne({
       fileId: selfieMediaId,
       organisationId,
+      uploadedByUserId: userId,
     });
     if (!selfieFile) {
       throw new ApiError(400, 'INVALID_SELFIE_MEDIA', 'Uploaded selfie photograph was not found.');
