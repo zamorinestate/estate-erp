@@ -647,7 +647,7 @@ function renderTimecardTab() {
       <div class="card" style="padding:20px; background:var(--bg-surface-1); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); border:1px solid var(--border-subtle);">
         <div class="flex items-center justify-between flex-wrap gap-sm" style="margin-bottom:16px;">
           <div style="font-size:15px; font-weight:800; color:var(--text-primary);">
-            August 2026 Detailed Daily Timecard
+            ${new Date(currentMonth + "-01T00:00:00").toLocaleString("en-IN", { month: "long", year: "numeric" })} Detailed Daily Timecard
           </div>
           <!-- Export & Filter Controls (P2 Option) -->
           <div class="flex items-center gap-xs flex-wrap">
