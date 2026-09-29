@@ -1161,12 +1161,12 @@ const staffCheckIn = asyncHandler(async (request, response) => {
 
   const scheduledStartAt = resolvedShift?.startTime
     ? buildShiftDateTime(businessDate, resolvedShift.startTime)
-    : new Date(`${businessDate}T09:00:00.000Z`);
+    : null;
   const scheduledEndAt = resolvedShift?.endTime
     ? buildShiftDateTime(businessDate, resolvedShift.endTime)
-    : new Date(`${businessDate}T17:30:00.000Z`);
-  const shiftId = resolvedShift?.shiftId || 'SH-MRN-01';
-  const shiftName = resolvedShift?.shiftName || 'Morning Roastery Shift';
+    : null;
+  const shiftId = resolvedShift?.shiftId || null;
+  const shiftName = resolvedShift?.shiftName || resolvedShift?.name || null;
 
   const metrics = calculateAttendanceMetrics({
     checkInAt: punchTime,
