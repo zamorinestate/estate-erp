@@ -3,7 +3,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const mongoose = require('mongoose');
+
+const root = path.join(__dirname, '..', '..');
 
 // Bypass Mongoose buffering in offline unit test mode
 mongoose.set('bufferCommands', false);
@@ -421,6 +425,38 @@ test('QR-009: verify endpoint returns verified flag and user-bound scan grant', 
   assert.equal(res.body.data.verified, true);
   assert.equal(res.body.data.transition, 'CHECK_IN');
   assert.match(res.body.data.scanGrant, /^ZAM_ASG_/);
+});
+
+test('QR-010: attendance QR is withheld when café geofence is not configured', async () => {
+  await assert.rejects(
+    async () => attendanceQrService.getActiveOrNewChallenge({
+      organisationId: 'ORG-ZAMORIN',
+      cafeId: 'CAFE-UNCONFIGURED',
+      requestedByRole: 'CAFE_ADMIN',
+      assignedCafeIds: ['CAFE-UNCONFIGURED'],
+    }),
+    { statusCode: 422, code: 'GEOFENCE_NOT_CONFIGURED' }
+  );
+});
+
+test('QR-011: management attendance QR rejects non-primary MASTER authority', async () => {
+  const req = {
+    auth: {
+      organisationId: 'ORG-ZAMORIN',
+      userId: 'MASTER-LEGACY',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      assignedCafeIds: ['CAFE-KNR-01'],
+      primaryCafeId: 'CAFE-KNR-01',
+    },
+    query: { cafeId: 'CAFE-KNR-01' },
+    headers: {},
+  };
+
+  await assert.rejects(
+    async () => getActiveCafeQr(req, createMockRes()),
+    { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1194,6 +1230,9 @@ test('ATTENDANCE-FLOW-001: QR deep-link, Cafe Operations kiosk, and calendars us
   const cafeOpsKioskSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'screens', 'attendanceKiosk.js'), 'utf8');
   const cafeOpsApiSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'api', 'cafeOpsApi.js'), 'utf8');
   const controllerSource = fs.readFileSync(path.join(root, 'backend', 'src', 'modules', 'attendance', 'attendanceController.js'), 'utf8');
+  const cafeCreateSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'cafeCreateModal.js'), 'utf8');
+  const administrationSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'administration.js'), 'utf8');
+  const cafeServiceSource = fs.readFileSync(path.join(root, 'backend', 'src', 'services', 'cafeService.js'), 'utf8');
 
   assert.match(qrPageSource, /res\.data\.attendanceUrl \|\| res\.data\.opaqueToken/);
   assert.match(displaySource, /res\.data\.attendanceUrl \|\| res\.data\.qrToken/);
@@ -1219,4 +1258,15 @@ test('ATTENDANCE-FLOW-001: QR deep-link, Cafe Operations kiosk, and calendars us
   assert.doesNotMatch(managementSource, /function openDayAttendanceDetailsModal/);
   assert.match(managementSource, /calendar-360\/\$\{encodeURIComponent\(selectedUserId\)\}/);
   assert.match(managementSource, /openAttendanceEvidenceViewer\(\{ attendanceId \}\)/);
+
+  assert.match(cafeCreateSource, /wiz-use-current-location-btn/);
+  assert.match(cafeCreateSource, /wiz-f-latitude/);
+  assert.match(cafeCreateSource, /wiz-f-longitude/);
+  assert.match(cafeCreateSource, /wiz-f-geofence-radius/);
+  assert.match(cafeCreateSource, /geofenceRadiusMetres: formData\.geofenceRadiusMetres/);
+  assert.match(administrationSource, /edit-cafe-geofence-radius/);
+  assert.match(administrationSource, /edit-cafe-use-location/);
+  assert.match(cafeServiceSource, /'geofenceRadiusMetres'/);
+  assert.match(cafeServiceSource, /Attendance geofence radius must be between 10 and 1000 metres/);
+  assert.match(controllerSource, /PRIMARY_MASTER_AUTHORITY_REQUIRED/);
 });
