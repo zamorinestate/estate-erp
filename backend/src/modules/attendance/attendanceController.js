@@ -1091,8 +1091,10 @@ const staffCheckIn = asyncHandler(async (request, response) => {
   }
 
   // Validate QR challenge token
-  const qrValidation = await attendanceQrService.validateChallengeToken(qrToken, {
+  const qrValidation = await attendanceQrService.validatePunchQrProof(qrToken, {
     employeeOrgId: organisationId,
+    employeeUserId: userId,
+    expectedTransition: 'CHECK_IN',
     employeeAssignedCafes: [
       ...(request.auth.assignedCafeIds || []),
       request.auth.primaryCafeId,
@@ -1480,8 +1482,10 @@ const staffCheckOut = asyncHandler(async (request, response) => {
   // Validate the mandatory QR challenge token.
   let qrValidation = null;
   if (qrToken) {
-    qrValidation = await attendanceQrService.validateChallengeToken(qrToken, {
+    qrValidation = await attendanceQrService.validatePunchQrProof(qrToken, {
       employeeOrgId: organisationId,
+      employeeUserId: userId,
+      expectedTransition: 'CHECK_OUT',
       employeeAssignedCafes: [
         ...(request.auth.assignedCafeIds || []),
         request.auth.primaryCafeId,
@@ -2475,7 +2479,7 @@ const getActiveCafeQr = asyncHandler(async (request, response) => {
  * Validates a scanned QR token and resolves authoritative café.
  */
 const verifyScannedQr = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds, primaryCafeId } = request.auth;
+  const { organisationId, userId, role, assignedCafeIds, primaryCafeId } = request.auth;
   const { qrToken } = request.body || {};
 
   if (!qrToken) {
@@ -2493,14 +2497,36 @@ const verifyScannedQr = asyncHandler(async (request, response) => {
 
   const cafe = await Cafe.findOne({ cafeId: result.resolvedCafeId }).lean();
 
+  const openAttendanceQuery = Attendance.findOne({
+    organisationId,
+    userId,
+    status: { $in: ['CHECKED_IN', 'ON_BREAK'] },
+    checkOutAt: null,
+  });
+  const openAttendance = await (typeof openAttendanceQuery?.sort === 'function'
+    ? openAttendanceQuery.sort({ checkInAt: -1 })
+    : openAttendanceQuery);
+  const transition = openAttendance ? 'CHECK_OUT' : 'CHECK_IN';
+
+  const scanGrant = attendanceQrService.issueScanGrant({
+    verification: result,
+    userId,
+    organisationId,
+    transition,
+  });
+
   return response.status(200).json({
     success: true,
     data: {
       valid: true,
+      verified: true,
       challengeId: result.challengeId,
       cafeId: result.resolvedCafeId,
       cafeName: cafe?.name || result.resolvedCafeId,
       expiresAt: result.expiresAt,
+      transition,
+      scanGrant: scanGrant.token,
+      scanGrantExpiresAt: scanGrant.expiresAt,
     },
     correlationId: request.correlationId || null,
   });
