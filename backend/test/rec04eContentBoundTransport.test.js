@@ -1667,3 +1667,195 @@ test('REC-04E real-hardware acceptance requires explicit observed paper/cutter i
   assert.match(pkg, /accept:rec04e:hardware/);
   assert.match(pkg, /verify:rec04e:hardware/);
 });
+
+
+test('REC-04E transaction finalization revalidates operator, job binding, and device trust', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+
+  assert.match(source, /OPERATOR_SESSION_ENDED_DURING_ACK/);
+  assert.match(source, /PRINT_JOB_CHANGED_DURING_FINALIZATION/);
+  assert.match(source, /DEVICE_ATTESTATION_REVOKED_DURING_ACK/);
+  assert.match(source, /const liveOperatorSession = await readLean\(OperatorSession\.findOne/);
+  assert.match(source, /const liveJob = await readLean\(PrintJob\.findOne/);
+  assert.match(source, /const liveRegistration = await readLean\(DeviceRegistration\.findOne/);
+  assert.match(source, /liveJob\.ackChallengeExpiresAt/);
+  assert.match(source, /liveProviderAtCommit !== attestationProvider/);
+  assert.match(source, /liveThumbprintAtCommit/);
+});
+
+test('REC-04E operator-session termination between verification and finalization aborts acknowledgement', async (t) => {
+  const job = {
+    printJobId: 'PJ-RACE-SESSION-001',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    billId: 'BILL-RACE-SESSION-001',
+    jobType: 'RECEIPT',
+    status: 'DISPATCHED',
+    dispatchedDeviceId: 'DV-ZC0001-POS-01',
+    attestationRequired: false,
+    drawerKickRequested: false,
+    drawerKickStatus: 'NOT_REQUESTED',
+    async save() {
+      throw new Error('job save must not run after session revocation');
+    },
+  };
+  let sessionReads = 0;
+  t.mock.method(OperatorSession, 'findOne', () => ({
+    lean: async () => {
+      sessionReads += 1;
+      return sessionReads === 1 ? { status: 'ACTIVE' } : null;
+    },
+  }));
+  t.mock.method(PrintJob, 'findOne', async () => job);
+
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(job.printJobId, {
+      userId: 'EMP-ZC-1001',
+      role: 'STAFF',
+      organisationId: 'ORG-ZAMORIN',
+      operatorSessionId: 'OPS-DV-ZC0001-POS-01',
+      deviceContext: {
+        deviceId: 'DV-ZC0001-POS-01',
+        deviceClass: 'CAFE_OWNED',
+        boundCafeId: 'ZC-0001',
+        status: 'ACTIVE',
+      },
+    }, { status: 'PRINTED' }),
+    (err) => err.code === 'OPERATOR_SESSION_ENDED_DURING_ACK'
+  );
+  assert.equal(job.status, 'DISPATCHED');
+});
+
+test('REC-04E device revocation after signature verification aborts the terminal transaction', async (t) => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
+  });
+  const publicJwk = publicKey.export({ format: 'jwk' });
+  const canonicalPublicKey = attestationService.canonicalPublicJwk(publicJwk);
+  const thumbprint = attestationService.publicKeyThumbprint(canonicalPublicKey);
+  const job = {
+    printJobId: 'PJ-RACE-DEVICE-001',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    billId: 'BILL-RACE-DEVICE-001',
+    jobType: 'RECEIPT',
+    status: 'DISPATCHED',
+    dispatchedDeviceId: 'DV-ZC0001-POS-01',
+    ackChallenge: 'rec04e-race-device',
+    ackChallengeExpiresAt: new Date(Date.now() + 60_000),
+    attestationRequired: true,
+    attestationKeyThumbprint: thumbprint,
+    attestationKeyProvider: 'ANDROID_KEYSTORE',
+    drawerKickRequested: false,
+    drawerKickStatus: 'NOT_REQUESTED',
+    async save() {
+      throw new Error('job save must not run after device revocation');
+    },
+  };
+  const registration = {
+    deviceId: job.dispatchedDeviceId,
+    organisationId: job.organisationId,
+    assignedCafeId: job.cafeId,
+    status: 'ACTIVE',
+    publicSigningKey: canonicalPublicKey,
+    signingKeyAlgorithm: 'ES256',
+    signingKeyProvider: 'ANDROID_KEYSTORE',
+    signingKeyThumbprint: thumbprint,
+  };
+  let registrationReads = 0;
+  t.mock.method(OperatorSession, 'findOne', () => ({
+    lean: async () => ({ status: 'ACTIVE' }),
+  }));
+  t.mock.method(PrintJob, 'findOne', async () => job);
+  t.mock.method(DeviceRegistration, 'findOne', () => ({
+    lean: async () => {
+      registrationReads += 1;
+      return registrationReads === 1 ? registration : null;
+    },
+  }));
+
+  const payload = attestationService.buildPrintAckPayload({
+    organisationId: job.organisationId,
+    cafeId: job.cafeId,
+    deviceId: job.dispatchedDeviceId,
+    printJobId: job.printJobId,
+    challenge: job.ackChallenge,
+    status: 'PRINTED',
+    drawerKickStatus: 'UNCHANGED',
+    failureCode: 'NONE',
+    failureReason: '',
+  });
+  const signature = crypto.sign(
+    'sha256',
+    Buffer.from(payload, 'utf8'),
+    { key: privateKey, dsaEncoding: 'der' }
+  ).toString('base64url');
+
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(job.printJobId, {
+      userId: 'EMP-ZC-1001',
+      role: 'STAFF',
+      organisationId: 'ORG-ZAMORIN',
+      operatorSessionId: 'OPS-DV-ZC0001-POS-01',
+      deviceContext: {
+        deviceId: job.dispatchedDeviceId,
+        deviceClass: 'CAFE_OWNED',
+        boundCafeId: job.cafeId,
+        status: 'ACTIVE',
+      },
+    }, {
+      status: 'PRINTED',
+      attestation: {
+        provider: 'ANDROID_KEYSTORE',
+        keyThumbprint: thumbprint,
+        signature,
+      },
+    }),
+    (err) => err.code === 'DEVICE_ATTESTATION_REVOKED_DURING_ACK'
+  );
+  assert.equal(job.status, 'DISPATCHED');
+});
+
+test('REC-04E concurrent print-job state drift aborts stale acknowledgement before writes', async (t) => {
+  const job = {
+    printJobId: 'PJ-RACE-STATE-001',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    billId: 'BILL-RACE-STATE-001',
+    jobType: 'RECEIPT',
+    status: 'DISPATCHED',
+    dispatchedDeviceId: 'DV-ZC0001-POS-01',
+    attestationRequired: false,
+    drawerKickRequested: false,
+    drawerKickStatus: 'NOT_REQUESTED',
+    async save() {
+      throw new Error('stale job must not be saved');
+    },
+  };
+  let jobReads = 0;
+  t.mock.method(OperatorSession, 'findOne', () => ({
+    lean: async () => ({ status: 'ACTIVE' }),
+  }));
+  t.mock.method(PrintJob, 'findOne', async () => {
+    jobReads += 1;
+    if (jobReads === 1) return job;
+    return { ...job, status: 'CANCELLED' };
+  });
+
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(job.printJobId, {
+      userId: 'EMP-ZC-1001',
+      role: 'STAFF',
+      organisationId: 'ORG-ZAMORIN',
+      operatorSessionId: 'OPS-DV-ZC0001-POS-01',
+      deviceContext: {
+        deviceId: job.dispatchedDeviceId,
+        deviceClass: 'CAFE_OWNED',
+        boundCafeId: job.cafeId,
+        status: 'ACTIVE',
+      },
+    }, { status: 'PRINTED' }),
+    (err) => err.code === 'PRINT_JOB_CHANGED_DURING_FINALIZATION'
+  );
+  assert.equal(job.status, 'DISPATCHED');
+});

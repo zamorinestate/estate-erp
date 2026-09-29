@@ -2100,6 +2100,138 @@ class PosOrderService {
         );
       }
 
+      const readLean = async (query) => {
+        const scoped =
+          session && query && typeof query.session === 'function'
+            ? query.session(session)
+            : query;
+        return scoped && typeof scoped.lean === 'function'
+          ? await scoped.lean()
+          : await scoped;
+      };
+
+      // Revalidate execution-time authority inside the same transaction that
+      // commits terminal print evidence. This closes revocation/session/key
+      // races between the initial signature verification and durable writes.
+      const liveOperatorSession = await readLean(OperatorSession.findOne({
+        operatorSessionId,
+        organisationId: orgId,
+        cafeId: boundCafeId,
+        deviceId,
+        operatorUserId: normalizeId(authContext.userId),
+        status: 'ACTIVE',
+      }));
+      if (!liveOperatorSession) {
+        throw new ApiError(
+          409,
+          'OPERATOR_SESSION_ENDED_DURING_ACK',
+          'The operator session ended before print acknowledgement could be finalized.'
+        );
+      }
+
+      const liveJob = await readLean(PrintJob.findOne({
+        organisationId: orgId,
+        printJobId: normPrintJobId,
+      }));
+      if (!liveJob) {
+        throw new ApiError(
+          409,
+          'PRINT_JOB_CHANGED_DURING_FINALIZATION',
+          'The print job disappeared before acknowledgement could be finalized.'
+        );
+      }
+
+      const liveStatus = normalizeId(liveJob.status);
+      const bindingChanged =
+        liveStatus !== currentStatus ||
+        normalizeId(liveJob.cafeId) !== jobCafeId ||
+        normalizeId(liveJob.dispatchedDeviceId) !== dispatchedDeviceId ||
+        String(liveJob.ackChallenge || '') !== String(job.ackChallenge || '') ||
+        String(liveJob.payloadSha256 || '').toLowerCase() !== String(job.payloadSha256 || '').toLowerCase() ||
+        Number(liveJob.payloadBytes || 0) !== Number(job.payloadBytes || 0) ||
+        String(liveJob.attestationKeyThumbprint || '').toLowerCase() !== String(job.attestationKeyThumbprint || '').toLowerCase() ||
+        normalizeId(liveJob.attestationKeyProvider || '') !== normalizeId(job.attestationKeyProvider || '');
+
+      if (bindingChanged) {
+        throw new ApiError(
+          409,
+          'PRINT_JOB_CHANGED_DURING_FINALIZATION',
+          'Print-job state or attestation binding changed during acknowledgement finalization. Retry against fresh state.'
+        );
+      }
+
+      if (
+        job.attestationRequired &&
+        !terminalStatuses.has(liveStatus) &&
+        liveJob.ackChallengeExpiresAt &&
+        new Date(liveJob.ackChallengeExpiresAt).getTime() <= Date.now()
+      ) {
+        throw new ApiError(
+          409,
+          'PRINT_ACK_CHALLENGE_EXPIRED',
+          'The print acknowledgement challenge expired before finalization committed.'
+        );
+      }
+
+      if (job.attestationRequired) {
+        const liveRegistration = await readLean(DeviceRegistration.findOne({
+          deviceId,
+          organisationId: orgId,
+          assignedCafeId: jobCafeId,
+          status: 'ACTIVE',
+        }));
+
+        if (
+          !liveRegistration?.publicSigningKey ||
+          normalizeId(liveRegistration.signingKeyAlgorithm) !== ATTESTATION_ALGORITHM
+        ) {
+          throw new ApiError(
+            409,
+            'DEVICE_ATTESTATION_REVOKED_DURING_ACK',
+            'The device registration was revoked, reassigned, suspended, or lost its signing key before acknowledgement committed.'
+          );
+        }
+
+        const liveProviderAtCommit = normalizeId(
+          liveRegistration.signingKeyProvider || 'UNKNOWN'
+        );
+        if (
+          liveProviderAtCommit !== attestationProvider ||
+          (
+            job.attestationKeyProvider &&
+            liveProviderAtCommit !== normalizeId(job.attestationKeyProvider)
+          )
+        ) {
+          throw new ApiError(
+            409,
+            'DEVICE_ATTESTATION_PROVIDER_CHANGED',
+            'The enrolled signing provider changed before acknowledgement committed.'
+          );
+        }
+
+        const liveThumbprintAtCommit =
+          liveRegistration.signingKeyThumbprint ||
+          publicKeyThumbprint(liveRegistration.publicSigningKey);
+        if (
+          (
+            job.attestationKeyThumbprint &&
+            String(liveThumbprintAtCommit).toLowerCase() !==
+              String(job.attestationKeyThumbprint).toLowerCase()
+          ) ||
+          (
+            attestationProof &&
+            String(liveThumbprintAtCommit).toLowerCase() !==
+              String(attestationProof.keyThumbprint).toLowerCase()
+          )
+        ) {
+          throw new ApiError(
+            409,
+            'DEVICE_ATTESTATION_KEY_CHANGED',
+            'The enrolled device signing key changed before acknowledgement committed.'
+          );
+        }
+      }
+
       if (statusChanged) {
         await job.save(session ? { session } : undefined);
       }
