@@ -289,6 +289,12 @@ test('REC-04C — native print shells never equate dialog/spool acceptance with 
   }
 
   assert.match(iosController, /"physicalCompletionVerified": false/);
+  assert.match(macController, /let systemCompleted = printOperation\.run\(\)/);
   assert.match(macController, /"physicalCompletionVerified": false/);
+  assert.doesNotMatch(
+    macController,
+    /printOperation\.runModal\([\s\S]{0,250}?success:\s*true/,
+    'macOS must not report unconditional success after merely presenting the print operation'
+  );
 });
 
