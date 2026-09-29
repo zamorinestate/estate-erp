@@ -671,7 +671,7 @@ const billSchema = new mongoose.Schema(
 
     printStatus: {
       type: String,
-      enum: ['NOT_REQUESTED', 'PRINT_PENDING', 'PRINT_DISPATCHED', 'PRINTED', 'PRINT_FAILED'],
+      enum: ['NOT_REQUESTED', 'PRINT_PENDING', 'PRINT_DISPATCHED', 'PRINTED', 'PRINT_FAILED', 'PRINT_CANCELLED'],
       default: 'NOT_REQUESTED',
       index: true,
     },
