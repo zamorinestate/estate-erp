@@ -246,6 +246,35 @@ class ZamorinNativeBridge(
                 callbacks.onOpenSystemPrint(requestId, jobName)
                 null // Asynchronous completion handled via callbacks
             }
+            "GET_PRINT_JOB_STATUS" -> {
+                val platformJobId = payload.optString("platformJobId", "").trim()
+                if (platformJobId.isBlank()) {
+                    BridgeResponse(
+                        requestId = requestId,
+                        success = false,
+                        errorCode = "PLATFORM_PRINT_JOB_ID_REQUIRED",
+                        errorMessage = "platformJobId is required."
+                    )
+                } else {
+                    val status = ZamorinPrintManager.getPrintJobStatus(context, platformJobId)
+                    val res = JSONObject().apply {
+                        put("found", status.found)
+                        put("platformJobId", status.platformJobId)
+                        put("status", status.status)
+                        put("terminal", status.terminal)
+                        put("physicalCompletionVerified", status.physicalCompletionVerified)
+                        if (status.error != null) put("error", status.error)
+                    }
+                    BridgeResponse(
+                        requestId = requestId,
+                        success = status.error == null || status.status == "FAILED",
+                        result = res,
+                        errorCode = if (status.status == "QUERY_FAILED" || status.status == "PRINT_SERVICE_UNAVAILABLE") "PRINT_STATUS_QUERY_FAILED" else null,
+                        errorMessage = if (status.status == "QUERY_FAILED" || status.status == "PRINT_SERVICE_UNAVAILABLE") status.error else null
+                    )
+                }
+            }
+
 
             "OPEN_CAMERA" -> {
                 callbacks.onOpenCamera(requestId)
