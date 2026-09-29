@@ -107,11 +107,17 @@ public class ViewController: UIViewController, WKNavigationDelegate, ZamorinNati
         printController.printFormatter = webView.viewPrintFormatter()
 
         printController.present(animated: true) { [weak self] (_, completed, error) in
+            let status = error != nil ? "FAILED" : (completed ? "SYSTEM_COMPLETED" : "CANCELLED")
             self?.bridge.respond(
                 requestId: requestId,
-                success: completed,
-                result: ["jobName": jobName],
-                errorCode: error != nil ? "PRINT_FAILED" : nil,
+                success: error == nil && completed,
+                result: [
+                    "jobName": jobName,
+                    "status": status,
+                    "systemPrintCompleted": completed,
+                    "physicalCompletionVerified": false
+                ],
+                errorCode: error != nil ? "PRINT_FAILED" : (completed ? nil : "PRINT_CANCELLED"),
                 errorMessage: error?.localizedDescription
             )
         }
