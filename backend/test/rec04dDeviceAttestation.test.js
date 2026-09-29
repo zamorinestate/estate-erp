@@ -18,11 +18,14 @@ const cafeRepositories = require('../src/cafe-operations/repositories');
 
 const root = path.join(__dirname, '..', '..');
 const androidBridgePath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinNativeBridge.kt');
+const androidPrintManagerPath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinPrintManager.kt');
 const windowsBridgePath = path.join(root, 'Platform', 'Windows', 'ZamorinCafeERP', 'ZamorinNativeBridge.cs');
 const iosBridgePath = path.join(root, 'Platform', 'Apple', 'ios', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
 const macBridgePath = path.join(root, 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
 const frontendAttestationPath = path.join(root, 'frontend', 'src', 'js', 'utils', 'deviceAttestation.js');
 const routerPath = path.join(root, 'frontend', 'src', 'js', 'router.js');
+const posTillPath = path.join(root, 'frontend', 'src', 'js', 'pages', 'posTill.js');
+const hardwareBridgeServicePath = path.join(root, 'backend', 'src', 'services', 'hardwareBridgeService.js');
 const deviceEnrollmentRoutesPath = path.join(root, 'backend', 'src', 'cafe-operations', 'routes', 'deviceEnrollmentRoutes.js');
 
 function makeKeyPair() {
@@ -402,3 +405,47 @@ test('REC-04D — native bridges keep private signing keys inside platform store
     'Legacy key binding must require both the enrolled device token and an authenticated ERP user'
   );
 });
+
+test('REC-04D — Android spooler terminal state is the only native path that can produce signed PRINTED', () => {
+  const printManager = fs.readFileSync(androidPrintManagerPath, 'utf8');
+  const androidBridge = fs.readFileSync(androidBridgePath, 'utf8');
+  const frontend = fs.readFileSync(frontendAttestationPath, 'utf8');
+
+  assert.match(printManager, /printJob\.isCompleted\s*->\s*"COMPLETED"/);
+  assert.match(printManager, /printJob\.isFailed\s*->\s*"FAILED"/);
+  assert.match(printManager, /printJob\.isCancelled\s*->\s*"CANCELLED"/);
+  assert.match(printManager, /physicalCompletionVerified\s*=\s*status\s*==\s*"COMPLETED"/);
+
+  assert.match(androidBridge, /"GET_PRINT_JOB_STATUS"/);
+  assert.match(androidBridge, /ZamorinPrintManager\.getPrintJobStatus\(context, platformJobId\)/);
+
+  assert.match(frontend, /monitorAndroidPrintAndAcknowledge/);
+  assert.match(frontend, /status\s*===\s*'COMPLETED'\s*&&\s*statusResult\.physicalCompletionVerified\s*===\s*true/);
+  assert.match(frontend, /status:\s*'PRINTED'/);
+  assert.match(frontend, /status:\s*'FAILED'/);
+  assert.match(frontend, /status:\s*'CANCELLED'/);
+  assert.match(frontend, /drawerKickStatus:\s*dispatch\?\.drawerKickRequested\s*\?\s*'UNKNOWN'/);
+});
+
+test('REC-04D — SAVE_AND_PRINT consumes one canonical PrintJob and browser fallback cannot self-acknowledge', () => {
+  const posTill = fs.readFileSync(posTillPath, 'utf8');
+  const hardware = fs.readFileSync(hardwareBridgeServicePath, 'utf8');
+
+  assert.match(posTill, /function openReceiptModal\(bill, isReprint = false, initialDispatch = null\)/);
+  assert.match(posTill, /let pendingInitialDispatch = initialDispatch\?\.printJobId \? initialDispatch : null/);
+  assert.match(posTill, /let dispatch = pendingInitialDispatch;\s*pendingInitialDispatch = null;/);
+  assert.match(posTill, /if \(pendingInitialDispatch\)[\s\S]{0,300}?printThermal\(\)/);
+  assert.match(posTill, /monitorAndroidPrintAndAcknowledge\(dispatch, nativeResponse\)/);
+  assert.match(posTill, /window\.print\(\);[\s\S]{0,180}?physicalCompletionVerified:\s*false/);
+
+  assert.doesNotMatch(
+    hardware,
+    /paymentMethod\s*===\s*['"]CASH['"]\s*\|\|\s*orderData\.triggerDrawerKick/,
+    'Historical CASH tender must never infer a new drawer kick during PRINT or REPRINT'
+  );
+  assert.match(
+    hardware,
+    /terminal\.drawerConfig\?\.enabled\s*&&\s*orderData\.triggerDrawerKick\s*===\s*true/
+  );
+});
+
