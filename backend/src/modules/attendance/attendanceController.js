@@ -534,11 +534,72 @@ const saveRoster = asyncHandler(async (request, response) => {
   }
   ensureCafeAccess(request, cafeId);
 
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekStartDate || ''))) {
+    throw new ApiError(400, 'ROSTER_WEEK_INVALID', 'weekStartDate must use YYYY-MM-DD format.');
+  }
+
+  const weekStart = new Date(`${weekStartDate}T00:00:00+05:30`);
+  if (Number.isNaN(weekStart.getTime()) || weekStart.getDay() !== 1) {
+    throw new ApiError(400, 'ROSTER_WEEK_MUST_START_MONDAY', 'Attendance roster weekStartDate must be a Monday.');
+  }
+
+  if (!Array.isArray(assignments) || assignments.length > 500) {
+    throw new ApiError(400, 'ROSTER_ASSIGNMENTS_INVALID', 'Roster assignments must be an array of at most 500 entries.');
+  }
+
+  const allowedDates = new Set(
+    Array.from({ length: 7 }, (_, offset) => {
+      const d = new Date(weekStart.getTime() + offset * 86400000);
+      return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    })
+  );
+  const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+  const seen = new Set();
+  const normalizedAssignments = assignments.map((assignment, index) => {
+    const userId = normalizeIdentifier(assignment?.userId);
+    const date = String(assignment?.date || '').trim();
+    const startTime = String(assignment?.startTime || '').trim();
+    const endTime = String(assignment?.endTime || '').trim();
+
+    if (!userId || !allowedDates.has(date) || !timePattern.test(startTime) || !timePattern.test(endTime)) {
+      throw new ApiError(
+        400,
+        'ROSTER_ASSIGNMENT_INVALID',
+        `Roster assignment ${index + 1} has invalid employee, date, startTime, or endTime.`
+      );
+    }
+
+    const duplicateKey = `${userId}|${date}`;
+    if (seen.has(duplicateKey)) {
+      throw new ApiError(409, 'ROSTER_ASSIGNMENT_DUPLICATE', `Duplicate roster assignment for ${userId} on ${date}.`);
+    }
+    seen.add(duplicateKey);
+
+    return {
+      userId,
+      date,
+      shiftTemplateId: assignment.shiftTemplateId ? normalizeIdentifier(assignment.shiftTemplateId) : null,
+      shiftName: assignment.shiftName ? String(assignment.shiftName).trim() : null,
+      startTime,
+      endTime,
+      breakMinutes: Math.max(0, Number(assignment.breakMinutes) || 0),
+      assignedRole: assignment.assignedRole ? String(assignment.assignedRole).trim() : null,
+    };
+  });
+
   let roster = await ShiftRoster.findOne({
     organisationId: request.auth.organisationId,
     cafeId,
     weekStartDate,
   });
+
+  if (roster && ['PUBLISHED', 'LOCKED', 'ARCHIVED'].includes(roster.status)) {
+    throw new ApiError(
+      423,
+      'ROSTER_IMMUTABLE',
+      `Roster ${roster.rosterId} is ${roster.status} and cannot be edited as a draft.`
+    );
+  }
 
   if (!roster) {
     const rosterId = `ROS-${weekStartDate.replace(/-/g, '')}-${cafeId}`;
@@ -548,11 +609,11 @@ const saveRoster = asyncHandler(async (request, response) => {
       cafeId,
       weekStartDate,
       status: 'DRAFT',
-      assignments,
+      assignments: normalizedAssignments,
       createdByUserId: request.auth.userId,
     });
   } else {
-    roster.assignments = assignments;
+    roster.assignments = normalizedAssignments;
   }
 
   await roster.save();
