@@ -55,7 +55,7 @@ const printJobSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['QUEUED', 'DISPATCHED', 'PRINTED', 'FAILED'],
+      enum: ['QUEUED', 'DISPATCHED', 'PRINTED', 'FAILED', 'CANCELLED'],
       default: 'QUEUED',
       index: true,
     },
@@ -72,6 +72,32 @@ const printJobSchema = new mongoose.Schema(
     requestedAt: {
       type: Date,
       default: Date.now,
+    },
+    dispatchedDeviceId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+      index: true,
+    },
+    acknowledgedByDeviceId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+    acknowledgedAt: {
+      type: Date,
+      default: null,
+    },
+    drawerKickRequested: {
+      type: Boolean,
+      default: false,
+    },
+    drawerKickStatus: {
+      type: String,
+      enum: ['NOT_REQUESTED', 'DISPATCHED', 'ACKNOWLEDGED', 'FAILED', 'UNKNOWN'],
+      default: 'NOT_REQUESTED',
     },
     completedAt: {
       type: Date,
