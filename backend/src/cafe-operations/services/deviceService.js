@@ -5,8 +5,22 @@ const { DEVICE_STATUS, SESSION_END_REASON, SECURITY_EVENT_TYPE } = require('../u
 const sessionService = require('./cafeOpsSessionService');
 const auditService = require('./auditService');
 const { logSecurityEvent, SECURITY_ACTIONS } = require('../../services/securityLogger');
+const {
+  ATTESTATION_ALGORITHM,
+  canonicalPublicJwk,
+  publicKeyThumbprint,
+} = require('../../services/deviceAttestationService');
 
-async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVersion, osVersion }) {
+async function enrollDevice({
+  enrollmentCodePlain,
+  displayName,
+  platform,
+  appVersion,
+  osVersion,
+  publicSigningKey,
+  signingKeyAlgorithm,
+  signingKeyProvider,
+}) {
   const repos = getRepositories();
   const tokenHash = sha256Hex(enrollmentCodePlain);
   const enrollment = await repos.enrollmentTokens.findByHash(tokenHash);
@@ -22,6 +36,20 @@ async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVer
     await auditService.record({ eventType: SECURITY_EVENT_TYPE.DEVICE_ENROLLMENT_FAILED, metadata: { reason: !enrollment ? 'NOT_FOUND' : enrollment.status } });
     const err = new Error('ENROLLMENT_UNAVAILABLE'); err.code = 'ENROLLMENT_UNAVAILABLE'; throw err;
   }
+  let canonicalSigningKey = null;
+  let signingKeyThumbprint = null;
+  let normalizedSigningKeyProvider = null;
+  if (publicSigningKey) {
+    if (String(signingKeyAlgorithm || ATTESTATION_ALGORITHM).toUpperCase() !== ATTESTATION_ALGORITHM) {
+      const err = new Error('UNSUPPORTED_DEVICE_SIGNING_ALGORITHM');
+      err.code = 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM';
+      throw err;
+    }
+    canonicalSigningKey = canonicalPublicJwk(publicSigningKey);
+    signingKeyThumbprint = publicKeyThumbprint(canonicalSigningKey);
+    normalizedSigningKeyProvider = String(signingKeyProvider || 'UNKNOWN').trim().toUpperCase();
+  }
+
   const deviceToken = generateOpaqueToken();
   const device = await repos.devices.create({
     deviceCode: generateDeviceCode(),
@@ -33,6 +61,11 @@ async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVer
     appVersion, osVersion,
     lifecycleStatus: DEVICE_STATUS.ACTIVE,
     deviceTokenHash: sha256Hex(deviceToken),
+    signingKeyThumbprint,
+    signingKeyAlgorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
+    signingKeyProvider: normalizedSigningKeyProvider,
+    attestationCapable: Boolean(canonicalSigningKey),
+    integrityState: canonicalSigningKey ? 'READY' : 'UNKNOWN',
     enrolledAt: new Date(),
   });
   await repos.enrollmentTokens.update(enrollment.id, { status: 'USED', usedAt: new Date(), usedByDeviceId: device.id });
@@ -48,9 +81,17 @@ async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVer
         deviceName: device.displayName,
         platform: 'WEB_POS',
         status: 'ACTIVE',
+        publicSigningKey: canonicalSigningKey,
+        signingKeyThumbprint,
+        signingKeyAlgorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
+        signingKeyProvider: normalizedSigningKeyProvider,
+        signingKeyCreatedAt: canonicalSigningKey ? new Date() : null,
         trustLevel: 'ENROLLED',
         lastSeenAt: new Date(),
-        metadata: { deviceCode: device.deviceCode },
+        metadata: {
+          deviceCode: device.deviceCode,
+          attestationCapable: Boolean(canonicalSigningKey),
+        },
       },
       { upsert: true, new: true }
     );
@@ -66,7 +107,16 @@ async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVer
     });
   } catch (_) {}
   await auditService.record({ eventType: SECURITY_EVENT_TYPE.DEVICE_ENROLLED, deviceId: device.id, cafeId: device.cafeId, organisationId: device.organisationId });
-  return { device, deviceToken };
+  return {
+    device,
+    deviceToken,
+    attestation: {
+      capable: Boolean(canonicalSigningKey),
+      algorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
+      keyThumbprint: signingKeyThumbprint,
+      provider: normalizedSigningKeyProvider,
+    },
+  };
 }
 
 const LIFECYCLE_END_REASON = {
