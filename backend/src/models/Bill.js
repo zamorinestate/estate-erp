@@ -682,8 +682,13 @@ const billSchema = new mongoose.Schema(
         jobType: { type: String, default: 'RECEIPT' },
         status: { type: String, default: 'QUEUED' },
         dispatchedAt: { type: Date, default: Date.now },
+        dispatchedDeviceId: { type: String, default: null, trim: true, uppercase: true },
+        acknowledgedByDeviceId: { type: String, default: null, trim: true, uppercase: true },
+        acknowledgedAt: { type: Date, default: null },
         completedAt: { type: Date, default: null },
         failureCode: { type: String, default: null },
+        drawerKickRequested: { type: Boolean, default: false },
+        drawerKickStatus: { type: String, default: 'NOT_REQUESTED' },
       },
     ],
 
