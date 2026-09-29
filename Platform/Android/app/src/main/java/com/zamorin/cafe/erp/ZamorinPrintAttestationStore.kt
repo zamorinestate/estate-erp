@@ -43,11 +43,18 @@ object ZamorinPrintAttestationStore {
         return try {
             val record = JSONObject(raw)
             val boundAt = record.optLong("boundAt", 0L)
-            if (boundAt <= 0L || System.currentTimeMillis() - boundAt > MAX_AGE_MS) {
+            val attestationContext = record.optJSONObject("context")
+                ?: throw IllegalArgumentException("Bound attestation context is missing.")
+            val now = System.currentTimeMillis()
+            val serverExpiresAt = attestationContext.optLong("challengeExpiresAtEpochMs", 0L)
+            val expiredByLocalFallback = boundAt <= 0L || now - boundAt > MAX_AGE_MS
+            val expiredByServerDeadline = serverExpiresAt > 0L && now >= serverExpiresAt
+
+            if (expiredByLocalFallback || expiredByServerDeadline) {
                 prefs.edit().remove(id).apply()
                 null
             } else {
-                record.optJSONObject("context")
+                attestationContext
             }
         } catch (_: Exception) {
             prefs.edit().remove(id).apply()

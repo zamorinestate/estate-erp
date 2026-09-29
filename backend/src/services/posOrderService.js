@@ -167,6 +167,10 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
       platform: null,
       unavailableReason: 'DEVICE_NOT_BOUND',
       challenge: null,
+      challengeIssuedAt: null,
+      challengeExpiresAt: null,
+      challengeIssuedAtEpochMs: null,
+      challengeExpiresAtEpochMs: null,
       keyThumbprint: null,
       algorithm: null,
     };
@@ -196,10 +200,17 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
         ? 'DEVICE_SIGNING_KEY_UNAVAILABLE'
         : 'PLATFORM_PRINT_ATTESTOR_UNAVAILABLE',
       challenge: null,
+      challengeIssuedAt: null,
+      challengeExpiresAt: null,
+      challengeIssuedAtEpochMs: null,
+      challengeExpiresAtEpochMs: null,
       keyThumbprint: null,
       algorithm: null,
     };
   }
+
+  const challengeIssuedAt = new Date();
+  const challengeExpiresAt = new Date(challengeIssuedAt.getTime() + PRINT_ACK_CHALLENGE_TTL_MS);
 
   return {
     required: true,
@@ -207,6 +218,10 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
     platform,
     unavailableReason: null,
     challenge: createChallenge(),
+    challengeIssuedAt,
+    challengeExpiresAt,
+    challengeIssuedAtEpochMs: challengeIssuedAt.getTime(),
+    challengeExpiresAtEpochMs: challengeExpiresAt.getTime(),
     keyThumbprint:
       registration.signingKeyThumbprint ||
       publicKeyThumbprint(registration.publicSigningKey),
@@ -1392,8 +1407,8 @@ class PosOrderService {
           requestedBy: authContext.userId || 'CASHIER',
           dispatchedDeviceId,
           ackChallenge: attestationBinding.challenge,
-          ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
-          ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+          ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+          ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
           attestationVersion: PRINT_ATTESTATION_VERSION,
           payloadSha256: printResult.payloadSha256,
           payloadBytes: printResult.payloadBytes,
@@ -1465,6 +1480,8 @@ class PosOrderService {
         attestationAlgorithm: attestationBinding.algorithm,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
         ackChallenge: attestationBinding.challenge,
+        ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+        ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
         attestationContext: attestationBinding.required ? {
           version: PRINT_ATTESTATION_VERSION,
           algorithm: ATTESTATION_ALGORITHM,
@@ -1473,6 +1490,8 @@ class PosOrderService {
           deviceId: dispatchedDeviceId,
           printJobId,
           challenge: attestationBinding.challenge,
+          challengeIssuedAtEpochMs: attestationBinding.challengeIssuedAtEpochMs,
+          challengeExpiresAtEpochMs: attestationBinding.challengeExpiresAtEpochMs,
           expectedPayloadSha256: printResult.payloadSha256,
           expectedPayloadBytes: printResult.payloadBytes,
           printerTarget: 'DEFAULT_THERMAL',
@@ -2188,8 +2207,8 @@ class PosOrderService {
         requestedBy: authContext.userId || 'STAFF',
         dispatchedDeviceId,
         ackChallenge: attestationBinding.challenge,
-        ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
-        ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+        ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+        ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
         attestationVersion: PRINT_ATTESTATION_VERSION,
         payloadSha256: printResult.payloadSha256,
         payloadBytes: printResult.payloadBytes,
@@ -2227,6 +2246,8 @@ class PosOrderService {
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
       ackChallenge: attestationBinding.challenge,
+      ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+      ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
       attestationContext: attestationBinding.required ? {
         version: PRINT_ATTESTATION_VERSION,
         algorithm: ATTESTATION_ALGORITHM,
@@ -2235,6 +2256,8 @@ class PosOrderService {
         deviceId: dispatchedDeviceId,
         printJobId,
         challenge: attestationBinding.challenge,
+        challengeIssuedAtEpochMs: attestationBinding.challengeIssuedAtEpochMs,
+        challengeExpiresAtEpochMs: attestationBinding.challengeExpiresAtEpochMs,
         expectedPayloadSha256: printResult.payloadSha256,
         expectedPayloadBytes: printResult.payloadBytes,
         printerTarget: 'DEFAULT_THERMAL',
@@ -2325,8 +2348,8 @@ class PosOrderService {
         requestedBy: authContext.userId || 'STAFF',
         dispatchedDeviceId,
         ackChallenge: attestationBinding.challenge,
-        ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
-        ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+        ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+        ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
         attestationVersion: PRINT_ATTESTATION_VERSION,
         payloadSha256: printResult.payloadSha256,
         payloadBytes: printResult.payloadBytes,
@@ -2367,6 +2390,8 @@ class PosOrderService {
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
       ackChallenge: attestationBinding.challenge,
+      ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+      ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
       attestationContext: attestationBinding.required ? {
         version: PRINT_ATTESTATION_VERSION,
         algorithm: ATTESTATION_ALGORITHM,
@@ -2375,6 +2400,8 @@ class PosOrderService {
         deviceId: dispatchedDeviceId,
         printJobId,
         challenge: attestationBinding.challenge,
+        challengeIssuedAtEpochMs: attestationBinding.challengeIssuedAtEpochMs,
+        challengeExpiresAtEpochMs: attestationBinding.challengeExpiresAtEpochMs,
         expectedPayloadSha256: printResult.payloadSha256,
         expectedPayloadBytes: printResult.payloadBytes,
         printerTarget: 'DEFAULT_THERMAL',

@@ -248,8 +248,28 @@ export async function monitorAndroidPrintAndAcknowledge(
   }
 
   const monitorStartedAt = Date.now();
+  const serverChallengeExpiresAt = Number(
+    dispatch?.attestationContext?.challengeExpiresAtEpochMs || 0
+  );
+  const localMonitorDeadline = monitorStartedAt + maxMonitorMs;
+  const monitorDeadline =
+    Number.isFinite(serverChallengeExpiresAt) && serverChallengeExpiresAt > 0
+      ? Math.min(localMonitorDeadline, serverChallengeExpiresAt - 5000)
+      : localMonitorDeadline;
+
+  if (monitorDeadline <= monitorStartedAt) {
+    return {
+      monitored: true,
+      terminal: false,
+      acknowledged: false,
+      platformJobId,
+      status: 'PENDING',
+      reason: 'PRINT_ACK_CHALLENGE_WINDOW_EXPIRED',
+    };
+  }
+
   let attempt = 0;
-  while (Date.now() - monitorStartedAt < maxMonitorMs) {
+  while (Date.now() < monitorDeadline) {
     if (attempt > 0) await delay(pollIntervalMs);
     attempt += 1;
 
@@ -332,13 +352,20 @@ export async function monitorAndroidPrintAndAcknowledge(
     };
   }
 
+  const serverWindowExpired =
+    Number.isFinite(serverChallengeExpiresAt) &&
+    serverChallengeExpiresAt > 0 &&
+    Date.now() >= serverChallengeExpiresAt - 5000;
+
   return {
     monitored: true,
     terminal: false,
     acknowledged: false,
     platformJobId,
     status: 'PENDING',
-    reason: 'PRINT_JOB_NOT_TERMINAL_WITHIN_MONITOR_WINDOW',
+    reason: serverWindowExpired
+      ? 'PRINT_ACK_CHALLENGE_WINDOW_EXPIRED'
+      : 'PRINT_JOB_NOT_TERMINAL_WITHIN_MONITOR_WINDOW',
   };
 }
 

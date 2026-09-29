@@ -223,3 +223,24 @@ test('REC-04E device platform provenance cannot default or hardcode unknown devi
   assert.match(registerDevice, /platform: resolveEnrollmentPlatform\(\)/);
   assert.doesNotMatch(registerDevice, /platform: 'web'/);
 });
+
+
+test('REC-04E uses one server-authoritative challenge lifetime across persistence, Android binding, and monitoring', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const store = fs.readFileSync(androidAttestationStorePath, 'utf8');
+  const frontend = fs.readFileSync(frontendPath, 'utf8');
+
+  assert.match(source, /const challengeIssuedAt = new Date\(\)/);
+  assert.match(source, /const challengeExpiresAt = new Date\(challengeIssuedAt\.getTime\(\) \+ PRINT_ACK_CHALLENGE_TTL_MS\)/);
+  assert.match(source, /ackChallengeIssuedAt: attestationBinding\.challengeIssuedAt/);
+  assert.match(source, /ackChallengeExpiresAt: attestationBinding\.challengeExpiresAt/);
+  assert.match(source, /challengeExpiresAtEpochMs: attestationBinding\.challengeExpiresAtEpochMs/);
+  assert.doesNotMatch(source, /ackChallengeExpiresAt: attestationBinding\.challenge \? new Date\(Date\.now\(\) \+ PRINT_ACK_CHALLENGE_TTL_MS\) : null/);
+
+  assert.match(store, /challengeExpiresAtEpochMs/);
+  assert.match(store, /expiredByServerDeadline/);
+
+  assert.match(frontend, /dispatch\?\.attestationContext\?\.challengeExpiresAtEpochMs/);
+  assert.match(frontend, /Math\.min\(localMonitorDeadline, serverChallengeExpiresAt - 5000\)/);
+  assert.match(frontend, /PRINT_ACK_CHALLENGE_WINDOW_EXPIRED/);
+});
