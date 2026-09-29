@@ -794,6 +794,7 @@ export async function performRequest(
   }
 
   const token = getAccessToken();
+  const operatorSessionId = getSessionId();
   const cafeOpsDeviceToken = getCafeOpsDeviceToken();
   const cafeOpsSessionToken = getCafeOpsSessionToken();
   const requestHeaders = {
@@ -803,6 +804,9 @@ export async function performRequest(
 
   if (token && typeof token === "string" && token.trim() && token !== "undefined" && token !== "null") {
     requestHeaders["Authorization"] = `Bearer ${token.trim()}`;
+  }
+  if (operatorSessionId && typeof operatorSessionId === "string" && operatorSessionId.trim()) {
+    requestHeaders["x-operator-session-id"] = operatorSessionId.trim();
   }
   if (cafeOpsDeviceToken && typeof cafeOpsDeviceToken === "string" && cafeOpsDeviceToken.trim()) {
     requestHeaders["x-cafeops-device-token"] = cafeOpsDeviceToken.trim();
