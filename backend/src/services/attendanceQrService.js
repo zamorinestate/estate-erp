@@ -193,7 +193,32 @@ class AttendanceQrService {
       throw new ApiError(400, 'QR_TOKEN_REQUIRED', 'Attendance QR token is required.');
     }
 
-    const trimmedToken = typeof qrToken === 'string' ? qrToken.trim() : '';
+    let trimmedToken = typeof qrToken === 'string' ? qrToken.trim() : '';
+
+    // A scanner may return the canonical HTTPS attendance deep-link rather
+    // than only the embedded opaque challenge. Accept only our configured
+    // frontend origin and extract the short-lived challenge server-side.
+    if (/^https?:\/\//i.test(trimmedToken)) {
+      let parsed;
+      try {
+        parsed = new URL(trimmedToken);
+      } catch (_) {
+        throw new ApiError(400, 'INVALID_CHALLENGE_FORMAT', 'Attendance QR URL format is invalid.');
+      }
+
+      const trustedOrigin = getPublicAppOrigin();
+      if (
+        parsed.origin !== trustedOrigin ||
+        parsed.searchParams.get('returnTo') !== 'staff-attendance'
+      ) {
+        throw new ApiError(403, 'UNTRUSTED_ATTENDANCE_QR_ORIGIN', 'Attendance QR URL does not belong to the trusted Zamorin application origin.');
+      }
+
+      trimmedToken = String(parsed.searchParams.get('attendanceQr') || '').trim();
+      if (!trimmedToken) {
+        throw new ApiError(400, 'QR_TOKEN_REQUIRED', 'Attendance QR URL does not contain a challenge token.');
+      }
+    }
 
     // Branch 0: Opaque High-Entropy Token (ZAM_ATT_<hex>)
     // Privacy-hardened architecture: Does not expose organisationId, cafeId, or DB identifiers in QR payload
@@ -244,8 +269,8 @@ class AttendanceQrService {
     const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
 
     // Branch A: Dot-separated compact token (challengeId.orgId.cafeId.expiresAt.signature)
-    if (typeof qrToken === 'string' && !qrToken.trim().startsWith('{')) {
-      const parts = qrToken.split('.');
+    if (trimmedToken && !trimmedToken.startsWith('{')) {
+      const parts = trimmedToken.split('.');
       if (parts.length !== 5) {
         throw new ApiError(400, 'INVALID_CHALLENGE_FORMAT', 'Attendance QR token format is invalid.');
       }
