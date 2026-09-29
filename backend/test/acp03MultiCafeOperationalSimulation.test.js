@@ -496,6 +496,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
       businessDate: '2026-09-18',
       cafeId: CAFE_A_ID,
       organisationId: ORG_ID,
+      registerId: 'REG-A-MAIN',
       cashierUserId: cafeAStaffAuth.userId,
       openingFloatPaisa: 200000, // ₹2,000 opening float
       status: 'OPEN',
@@ -507,6 +508,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
       businessDate: '2026-09-18',
       cafeId: CAFE_B_ID,
       organisationId: ORG_ID,
+      registerId: 'REG-B-MAIN',
       cashierUserId: cafeBStaffAuth.userId,
       openingFloatPaisa: 350000, // ₹3,500 opening float
       status: 'OPEN',
