@@ -2046,6 +2046,34 @@ const requestStaffCorrection = asyncHandler(async (request, response) => {
   });
 });
 
+// 15a. GET /api/v1/attendance/corrections/mine
+const getStaffCorrections = asyncHandler(async (request, response) => {
+  const { organisationId, userId } = request.auth;
+  const month = String(request.query.month || '').trim();
+
+  if (month && !/^\d{4}-\d{2}$/.test(month)) {
+    throw new ApiError(400, 'INVALID_MONTH', 'month must use YYYY-MM format.');
+  }
+
+  const filter = {
+    organisationId,
+    userId,
+  };
+  if (month) {
+    filter.businessDate = { $regex: `^${month}` };
+  }
+
+  const requests = await AttendanceCorrectionRequest.find(filter)
+    .sort({ submittedAt: -1, createdAt: -1 })
+    .lean();
+
+  return response.status(200).json({
+    success: true,
+    data: { requests },
+    correlationId: request.correlationId || null,
+  });
+});
+
 // 15b. GET /api/v1/attendance/corrections/pending
 const getPendingCorrections = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
@@ -2927,6 +2955,7 @@ module.exports = {
   previewRecalculation,
   getStaffHistory,
   requestStaffCorrection,
+  getStaffCorrections,
   getPendingCorrections,
   reviewStaffCorrection,
   recordStaffAttestation,
