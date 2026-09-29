@@ -14,7 +14,7 @@ const CafeOpsDeviceSchema = new Schema({
   // show "Main Campus Cafe" instead of a raw ObjectId. Set once at
   // enrollment from the enrollment token; update via reassign-cafe.
   cafeDisplayName: { type: String },
-  platform: { type: String, enum: ['android', 'ios', 'web'], default: 'web' },
+  platform: { type: String, enum: ['android', 'ios', 'macos', 'windows', 'web'], default: 'web' },
   appVersion: { type: String },
   osVersion: { type: String },
   lifecycleStatus: { type: String, enum: Object.values(DEVICE_STATUS), default: DEVICE_STATUS.ACTIVE, index: true },
