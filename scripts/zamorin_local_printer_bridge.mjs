@@ -155,6 +155,7 @@ function validatePrintRequest(payload = {}) {
     expectedPayloadSha256,
     expectedPayloadBytes,
     printerTarget,
+    drawerKickRequested: payload.drawerKickRequested === true,
     buffer,
   };
 }
@@ -339,6 +340,10 @@ const server = http.createServer(async (req, res) => {
         printerEndpointPinned: printerConfig.endpointPinned === true,
         printerIdentityVerified: false,
         physicalCompletionVerified: false,
+        drawerKickRequested: validated.drawerKickRequested,
+        drawerCommandTransportAccepted:
+          validated.drawerKickRequested && transport.transportAccepted === true,
+        drawerHardwareVerified: false,
         drawerState: 'UNKNOWN',
       });
     } catch (err) {

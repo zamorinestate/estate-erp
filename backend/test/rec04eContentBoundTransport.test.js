@@ -1301,3 +1301,28 @@ test('REC-04E local bridge ships an explicit non-secret endpoint-pinning configu
   assert.match(template, /ZAMORIN_PRINTER_ENDPOINT_SHA256=/);
   assert.match(template, /NOT cryptographic proof/);
 });
+
+
+test('REC-04E drawer evidence distinguishes command transport from physical drawer state', async () => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const bytes = Buffer.from([0x1b, 0x70, 0x00, 0x19, 0xfa]);
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const validated = bridgeModule.validatePrintRequest({
+    printJobId: 'PJ-REC04E-DRAWER-001',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: true,
+  });
+
+  assert.equal(validated.drawerKickRequested, true);
+
+  const source = fs.readFileSync(localBridgePath, 'utf8');
+  assert.match(source, /drawerCommandTransportAccepted/);
+  assert.match(source, /drawerHardwareVerified: false/);
+  assert.match(source, /drawerState: 'UNKNOWN'/);
+  assert.match(source, /DRAWER_TRANSPORT_NOT_CONFIGURED/);
+  assert.doesNotMatch(source, /drawerState: 'OPEN'/);
+  assert.doesNotMatch(source, /drawerHardwareVerified: true/);
+});
