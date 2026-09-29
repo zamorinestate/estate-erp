@@ -533,7 +533,12 @@ class AttendanceQrService {
   /**
    * Server-authoritative distance calculation and geofence verification against Cafe.address.
    */
-  async verifyGeofence({ cafeId, latitude, longitude, accuracyMeters }) {
+  async verifyGeofence({ organisationId, cafeId, latitude, longitude, accuracyMeters }) {
+    const cleanOrganisationId = String(organisationId || '').trim().toUpperCase();
+    if (!cleanOrganisationId) {
+      throw new ApiError(401, 'ORGANISATION_CONTEXT_REQUIRED', 'Authenticated organisation context is required for attendance geofence verification.');
+    }
+
     if (
       !Number.isFinite(latitude) ||
       !Number.isFinite(longitude) ||
@@ -545,7 +550,10 @@ class AttendanceQrService {
       throw new ApiError(400, 'COORDINATES_REQUIRED', 'Valid finite GPS latitude and longitude are required.');
     }
 
-    const cafeDoc = await Cafe.findOne({ cafeId }).lean();
+    const cafeDoc = await Cafe.findOne({
+      organisationId: cleanOrganisationId,
+      cafeId: String(cafeId || '').trim().toUpperCase(),
+    }).lean();
     if (!cafeDoc) {
       throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found.');
     }
