@@ -1511,17 +1511,15 @@ function wirePOSEventListeners(root) {
   });
 
   root.querySelectorAll("[data-reprint-bill]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
       const bId = btn.dataset.reprintBill;
-      try {
-        await apiPost(`/bills/${bId}/reprint`, { reason: "Customer Request" });
-        const order = pastOrdersList.find((o) => o.billId === bId);
-        if (order) {
-          openReceiptModal(order, true);
-        }
-      } catch (err) {
-        showToast(err.message || "Failed to reprint", "error");
+      const order = pastOrdersList.find((o) => o.billId === bId);
+      if (!order) {
+        showToast("Unable to load the selected bill for reprint.", "error");
+        return;
       }
+      openReceiptModal(order, true);
+      showToast("Reprint mode opened. The audit event is recorded when the reprint is dispatched.", "mint");
     });
   });
 
@@ -2168,11 +2166,21 @@ function openReceiptModal(bill, isReprint = false) {
     // then invoke browser print as the local rendering fallback.
     if (bill.billId && !bill.billId.startsWith("PREVIEW")) {
       try {
-        await apiPost(`/pos/orders/${bill.billId}/print`, {
+        const endpoint = isReprint
+          ? `/pos/orders/${bill.billId}/reprint`
+          : `/pos/orders/${bill.billId}/print`;
+        const dispatch = await apiPost(endpoint, {
           reason: isReprint ? "Terminal duplicate receipt reprint" : "Terminal thermal print",
           paperWidth: currentPaperWidth,
         });
-        showToast("Thermal print job queued on POS printer.", "mint");
+        if (dispatch?.printTrackingWarning) {
+          showToast("Print payload dispatched, but durable print tracking reported a warning.", "warning");
+        } else {
+          showToast(
+            isReprint ? "Reprint job dispatched to POS printer." : "Thermal print job dispatched to POS printer.",
+            "mint"
+          );
+        }
       } catch (printErr) {
         // Non-fatal: log and fall through to browser print
         console.warn("[POS] Backend print endpoint error:", printErr.message);
@@ -2289,9 +2297,10 @@ function openReceiptModal(bill, isReprint = false) {
         <button type="button" class="btn btn-sm btn-primary" id="posReceiptSaveAndPrintBtn" style="justify-content:center;">
           ⚡ Save & Print
         </button>
+        ${isReprint ? "" : `
         <button type="button" class="btn btn-sm btn-outline" id="posReceiptReprintBtn" style="justify-content:center;">
           🔁 Reprint Receipt
-        </button>
+        </button>`}
       </div>
     `,
     cancelLabel: "Close",
@@ -2350,26 +2359,20 @@ function openReceiptModal(bill, isReprint = false) {
       printThermal();
     });
 
-    // Audit-tracked Reprint (Section 52)
+    // Canonical Reprint Mode (Section 52)
     modalEl.querySelector("#posReceiptReprintBtn")?.addEventListener("click", async () => {
       const confirmReprint = await confirmAction({
         title: "Confirm Receipt Reprint",
-        message: `Generate duplicate receipt reprint for invoice ${bill.invoiceNumber || bill.billId}? This action is recorded in the operational audit log.`,
-        confirmText: "Reprint Receipt",
+        message: `Open audited reprint mode for invoice ${bill.invoiceNumber || bill.billId}? The audit event is recorded when the reprint is dispatched.`,
+        confirmText: "Open Reprint Mode",
         cancelText: "Cancel",
       });
 
       if (!confirmReprint) return;
 
-      try {
-        const res = await apiPost(`/bills/${bill.billId}/reprint`, { reason: "Customer request / terminal reprint" });
-        showToast("Reprint logged to operational audit register.", "mint");
-        closeModal();
-        const updatedBill = { ...bill, reprints: res?.data?.reprints || [...(bill.reprints || []), { reprintedAt: new Date() }] };
-        openReceiptModal(updatedBill, true);
-      } catch (err) {
-        showToast(err?.message || "Failed to log reprint", "coral");
-      }
+      closeModal();
+      openReceiptModal(bill, true);
+      showToast("Reprint mode opened. Use Thermal Print or Save & Print to dispatch the audited reprint.", "mint");
     });
   }, 50);
 }
