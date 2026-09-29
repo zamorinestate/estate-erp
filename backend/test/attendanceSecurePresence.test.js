@@ -440,6 +440,7 @@ test('GEO-002: calculateDistance computes accurate distance between two points',
 test('GEO-003: verifyGeofence approves punch within allowed radius', async () => {
   // 20 meters away
   const result = await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
     cafeId: 'CAFE-KNR-01',
     latitude: 11.8746,
     longitude: 75.3705,
@@ -456,6 +457,7 @@ test('GEO-004: verifyGeofence throws 403 when location is outside radius', async
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'CAFE-KNR-01',
         latitude: 11.9200,
         longitude: 75.4000,
@@ -470,6 +472,7 @@ test('GEO-005: verifyGeofence throws 422 GEOFENCE_NOT_CONFIGURED if Cafe has no 
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'CAFE-UNCONFIGURED',
         latitude: 11.8745,
         longitude: 75.3704,
@@ -490,6 +493,7 @@ test('GEO-006A: verifyGeofence rejects NaN, infinity, and impossible coordinates
   for (const coords of invalidCoordinates) {
     await assert.rejects(
       async () => attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'CAFE-KNR-01',
         ...coords,
         accuracyMeters: 10,
@@ -500,6 +504,7 @@ test('GEO-006A: verifyGeofence rejects NaN, infinity, and impossible coordinates
 
   await assert.rejects(
     async () => attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
       cafeId: 'CAFE-KNR-01',
       latitude: 11.8745,
       longitude: 75.3704,
@@ -513,6 +518,7 @@ test('GEO-006: verifyGeofence rejects low accuracy GPS readings (> 100m)', async
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'CAFE-KNR-01',
         latitude: 11.8745,
         longitude: 75.3704,
