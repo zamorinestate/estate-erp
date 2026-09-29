@@ -58,6 +58,7 @@ export async function getNativeDeviceAttestationIdentity({ requiredForNative = t
   if (!capabilities.isNative) {
     return {
       capable: false,
+      platform: capabilities.platform || 'WEB',
       algorithm: null,
       provider: null,
       publicKeyJwk: null,
@@ -71,6 +72,7 @@ export async function getNativeDeviceAttestationIdentity({ requiredForNative = t
     );
     return {
       capable: true,
+      platform: capabilities.platform || null,
       algorithm: result.algorithm || ATTESTATION_ALGORITHM,
       provider: result.provider || 'UNKNOWN',
       publicKeyJwk: validatePublicJwk(result.publicKeyJwk),
@@ -80,6 +82,7 @@ export async function getNativeDeviceAttestationIdentity({ requiredForNative = t
     if (requiredForNative) throw err;
     return {
       capable: false,
+      platform: capabilities.platform || null,
       algorithm: null,
       provider: null,
       publicKeyJwk: null,
