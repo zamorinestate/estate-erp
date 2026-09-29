@@ -37,6 +37,28 @@ let rosterPublishedMap = {};
 let cafeRosterSchedules = {};
 let cachedCafes = [];
 
+function toIstTimeInput(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function istDateTimeToIso(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const d = new Date(`${dateStr}T${timeStr}:00+05:30`);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function getCurrentIstDateKey() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
 async function loadCafesList() {
   if (cachedCafes.length) return cachedCafes;
   try {
@@ -2665,11 +2687,11 @@ function openEditAttendanceModal(root, attendanceId) {
 
   const role = state.role || state.user?.role || ROLES.MASTER;
   const currentStatus = record.status || "CHECKED_IN";
-  const checkInVal = record.checkInAt ? new Date(record.checkInAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "09:00";
-  const checkOutVal = record.checkOutAt ? new Date(record.checkOutAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "17:30";
+  const checkInVal = toIstTimeInput(record.checkInAt);
+  const checkOutVal = toIstTimeInput(record.checkOutAt);
   const breakMinutesVal = record.breakMinutes ?? 0;
   const approvedOtVal = record.approvedOvertimeMinutes ?? 0;
-  const businessDate = record.businessDate || new Date().toISOString().slice(0, 10);
+  const businessDate = record.businessDate || getCurrentIstDateKey();
 
   openModal({
     title: `Edit Attendance Record — ${record.name || record.userId} (${record.attendanceId || attendanceId})`,
@@ -2785,8 +2807,10 @@ function openEditAttendanceModal(root, attendanceId) {
           approvedOvertimeMinutes: otMins,
           reason: reason.trim(),
         };
-        if (inTime) payload.checkInAt = `${businessDate}T${inTime}:00.000Z`;
-        if (outTime) payload.checkOutAt = `${businessDate}T${outTime}:00.000Z`;
+        const checkInIso = istDateTimeToIso(businessDate, inTime);
+        const checkOutIso = istDateTimeToIso(businessDate, outTime);
+        if (checkInIso) payload.checkInAt = checkInIso;
+        if (checkOutIso) payload.checkOutAt = checkOutIso;
 
         const targetId = record.attendanceId || attendanceId;
         await apiPatch(`/attendance/${targetId}`, payload);
@@ -2809,12 +2833,14 @@ function openEditAttendanceModal(root, attendanceId) {
 
     if (!inTime) return;
     try {
+      const checkInIso = istDateTimeToIso(businessDate, inTime);
+      const checkOutIso = istDateTimeToIso(businessDate, outTime);
       const res = await apiPost("/attendance/preview-recalculation", {
-        checkInAt: `${businessDate}T${inTime}:00.000Z`,
-        checkOutAt: outTime ? `${businessDate}T${outTime}:00.000Z` : null,
+        checkInAt: checkInIso,
+        checkOutAt: checkOutIso,
         breakMinutes: breakMins,
-        scheduledStartAt: record.scheduledStartAt || `${businessDate}T09:00:00.000Z`,
-        scheduledEndAt: record.scheduledEndAt || `${businessDate}T17:30:00.000Z`,
+        scheduledStartAt: record.scheduledStartAt || null,
+        scheduledEndAt: record.scheduledEndAt || null,
         approvedOvertimeMinutes: otMins,
       });
       if (res?.data?.metrics) {
