@@ -1,6 +1,11 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const {
+  ATTESTATION_ALGORITHM,
+  canonicalPublicJwk,
+  publicKeyThumbprint,
+} = require('./deviceAttestationService');
 const { DeviceRegistration } = require('../models/DeviceRegistration');
 const { DeviceSecurityEvent } = require('../models/DeviceSecurityEvent');
 const { TrustedDevice } = require('../models/TrustedDevice');
@@ -189,9 +194,11 @@ class DeviceTrustService {
     const enrollmentCode = `ENR-${crypto.randomBytes(3).toString('hex').toUpperCase()}-${requestedCafeId || 'GEN'}`;
     const enrollmentExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes TTL
 
+    let canonicalSigningKey = null;
     let thumbprint = null;
     if (publicSigningKey) {
-      thumbprint = crypto.createHash('sha256').update(publicSigningKey).digest('hex');
+      canonicalSigningKey = canonicalPublicJwk(publicSigningKey);
+      thumbprint = publicKeyThumbprint(canonicalSigningKey);
     }
 
     const reg = await DeviceRegistration.findOneAndUpdate(
@@ -203,8 +210,11 @@ class DeviceTrustService {
           deviceName,
           deviceClass: 'CAFE_OWNED',
           assignedCafeId: requestedCafeId,
-          publicSigningKey,
+          publicSigningKey: canonicalSigningKey,
           signingKeyThumbprint: thumbprint,
+          signingKeyAlgorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
+          signingKeyProvider: canonicalSigningKey ? 'UNKNOWN' : null,
+          signingKeyCreatedAt: canonicalSigningKey ? new Date() : null,
           status: 'PENDING',
           enrollmentCode,
           enrollmentExpiresAt,
