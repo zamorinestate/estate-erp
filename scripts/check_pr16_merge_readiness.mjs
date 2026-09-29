@@ -153,6 +153,40 @@ if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(githubRepository)) {
   );
 }
 
+const prNumber = Number(process.env.ZAMORIN_PR_NUMBER || 16);
+if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+  fail('PR_NUMBER_INVALID', 'ZAMORIN_PR_NUMBER must be a positive integer.');
+}
+
+const pullRequest = await githubJson(
+  `https://api.github.com/repos/${githubRepository}/pulls/${prNumber}`
+);
+const pullHeadSha = String(pullRequest?.head?.sha || '').toLowerCase();
+if (pullHeadSha !== expectedSha) {
+  fail(
+    'PR_CANDIDATE_SHA_MISMATCH',
+    `PR #${prNumber} head is ${pullHeadSha || 'unknown'}, not candidate ${expectedSha}.`
+  );
+}
+if (pullRequest?.state !== 'open') {
+  fail(
+    'PR_NOT_OPEN',
+    `PR #${prNumber} must remain open during certification.`
+  );
+}
+if (pullRequest?.draft !== true) {
+  fail(
+    'PR_NOT_DRAFT',
+    `PR #${prNumber} must remain draft until explicit approval after certification.`
+  );
+}
+if (pullRequest?.merged_at) {
+  fail(
+    'PR_ALREADY_MERGED',
+    `PR #${prNumber} is already merged; certification must occur before merge.`
+  );
+}
+
 const ciEvidence = await githubJson(
   `https://api.github.com/repos/${githubRepository}/actions/runs?head_sha=${expectedSha}&per_page=100`
 );
@@ -245,6 +279,12 @@ console.log(JSON.stringify({
   githubExactHeadCiVerified: true,
   githubRepository,
   exactHeadWorkflowEvidence,
+  prNumber,
+  prHeadSha: pullHeadSha,
+  prHeadVerified: true,
+  prOpenVerified: true,
+  prDraftVerified: true,
+  prUnmergedVerified: true,
   prMustRemainDraftUntilExplicitApproval: true,
   mergePerformed: false,
   deploymentPerformed: false,

@@ -271,3 +271,17 @@ test('FINAL POS RECEIPT LINEAGE — final certifier verifies latest exact-head G
   assert.match(finalGate, /latest\.status !== 'completed' \|\| latest\.conclusion !== 'success'/);
   assert.match(finalGate, /githubExactHeadCiVerified: true/);
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — final certifier binds certification to the live draft PR head', () => {
+  const finalGate = readRepo('scripts/check_pr16_merge_readiness.mjs');
+
+  assert.match(finalGate, /pulls\/\$\{prNumber\}/);
+  assert.match(finalGate, /PR_CANDIDATE_SHA_MISMATCH/);
+  assert.match(finalGate, /PR_NOT_OPEN/);
+  assert.match(finalGate, /PR_NOT_DRAFT/);
+  assert.match(finalGate, /PR_ALREADY_MERGED/);
+  assert.match(finalGate, /prHeadVerified: true/);
+  assert.match(finalGate, /prDraftVerified: true/);
+  assert.match(finalGate, /prUnmergedVerified: true/);
+});
