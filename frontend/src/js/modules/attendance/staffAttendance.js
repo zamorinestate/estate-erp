@@ -1593,7 +1593,8 @@ export function openVerificationModal(flowType, onDoneCallback, { preScannedQrTo
       }
 
       const uploadRes = await apiUpload("/attendance/evidence/upload", formData);
-      if (!uploadRes?.data?.fileId) {
+      const selfieFileId = uploadRes?.data?.fileId || uploadRes?.data?.mediaId || null;
+      if (!selfieFileId) {
         throw new Error(uploadRes?.message || "Evidence upload failed.");
       }
 
@@ -1605,7 +1606,7 @@ export function openVerificationModal(flowType, onDoneCallback, { preScannedQrTo
         latitude: geoCoords.latitude,
         longitude: geoCoords.longitude,
         accuracyMeters: geoCoords.accuracyMeters,
-        selfieFileId: uploadRes.data.fileId,
+        selfieFileId,
         deviceFingerprint: "BROWSER-STAFF-DEVICE",
       });
 
