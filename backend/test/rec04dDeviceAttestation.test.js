@@ -23,6 +23,7 @@ const iosBridgePath = path.join(root, 'Platform', 'Apple', 'ios', 'ZamorinCafeER
 const macBridgePath = path.join(root, 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
 const frontendAttestationPath = path.join(root, 'frontend', 'src', 'js', 'utils', 'deviceAttestation.js');
 const routerPath = path.join(root, 'frontend', 'src', 'js', 'router.js');
+const deviceEnrollmentRoutesPath = path.join(root, 'backend', 'src', 'cafe-operations', 'routes', 'deviceEnrollmentRoutes.js');
 
 function makeKeyPair() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
@@ -367,6 +368,7 @@ test('REC-04D — native bridges keep private signing keys inside platform store
   const mac = fs.readFileSync(macBridgePath, 'utf8');
   const frontend = fs.readFileSync(frontendAttestationPath, 'utf8');
   const router = fs.readFileSync(routerPath, 'utf8');
+  const deviceEnrollmentRoutes = fs.readFileSync(deviceEnrollmentRoutesPath, 'utf8');
 
   assert.match(android, /AndroidKeyStore/);
   assert.match(android, /KeyGenParameterSpec/);
@@ -392,6 +394,11 @@ test('REC-04D — native bridges keep private signing keys inside platform store
   assert.match(frontend, /ensureNativeDeviceAttestationBinding/);
   assert.match(frontend, /\/cafe-ops\/devices\/attestation\/key/);
   assert.match(router, /publicSigningKey: signingIdentity\.capable \? signingIdentity\.publicKeyJwk : null/);
-  assert.match(router, /await ensureNativeDeviceAttestationBinding\(\)/);
+  assert.match(router, /onSignIn:\s*async\s*\(\)\s*=>\s*\{[\s\S]{0,900}?await ensureNativeDeviceAttestationBinding\(\)[\s\S]{0,900}?navigate\("dashboard"\)/);
   assert.match(router, /DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT/);
+  assert.match(
+    deviceEnrollmentRoutes,
+    /router\.post\('\/attestation\/key',\s*deviceContext,\s*authenticate,/,
+    'Legacy key binding must require both the enrolled device token and an authenticated ERP user'
+  );
 });
