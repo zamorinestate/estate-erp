@@ -1,9 +1,17 @@
 import { readFile } from 'fs/promises';
 import path from 'path';
 
-const reportArg = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
+const argv = process.argv.slice(2);
+const reportArg = argv.find((arg) => !arg.startsWith('--'));
+const expectedShaArg = argv.find((arg) => arg.startsWith('--expected-sha='));
+const expectedSha = String(expectedShaArg?.split('=', 2)[1] || '').trim().toLowerCase();
+
 if (!reportArg) {
-  console.error('Usage: npm run verify:rec04e:hardware -- <acceptance-report.json>');
+  console.error('Usage: npm run verify:rec04e:hardware -- <acceptance-report.json> [--expected-sha=<40-char-sha>]');
+  process.exit(2);
+}
+if (expectedSha && !/^[a-f0-9]{40}$/.test(expectedSha)) {
+  console.error('Invalid --expected-sha value.');
   process.exit(2);
 }
 
@@ -12,6 +20,8 @@ const report = JSON.parse(await readFile(reportPath, 'utf8'));
 const failures = [];
 
 if (report.schemaVersion !== 'REC04E_HARDWARE_ACCEPTANCE_V1') failures.push('schemaVersion');
+if (!/^[a-f0-9]{40}$/.test(String(report.candidateSha || '').toLowerCase())) failures.push('candidateSha');
+if (expectedSha && String(report.candidateSha || '').toLowerCase() !== expectedSha) failures.push('candidateShaMismatch');
 if (!/^REC04E-/.test(String(report.acceptanceId || ''))) failures.push('acceptanceId');
 if (!/^PJ-REC04E-/.test(String(report.printJobId || ''))) failures.push('printJobId');
 if (!/^[a-f0-9]{64}$/.test(String(report.payload?.sha256 || ''))) failures.push('payload.sha256');
@@ -39,6 +49,7 @@ if (failures.length) {
 console.log(JSON.stringify({
   valid: true,
   certified: true,
+  candidateSha: report.candidateSha,
   acceptanceId: report.acceptanceId,
   reportPath,
 }, null, 2));

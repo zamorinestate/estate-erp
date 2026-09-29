@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
+import { spawnSync } from 'child_process';
 
 function parseArgs(argv) {
   const out = {};
@@ -14,6 +15,22 @@ function parseArgs(argv) {
 
 function yes(value) {
   return String(value || '').trim().toLowerCase() === 'yes';
+}
+
+function resolveCandidateSha(explicitSha) {
+  const provided = String(explicitSha || '').trim().toLowerCase();
+  if (/^[a-f0-9]{40}$/.test(provided)) return provided;
+
+  const gitResult = spawnSync('git', ['rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const gitSha = String(gitResult.stdout || '').trim().toLowerCase();
+  if (gitResult.status === 0 && /^[a-f0-9]{40}$/.test(gitSha)) return gitSha;
+
+  const err = new Error('REC04E_CANDIDATE_SHA_REQUIRED');
+  err.code = 'REC04E_CANDIDATE_SHA_REQUIRED';
+  throw err;
 }
 
 function buildAcceptanceEscPos({ acceptanceId, includeDrawer }) {
@@ -47,6 +64,7 @@ async function requestJson(url, options = {}) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+const candidateSha = resolveCandidateSha(args['candidate-sha']);
 const bridgeBase = String(args.bridge || 'http://127.0.0.1:9199').replace(/\/+$/, '');
 const printerSerial = String(args['printer-serial'] || '').trim();
 const printerModel = String(args['printer-model'] || '').trim();
@@ -100,6 +118,7 @@ const certified =
 
 const report = {
   schemaVersion: 'REC04E_HARDWARE_ACCEPTANCE_V1',
+  candidateSha,
   acceptanceId,
   createdAt: new Date().toISOString(),
   printJobId,
@@ -140,7 +159,7 @@ await mkdir(outDir, { recursive: true });
 const reportPath = path.join(outDir, `${acceptanceId}.json`);
 await writeFile(reportPath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
 
-console.log(JSON.stringify({ reportPath, certified, acceptanceId }, null, 2));
+console.log(JSON.stringify({ reportPath, certified, acceptanceId, candidateSha }, null, 2));
 if (!certified) {
   console.error(
     'REC-04E hardware acceptance is NOT certified. Re-run on the real printer with --printer-model, --printer-serial, --confirm-paper=yes, --confirm-cut=yes and, when testing the drawer, --confirm-drawer=yes.'

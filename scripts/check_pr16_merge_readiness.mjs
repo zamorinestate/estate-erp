@@ -122,6 +122,7 @@ const verify = spawnSync(
   [
     path.resolve('scripts/verify_rec04e_hardware_acceptance.mjs'),
     reportPath,
+    `--expected-sha=${expectedSha}`,
   ],
   {
     encoding: 'utf8',
@@ -141,6 +142,7 @@ console.log(JSON.stringify({
   workingTreeClean: true,
   canonicalGatesVerified: requiredSuites,
   hardwareAcceptanceReport: reportPath,
+  hardwareAcceptanceCandidateShaBound: true,
   githubExactHeadCiRequired: true,
   prMustRemainDraftUntilExplicitApproval: true,
   mergePerformed: false,

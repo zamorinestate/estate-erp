@@ -191,3 +191,17 @@ test('FINAL POS RECEIPT LINEAGE — canonical CI includes repository-wide retire
     assert.ok(command.includes(suite), `${suite} must remain in canonical CI`);
   }
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — hardware acceptance report is cryptographically candidate-SHA bound at certification time', () => {
+  const runner = readRepo('scripts/run_rec04e_hardware_acceptance.mjs');
+  const verifier = readRepo('scripts/verify_rec04e_hardware_acceptance.mjs');
+  const finalGate = readRepo('scripts/check_pr16_merge_readiness.mjs');
+
+  assert.match(runner, /candidateSha/);
+  assert.match(runner, /REC04E_CANDIDATE_SHA_REQUIRED/);
+  assert.match(verifier, /candidateShaMismatch/);
+  assert.match(verifier, /--expected-sha=/);
+  assert.match(finalGate, /--expected-sha=\$\{expectedSha\}/);
+  assert.match(finalGate, /hardwareAcceptanceCandidateShaBound: true/);
+});
