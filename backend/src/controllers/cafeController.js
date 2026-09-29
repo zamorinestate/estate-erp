@@ -32,6 +32,71 @@ function normalizeIdentifier(value) {
     : '';
 }
 
+function normalizeCafeGeofenceAddress(address, { required = false } = {}) {
+  const normalized = address && typeof address === 'object' && !Array.isArray(address)
+    ? { ...address }
+    : {};
+
+  const hasLatitude =
+    normalized.latitude !== undefined &&
+    normalized.latitude !== null &&
+    String(normalized.latitude).trim() !== '';
+  const hasLongitude =
+    normalized.longitude !== undefined &&
+    normalized.longitude !== null &&
+    String(normalized.longitude).trim() !== '';
+
+  if (required && (!hasLatitude || !hasLongitude)) {
+    throw new ApiError(
+      400,
+      'CAFE_GEOFENCE_REQUIRED',
+      'An ACTIVE café requires valid latitude and longitude for secure attendance geofencing.'
+    );
+  }
+
+  if (hasLatitude !== hasLongitude) {
+    throw new ApiError(
+      400,
+      'CAFE_GEOFENCE_INCOMPLETE',
+      'Café geofence latitude and longitude must be supplied together.'
+    );
+  }
+
+  if (hasLatitude && hasLongitude) {
+    const latitude = Number(normalized.latitude);
+    const longitude = Number(normalized.longitude);
+
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+      throw new ApiError(400, 'CAFE_LATITUDE_INVALID', 'Café latitude must be between -90 and 90.');
+    }
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw new ApiError(400, 'CAFE_LONGITUDE_INVALID', 'Café longitude must be between -180 and 180.');
+    }
+
+    normalized.latitude = latitude;
+    normalized.longitude = longitude;
+  }
+
+  const hasRadius =
+    normalized.geofenceRadiusMetres !== undefined &&
+    normalized.geofenceRadiusMetres !== null &&
+    String(normalized.geofenceRadiusMetres).trim() !== '';
+
+  if (required || hasRadius) {
+    const radius = Number(hasRadius ? normalized.geofenceRadiusMetres : 100);
+    if (!Number.isFinite(radius) || radius < 10 || radius > 1000) {
+      throw new ApiError(
+        400,
+        'CAFE_GEOFENCE_RADIUS_INVALID',
+        'Attendance geofence radius must be between 10 and 1000 metres.'
+      );
+    }
+    normalized.geofenceRadiusMetres = radius;
+  }
+
+  return normalized;
+}
+
 function requireOrganisationId(request) {
   const organisationId = String(request.auth?.organisationId || '').trim().toUpperCase();
   if (!organisationId) {
@@ -283,12 +348,18 @@ const updateCafe = asyncHandler(
   async (request, response) => {
     requireMaster(request);
 
-    const cafeId =
-      normalizeIdentifier(
-        request.params.cafeId
-      );
-
+    const cafeId = normalizeIdentifier(request.params.cafeId);
     assertCafeAccess(request, cafeId);
+
+    const existingCafe = await Cafe.findOne({
+      organisationId: request.auth.organisationId,
+      cafeId,
+      status: { $ne: 'ARCHIVED' },
+    });
+
+    if (!existingCafe) {
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'The café was not found.');
+    }
 
     const protectedFields = [
       'cafeId',
@@ -302,29 +373,38 @@ const updateCafe = asyncHandler(
       'closure',
     ];
 
-    const updates = {
-      ...(request.body || {}),
-    };
+    const updates = { ...(request.body || {}) };
+    protectedFields.forEach((field) => delete updates[field]);
 
-    protectedFields.forEach(
-      (field) => delete updates[field]
-    );
+    const targetStatus = normalizeIdentifier(updates.status || existingCafe.status);
+    if (updates.address !== undefined) {
+      if (!updates.address || typeof updates.address !== 'object' || Array.isArray(updates.address)) {
+        throw new ApiError(400, 'CAFE_ADDRESS_INVALID', 'Café address must be a structured object.');
+      }
+      updates.address = {
+        ...(existingCafe.address?.toObject ? existingCafe.address.toObject() : (existingCafe.address || {})),
+        ...updates.address,
+      };
+    }
 
-    updates.updatedBy =
-      request.auth.userId;
+    if (targetStatus === 'ACTIVE') {
+      const mergedAddress = updates.address || (
+        existingCafe.address?.toObject ? existingCafe.address.toObject() : (existingCafe.address || {})
+      );
+      updates.address = normalizeCafeGeofenceAddress(mergedAddress, { required: true });
+    } else if (updates.address) {
+      updates.address = normalizeCafeGeofenceAddress(updates.address);
+    }
+
+    updates.updatedBy = request.auth.userId;
 
     const cafe = await Cafe.findOneAndUpdate(
       {
-        organisationId:
-          request.auth.organisationId,
+        organisationId: request.auth.organisationId,
         cafeId,
-        status: {
-          $ne: 'ARCHIVED',
-        },
+        status: { $ne: 'ARCHIVED' },
       },
-      {
-        $set: updates,
-      },
+      { $set: updates },
       {
         returnDocument: 'after',
         runValidators: true,
@@ -332,22 +412,14 @@ const updateCafe = asyncHandler(
     );
 
     if (!cafe) {
-      throw new ApiError(
-        404,
-        'CAFE_NOT_FOUND',
-        'The café was not found.'
-      );
+      throw new ApiError(404, 'CAFE_NOT_FOUND', 'The café was not found.');
     }
 
     return response.status(200).json({
       success: true,
-      message:
-        'Café updated successfully.',
-      data: {
-        cafe,
-      },
-      correlationId:
-        request.correlationId || null,
+      message: 'Café updated successfully.',
+      data: { cafe },
+      correlationId: request.correlationId || null,
     });
   }
 );
@@ -377,6 +449,20 @@ const changeCafeStatus = asyncHandler(
         'INVALID_CAFE_STATUS',
         'The requested café status is invalid.'
       );
+    }
+
+    if (status === 'ACTIVE') {
+      const existingCafe = await Cafe.findOne({
+        organisationId: request.auth.organisationId,
+        cafeId,
+        status: { $ne: 'ARCHIVED' },
+      }).lean();
+
+      if (!existingCafe) {
+        throw new ApiError(404, 'CAFE_NOT_FOUND', 'The café was not found.');
+      }
+
+      normalizeCafeGeofenceAddress(existingCafe.address || {}, { required: true });
     }
 
     const cafe = await Cafe.findOneAndUpdate(
