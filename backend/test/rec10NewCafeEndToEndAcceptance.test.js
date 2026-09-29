@@ -355,6 +355,25 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
     });
     assert.equal(validCheck.valid, true, 'Fully compliant payload must pass validation');
 
+    // 2.1A Operational validation must fail closed without attendance geofence.
+    const missingGeofenceCheck = await cafeService.validateCafeCreationPayload({
+      cafeData: {
+        name: `${SYNTHETIC_CAFE_NAME}-NO-GEOFENCE`,
+        displayName: 'No Geofence Unit',
+        addressLine1: 'Estate Road, Vythiri',
+        city: 'Kozhikode',
+        stateCode: '32',
+        pincode: '673001',
+      },
+      isDraft: false,
+      organisationId: ORG_ID,
+    });
+    assert.equal(missingGeofenceCheck.valid, false);
+    assert.ok(
+      missingGeofenceCheck.errors.some((e) => e.includes('geofence latitude and longitude')),
+      'Operational café validation must require attendance geofence coordinates'
+    );
+
     // 2.2 Missing required business name
     const missingNameCheck = await cafeService.validateCafeCreationPayload({
       cafeData: { name: '' },
