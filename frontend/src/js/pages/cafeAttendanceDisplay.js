@@ -147,7 +147,7 @@ export class CafeAttendanceDisplayPage {
 
         const qrWrap = this.container.querySelector('#qr-code-wrapper');
         if (qrWrap) {
-          const svg = generateQrSvg(res.data.qrToken, { size: 240, margin: 2, darkColor: '#121212', lightColor: '#ffffff' });
+          const svg = generateQrSvg(res.data.attendanceUrl || res.data.qrToken, { size: 240, margin: 2, darkColor: '#121212', lightColor: '#ffffff' });
           qrWrap.innerHTML = svg;
         }
 
