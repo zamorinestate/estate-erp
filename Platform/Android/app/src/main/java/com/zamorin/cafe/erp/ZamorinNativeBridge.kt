@@ -8,6 +8,15 @@ import java.util.Base64
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import java.math.BigInteger
+import java.security.KeyPairGenerator
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.Signature
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
 
 /**
  * ZAMORIN CAFÉ ERP — SECURE ORIGIN-CONSTRAINED NATIVE BRIDGE
@@ -176,6 +185,62 @@ class ZamorinNativeBridge(
                 }
             }
 
+            "GET_DEVICE_ATTESTATION_KEY" -> {
+                try {
+                    val publicKey = ensureAttestationKey().certificate.publicKey as ECPublicKey
+                    val jwk = publicJwk(publicKey)
+                    val res = JSONObject().apply {
+                        put("algorithm", "ES256")
+                        put("provider", "ANDROID_KEYSTORE")
+                        put("publicKeyJwk", jwk)
+                        put("keyThumbprint", keyThumbprint(jwk))
+                    }
+                    BridgeResponse(requestId = requestId, success = true, result = res)
+                } catch (e: Exception) {
+                    BridgeResponse(
+                        requestId = requestId,
+                        success = false,
+                        errorCode = "DEVICE_ATTESTATION_KEY_FAILED",
+                        errorMessage = e.message ?: "Unable to initialize Android Keystore signing key."
+                    )
+                }
+            }
+
+            "SIGN_DEVICE_ATTESTATION" -> {
+                val signedPayload = payload.optString("payload", "")
+                if (signedPayload.isBlank()) {
+                    BridgeResponse(
+                        requestId = requestId,
+                        success = false,
+                        errorCode = "ATTESTATION_PAYLOAD_REQUIRED",
+                        errorMessage = "A canonical attestation payload is required."
+                    )
+                } else {
+                    try {
+                        val entry = ensureAttestationKey()
+                        val signer = Signature.getInstance("SHA256withECDSA")
+                        signer.initSign(entry.privateKey)
+                        signer.update(signedPayload.toByteArray(Charsets.UTF_8))
+                        val signature = signer.sign()
+                        val jwk = publicJwk(entry.certificate.publicKey as ECPublicKey)
+                        val res = JSONObject().apply {
+                            put("algorithm", "ES256")
+                            put("provider", "ANDROID_KEYSTORE")
+                            put("keyThumbprint", keyThumbprint(jwk))
+                            put("signature", Base64.getUrlEncoder().withoutPadding().encodeToString(signature))
+                        }
+                        BridgeResponse(requestId = requestId, success = true, result = res)
+                    } catch (e: Exception) {
+                        BridgeResponse(
+                            requestId = requestId,
+                            success = false,
+                            errorCode = "DEVICE_ATTESTATION_SIGN_FAILED",
+                            errorMessage = e.message ?: "Unable to sign device attestation."
+                        )
+                    }
+                }
+            }
+
             "OPEN_SYSTEM_PRINT" -> {
                 val jobName = payload.optString("jobName", "Zamorin_Print_Job")
                 callbacks.onOpenSystemPrint(requestId, jobName)
@@ -248,5 +313,66 @@ class ZamorinNativeBridge(
                 )
             }
         }
+    }
+
+    private data class AttestationEntry(
+        val privateKey: java.security.PrivateKey,
+        val certificate: java.security.cert.Certificate
+    )
+
+    private fun ensureAttestationKey(): AttestationEntry {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (!keyStore.containsAlias(ATTESTATION_KEY_ALIAS)) {
+            val generator = KeyPairGenerator.getInstance(
+                KeyProperties.KEY_ALGORITHM_EC,
+                "AndroidKeyStore"
+            )
+            val spec = KeyGenParameterSpec.Builder(
+                ATTESTATION_KEY_ALIAS,
+                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+            )
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .build()
+            generator.initialize(spec)
+            generator.generateKeyPair()
+        }
+
+        val privateKey = keyStore.getKey(ATTESTATION_KEY_ALIAS, null) as? java.security.PrivateKey
+            ?: throw IllegalStateException("Android Keystore private signing key is unavailable.")
+        val certificate = keyStore.getCertificate(ATTESTATION_KEY_ALIAS)
+            ?: throw IllegalStateException("Android Keystore signing certificate is unavailable.")
+        return AttestationEntry(privateKey, certificate)
+    }
+
+    private fun publicJwk(publicKey: ECPublicKey): JSONObject {
+        return JSONObject().apply {
+            put("kty", "EC")
+            put("crv", "P-256")
+            put("x", base64Url(fixedCoordinate(publicKey.w.affineX)))
+            put("y", base64Url(fixedCoordinate(publicKey.w.affineY)))
+        }
+    }
+
+    private fun fixedCoordinate(value: BigInteger): ByteArray {
+        val raw = value.toByteArray()
+        if (raw.size == 32) return raw
+        if (raw.size == 33 && raw[0].toInt() == 0) return raw.copyOfRange(1, 33)
+        if (raw.size > 32) return raw.copyOfRange(raw.size - 32, raw.size)
+        return ByteArray(32 - raw.size) + raw
+    }
+
+    private fun base64Url(bytes: ByteArray): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+
+    private fun keyThumbprint(jwk: JSONObject): String {
+        val canonical = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"${jwk.getString("x")}\",\"y\":\"${jwk.getString("y")}\"}"
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    companion object {
+        private const val ATTESTATION_KEY_ALIAS = "zamorin_device_attestation_v1"
     }
 }
