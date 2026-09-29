@@ -160,46 +160,46 @@ export async function buildPrintAckPayload(attestationContext, acknowledgement =
   ].join('\n');
 }
 
-export async function signPrintAcknowledgement(attestationContext, acknowledgement = {}) {
-  const payload = await buildPrintAckPayload(attestationContext, acknowledgement);
-  const result = normalizeBridgeResult(
-    await NativeCapabilities.sendNativeMessage('SIGN_DEVICE_ATTESTATION', { payload })
-  );
-  if (!result.signature) {
-    const err = new Error('Native device did not return an attestation signature.');
-    err.code = 'DEVICE_ATTESTATION_SIGNATURE_MISSING';
-    throw err;
-  }
-  return {
-    payload,
-    attestation: {
-      signature: result.signature,
-      keyThumbprint: result.keyThumbprint || null,
-      algorithm: result.algorithm || ATTESTATION_ALGORITHM,
-      provider: result.provider || null,
-    },
-  };
-}
-
-export async function submitPrintAcknowledgement(dispatch, acknowledgement = {}) {
+async function submitPurposeBoundPrintAcknowledgement(dispatch, nativeResult) {
   if (!dispatch?.printJobId) {
     throw new Error('printJobId is required for device acknowledgement.');
   }
-
-  let attestation = null;
-  if (dispatch.cryptographicAttestationRequired) {
-    if (!dispatch.attestationContext) {
-      throw new Error('Server did not provide the attestation context for this print job.');
-    }
-    const signed = await signPrintAcknowledgement(dispatch.attestationContext, acknowledgement);
-    attestation = signed.attestation;
+  if (!nativeResult?.signature) {
+    const err = new Error('Android did not return a purpose-bound print attestation signature.');
+    err.code = 'DEVICE_ATTESTATION_SIGNATURE_MISSING';
+    throw err;
   }
+
+  const nativeStatus = String(nativeResult.status || '').toUpperCase();
+  if (!['PRINTED', 'FAILED', 'CANCELLED'].includes(nativeStatus)) {
+    const err = new Error('Native print attestation did not return a supported terminal status.');
+    err.code = 'INVALID_NATIVE_PRINT_ATTESTATION_STATUS';
+    throw err;
+  }
+
+  const drawerKickStatus =
+    String(nativeResult.drawerKickStatus || '').toUpperCase() === 'UNCHANGED'
+      ? null
+      : (nativeResult.drawerKickStatus || null);
+
+  const failureCode =
+    nativeResult.failureCode && String(nativeResult.failureCode).toUpperCase() !== 'NONE'
+      ? nativeResult.failureCode
+      : null;
 
   return apiPost(
     `/pos/print-jobs/${encodeURIComponent(dispatch.printJobId)}/ack`,
     {
-      ...acknowledgement,
-      attestation,
+      status: nativeStatus,
+      failureCode,
+      failureReason: nativeResult.failureReason || null,
+      drawerKickStatus,
+      attestation: {
+        signature: nativeResult.signature,
+        keyThumbprint: nativeResult.keyThumbprint || null,
+        algorithm: nativeResult.algorithm || ATTESTATION_ALGORITHM,
+        provider: nativeResult.provider || 'ANDROID_KEYSTORE',
+      },
     }
   );
 }
@@ -239,49 +239,39 @@ export async function monitorAndroidPrintAndAcknowledge(
   for (let attempt = 0; attempt < maxPolls; attempt += 1) {
     if (attempt > 0) await delay(pollIntervalMs);
 
-    const statusResponse = await NativeCapabilities.sendNativeMessage(
-      'GET_PRINT_JOB_STATUS',
+    const attestationResponse = await NativeCapabilities.sendNativeMessage(
+      'ATTEST_PRINT_JOB_RESULT',
       { platformJobId }
     );
-    const statusResult = unwrapNativeResult(statusResponse);
-    const status = String(statusResult.status || '').toUpperCase();
+    if (attestationResponse?.success === false) {
+      const err = new Error(
+        attestationResponse?.errorMessage ||
+        'Android could not attest the bound print job result.'
+      );
+      err.code = attestationResponse?.errorCode || 'ANDROID_PRINT_ATTESTATION_FAILED';
+      throw err;
+    }
 
-    if (!statusResult.terminal) {
+    const attestedResult = unwrapNativeResult(attestationResponse);
+    const status = String(attestedResult.status || '').toUpperCase();
+
+    if (!attestedResult.terminal) {
       continue;
     }
 
-    let acknowledgement;
-    if (status === 'COMPLETED' && statusResult.physicalCompletionVerified === true) {
-      acknowledgement = {
-        status: 'PRINTED',
-        drawerKickStatus: dispatch?.drawerKickRequested ? 'UNKNOWN' : null,
-      };
-    } else if (status === 'FAILED') {
-      acknowledgement = {
-        status: 'FAILED',
-        failureCode: 'ANDROID_PRINT_JOB_FAILED',
-        failureReason: statusResult.error || 'Android print spooler reported a failed print job.',
-        drawerKickStatus: dispatch?.drawerKickRequested ? 'UNKNOWN' : null,
-      };
-    } else if (status === 'CANCELLED') {
-      acknowledgement = {
-        status: 'CANCELLED',
-        failureCode: 'ANDROID_PRINT_JOB_CANCELLED',
-        failureReason: 'Android print spooler reported that the print job was cancelled.',
-        drawerKickStatus: dispatch?.drawerKickRequested ? 'UNKNOWN' : null,
-      };
-    } else {
-      return {
-        monitored: true,
-        terminal: true,
-        acknowledged: false,
-        platformJobId,
-        status,
-        reason: 'UNSUPPORTED_TERMINAL_PRINT_STATE',
-      };
+    if (
+      status === 'PRINTED' &&
+      attestedResult.physicalCompletionVerified !== true
+    ) {
+      const err = new Error('Android attempted to report PRINTED without spooler completion evidence.');
+      err.code = 'ANDROID_PRINT_COMPLETION_EVIDENCE_REQUIRED';
+      throw err;
     }
 
-    const serverAck = await submitPrintAcknowledgement(dispatch, acknowledgement);
+    const serverAck = await submitPurposeBoundPrintAcknowledgement(
+      dispatch,
+      attestedResult
+    );
     return {
       monitored: true,
       terminal: true,
