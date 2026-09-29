@@ -67,3 +67,16 @@ test('POS print tracking failures are surfaced instead of silently swallowed', (
   );
 });
 
+test('POS reprint UI dispatches through the canonical POS reprint endpoint exactly at print time', () => {
+  const frontend = fs.readFileSync(frontendPath, 'utf8');
+
+  assert.match(frontend, /\? `\/pos\/orders\/\$\{bill\.billId\}\/reprint`/);
+  assert.match(frontend, /openReceiptModal\(bill, true\)/);
+  assert.doesNotMatch(
+    frontend,
+    /apiPost\(`\/bills\/\$\{(?:bill\.billId|bId)\}\/reprint`/,
+    'POS UI must not pre-log reprints through the secondary bill endpoint'
+  );
+  assert.match(frontend, /The audit event is recorded when the reprint is dispatched/);
+});
+
