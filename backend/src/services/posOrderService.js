@@ -1509,6 +1509,224 @@ class PosOrderService {
   }
 
   /**
+   * REC-04C: Accepts a terminal print result only from the exact active café-owned
+   * device that received the dispatched print job. Browser print dialogs are not
+   * eligible to self-assert physical completion.
+   */
+  static async acknowledgePrintJob(printJobId, authContext = {}, acknowledgement = {}) {
+    const orgId = requireOrganisationId(authContext);
+    const normPrintJobId = normalizeId(printJobId);
+    const ackStatus = normalizeId(acknowledgement.status);
+    const allowedStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
+
+    if (!normPrintJobId) {
+      throw new ApiError(400, 'PRINT_JOB_ID_REQUIRED', 'printJobId is required.');
+    }
+    if (!allowedStatuses.has(ackStatus)) {
+      throw new ApiError(
+        400,
+        'INVALID_PRINT_ACK_STATUS',
+        'Print acknowledgement status must be PRINTED, FAILED, or CANCELLED.'
+      );
+    }
+
+    const device = authContext.deviceContext || {};
+    const deviceId = normalizeId(device.deviceId);
+    const boundCafeId = normalizeId(device.boundCafeId);
+    if (
+      !deviceId ||
+      deviceId === 'UNKNOWN_PERSONAL_DEVICE' ||
+      normalizeId(device.deviceClass) !== 'CAFE_OWNED' ||
+      normalizeId(device.status) !== 'ACTIVE' ||
+      !boundCafeId
+    ) {
+      throw new ApiError(
+        403,
+        'PRINT_DEVICE_TRUST_REQUIRED',
+        'Physical print acknowledgement requires an active café-owned device.'
+      );
+    }
+
+    const job = await PrintJob.findOne({
+      organisationId: orgId,
+      printJobId: normPrintJobId,
+    });
+    if (!job) {
+      throw new ApiError(404, 'PRINT_JOB_NOT_FOUND', 'Print job does not exist in the authenticated organisation.');
+    }
+
+    const jobCafeId = normalizeId(job.cafeId);
+    if (jobCafeId !== boundCafeId) {
+      throw new ApiError(
+        403,
+        'CROSS_CAFE_PRINT_ACK_DENIED',
+        'The acknowledging device is not bound to the print job café.'
+      );
+    }
+
+    const dispatchedDeviceId = normalizeId(job.dispatchedDeviceId);
+    if (!dispatchedDeviceId) {
+      throw new ApiError(
+        409,
+        'PRINT_JOB_NOT_DEVICE_BOUND',
+        'This print job was not dispatched to a verifiable café-owned device and cannot be marked physically complete.'
+      );
+    }
+    if (dispatchedDeviceId !== deviceId) {
+      throw new ApiError(
+        403,
+        'PRINT_JOB_DEVICE_MISMATCH',
+        'Only the device that received this print job may acknowledge its physical result.'
+      );
+    }
+
+    const currentStatus = normalizeId(job.status);
+    const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
+    if (terminalStatuses.has(currentStatus) && currentStatus !== ackStatus) {
+      throw new ApiError(
+        409,
+        'PRINT_JOB_TERMINAL_STATE_CONFLICT',
+        `Print job is already finalized as ${currentStatus} and cannot transition to ${ackStatus}.`
+      );
+    }
+    if (!terminalStatuses.has(currentStatus) && currentStatus !== 'DISPATCHED') {
+      throw new ApiError(
+        409,
+        'INVALID_PRINT_JOB_TRANSITION',
+        `Print job in state ${currentStatus || 'UNKNOWN'} cannot be acknowledged as ${ackStatus}.`
+      );
+    }
+
+    const requestedDrawerStatus = acknowledgement.drawerKickStatus
+      ? normalizeId(acknowledgement.drawerKickStatus)
+      : null;
+    if (requestedDrawerStatus) {
+      const allowedDrawerStatuses = new Set(['ACKNOWLEDGED', 'FAILED', 'UNKNOWN']);
+      if (!job.drawerKickRequested) {
+        throw new ApiError(
+          409,
+          'DRAWER_ACK_NOT_APPLICABLE',
+          'This print job did not request a cash drawer kick.'
+        );
+      }
+      if (!allowedDrawerStatuses.has(requestedDrawerStatus)) {
+        throw new ApiError(
+          400,
+          'INVALID_DRAWER_ACK_STATUS',
+          'drawerKickStatus must be ACKNOWLEDGED, FAILED, or UNKNOWN.'
+        );
+      }
+      job.drawerKickStatus = requestedDrawerStatus;
+    }
+
+    const now = new Date();
+    const statusChanged = currentStatus !== ackStatus;
+    if (statusChanged) {
+      job.status = ackStatus;
+      job.acknowledgedByDeviceId = deviceId;
+      job.acknowledgedAt = now;
+      job.completedAt = now;
+
+      if (ackStatus === 'FAILED') {
+        job.failureCode = normalizeId(acknowledgement.failureCode || 'DEVICE_PRINT_FAILED');
+        job.failureReason = String(acknowledgement.failureReason || 'Physical print device reported failure.').slice(0, 500);
+      } else if (ackStatus === 'CANCELLED') {
+        job.failureCode = normalizeId(acknowledgement.failureCode || 'PRINT_CANCELLED');
+        job.failureReason = String(acknowledgement.failureReason || 'Physical print job was cancelled.').slice(0, 500);
+      } else {
+        job.failureCode = null;
+        job.failureReason = null;
+      }
+    }
+
+    await job.save();
+
+    const bill = await Bill.findOne({
+      organisationId: orgId,
+      cafeId: jobCafeId,
+      billId: normalizeId(job.billId),
+    });
+    if (bill) {
+      bill.printJobs = Array.isArray(bill.printJobs) ? bill.printJobs : [];
+      let billPrintJob = bill.printJobs.find((entry) =>
+        normalizeId(entry.printJobId) === normPrintJobId
+      );
+
+      if (!billPrintJob) {
+        bill.printJobs.push({
+          printJobId: normPrintJobId,
+          jobType: job.jobType,
+          status: ackStatus,
+          dispatchedAt: job.requestedAt || job.createdAt || now,
+          dispatchedDeviceId,
+          acknowledgedByDeviceId: deviceId,
+          acknowledgedAt: now,
+          completedAt: now,
+          failureCode: job.failureCode || null,
+          drawerKickRequested: Boolean(job.drawerKickRequested),
+          drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+        });
+      } else {
+        billPrintJob.status = ackStatus;
+        billPrintJob.acknowledgedByDeviceId = deviceId;
+        billPrintJob.acknowledgedAt = now;
+        billPrintJob.completedAt = now;
+        billPrintJob.failureCode = job.failureCode || null;
+        billPrintJob.drawerKickStatus = job.drawerKickStatus || 'NOT_REQUESTED';
+      }
+
+      if (normalizeId(job.jobType) === 'RECEIPT') {
+        bill.printStatus =
+          ackStatus === 'PRINTED'
+            ? 'PRINTED'
+            : ackStatus === 'CANCELLED'
+              ? 'PRINT_CANCELLED'
+              : 'PRINT_FAILED';
+      }
+      await bill.save();
+    }
+
+    try {
+      await auditService.recordAuditEvent({
+        organisationId: orgId,
+        cafeId: jobCafeId,
+        actorUserId: authContext.userId || 'DEVICE',
+        actorRole: authContext.role || 'STAFF',
+        module: 'POS_PRINTING',
+        action: 'PRINT_JOB_ACKNOWLEDGED',
+        entityType: 'PRINT_JOB',
+        entityId: normPrintJobId,
+        result: ackStatus === 'PRINTED' ? 'SUCCESS' : 'FAILED',
+        reason: acknowledgement.failureReason || `Device acknowledged print job as ${ackStatus}.`,
+        metadata: {
+          printJobId: normPrintJobId,
+          billId: job.billId,
+          jobType: job.jobType,
+          deviceId,
+          status: ackStatus,
+          drawerKickRequested: Boolean(job.drawerKickRequested),
+          drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+          idempotentReplay: !statusChanged,
+        },
+      });
+    } catch {}
+
+    return {
+      success: true,
+      printJobId: normPrintJobId,
+      billId: job.billId,
+      jobType: job.jobType,
+      status: job.status,
+      printed: job.status === 'PRINTED',
+      acknowledgedByDeviceId: job.acknowledgedByDeviceId,
+      acknowledgedAt: job.acknowledgedAt,
+      drawerKickRequested: Boolean(job.drawerKickRequested),
+      drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+      idempotentReplay: !statusChanged,
+    };
+  }
+
+  /**
    * Prints an existing committed bill without mutating financial state.
    */
   static async printCommittedBill(billId, authContext = {}, options = {}) {
