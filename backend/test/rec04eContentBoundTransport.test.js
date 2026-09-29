@@ -559,3 +559,19 @@ test('REC-04E acknowledgement response distinguishes spooler, content-bound deli
   assert.match(source, /contentBoundDeliveryVerified,/);
   assert.match(source, /physicalPrintVerified,/);
 });
+
+
+test('REC-04E exported frontend canonical-payload helper supports both legacy V1 and active V2 semantics', () => {
+  const frontend = fs.readFileSync(frontendPath, 'utf8');
+
+  assert.match(frontend, /\[ATTESTATION_VERSION, PRINT_ATTESTATION_VERSION\]\.includes\(version\)/);
+  assert.match(frontend, /version === ATTESTATION_VERSION/);
+  assert.match(frontend, /expectedPayloadSha256/);
+  assert.match(frontend, /expectedPayloadBytes/);
+  assert.match(frontend, /platformJobIdSha256/);
+  assert.match(frontend, /printerIdentitySha256/);
+  assert.match(frontend, /contentBindingVerified=/);
+  assert.match(frontend, /printerIdentityVerified=/);
+  assert.doesNotMatch(frontend, /Physical print device reported failure/);
+  assert.doesNotMatch(frontend, /Physical print job was cancelled/);
+});

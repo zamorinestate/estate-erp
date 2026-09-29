@@ -126,7 +126,8 @@ export async function ensureNativeDeviceAttestationBinding() {
 
 export async function buildPrintAckPayload(attestationContext, acknowledgement = {}) {
   const context = attestationContext || {};
-  if (context.version !== ATTESTATION_VERSION) {
+  const version = context.version || ATTESTATION_VERSION;
+  if (![ATTESTATION_VERSION, PRINT_ATTESTATION_VERSION].includes(version)) {
     throw new Error('Unsupported print acknowledgement attestation version.');
   }
   if ((context.algorithm || ATTESTATION_ALGORITHM) !== ATTESTATION_ALGORITHM) {
@@ -143,22 +144,58 @@ export async function buildPrintAckPayload(attestationContext, acknowledgement =
         : 'NONE';
   const failureReason =
     status === 'FAILED'
-      ? String(acknowledgement.failureReason || 'Physical print device reported failure.').slice(0, 500)
+      ? String(acknowledgement.failureReason || 'Print transport reported failure.').slice(0, 500)
       : status === 'CANCELLED'
-        ? String(acknowledgement.failureReason || 'Physical print job was cancelled.').slice(0, 500)
+        ? String(acknowledgement.failureReason || 'Print job was cancelled.').slice(0, 500)
         : '';
 
+  const commonTail = [
+    `status=${status}`,
+    `drawerKickStatus=${drawerKickStatus}`,
+    `failureCode=${failureCode}`,
+    `failureReasonSha256=${await sha256Hex(failureReason)}`,
+  ];
+
+  if (version === ATTESTATION_VERSION) {
+    return [
+      ATTESTATION_VERSION,
+      `organisationId=${normalizeToken(context.organisationId, 'organisationId')}`,
+      `cafeId=${normalizeToken(context.cafeId, 'cafeId')}`,
+      `deviceId=${normalizeToken(context.deviceId, 'deviceId')}`,
+      `printJobId=${normalizeToken(context.printJobId, 'printJobId')}`,
+      `challenge=${String(context.challenge || '').trim()}`,
+      ...commonTail,
+    ].join('\n');
+  }
+
+  const payloadSha256 = String(context.expectedPayloadSha256 || '').trim().toLowerCase();
+  const payloadBytes = Number(context.expectedPayloadBytes);
+  const platformJobId = String(acknowledgement.platformJobId || '').trim();
+  const printerIdentity = String(acknowledgement.printerIdentity || '').trim();
+  if (!/^[a-f0-9]{64}$/.test(payloadSha256)) {
+    throw new Error('expectedPayloadSha256 is invalid for REC-04E attestation.');
+  }
+  if (!Number.isSafeInteger(payloadBytes) || payloadBytes <= 0) {
+    throw new Error('expectedPayloadBytes is invalid for REC-04E attestation.');
+  }
+
   return [
-    ATTESTATION_VERSION,
+    PRINT_ATTESTATION_VERSION,
     `organisationId=${normalizeToken(context.organisationId, 'organisationId')}`,
     `cafeId=${normalizeToken(context.cafeId, 'cafeId')}`,
     `deviceId=${normalizeToken(context.deviceId, 'deviceId')}`,
     `printJobId=${normalizeToken(context.printJobId, 'printJobId')}`,
     `challenge=${String(context.challenge || '').trim()}`,
-    `status=${status}`,
-    `drawerKickStatus=${drawerKickStatus}`,
-    `failureCode=${failureCode}`,
-    `failureReasonSha256=${await sha256Hex(failureReason)}`,
+    `expectedPayloadSha256=${payloadSha256}`,
+    `expectedPayloadBytes=${payloadBytes}`,
+    `printerTarget=${normalizeToken(context.printerTarget || 'DEFAULT_THERMAL', 'printerTarget')}`,
+    `transportMode=${normalizeToken(acknowledgement.transportMode || 'UNBOUND', 'transportMode')}`,
+    `platformJobIdSha256=${await sha256Hex(platformJobId)}`,
+    `evidenceLevel=${normalizeToken(acknowledgement.evidenceLevel || 'NONE', 'evidenceLevel')}`,
+    `contentBindingVerified=${acknowledgement.contentBindingVerified === true ? 'TRUE' : 'FALSE'}`,
+    `printerIdentitySha256=${await sha256Hex(printerIdentity)}`,
+    `printerIdentityVerified=${acknowledgement.printerIdentityVerified === true ? 'TRUE' : 'FALSE'}`,
+    ...commonTail,
   ].join('\n');
 }
 
