@@ -2061,3 +2061,76 @@ test('REC-04E bridge serializes duplicate writes and releases per-job lock state
   assert.equal(writes, 1);
   assert.equal(bridgeModule.activePrintJobLockCount(), 0);
 });
+
+
+test('REC-04E journal persistence failure after WRITE_STARTED remains outcome-unknown and non-retryable', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-bridge-journal-fail-after-write-'));
+  const journalPath = path.join(tempDir, 'journal.json');
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const bytes = Buffer.from('post-write journal failure payload');
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const payload = {
+    printJobId: 'PJ-REC04E-JOURNAL-POSTWRITE-FAIL-001',
+    printBufferBase64: bytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: bytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: true,
+  };
+  const printerConfig = {
+    endpointFingerprint: '8'.repeat(64),
+    endpointPinned: true,
+    printerId: 'TEST-THERMAL',
+    host: '127.0.0.1',
+    port: 9100,
+  };
+
+  let journalWrites = 0;
+  const writeJournalFn = async (journal, targetPath) => {
+    journalWrites += 1;
+    if (journalWrites >= 3) {
+      const err = new Error('SIMULATED_JOURNAL_PERSISTENCE_FAILURE');
+      err.code = 'PRINT_JOURNAL_WRITE_FAILED';
+      throw err;
+    }
+    return bridgeModule.writeJournalAtomic(journal, targetPath);
+  };
+
+  await assert.rejects(
+    () => bridgeModule.processJournaledPrint(payload, printerConfig, {
+      journalPath,
+      writeJournalFn,
+      dispatchFn: async (_buffer, options) => {
+        await options.onWriteStarted();
+        return { transportAccepted: true, bytesDispatched: bytes.length };
+      },
+    }),
+    (err) => {
+      assert.equal(err.code, 'PRINT_TRANSPORT_OUTCOME_UNKNOWN');
+      assert.ok(err.journalRecoveryError);
+      assert.equal(err.journalRecoveryError.code, 'PRINT_JOURNAL_WRITE_FAILED');
+      return true;
+    }
+  );
+
+  const persisted = await bridgeModule.readJournal(journalPath);
+  assert.equal(
+    persisted.jobs[payload.printJobId].state,
+    'WRITE_STARTED',
+    'restart state must remain non-retryable when post-write persistence fails'
+  );
+
+  let resendCount = 0;
+  await assert.rejects(
+    () => bridgeModule.processJournaledPrint(payload, printerConfig, {
+      journalPath,
+      dispatchFn: async () => { resendCount += 1; },
+    }),
+    (err) => err.code === 'PRINT_TRANSPORT_OUTCOME_UNKNOWN'
+  );
+  assert.equal(resendCount, 0);
+});

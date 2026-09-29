@@ -355,13 +355,15 @@ async function processJournaledPrint(
   {
     journalPath = resolveJournalPath(),
     dispatchFn = dispatchNetworkPrint,
+    readJournalFn = readJournal,
+    writeJournalFn = writeJournalAtomic,
   } = {}
 ) {
   const validated = validatePrintRequest(payload);
 
   return await withPrintJobLock(validated.printJobId, async () => {
     const identity = transportJournalIdentity(validated, printerConfig);
-    let journal = await readJournal(journalPath);
+    let journal = await readJournalFn(journalPath);
     const prior = journal.jobs[validated.printJobId] || null;
 
     if (prior) {
@@ -419,7 +421,7 @@ async function processJournaledPrint(
       updatedAt: now,
     };
     journal.jobs[validated.printJobId] = baseRecord;
-    await writeJournalAtomic(journal, journalPath);
+    await writeJournalFn(journal, journalPath);
 
     let writeStarted = false;
     try {
@@ -427,7 +429,7 @@ async function processJournaledPrint(
         ...printerConfig,
         onWriteStarted: async () => {
           writeStarted = true;
-          journal = await readJournal(journalPath);
+          journal = await readJournalFn(journalPath);
           const live = journal.jobs[validated.printJobId];
           assertJournalIdentityMatches(live, identity);
           journal.jobs[validated.printJobId] = {
@@ -436,11 +438,11 @@ async function processJournaledPrint(
             writeStartedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
-          await writeJournalAtomic(journal, journalPath);
+          await writeJournalFn(journal, journalPath);
         },
       });
 
-      journal = await readJournal(journalPath);
+      journal = await readJournalFn(journalPath);
       const live = journal.jobs[validated.printJobId];
       assertJournalIdentityMatches(live, identity);
       journal.jobs[validated.printJobId] = {
@@ -451,7 +453,7 @@ async function processJournaledPrint(
         acceptedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      await writeJournalAtomic(journal, journalPath);
+      await writeJournalFn(journal, journalPath);
 
       return {
         success: true,
@@ -479,25 +481,33 @@ async function processJournaledPrint(
         drawerState: 'UNKNOWN',
       };
     } catch (err) {
-      journal = await readJournal(journalPath);
-      const live = journal.jobs[validated.printJobId];
-      if (live) {
-        assertJournalIdentityMatches(live, identity);
-        journal.jobs[validated.printJobId] = {
-          ...live,
-          state: writeStarted ? 'OUTCOME_UNKNOWN' : 'FAILED_BEFORE_WRITE',
-          lastError: String(err?.code || err?.message || 'PRINT_TRANSPORT_FAILED'),
-          updatedAt: new Date().toISOString(),
-        };
-        await writeJournalAtomic(journal, journalPath);
+      let journalRecoveryError = null;
+      try {
+        journal = await readJournalFn(journalPath);
+        const live = journal.jobs[validated.printJobId];
+        if (live) {
+          assertJournalIdentityMatches(live, identity);
+          journal.jobs[validated.printJobId] = {
+            ...live,
+            state: writeStarted ? 'OUTCOME_UNKNOWN' : 'FAILED_BEFORE_WRITE',
+            lastError: String(err?.code || err?.message || 'PRINT_TRANSPORT_FAILED'),
+            updatedAt: new Date().toISOString(),
+          };
+          await writeJournalFn(journal, journalPath);
+        }
+      } catch (recoveryErr) {
+        journalRecoveryError = recoveryErr;
       }
 
       if (writeStarted) {
         const unknown = new Error('PRINT_TRANSPORT_OUTCOME_UNKNOWN');
         unknown.code = 'PRINT_TRANSPORT_OUTCOME_UNKNOWN';
         unknown.cause = err;
+        if (journalRecoveryError) unknown.journalRecoveryError = journalRecoveryError;
         throw unknown;
       }
+
+      if (journalRecoveryError) throw journalRecoveryError;
       throw err;
     }
   });
