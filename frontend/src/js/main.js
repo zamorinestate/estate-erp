@@ -382,6 +382,17 @@ function capturePendingAttendanceQrIntent(role, targetRoute) {
     try {
       sessionStorage.setItem("zamorin.pendingAttendanceQr", attendanceQr);
     } catch {}
+
+    try {
+      if (window.history?.replaceState) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("attendanceQr");
+        cleanUrl.searchParams.delete("returnTo");
+        cleanUrl.searchParams.delete("redirect");
+        cleanUrl.searchParams.delete("next");
+        window.history.replaceState(null, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+      }
+    } catch {}
   }
 }
 
