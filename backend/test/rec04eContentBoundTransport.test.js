@@ -157,3 +157,18 @@ test('REC-04E drawer intent stays requested until a transport can prove actuatio
   assert.match(source, /ANDROID_DRAWER_EVIDENCE_OVERCLAIM/);
   assert.match(source, /job\.drawerKickRequested \? 'UNKNOWN' : 'UNCHANGED'/);
 });
+
+
+test('REC-04E persists explicit V2 attestation lineage for migration safety', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const model = fs.readFileSync(modelPath, 'utf8');
+
+  assert.match(model, /attestationVersion/);
+  assert.match(model, /ZAMORIN_PRINT_ACK_V2/);
+  assert.match(source, /attestationVersion: PRINT_ATTESTATION_VERSION/);
+  assert.match(
+    source,
+    /normalizeId\(job\.attestationVersion\) === PRINT_ATTESTATION_VERSION \|\|\s*Boolean\(job\.payloadSha256\)/,
+    'Migration logic must prefer explicit V2 lineage while still recognizing pre-marker V2 jobs by digest'
+  );
+});

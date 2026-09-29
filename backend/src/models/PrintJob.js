@@ -101,6 +101,11 @@ const printJobSchema = new mongoose.Schema(
     },
     ackChallengeExpiresAt: { type: Date, default: null },
     ackChallengeConsumedAt: { type: Date, default: null },
+    attestationVersion: {
+      type: String,
+      enum: ['ZAMORIN_DEVICE_ACK_V1', 'ZAMORIN_PRINT_ACK_V2'],
+      default: null,
+    },
     payloadSha256: { type: String, default: null, lowercase: true, match: /^[a-f0-9]{64}$/ },
     payloadBytes: { type: Number, default: null, min: 1 },
     transportMode: {

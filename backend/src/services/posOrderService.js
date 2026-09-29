@@ -1378,6 +1378,7 @@ class PosOrderService {
           ackChallenge: attestationBinding.challenge,
           ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
           ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+          attestationVersion: PRINT_ATTESTATION_VERSION,
           payloadSha256: printResult.payloadSha256,
           payloadBytes: printResult.payloadBytes,
           printerTarget: 'DEFAULT_THERMAL',
@@ -1405,6 +1406,7 @@ class PosOrderService {
           dispatchedAt: new Date(),
           dispatchedDeviceId,
           attestationRequired: attestationBinding.required,
+          attestationVersion: PRINT_ATTESTATION_VERSION,
           attestationKeyThumbprint: attestationBinding.keyThumbprint,
           payloadSha256: printResult.payloadSha256,
           payloadBytes: printResult.payloadBytes,
@@ -1729,7 +1731,9 @@ class PosOrderService {
 
     const currentStatus = normalizeId(job.status);
     const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
-    const isContentBoundJob = Boolean(job.payloadSha256);
+    const isContentBoundJob =
+      normalizeId(job.attestationVersion) === PRINT_ATTESTATION_VERSION ||
+      Boolean(job.payloadSha256);
     let attestationProof = null;
     let transportEvidence = null;
 
@@ -2007,6 +2011,7 @@ class PosOrderService {
           acknowledgedByDeviceId: deviceId,
           acknowledgedAt: now,
           attestationRequired: Boolean(job.attestationRequired),
+          attestationVersion: job.attestationVersion || null,
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
           attestationVerifiedAt: job.attestationVerifiedAt || null,
           ackSignatureHash: job.ackSignatureHash || null,
@@ -2029,6 +2034,7 @@ class PosOrderService {
         billPrintJob.acknowledgedByDeviceId = deviceId;
         billPrintJob.acknowledgedAt = now;
         billPrintJob.attestationRequired = Boolean(job.attestationRequired);
+        billPrintJob.attestationVersion = job.attestationVersion || null;
         billPrintJob.attestationKeyThumbprint = job.attestationKeyThumbprint || null;
         billPrintJob.attestationVerifiedAt = job.attestationVerifiedAt || null;
         billPrintJob.ackSignatureHash = job.ackSignatureHash || null;
@@ -2078,6 +2084,7 @@ class PosOrderService {
           drawerKickRequested: Boolean(job.drawerKickRequested),
           drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
           attestationRequired: Boolean(job.attestationRequired),
+          attestationVersion: job.attestationVersion || null,
           attestationVerified: Boolean(attestationProof),
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
           ackSignatureHash: job.ackSignatureHash || null,
@@ -2107,6 +2114,7 @@ class PosOrderService {
       drawerKickRequested: Boolean(job.drawerKickRequested),
       drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
       attestationRequired: Boolean(job.attestationRequired),
+      attestationVersion: job.attestationVersion || null,
       attestationVerified: Boolean(attestationProof),
       attestationKeyThumbprint: job.attestationKeyThumbprint || null,
       payloadSha256: job.payloadSha256 || null,
@@ -2163,6 +2171,7 @@ class PosOrderService {
         ackChallenge: attestationBinding.challenge,
         ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
         ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+        attestationVersion: PRINT_ATTESTATION_VERSION,
         payloadSha256: printResult.payloadSha256,
         payloadBytes: printResult.payloadBytes,
         printerTarget: 'DEFAULT_THERMAL',
@@ -2296,6 +2305,7 @@ class PosOrderService {
         ackChallenge: attestationBinding.challenge,
         ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
         ackChallengeExpiresAt: attestationBinding.challenge ? new Date(Date.now() + PRINT_ACK_CHALLENGE_TTL_MS) : null,
+        attestationVersion: PRINT_ATTESTATION_VERSION,
         payloadSha256: printResult.payloadSha256,
         payloadBytes: printResult.payloadBytes,
         printerTarget: 'DEFAULT_THERMAL',
