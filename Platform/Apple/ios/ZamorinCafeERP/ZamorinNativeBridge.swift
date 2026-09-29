@@ -119,9 +119,9 @@ public class ZamorinNativeBridge: NSObject, WKScriptMessageHandler {
 
         case "PRINT_DOCUMENT", "OPEN_SYSTEM_PRINT":
             let jobName = payload["jobName"] as? String ?? "Zamorin_Document"
+            // Print is asynchronous. The delegate owns the single terminal response;
+            // opening the system print UI is not physical completion.
             delegate?.onOpenSystemPrint(requestId: requestId, jobName: jobName)
-            let res = buildResponse(requestId: requestId, success: true, result: ["jobName": jobName])
-            deliverResponse(res, completion: completion)
 
         case "TAKE_PHOTO":
             delegate?.onTakePhoto(requestId: requestId)
