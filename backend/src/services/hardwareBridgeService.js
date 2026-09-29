@@ -689,22 +689,22 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
         'Cash-drawer operation is denied outside the operator assigned café.'
       );
     }
+  }
 
-    const device = actor.deviceContext || {};
-    const deviceCafeId = String(device.boundCafeId || '').trim().toUpperCase();
-    if (
-      String(device.deviceClass || '').trim().toUpperCase() !== 'CAFE_OWNED' ||
-      String(device.status || '').trim().toUpperCase() !== 'ACTIVE' ||
-      !device.deviceId ||
-      device.deviceId === 'UNKNOWN_PERSONAL_DEVICE' ||
-      deviceCafeId !== terminalCafeId
-    ) {
-      throw new ApiError(
-        403,
-        'CAFE_OWNED_DEVICE_REQUIRED',
-        'Cash-drawer operation requires an active café-owned device bound to the terminal café.'
-      );
-    }
+  const device = actor.deviceContext || {};
+  const deviceCafeId = String(device.boundCafeId || '').trim().toUpperCase();
+  if (
+    String(device.deviceClass || '').trim().toUpperCase() !== 'CAFE_OWNED' ||
+    String(device.status || '').trim().toUpperCase() !== 'ACTIVE' ||
+    !device.deviceId ||
+    device.deviceId === 'UNKNOWN_PERSONAL_DEVICE' ||
+    deviceCafeId !== terminalCafeId
+  ) {
+    throw new ApiError(
+      403,
+      'CAFE_OWNED_DEVICE_REQUIRED',
+      'Cash-drawer operation requires an active café-owned device bound to the terminal café.'
+    );
   }
 
   const kickBuffer = buildDrawerKickBuffer(terminal.drawerConfig.pin || 2);
