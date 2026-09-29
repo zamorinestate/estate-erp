@@ -228,3 +228,18 @@ test('FINAL POS RECEIPT LINEAGE — final PR certifier runs both repository secr
   assert.match(finalGate, /REPOSITORY_SECRET_SCAN_FAILED/);
   assert.match(finalGate, /repositorySecretScansVerified: true/);
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — localhost raw transport requires backend-signed dispatch authorization', () => {
+  const pos = readRepo('backend/src/services/posOrderService.js');
+  const bridge = readRepo('scripts/zamorin_local_printer_bridge.mjs');
+  const client = readRepo('frontend/src/js/services/hardwareBridgeClient.js');
+  const runner = readRepo('scripts/run_rec04e_hardware_acceptance.mjs');
+
+  assert.match(pos, /createPrintDispatchAuthorization/);
+  assert.match(pos, /printDispatchAuthorization/);
+  assert.match(client, /printDispatchAuthorization: dispatch\.printDispatchAuthorization/);
+  assert.match(bridge, /verifyPrintDispatchAuthorization/);
+  assert.match(bridge, /serverDispatchAuthorized: true/);
+  assert.match(runner, /REC04E_SERVER_DISPATCH_JSON_REQUIRED/);
+});

@@ -9,6 +9,7 @@ const { pathToFileURL } = require('node:url');
 const os = require('node:os');
 const fsp = require('node:fs/promises');
 const attestationService = require('../src/services/deviceAttestationService');
+const printDispatchAuthService = require('../src/services/printDispatchAuthorizationService');
 const { PosOrderService } = require('../src/services/posOrderService');
 const { PrintJob } = require('../src/models/PrintJob');
 const { Bill } = require('../src/models/Bill');
@@ -1927,4 +1928,91 @@ test('REC-04E manual drawer control never reports a pulse as sent without verifi
     till,
     /Manual cash-drawer opening is unavailable until a verified hardware transport can acknowledge drawer actuation\./
   );
+});
+
+
+test('REC-04E local raw ESC/POS requires backend Ed25519 authorization bound to exact durable dispatch', async () => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const privateKeyBase64 = privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
+  const publicKeyBase64 = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
+  const binding = {
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    deviceId: 'DV-ZC0001-POS-01',
+    printJobId: 'PJ-AUTH-001',
+    payloadSha256: 'a'.repeat(64),
+    payloadBytes: 123,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: true,
+  };
+  const authorization = printDispatchAuthService.createPrintDispatchAuthorization(
+    binding,
+    { privateKeyBase64, nowEpochMs: 1_800_000_000_000 }
+  );
+  assert.equal(authorization.algorithm, 'Ed25519');
+  assert.match(authorization.keyId, /^[a-f0-9]{64}$/);
+
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const verified = bridgeModule.verifyPrintDispatchAuthorization(
+    authorization,
+    binding,
+    { publicKeyBase64, nowEpochMs: 1_800_000_001_000 }
+  );
+  assert.equal(verified.verified, true);
+
+  assert.throws(
+    () => bridgeModule.verifyPrintDispatchAuthorization(
+      authorization,
+      { ...binding, payloadSha256: 'b'.repeat(64) },
+      { publicKeyBase64, nowEpochMs: 1_800_000_001_000 }
+    ),
+    (err) => err.code === 'PRINT_DISPATCH_AUTHORIZATION_BINDING_MISMATCH'
+  );
+  assert.throws(
+    () => bridgeModule.verifyPrintDispatchAuthorization(
+      { ...authorization, signature: authorization.signature.slice(0, -2) + 'AA' },
+      binding,
+      { publicKeyBase64, nowEpochMs: 1_800_000_001_000 }
+    ),
+    (err) => err.code === 'PRINT_DISPATCH_AUTHORIZATION_SIGNATURE_INVALID'
+  );
+  assert.throws(
+    () => bridgeModule.verifyPrintDispatchAuthorization(
+      authorization,
+      binding,
+      { publicKeyBase64, nowEpochMs: authorization.expiresAtEpochMs + 1 }
+    ),
+    (err) => err.code === 'PRINT_DISPATCH_AUTHORIZATION_EXPIRED'
+  );
+});
+
+test('REC-04E raw bridge verifies server dispatch authorization before journal or socket write', () => {
+  const bridge = fs.readFileSync(localBridgePath, 'utf8');
+  const client = fs.readFileSync(hardwareClientPath, 'utf8');
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const preflight = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'scripts', 'verifyDeploymentConfig.js'),
+    'utf8'
+  );
+  const verifyIndex = bridge.indexOf('verifyPrintDispatchAuthorization(');
+  const processIndex = bridge.indexOf('processJournaledPrint(payload, printerConfig)');
+  assert.ok(verifyIndex >= 0 && processIndex > verifyIndex);
+  assert.match(bridge, /dispatchAuthorizationReady/);
+  assert.match(client, /!dispatch\?\.printDispatchAuthorization/);
+  assert.match(client, /printDispatchAuthorization: dispatch\.printDispatchAuthorization/);
+  assert.match(source, /createPrintDispatchAuthorization/);
+  assert.match(source, /printDispatchAuthorization,/);
+  assert.match(preflight, /ZAMORIN_PRINT_DISPATCH_PRIVATE_KEY_PKCS8_B64/);
+  assert.match(preflight, /asymmetricKeyType === 'ed25519'/);
+});
+
+test('REC-04E hardware acceptance replays a real server-authorized POS dispatch rather than locally minting printable bytes', () => {
+  const runner = fs.readFileSync(
+    path.join(root, 'scripts', 'run_rec04e_hardware_acceptance.mjs'),
+    'utf8'
+  );
+  assert.match(runner, /REC04E_SERVER_DISPATCH_JSON_REQUIRED/);
+  assert.match(runner, /dispatch\?\.printDispatchAuthorization/);
+  assert.match(runner, /serverDispatchAuthorized === true/);
+  assert.doesNotMatch(runner, /function buildAcceptanceEscPos/);
 });
