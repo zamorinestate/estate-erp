@@ -25,6 +25,8 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: PUBLIC_APP_ORIGIN
+        value: https://zamorin-cafe-erp.vercel.app
       - key: JWT_ACCESS_SECRET
         sync: false
       - key: JWT_ACCESS_TTL_MINUTES
