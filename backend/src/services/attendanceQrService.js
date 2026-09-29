@@ -12,6 +12,7 @@ const ApiError = require('../utils/ApiError');
 const { getPublicAppOrigin } = require('./cafeAccessCryptoService');
 
 const QR_SIGNING_SECRET = process.env.QR_SIGNING_SECRET || 'zamorin_qr_master_signing_secret_key_2026_dsec';
+const ATTENDANCE_SCAN_GRANT_TTL_SECONDS = 180;
 
 function calculateDistanceMetres(lat1, lon1, lat2, lon2) {
   const R = 6371000; // Earth radius in metres
@@ -383,6 +384,125 @@ class AttendanceQrService {
       issuedAt: challenge.issuedAt,
       expiresAt: challenge.expiresAt,
     };
+  }
+
+  /**
+   * Converts a freshly verified rotating QR into a short-lived, user-bound
+   * scan grant. This lets GPS + selfie capture finish without weakening the
+   * 45-second display rotation. The grant is bound to user, organisation,
+   * cafe, original challenge, device, and expected transition.
+   */
+  issueScanGrant({ verification, userId, organisationId, transition }) {
+    const normalizedTransition = String(transition || '').toUpperCase();
+    if (!verification?.valid || !verification?.challengeId || !verification?.resolvedCafeId) {
+      throw new ApiError(400, 'ATTENDANCE_QR_VERIFICATION_REQUIRED', 'A verified attendance QR is required before issuing a scan grant.');
+    }
+    if (!userId || !organisationId || !['CHECK_IN', 'CHECK_OUT'].includes(normalizedTransition)) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_CONTEXT_INVALID', 'Attendance scan grant context is incomplete.');
+    }
+
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const payload = {
+      v: 1,
+      purpose: 'ATTENDANCE_SCAN_GRANT',
+      uid: String(userId).trim().toUpperCase(),
+      oid: String(organisationId).trim().toUpperCase(),
+      cafeId: String(verification.resolvedCafeId).trim().toUpperCase(),
+      cid: String(verification.challengeId),
+      did: String(verification.challenge?.deviceId || 'OPS_CONSOLE'),
+      transition: normalizedTransition,
+      iat: issuedAt,
+      exp: issuedAt + ATTENDANCE_SCAN_GRANT_TTL_SECONDS,
+      nonce: crypto.randomBytes(12).toString('hex'),
+    };
+
+    const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const signature = crypto.createHmac('sha256', secret).update(encodedPayload).digest('hex');
+
+    return {
+      token: `ZAM_ASG_${encodedPayload}.${signature}`,
+      expiresAt: new Date(payload.exp * 1000),
+      transition: normalizedTransition,
+    };
+  }
+
+  validateScanGrant(token, { employeeOrgId, employeeUserId, expectedTransition }) {
+    const raw = String(token || '').trim();
+    if (!raw.startsWith('ZAM_ASG_')) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_FORMAT_INVALID', 'Attendance scan grant format is invalid.');
+    }
+
+    const serialized = raw.slice('ZAM_ASG_'.length);
+    const separator = serialized.lastIndexOf('.');
+    if (separator <= 0) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_FORMAT_INVALID', 'Attendance scan grant format is invalid.');
+    }
+
+    const encodedPayload = serialized.slice(0, separator);
+    const suppliedSignature = serialized.slice(separator + 1);
+    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const expectedSignature = crypto.createHmac('sha256', secret).update(encodedPayload).digest('hex');
+
+    const suppliedBuffer = Buffer.from(suppliedSignature, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    if (
+      suppliedBuffer.length !== expectedBuffer.length ||
+      !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)
+    ) {
+      throw new ApiError(403, 'ATTENDANCE_SCAN_GRANT_SIGNATURE_INVALID', 'Attendance scan grant signature is invalid.');
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+    } catch (_) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_FORMAT_INVALID', 'Attendance scan grant payload is invalid.');
+    }
+
+    const orgId = String(employeeOrgId || '').trim().toUpperCase();
+    const userId = String(employeeUserId || '').trim().toUpperCase();
+    const transition = String(expectedTransition || '').trim().toUpperCase();
+
+    if (
+      payload?.v !== 1 ||
+      payload?.purpose !== 'ATTENDANCE_SCAN_GRANT' ||
+      payload?.oid !== orgId ||
+      payload?.uid !== userId ||
+      payload?.transition !== transition
+    ) {
+      throw new ApiError(403, 'ATTENDANCE_SCAN_GRANT_SCOPE_MISMATCH', 'Attendance scan grant does not match this employee or punch transition.');
+    }
+
+    if (!Number.isSafeInteger(payload.exp) || Date.now() > payload.exp * 1000) {
+      throw new ApiError(403, 'ATTENDANCE_SCAN_GRANT_EXPIRED', 'Attendance scan grant expired. Please scan the current Café QR again.');
+    }
+
+    return {
+      valid: true,
+      verified: true,
+      challengeId: payload.cid,
+      resolvedCafeId: payload.cafeId,
+      cafeId: payload.cafeId,
+      organisationId: payload.oid,
+      issuedAt: new Date(payload.iat * 1000),
+      expiresAt: new Date(payload.exp * 1000),
+      purpose: 'ATTENDANCE_PUNCH',
+      challenge: { deviceId: payload.did },
+      scanGrantVerified: true,
+    };
+  }
+
+  async validatePunchQrProof(qrToken, context = {}) {
+    if (String(qrToken || '').trim().startsWith('ZAM_ASG_')) {
+      return this.validateScanGrant(qrToken, {
+        employeeOrgId: context.employeeOrgId,
+        employeeUserId: context.employeeUserId,
+        expectedTransition: context.expectedTransition,
+      });
+    }
+
+    return this.validateChallengeToken(qrToken, context);
   }
 
   /**
