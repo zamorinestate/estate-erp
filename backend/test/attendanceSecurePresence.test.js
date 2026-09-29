@@ -231,6 +231,32 @@ test('QR-003: validateChallengeToken successfully validates authentic token and 
   assert.equal(verified.challengeId, challenge.challengeId);
 });
 
+test('QR-003A: verifier accepts trusted attendance deep-link and rejects foreign origin', async () => {
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+  });
+
+  const verified = await attendanceQrService.validateChallengeToken(challenge.attendanceUrl, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+  assert.equal(verified.verified, true);
+  assert.equal(verified.cafeId, 'CAFE-KNR-01');
+
+  const foreign = new URL(challenge.attendanceUrl);
+  foreign.host = 'evil.example';
+  await assert.rejects(
+    async () => attendanceQrService.validateChallengeToken(foreign.toString(), {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeAssignedCafes: ['CAFE-KNR-01'],
+      employeeRole: 'STAFF',
+    }),
+    { statusCode: 403, code: 'UNTRUSTED_ATTENDANCE_QR_ORIGIN' }
+  );
+});
+
 test('QR-004: validateChallengeToken rejects malformed or tampered token', async () => {
   await assert.rejects(
     async () => {
