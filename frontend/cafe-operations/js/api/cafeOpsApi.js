@@ -164,6 +164,41 @@
       return prepared;
     }
 
+    if (String(prepared.platform || '').trim().toLowerCase() === 'android') {
+      const challenge = await apiRequest('/devices/attestation/challenge', {
+        body: {
+          enrollmentCode: prepared.enrollmentCode,
+          platform: prepared.platform,
+        },
+        auth: 'none',
+      });
+
+      const nativeIdentity = await sendNativeEnrollmentMessage(
+        'GET_DEVICE_ATTESTATION_KEY',
+        { hardwareAttestationChallenge: challenge.challenge }
+      );
+      const nativeResult = nativeIdentity?.result || nativeIdentity || {};
+      if (
+        !Array.isArray(nativeResult.certificateChain) ||
+        nativeResult.certificateChain.length < 2
+      ) {
+        const err = new Error(
+          'Android did not return a hardware-attestation certificate chain.'
+        );
+        err.code = 'ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID';
+        throw err;
+      }
+
+      return {
+        ...prepared,
+        ...validateNativeSigningIdentity(nativeIdentity, prepared.platform),
+        hardwareAttestation: {
+          challengeId: challenge.challengeId,
+          certificateChain: nativeResult.certificateChain,
+        },
+      };
+    }
+
     const nativeIdentity = await sendNativeEnrollmentMessage(
       'GET_DEVICE_ATTESTATION_KEY',
       {}

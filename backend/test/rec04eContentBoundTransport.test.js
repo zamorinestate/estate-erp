@@ -672,3 +672,34 @@ test('REC-04E suite is executed by canonical backend CI', () => {
     /test\/rec04eContentBoundTransport\.test\.js/
   );
 });
+
+
+test('REC-04E Android enrollment generates the runtime signing key from the server challenge and returns its X.509 chain', () => {
+  const nativeBridge = fs.readFileSync(androidBridgePath, 'utf8');
+  const cafeOpsApi = fs.readFileSync(
+    path.join(root, 'frontend', 'cafe-operations', 'js', 'api', 'cafeOpsApi.js'),
+    'utf8'
+  );
+  const route = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'cafe-operations', 'routes', 'deviceEnrollmentRoutes.js'),
+    'utf8'
+  );
+
+  assert.match(nativeBridge, /setAttestationChallenge\(challenge\)/);
+  assert.match(nativeBridge, /zamorin_device_attestation_v2/);
+  assert.match(nativeBridge, /getCertificateChain\(alias\)/);
+  assert.match(nativeBridge, /ATTESTED_ATTESTATION_KEY_ALIAS/);
+  assert.match(nativeBridge, /ensureAttestationKey\(\)/);
+
+  assert.match(cafeOpsApi, /\/devices\/attestation\/challenge/);
+  assert.match(
+    cafeOpsApi,
+    /hardwareAttestationChallenge: challenge\.challenge/
+  );
+  assert.match(
+    cafeOpsApi,
+    /certificateChain: nativeResult\.certificateChain/
+  );
+  assert.match(route, /router\.post\('\/attestation\/challenge'/);
+  assert.match(route, /hardwareAttestation/);
+});

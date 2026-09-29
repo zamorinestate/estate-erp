@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import java.util.Base64
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -187,13 +188,27 @@ class ZamorinNativeBridge(
 
             "GET_DEVICE_ATTESTATION_KEY" -> {
                 try {
-                    val publicKey = ensureAttestationKey().certificate.publicKey as ECPublicKey
+                    val challenge = payload.optString("hardwareAttestationChallenge", "").trim()
+                    val entry = if (challenge.isNotBlank()) {
+                        createHardwareAttestedEnrollmentKey(challenge)
+                    } else {
+                        ensureAttestationKey()
+                    }
+                    val publicKey = entry.certificate.publicKey as ECPublicKey
                     val jwk = publicJwk(publicKey)
                     val res = JSONObject().apply {
                         put("algorithm", "ES256")
                         put("provider", "ANDROID_KEYSTORE")
                         put("publicKeyJwk", jwk)
                         put("keyThumbprint", keyThumbprint(jwk))
+                        if (challenge.isNotBlank()) {
+                            put("hardwareAttestationChallengeBound", true)
+                            put("certificateChain", JSONArray().apply {
+                                entry.certificateChain.forEach { certificate ->
+                                    put(Base64.getEncoder().encodeToString(certificate.encoded))
+                                }
+                            })
+                        }
                     }
                     BridgeResponse(requestId = requestId, success = true, result = res)
                 } catch (e: Exception) {
@@ -511,18 +526,70 @@ class ZamorinNativeBridge(
 
     private data class AttestationEntry(
         val privateKey: java.security.PrivateKey,
-        val certificate: java.security.cert.Certificate
+        val certificate: java.security.cert.Certificate,
+        val certificateChain: Array<java.security.cert.Certificate>
     )
+
+    private fun loadAttestationEntry(
+        keyStore: KeyStore,
+        alias: String
+    ): AttestationEntry {
+        val privateKey = keyStore.getKey(alias, null) as? java.security.PrivateKey
+            ?: throw IllegalStateException("Android Keystore private signing key is unavailable.")
+        val certificate = keyStore.getCertificate(alias)
+            ?: throw IllegalStateException("Android Keystore signing certificate is unavailable.")
+        val chain = keyStore.getCertificateChain(alias) ?: arrayOf(certificate)
+        return AttestationEntry(privateKey, certificate, chain)
+    }
+
+    private fun createHardwareAttestedEnrollmentKey(
+        challengeBase64Url: String
+    ): AttestationEntry {
+        val challenge = try {
+            Base64.getUrlDecoder().decode(challengeBase64Url)
+        } catch (_: Exception) {
+            throw IllegalArgumentException("Hardware-attestation challenge encoding is invalid.")
+        }
+        if (challenge.size !in 16..128) {
+            throw IllegalArgumentException("Hardware-attestation challenge length is invalid.")
+        }
+
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (keyStore.containsAlias(ATTESTED_ATTESTATION_KEY_ALIAS)) {
+            keyStore.deleteEntry(ATTESTED_ATTESTATION_KEY_ALIAS)
+        }
+
+        val generator = KeyPairGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_EC,
+            "AndroidKeyStore"
+        )
+        val spec = KeyGenParameterSpec.Builder(
+            ATTESTED_ATTESTATION_KEY_ALIAS,
+            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+        )
+            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+            .setDigests(KeyProperties.DIGEST_SHA256)
+            .setAttestationChallenge(challenge)
+            .build()
+        generator.initialize(spec)
+        generator.generateKeyPair()
+
+        return loadAttestationEntry(keyStore, ATTESTED_ATTESTATION_KEY_ALIAS)
+    }
 
     private fun ensureAttestationKey(): AttestationEntry {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (!keyStore.containsAlias(ATTESTATION_KEY_ALIAS)) {
+        if (keyStore.containsAlias(ATTESTED_ATTESTATION_KEY_ALIAS)) {
+            return loadAttestationEntry(keyStore, ATTESTED_ATTESTATION_KEY_ALIAS)
+        }
+
+        if (!keyStore.containsAlias(LEGACY_ATTESTATION_KEY_ALIAS)) {
             val generator = KeyPairGenerator.getInstance(
                 KeyProperties.KEY_ALGORITHM_EC,
                 "AndroidKeyStore"
             )
             val spec = KeyGenParameterSpec.Builder(
-                ATTESTATION_KEY_ALIAS,
+                LEGACY_ATTESTATION_KEY_ALIAS,
                 KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
             )
                 .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
@@ -532,11 +599,7 @@ class ZamorinNativeBridge(
             generator.generateKeyPair()
         }
 
-        val privateKey = keyStore.getKey(ATTESTATION_KEY_ALIAS, null) as? java.security.PrivateKey
-            ?: throw IllegalStateException("Android Keystore private signing key is unavailable.")
-        val certificate = keyStore.getCertificate(ATTESTATION_KEY_ALIAS)
-            ?: throw IllegalStateException("Android Keystore signing certificate is unavailable.")
-        return AttestationEntry(privateKey, certificate)
+        return loadAttestationEntry(keyStore, LEGACY_ATTESTATION_KEY_ALIAS)
     }
 
     private fun publicJwk(publicKey: ECPublicKey): JSONObject {
@@ -567,6 +630,7 @@ class ZamorinNativeBridge(
     }
 
     companion object {
-        private const val ATTESTATION_KEY_ALIAS = "zamorin_device_attestation_v1"
+        private const val LEGACY_ATTESTATION_KEY_ALIAS = "zamorin_device_attestation_v1"
+        private const val ATTESTED_ATTESTATION_KEY_ALIAS = "zamorin_device_attestation_v2"
     }
 }
