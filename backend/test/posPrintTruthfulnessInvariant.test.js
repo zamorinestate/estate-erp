@@ -54,3 +54,16 @@ test('POS print audit identities are collision-resistant and not timestamp-deriv
   assert.doesNotMatch(source, /Math\.floor\(100000 \+ Math\.random\(\) \* 900000\)/);
 });
 
+test('POS print tracking failures are surfaced instead of silently swallowed', () => {
+  const source = fs.readFileSync(servicePath, 'utf8');
+
+  assert.match(source, /PRINT_JOB_PERSISTENCE_FAILED/);
+  assert.match(source, /printTrackingPersisted/);
+  assert.match(source, /printTrackingWarning/);
+  assert.doesNotMatch(
+    source,
+    /await pj\.save\(\);\s*\}\s*catch\s*\{\s*\}/,
+    'PrintJob persistence failures must never be silently swallowed'
+  );
+});
+
