@@ -1209,6 +1209,27 @@ export function wireStaffAttendance(root) {
 }
 
 // ── VERIFICATION FLOW MODAL (ROTATING QR + GPS + LIVE SELFIE) ────────────────
+function normalizeAttendanceQrInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^ZAM_ATT_[a-f0-9]{64}$/i.test(raw)) return raw;
+  if (raw.split(".").length === 5 && !raw.includes("://")) return raw;
+
+  try {
+    const parsed = new URL(raw);
+    const isTrustedProtocol = parsed.protocol === "https:" ||
+      (parsed.protocol === "http:" && ["localhost", "127.0.0.1"].includes(parsed.hostname));
+    const returnTo = parsed.searchParams.get("returnTo");
+    const embedded = String(parsed.searchParams.get("attendanceQr") || "").trim();
+    if (isTrustedProtocol && returnTo === "staff-attendance" && /^ZAM_ATT_[a-f0-9]{64}$/i.test(embedded)) {
+      return embedded;
+    }
+  } catch {}
+
+  return raw;
+}
+
 export function openVerificationModal(flowType, onDoneCallback, { preScannedQrToken = null } = {}) {
   let existing = document.getElementById("attendance-verification-modal");
   if (existing) {
@@ -1438,7 +1459,8 @@ export function openVerificationModal(flowType, onDoneCallback, { preScannedQrTo
     showLoading("Verifying Attendance QR challenge with server...");
 
     try {
-      const res = await apiPost("/attendance/qr/verify", { qrToken: token });
+      const normalizedQrToken = normalizeAttendanceQrInput(token);
+      const res = await apiPost("/attendance/qr/verify", { qrToken: normalizedQrToken });
       hideLoading();
 
       if (!res?.data?.verified) {
@@ -1454,7 +1476,7 @@ export function openVerificationModal(flowType, onDoneCallback, { preScannedQrTo
         );
       }
 
-      scannedQrToken = res.data.scanGrant || token;
+      scannedQrToken = res.data.scanGrant || normalizedQrToken;
       verifiedCafe = res.data;
 
       // Mark Step 1 complete with verified café identity & Company Logo
