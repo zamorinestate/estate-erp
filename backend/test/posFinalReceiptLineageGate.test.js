@@ -177,3 +177,17 @@ test('FINAL POS RECEIPT LINEAGE — generic deploy readiness cannot report fully
   assert.match(releaseGate, /Hardware Acceptance: EXTERNAL REC-04E CERTIFIED REPORT REQUIRED/);
   assert.match(releaseGate, /Production Verdict : NOT ISSUED BY THIS SOFTWARE-ONLY WORKFLOW/);
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — canonical CI includes repository-wide retired-persona and hard-coded café fallback guards', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(backendRoot, 'package.json'), 'utf8'));
+  const command = String(pkg.scripts?.test || '');
+
+  for (const suite of [
+    'test/retiredMasterPersonaInvariant.test.js',
+    'test/cafeScopeFallbackInvariant.test.js',
+    'test/hardcodedCafeFallbackInvariant.test.js',
+  ]) {
+    assert.ok(command.includes(suite), `${suite} must remain in canonical CI`);
+  }
+});
