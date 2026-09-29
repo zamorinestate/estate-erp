@@ -369,6 +369,34 @@ test('QR-008: verified scan grant is user-bound, transition-bound, and punch-val
   );
 });
 
+test('QR-009: verify endpoint returns verified flag and user-bound scan grant', async () => {
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+
+  const req = {
+    auth: {
+      organisationId: 'ORG-ZAMORIN',
+      userId: 'EMP-STAFF-1',
+      role: 'STAFF',
+      assignedCafeIds: ['CAFE-KNR-01'],
+      primaryCafeId: 'CAFE-KNR-01',
+    },
+    body: { qrToken: challenge.opaqueToken },
+  };
+  const res = createMockRes();
+
+  await verifyScannedQr(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.valid, true);
+  assert.equal(res.body.data.verified, true);
+  assert.equal(res.body.data.transition, 'CHECK_IN');
+  assert.match(res.body.data.scanGrant, /^ZAM_ASG_/);
+});
+
 // ---------------------------------------------------------------------------
 // 2. GEOFENCE & HAVERSINE DISTANCE VERIFICATION
 // ---------------------------------------------------------------------------
