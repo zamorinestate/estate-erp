@@ -8,6 +8,7 @@ const attestationService = require('../src/services/deviceAttestationService');
 const { PosOrderService } = require('../src/services/posOrderService');
 const { PrintJob } = require('../src/models/PrintJob');
 const { Bill } = require('../src/models/Bill');
+const { DeviceRegistration } = require('../src/models/DeviceRegistration');
 const root = path.join(__dirname, '..', '..');
 const posServicePath = path.join(__dirname, '..', 'src', 'services', 'posOrderService.js');
 const modelPath = path.join(__dirname, '..', 'src', 'models', 'PrintJob.js');
@@ -466,4 +467,62 @@ test('REC-04E acknowledgement API distinguishes signature verification from hard
   assert.match(source, /signatureVerified: Boolean\(attestationProof\)/);
   assert.match(source, /hardwareBackedKeyVerified: job\.attestationKeyHardwareBackedVerified === true/);
   assert.match(source, /attestationVerified: Boolean\(attestationProof\)/);
+});
+
+
+test('REC-04E DeviceRegistration validation enforces hardware-backed trust evidence at runtime', async () => {
+  const base = {
+    deviceId: 'DV-REC04E-HW-VALIDATION',
+    organisationId: 'ORG-ZAMORIN',
+    deviceClass: 'PERSONAL',
+    deviceName: 'REC-04E Hardware Validation',
+    platform: 'ANDROID',
+    status: 'ACTIVE',
+    signingKeyHardwareBackedVerified: true,
+    signingKeyHardwareAttestationVerifiedAt: new Date(),
+  };
+
+  const softwareOnly = new DeviceRegistration({
+    ...base,
+    trustLevel: 'HARDWARE_BACKED',
+    signingKeyHardwareSecurityLevel: 'SOFTWARE',
+  });
+
+  await assert.rejects(
+    () => softwareOnly.validate(),
+    (err) => {
+      assert.ok(err?.errors?.trustLevel || err?.errors?.signingKeyHardwareBackedVerified);
+      return true;
+    }
+  );
+
+  const missingVerification = new DeviceRegistration({
+    ...base,
+    trustLevel: 'HARDWARE_BACKED',
+    signingKeyHardwareBackedVerified: false,
+    signingKeyHardwareSecurityLevel: 'TRUSTED_ENVIRONMENT',
+  });
+
+  await assert.rejects(
+    () => missingVerification.validate(),
+    (err) => {
+      assert.ok(err?.errors?.trustLevel);
+      return true;
+    }
+  );
+
+  const trustedEnvironment = new DeviceRegistration({
+    ...base,
+    trustLevel: 'HARDWARE_BACKED',
+    signingKeyHardwareSecurityLevel: 'TRUSTED_ENVIRONMENT',
+  });
+  await trustedEnvironment.validate();
+
+  const strongBox = new DeviceRegistration({
+    ...base,
+    deviceId: 'DV-REC04E-HW-STRONGBOX',
+    trustLevel: 'HARDWARE_BACKED',
+    signingKeyHardwareSecurityLevel: 'STRONGBOX',
+  });
+  await strongBox.validate();
 });
