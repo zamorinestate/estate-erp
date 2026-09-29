@@ -48,11 +48,11 @@ const deviceRegistrationSchema = new mongoose.Schema(
       validate: {
         validator: function (v) {
           if (this.deviceClass === 'CAFE_OWNED') {
-            return typeof v === 'string' && /^ZC-\d{4,}$/.test(v);
+            return typeof v === 'string' && /^ZC-(?:CAF-)?\d{4,}$/.test(v);
           }
           return true;
         },
-        message: 'Assigned cafeId must match /^ZC-\\d{4,}$/ when deviceClass is CAFE_OWNED',
+        message: 'Assigned cafeId must match /^ZC-(?:CAF-)?\\d{4,}$/ when deviceClass is CAFE_OWNED',
       },
     },
 
