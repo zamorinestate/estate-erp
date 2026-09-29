@@ -27,7 +27,7 @@ import { setupModalA11y } from "../../utils/modalA11y.js";
 
 let activeTab = "TODAY"; // 'TODAY' | 'ROSTER' | 'CALENDAR' | 'TIMECARD' | 'CORRECTIONS' | 'ATTESTATION'
 let clockTimer = null;
-let currentMonth = new Date().toISOString().slice(0, 7);
+let currentMonth = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
 let serverTimeOffset = 0;
 let cachedToday = null;
 let cachedShift = null;
@@ -232,30 +232,30 @@ function renderTodayTab() {
         <div>
           <div class="flex items-center justify-between" style="margin-bottom:14px;">
             <div style="font-size:12px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.04em;">
-              Verification Readiness Check
+              Secure Punch Verification
             </div>
-            <span class="badge badge-mint" style="font-size:10px;">ALL SIGNALS READY</span>
+            <span class="badge badge-subtle" style="font-size:10px;">CHECKED AT PUNCH</span>
           </div>
 
           <!-- Readiness signals -->
           <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
             <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
               <span style="font-size:12.5px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
-                <span>📍</span> GPS Geofence (Main Outlet)
+                <span>📍</span> GPS Geofence
               </span>
-              <span class="badge badge-mint" style="font-size:10px;">In Radius (8m)</span>
+              <span class="badge badge-subtle" style="font-size:10px;">Verified after location permission</span>
             </div>
             <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
               <span style="font-size:12.5px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
                 <span>📷</span> Device Camera Access
               </span>
-              <span class="badge badge-mint" style="font-size:10px;">Granted</span>
+              <span class="badge badge-subtle" style="font-size:10px;">Permission requested during selfie step</span>
             </div>
             <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
               <span style="font-size:12.5px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
                 <span>📶</span> Network Connectivity
               </span>
-              <span class="badge badge-mint" style="font-size:10px;">Active &amp; Low Latency</span>
+              <span class="badge ${typeof navigator !== "undefined" && navigator.onLine ? "badge-mint" : "badge-coral"}" style="font-size:10px;">${typeof navigator !== "undefined" && navigator.onLine ? "Online" : "Offline"}</span>
             </div>
           </div>
 
@@ -893,6 +893,15 @@ function renderAttestationTab() {
 }
 
 // ── UTILITIES & WIRE INTERACTIONS ────────────────────────────────────────────
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function formatTimeStr(iso) {
   if (!iso) return "—";
   try {
@@ -1070,7 +1079,7 @@ export function wireStaffAttendance(root) {
     // Day drilldown clicks
     container.querySelectorAll(".btn-view-day-drilldown, .calendar-day-cell").forEach((el) => {
       el.addEventListener("click", () => {
-        const date = el.dataset.date || "18 Aug 2026";
+        const date = el.dataset.date || "";
         const attId = el.dataset.attId;
         const matched = cachedHistory.find((r) =>
           (attId && (r.id === attId || r.attendanceId === attId || r._id === attId)) ||
@@ -2077,7 +2086,7 @@ function openDiscrepancyModal(onDoneCallback) {
 
     try {
       await apiPost("/attendance/attestation", {
-        month: "2026-08",
+        month: currentMonth,
         decision: "REPORT_DISCREPANCY",
         remarks: memo,
       });
