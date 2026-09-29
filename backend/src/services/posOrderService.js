@@ -1666,23 +1666,6 @@ class PosOrderService {
       );
     }
 
-    const currentStatus = normalizeId(job.status);
-    const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
-    if (terminalStatuses.has(currentStatus) && currentStatus !== ackStatus) {
-      throw new ApiError(
-        409,
-        'PRINT_JOB_TERMINAL_STATE_CONFLICT',
-        `Print job is already finalized as ${currentStatus} and cannot transition to ${ackStatus}.`
-      );
-    }
-    if (!terminalStatuses.has(currentStatus) && currentStatus !== 'DISPATCHED') {
-      throw new ApiError(
-        409,
-        'INVALID_PRINT_JOB_TRANSITION',
-        `Print job in state ${currentStatus || 'UNKNOWN'} cannot be acknowledged as ${ackStatus}.`
-      );
-    }
-
     const requestedDrawerStatus = acknowledgement.drawerKickStatus
       ? normalizeId(acknowledgement.drawerKickStatus)
       : null;
@@ -1702,6 +1685,114 @@ class PosOrderService {
           'drawerKickStatus must be ACKNOWLEDGED, FAILED, or UNKNOWN.'
         );
       }
+    }
+
+    const resolvedFailureCode =
+      ackStatus === 'FAILED'
+        ? normalizeId(acknowledgement.failureCode || 'DEVICE_PRINT_FAILED')
+        : ackStatus === 'CANCELLED'
+          ? normalizeId(acknowledgement.failureCode || 'PRINT_CANCELLED')
+          : 'NONE';
+    const resolvedFailureReason =
+      ackStatus === 'FAILED'
+        ? String(acknowledgement.failureReason || 'Physical print device reported failure.').slice(0, 500)
+        : ackStatus === 'CANCELLED'
+          ? String(acknowledgement.failureReason || 'Physical print job was cancelled.').slice(0, 500)
+          : '';
+
+    let attestationProof = null;
+    if (job.attestationRequired) {
+      const registration = await DeviceRegistration.findOne({
+        deviceId,
+        organisationId: orgId,
+        assignedCafeId: jobCafeId,
+        status: 'ACTIVE',
+      }).lean();
+
+      if (
+        !registration?.publicSigningKey ||
+        normalizeId(registration.signingKeyAlgorithm) !== ATTESTATION_ALGORITHM
+      ) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_KEY_UNAVAILABLE',
+          'The enrolled device signing key is unavailable or no longer valid.'
+        );
+      }
+
+      const liveKeyThumbprint =
+        registration.signingKeyThumbprint ||
+        publicKeyThumbprint(registration.publicSigningKey);
+      if (
+        job.attestationKeyThumbprint &&
+        String(job.attestationKeyThumbprint).toLowerCase() !== String(liveKeyThumbprint).toLowerCase()
+      ) {
+        throw new ApiError(
+          409,
+          'DEVICE_ATTESTATION_KEY_CHANGED',
+          'The enrolled device signing key changed after this print job was dispatched.'
+        );
+      }
+
+      const suppliedThumbprint = acknowledgement.attestation?.keyThumbprint;
+      if (
+        suppliedThumbprint &&
+        String(suppliedThumbprint).toLowerCase() !== String(liveKeyThumbprint).toLowerCase()
+      ) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_KEY_MISMATCH',
+          'The acknowledgement was signed by an unexpected device key.'
+        );
+      }
+
+      const signedPayload = buildPrintAckPayload({
+        organisationId: orgId,
+        cafeId: jobCafeId,
+        deviceId,
+        printJobId: normPrintJobId,
+        challenge: job.ackChallenge,
+        status: ackStatus,
+        drawerKickStatus: requestedDrawerStatus || 'UNCHANGED',
+        failureCode: resolvedFailureCode,
+        failureReason: resolvedFailureReason,
+      });
+
+      attestationProof = verifyPrintAckSignature({
+        publicSigningKey: registration.publicSigningKey,
+        signatureBase64Url: acknowledgement.attestation?.signature,
+        payload: signedPayload,
+      });
+
+      if (
+        String(attestationProof.keyThumbprint).toLowerCase() !== String(liveKeyThumbprint).toLowerCase()
+      ) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_KEY_MISMATCH',
+          'Verified acknowledgement key does not match the enrolled device key.'
+        );
+      }
+    }
+
+    const currentStatus = normalizeId(job.status);
+    const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
+    if (terminalStatuses.has(currentStatus) && currentStatus !== ackStatus) {
+      throw new ApiError(
+        409,
+        'PRINT_JOB_TERMINAL_STATE_CONFLICT',
+        `Print job is already finalized as ${currentStatus} and cannot transition to ${ackStatus}.`
+      );
+    }
+    if (!terminalStatuses.has(currentStatus) && currentStatus !== 'DISPATCHED') {
+      throw new ApiError(
+        409,
+        'INVALID_PRINT_JOB_TRANSITION',
+        `Print job in state ${currentStatus || 'UNKNOWN'} cannot be acknowledged as ${ackStatus}.`
+      );
+    }
+
+    if (requestedDrawerStatus) {
       job.drawerKickStatus = requestedDrawerStatus;
     }
 
@@ -1713,19 +1804,38 @@ class PosOrderService {
       job.acknowledgedAt = now;
       job.completedAt = now;
 
-      if (ackStatus === 'FAILED') {
-        job.failureCode = normalizeId(acknowledgement.failureCode || 'DEVICE_PRINT_FAILED');
-        job.failureReason = String(acknowledgement.failureReason || 'Physical print device reported failure.').slice(0, 500);
-      } else if (ackStatus === 'CANCELLED') {
-        job.failureCode = normalizeId(acknowledgement.failureCode || 'PRINT_CANCELLED');
-        job.failureReason = String(acknowledgement.failureReason || 'Physical print job was cancelled.').slice(0, 500);
+      if (ackStatus === 'FAILED' || ackStatus === 'CANCELLED') {
+        job.failureCode = resolvedFailureCode;
+        job.failureReason = resolvedFailureReason;
       } else {
         job.failureCode = null;
         job.failureReason = null;
       }
     }
 
+    if (attestationProof) {
+      job.attestationVerifiedAt = now;
+      job.ackSignatureHash = attestationProof.signatureHash;
+    }
+
     await job.save();
+
+    if (attestationProof) {
+      await DeviceRegistration.updateOne(
+        {
+          deviceId,
+          organisationId: orgId,
+          assignedCafeId: jobCafeId,
+          status: 'ACTIVE',
+        },
+        {
+          $set: {
+            signingKeyLastVerifiedAt: now,
+            'metadata.lastAttestationKeyThumbprint': attestationProof.keyThumbprint,
+          },
+        }
+      );
+    }
 
     const bill = await Bill.findOne({
       organisationId: orgId,
@@ -1747,6 +1857,10 @@ class PosOrderService {
           dispatchedDeviceId,
           acknowledgedByDeviceId: deviceId,
           acknowledgedAt: now,
+          attestationRequired: Boolean(job.attestationRequired),
+          attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+          attestationVerifiedAt: job.attestationVerifiedAt || null,
+          ackSignatureHash: job.ackSignatureHash || null,
           completedAt: now,
           failureCode: job.failureCode || null,
           drawerKickRequested: Boolean(job.drawerKickRequested),
@@ -1756,6 +1870,10 @@ class PosOrderService {
         billPrintJob.status = ackStatus;
         billPrintJob.acknowledgedByDeviceId = deviceId;
         billPrintJob.acknowledgedAt = now;
+        billPrintJob.attestationRequired = Boolean(job.attestationRequired);
+        billPrintJob.attestationKeyThumbprint = job.attestationKeyThumbprint || null;
+        billPrintJob.attestationVerifiedAt = job.attestationVerifiedAt || null;
+        billPrintJob.ackSignatureHash = job.ackSignatureHash || null;
         billPrintJob.completedAt = now;
         billPrintJob.failureCode = job.failureCode || null;
         billPrintJob.drawerKickStatus = job.drawerKickStatus || 'NOT_REQUESTED';
@@ -1792,6 +1910,10 @@ class PosOrderService {
           status: ackStatus,
           drawerKickRequested: Boolean(job.drawerKickRequested),
           drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+          attestationRequired: Boolean(job.attestationRequired),
+          attestationVerified: Boolean(attestationProof),
+          attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+          ackSignatureHash: job.ackSignatureHash || null,
           idempotentReplay: !statusChanged,
         },
       });
@@ -1808,6 +1930,9 @@ class PosOrderService {
       acknowledgedAt: job.acknowledgedAt,
       drawerKickRequested: Boolean(job.drawerKickRequested),
       drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+      attestationRequired: Boolean(job.attestationRequired),
+      attestationVerified: Boolean(attestationProof),
+      attestationKeyThumbprint: job.attestationKeyThumbprint || null,
       idempotentReplay: !statusChanged,
     };
   }
