@@ -126,7 +126,10 @@ async function main() {
     masterEmail,
   });
 
-  const masterId = masterUser?.userId || 'MU-0001';
+  const masterId = String(masterUser?.userId || '').trim();
+  if (!masterId) {
+    throw new Error('Seeded Primary Master did not return a canonical userId; refusing authority fallback.');
+  }
   console.log('[dev] Seeding cafes, operational inventory, and active suppliers with masterId:', masterId);
   await seedCafeOperationsData(organisationId, masterId);
   await seedInventoryData({ organisationId, masterUserId: masterId });
