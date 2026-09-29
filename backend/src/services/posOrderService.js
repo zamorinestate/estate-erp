@@ -1280,19 +1280,19 @@ class PosOrderService {
           billId,
           invoiceNumber,
           jobType: 'RECEIPT',
-          status: 'PRINTED',
+          status: 'DISPATCHED',
           requestedBy: authContext.userId || 'CASHIER',
-          completedAt: new Date(),
           printBufferBase64: printResult.printBufferBase64,
+          htmlPreview: printResult.htmlPreview,
         });
         await pj.save();
-        billDoc.printStatus = 'PRINTED';
+        billDoc.printStatus = 'PRINT_DISPATCHED';
         billDoc.printJobs = billDoc.printJobs || [];
         billDoc.printJobs.push({
           printJobId,
           jobType: 'RECEIPT',
-          status: 'PRINTED',
-          completedAt: new Date(),
+          status: 'DISPATCHED',
+          dispatchedAt: new Date(),
         });
         await billDoc.save();
       } catch {}
@@ -1301,11 +1301,12 @@ class PosOrderService {
         success: true,
         action: 'SAVE_AND_PRINT',
         saleFinalized: true,
-        message: 'Order saved and receipt printed successfully.',
+        message: 'Order saved and receipt dispatched to the POS print client.',
         bill: savedBillData,
         data: savedBillData,
-        printed: true,
-        printStatus: 'PRINTED',
+        printed: false,
+        printDispatched: true,
+        printStatus: 'PRINT_DISPATCHED',
         printJobId,
         printBuffer: printResult.printBufferBase64,
         htmlPreview: printResult.htmlPreview,
@@ -1467,10 +1468,10 @@ class PosOrderService {
         billId: bill.billId,
         invoiceNumber: bill.invoiceNumber,
         jobType: 'RECEIPT',
-        status: 'PRINTED',
+        status: 'DISPATCHED',
         requestedBy: authContext.userId || 'STAFF',
-        completedAt: new Date(),
         printBufferBase64: printResult.printBufferBase64,
+        htmlPreview: printResult.htmlPreview,
       });
       await pj.save();
     } catch {}
@@ -1479,8 +1480,9 @@ class PosOrderService {
       success: true,
       action: 'PRINT',
       bill: billData,
-      printed: true,
-      printStatus: 'PRINTED',
+      printed: false,
+      printDispatched: true,
+      printStatus: 'PRINT_DISPATCHED',
       printJobId,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
@@ -1557,10 +1559,10 @@ class PosOrderService {
         billId: bill.billId,
         invoiceNumber: bill.invoiceNumber,
         jobType: 'REPRINT',
-        status: 'PRINTED',
+        status: 'DISPATCHED',
         requestedBy: authContext.userId || 'STAFF',
-        completedAt: new Date(),
         printBufferBase64: printResult.printBufferBase64,
+        htmlPreview: printResult.htmlPreview,
       });
       await pj.save();
     } catch {}
