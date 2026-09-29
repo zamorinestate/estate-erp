@@ -742,3 +742,49 @@ test('REC-04E Android hardware attestation can fail soft to enrolled signing ide
     /hardwareBackedSigningKeyVerified:\s*true/
   );
 });
+
+
+test('REC-04E hardware-attestation challenge issuance allows only one active challenge per pending enrollment code', async () => {
+  resetRepositories();
+  const repos = getRepositories();
+  const enrollmentCode = 'REC04E-CHALLENGE-RACE';
+  const tokenHash = sha256Hex(enrollmentCode);
+
+  await repos.enrollmentTokens.create({
+    tokenHash,
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    cafeDisplayName: 'Challenge Race Cafe',
+    intendedDisplayName: 'Challenge Race POS',
+    createdByEmployeeId: 'MU-PRIMARY-01',
+    status: 'PENDING',
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+
+  const attempts = await Promise.allSettled([
+    deviceService.issueHardwareAttestationChallenge({
+      enrollmentCodePlain: enrollmentCode,
+      platform: 'android',
+    }),
+    deviceService.issueHardwareAttestationChallenge({
+      enrollmentCodePlain: enrollmentCode,
+      platform: 'android',
+    }),
+  ]);
+
+  assert.equal(attempts.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(attempts.filter((r) => r.status === 'rejected').length, 1);
+
+  const rejected = attempts.find((r) => r.status === 'rejected');
+  assert.equal(
+    rejected.reason.code,
+    'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_IN_PROGRESS'
+  );
+
+  const token = await repos.enrollmentTokens.findByHash(tokenHash);
+  assert.equal(token.status, 'PENDING');
+  assert.ok(token.hardwareAttestationChallengeId);
+  assert.equal(token.hardwareAttestationChallengeConsumedAt, null);
+
+  resetRepositories();
+});

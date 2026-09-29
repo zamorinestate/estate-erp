@@ -34,6 +34,16 @@ function create() {
       async issueHardwareAttestationChallenge(id, patch) {
         const rec = enrollmentTokens.get(String(id));
         if (!rec || rec.status !== 'PENDING' || new Date() > new Date(rec.expiresAt)) return null;
+
+        const now = new Date();
+        const hasActiveChallenge =
+          Boolean(rec.hardwareAttestationChallengeId) &&
+          !rec.hardwareAttestationChallengeConsumedAt &&
+          rec.hardwareAttestationChallengeExpiresAt &&
+          new Date(rec.hardwareAttestationChallengeExpiresAt) > now;
+
+        if (hasActiveChallenge) return null;
+
         Object.assign(rec, patch);
         return rec;
       },

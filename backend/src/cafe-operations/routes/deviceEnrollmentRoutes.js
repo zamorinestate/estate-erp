@@ -36,6 +36,14 @@ router.post('/attestation/challenge', async (req, res, next) => {
         'Hardware key attestation is currently available only for Android enrollment.'
       );
     }
+    if (err.code === 'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_IN_PROGRESS') {
+      return fail(
+        res,
+        409,
+        err.code,
+        'A hardware-attestation challenge is already active for this enrollment code.'
+      );
+    }
     next(err);
   }
 });

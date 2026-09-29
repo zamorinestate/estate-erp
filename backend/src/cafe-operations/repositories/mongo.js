@@ -29,8 +29,20 @@ function create() {
       },
       async update(id, patch) { return toPlain(await models.DeviceEnrollmentToken.findByIdAndUpdate(id, patch, { new: true })); },
       async issueHardwareAttestationChallenge(id, patch) {
+        const now = new Date();
         return toPlain(await models.DeviceEnrollmentToken.findOneAndUpdate(
-          { _id: id, status: 'PENDING', expiresAt: { $gt: new Date() } },
+          {
+            _id: id,
+            status: 'PENDING',
+            expiresAt: { $gt: now },
+            $or: [
+              { hardwareAttestationChallengeId: null },
+              { hardwareAttestationChallengeId: { $exists: false } },
+              { hardwareAttestationChallengeConsumedAt: { $ne: null } },
+              { hardwareAttestationChallengeExpiresAt: { $lte: now } },
+              { hardwareAttestationChallengeExpiresAt: null },
+            ],
+          },
           { $set: patch },
           { new: true }
         ).select('+hardwareAttestationChallengeHash'));

@@ -139,6 +139,22 @@ async function issueHardwareAttestationChallenge({
   );
 
   if (!updated) {
+    const latest = await repos.enrollmentTokens.findByHash(
+      sha256Hex(enrollmentCodePlain)
+    );
+    const activeChallenge =
+      latest?.status === 'PENDING' &&
+      latest?.hardwareAttestationChallengeId &&
+      !latest?.hardwareAttestationChallengeConsumedAt &&
+      latest?.hardwareAttestationChallengeExpiresAt &&
+      new Date(latest.hardwareAttestationChallengeExpiresAt) > new Date();
+
+    if (activeChallenge) {
+      const err = new Error('ANDROID_HARDWARE_ATTESTATION_CHALLENGE_IN_PROGRESS');
+      err.code = 'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_IN_PROGRESS';
+      throw err;
+    }
+
     const err = new Error('ENROLLMENT_UNAVAILABLE');
     err.code = 'ENROLLMENT_UNAVAILABLE';
     throw err;
