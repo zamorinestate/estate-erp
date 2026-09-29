@@ -118,6 +118,36 @@ const reprintOrder = asyncHandler(async (request, response) => {
 });
 
 /**
+ * POST /api/v1/pos/print-jobs/:printJobId/ack
+ * REC-04C: Device-bound physical print acknowledgement.
+ */
+const acknowledgePrintJob = asyncHandler(async (request, response) => {
+  const { printJobId } = request.params;
+  const {
+    status,
+    failureCode = null,
+    failureReason = null,
+    drawerKickStatus = null,
+  } = request.body || {};
+
+  const result = await PosOrderService.acknowledgePrintJob(
+    printJobId,
+    request.auth,
+    {
+      status,
+      failureCode,
+      failureReason,
+      drawerKickStatus,
+    }
+  );
+
+  return response.status(200).json({
+    success: true,
+    data: result,
+  });
+});
+
+/**
  * GET /api/v1/pos/orders/active/:cafeId
  * Retrieves active/open bills/tickets for a café.
  */
@@ -518,6 +548,7 @@ module.exports = {
   previewOrder,
   printOrder,
   reprintOrder,
+  acknowledgePrintJob,
   getActiveOrders,
   getLastCommittedBill,
   getOrderStatusByIdempotency,
