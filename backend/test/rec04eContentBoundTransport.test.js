@@ -9,6 +9,7 @@ const { PosOrderService } = require('../src/services/posOrderService');
 const { PrintJob } = require('../src/models/PrintJob');
 const { Bill } = require('../src/models/Bill');
 const { DeviceRegistration } = require('../src/models/DeviceRegistration');
+const { OperatorSession } = require('../src/models/OperatorSession');
 const deviceService = require('../src/cafe-operations/services/deviceService');
 const { getRepositories, resetRepositories } = require('../src/cafe-operations/repositories');
 const {
@@ -849,4 +850,166 @@ test('REC-04E hardware trust requires exact hardware-enforced key authorizations
     }).reason,
     'ANDROID_ATTESTATION_VERIFIED_BOOT_REQUIRED'
   );
+});
+
+
+function rec04eTrustDriftFixture(overrides = {}) {
+  const job = {
+    printJobId: 'PJ-PRT-REC04E-TRUST-001',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    billId: 'BILL-REC04E-TRUST-001',
+    jobType: 'RECEIPT',
+    status: 'DISPATCHED',
+    dispatchedDeviceId: 'DV-ZC0001-POS-01',
+    ackChallenge: 'rec04e-trust-drift-challenge',
+    ackChallengeExpiresAt: new Date(Date.now() + 60_000),
+    attestationRequired: true,
+    attestationVersion: 'ZAMORIN_PRINT_ACK_V2',
+    attestationKeyThumbprint: 'a'.repeat(64),
+    attestationKeyProvider: 'ANDROID_KEYSTORE',
+    payloadSha256: 'b'.repeat(64),
+    payloadBytes: 16,
+    printerTarget: 'DEFAULT_THERMAL',
+    drawerKickRequested: false,
+    drawerKickStatus: 'NOT_REQUESTED',
+    async save() { return this; },
+    ...overrides,
+  };
+
+  const auth = {
+    userId: 'EMP-ZC-1001',
+    role: 'STAFF',
+    organisationId: 'ORG-ZAMORIN',
+    operatorSessionId: 'OPS-REC04E-TRUST-001',
+    assignedCafeIds: ['ZC-0001'],
+    primaryCafeId: 'ZC-0001',
+    deviceContext: {
+      deviceId: job.dispatchedDeviceId,
+      deviceClass: 'CAFE_OWNED',
+      boundCafeId: job.cafeId,
+      status: 'ACTIVE',
+      trustLevel: 'ENROLLED',
+    },
+  };
+
+  return { job, auth };
+}
+
+test('REC-04E acknowledgement fails closed when operator session ends after dispatch', async (t) => {
+  const { job, auth } = rec04eTrustDriftFixture();
+
+  t.mock.method(OperatorSession, 'findOne', () => ({
+    lean: async () => null,
+  }));
+  t.mock.method(PrintJob, 'findOne', async () => job);
+
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(job.printJobId, auth, {
+      status: 'PRINTED',
+      attestation: {},
+    }),
+    (err) => {
+      assert.equal(err.code, 'OPERATOR_SESSION_DEVICE_MISMATCH');
+      assert.equal(job.status, 'DISPATCHED');
+      return true;
+    }
+  );
+});
+
+test('REC-04E acknowledgement fails closed when device is revoked or reassigned after dispatch', async (t) => {
+  const { job, auth } = rec04eTrustDriftFixture();
+
+  t.mock.method(OperatorSession, 'findOne', () => ({
+    lean: async () => ({ status: 'ACTIVE' }),
+  }));
+  t.mock.method(PrintJob, 'findOne', async () => job);
+  t.mock.method(DeviceRegistration, 'findOne', () => ({
+    lean: async () => null,
+  }));
+
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(job.printJobId, auth, {
+      status: 'PRINTED',
+      attestation: {},
+    }),
+    (err) => {
+      assert.equal(err.code, 'DEVICE_ATTESTATION_KEY_UNAVAILABLE');
+      assert.equal(job.status, 'DISPATCHED');
+      return true;
+    }
+  );
+});
+
+test('REC-04E acknowledgement rejects provider drift after dispatch', async (t) => {
+  const { job, auth } = rec04eTrustDriftFixture();
+  const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const publicJwk = pair.publicKey.export({ format: 'jwk' });
+  const canonical = attestationService.canonicalPublicJwk(publicJwk);
+  const thumbprint = attestationService.publicKeyThumbprint(canonical);
+  job.attestationKeyThumbprint = thumbprint;
+
+  t.mock.method(OperatorSession, 'findOne', () => ({
+    lean: async () => ({ status: 'ACTIVE' }),
+  }));
+  t.mock.method(PrintJob, 'findOne', async () => job);
+  t.mock.method(DeviceRegistration, 'findOne', () => ({
+    lean: async () => ({
+      deviceId: job.dispatchedDeviceId,
+      organisationId: job.organisationId,
+      assignedCafeId: job.cafeId,
+      status: 'ACTIVE',
+      publicSigningKey: canonical,
+      signingKeyAlgorithm: 'ES256',
+      signingKeyThumbprint: thumbprint,
+      signingKeyProvider: 'WEB_CRYPTO',
+    }),
+  }));
+
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(job.printJobId, auth, {
+      status: 'PRINTED',
+      attestation: {},
+    }),
+    (err) => {
+      assert.equal(err.code, 'DEVICE_ATTESTATION_PROVIDER_UNTRUSTED');
+      assert.equal(job.status, 'DISPATCHED');
+      return true;
+    }
+  );
+});
+
+test('REC-04E acknowledgement rejects an expired first-use challenge without mutating terminal state', async (t) => {
+  const { job, auth } = rec04eTrustDriftFixture({
+    ackChallengeExpiresAt: new Date(Date.now() - 1_000),
+  });
+
+  t.mock.method(OperatorSession, 'findOne', () => ({
+    lean: async () => ({ status: 'ACTIVE' }),
+  }));
+  t.mock.method(PrintJob, 'findOne', async () => job);
+
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(job.printJobId, auth, {
+      status: 'PRINTED',
+      attestation: {},
+    }),
+    (err) => {
+      assert.equal(err.code, 'PRINT_ACK_CHALLENGE_EXPIRED');
+      assert.equal(job.status, 'DISPATCHED');
+      return true;
+    }
+  );
+});
+
+test('REC-04E finalization is transactional in production and idempotent Bill repair remains available for fallback environments', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+
+  assert.match(source, /executeTransactionWithRetry\(async \(session\) =>/);
+  assert.match(source, /PRINT_ACK_TRANSACTION_REQUIRED/);
+  assert.match(source, /job\.save\(session \? \{ session \} : undefined\)/);
+  assert.match(source, /DeviceRegistration\.updateOne\([\s\S]{0,1200}?session \? \{ session \} : undefined/);
+  assert.match(source, /const billNeedsRepair =/);
+  assert.match(source, /if \(!statusChanged && !billNeedsRepair\) return/);
+  assert.match(source, /PRINT_ACK_BILL_SYNC_FAILED/);
 });

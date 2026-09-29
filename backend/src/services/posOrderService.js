@@ -38,6 +38,7 @@ const {
 const { PosReconciliationService } = require('./posReconciliationService');
 const crypto = require('node:crypto');
 const { ApiError } = require('../utils/ApiError');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 const auditService = require('./auditService');
 const {
   PRINT_ATTESTATION_VERSION,
@@ -2082,37 +2083,79 @@ class PosOrderService {
       }
     }
 
-    if (statusChanged) {
-      await job.save();
-    }
+    // REC-04E: terminal print evidence, device verification metadata, and the
+    // Bill audit copy form one financial/audit state transition. In production,
+    // require MongoDB transaction support so a Bill write failure cannot leave a
+    // terminal PrintJob without its corresponding Bill lineage. The non-
+    // transactional test/dev fallback remains idempotently repairable on retry.
+    await executeTransactionWithRetry(async (session) => {
+      if (process.env.NODE_ENV === 'production' && !session) {
+        throw new ApiError(
+          503,
+          'PRINT_ACK_TRANSACTION_REQUIRED',
+          'Production print acknowledgement requires MongoDB transaction support.'
+        );
+      }
 
-    if (statusChanged && attestationProof) {
-      await DeviceRegistration.updateOne(
-        {
-          deviceId,
-          organisationId: orgId,
-          assignedCafeId: jobCafeId,
-          status: 'ACTIVE',
-        },
-        {
-          $set: {
-            signingKeyLastVerifiedAt: now,
-            'metadata.lastAttestationKeyThumbprint': attestationProof.keyThumbprint,
+      if (statusChanged) {
+        await job.save(session ? { session } : undefined);
+      }
+
+      if (statusChanged && attestationProof) {
+        await DeviceRegistration.updateOne(
+          {
+            deviceId,
+            organisationId: orgId,
+            assignedCafeId: jobCafeId,
+            status: 'ACTIVE',
           },
-        }
-      );
-    }
+          {
+            $set: {
+              signingKeyLastVerifiedAt: now,
+              'metadata.lastAttestationKeyThumbprint': attestationProof.keyThumbprint,
+            },
+          },
+          session ? { session } : undefined
+        );
+      }
 
-    const bill = await Bill.findOne({
-      organisationId: orgId,
-      cafeId: jobCafeId,
-      billId: normalizeId(job.billId),
-    });
-    if (statusChanged && bill) {
+      const billQuery = Bill.findOne({
+        organisationId: orgId,
+        cafeId: jobCafeId,
+        billId: normalizeId(job.billId),
+      });
+      const bill =
+        session && billQuery && typeof billQuery.session === 'function'
+          ? await billQuery.session(session)
+          : await billQuery;
+
+      if (!bill) return;
+
       bill.printJobs = Array.isArray(bill.printJobs) ? bill.printJobs : [];
       let billPrintJob = bill.printJobs.find((entry) =>
         normalizeId(entry.printJobId) === normPrintJobId
       );
+
+      const expectedReceiptPrintStatus =
+        ackStatus === 'PRINTED'
+          ? 'PRINTED'
+          : ackStatus === 'CANCELLED'
+            ? 'PRINT_CANCELLED'
+            : 'PRINT_FAILED';
+
+      const billNeedsRepair =
+        !billPrintJob ||
+        normalizeId(billPrintJob.status) !== ackStatus ||
+        normalizeId(billPrintJob.acknowledgedByDeviceId) !== deviceId ||
+        normalizeId(billPrintJob.evidenceLevel || 'NONE') !== normalizeId(job.evidenceLevel || 'NONE') ||
+        String(billPrintJob.platformJobId || '').trim() !== String(job.platformJobId || '').trim() ||
+        String(billPrintJob.ackSignatureHash || '').trim() !== String(job.ackSignatureHash || '').trim() ||
+        (
+          normalizeId(job.jobType) === 'RECEIPT' &&
+          normalizeId(bill.printStatus) !== expectedReceiptPrintStatus
+        );
+
+      if (!statusChanged && !billNeedsRepair) return;
 
       if (!billPrintJob) {
         bill.printJobs.push({
@@ -2122,7 +2165,7 @@ class PosOrderService {
           dispatchedAt: job.requestedAt || job.createdAt || now,
           dispatchedDeviceId,
           acknowledgedByDeviceId: deviceId,
-          acknowledgedAt: now,
+          acknowledgedAt: job.acknowledgedAt || now,
           attestationRequired: Boolean(job.attestationRequired),
           attestationVersion: job.attestationVersion || null,
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
@@ -2140,7 +2183,7 @@ class PosOrderService {
           contentBindingVerified: job.contentBindingVerified === true,
           actualPrinterId: job.actualPrinterId || null,
           printerIdentityVerified: job.printerIdentityVerified === true,
-          completedAt: now,
+          completedAt: job.completedAt || now,
           failureCode: job.failureCode || null,
           drawerKickRequested: Boolean(job.drawerKickRequested),
           drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
@@ -2148,7 +2191,7 @@ class PosOrderService {
       } else {
         billPrintJob.status = ackStatus;
         billPrintJob.acknowledgedByDeviceId = deviceId;
-        billPrintJob.acknowledgedAt = now;
+        billPrintJob.acknowledgedAt = job.acknowledgedAt || now;
         billPrintJob.attestationRequired = Boolean(job.attestationRequired);
         billPrintJob.attestationVersion = job.attestationVersion || null;
         billPrintJob.attestationKeyThumbprint = job.attestationKeyThumbprint || null;
@@ -2166,21 +2209,27 @@ class PosOrderService {
         billPrintJob.contentBindingVerified = job.contentBindingVerified === true;
         billPrintJob.actualPrinterId = job.actualPrinterId || null;
         billPrintJob.printerIdentityVerified = job.printerIdentityVerified === true;
-        billPrintJob.completedAt = now;
+        billPrintJob.completedAt = job.completedAt || now;
         billPrintJob.failureCode = job.failureCode || null;
         billPrintJob.drawerKickStatus = job.drawerKickStatus || 'NOT_REQUESTED';
       }
 
       if (normalizeId(job.jobType) === 'RECEIPT') {
-        bill.printStatus =
-          ackStatus === 'PRINTED'
-            ? 'PRINTED'
-            : ackStatus === 'CANCELLED'
-              ? 'PRINT_CANCELLED'
-              : 'PRINT_FAILED';
+        bill.printStatus = expectedReceiptPrintStatus;
       }
-      await bill.save();
-    }
+
+      try {
+        await bill.save(session ? { session } : undefined);
+      } catch (error) {
+        const syncError = new ApiError(
+          503,
+          'PRINT_ACK_BILL_SYNC_FAILED',
+          'Print acknowledgement was not fully synchronized to the Bill audit record. Retry the same acknowledgement safely.'
+        );
+        syncError.originalError = error;
+        throw syncError;
+      }
+    });
 
     const spoolerCompletionVerified =
       normalizeId(job.evidenceLevel || 'NONE') === 'SPOOLER_COMPLETION';
