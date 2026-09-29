@@ -6,6 +6,7 @@ import { NativeCapabilities } from './nativeCapabilities.js';
 const ATTESTATION_VERSION = 'ZAMORIN_DEVICE_ACK_V1';
 const PRINT_ATTESTATION_VERSION = 'ZAMORIN_PRINT_ACK_V2';
 const ATTESTATION_ALGORITHM = 'ES256';
+const PRINT_ACK_MONITOR_WINDOW_MS = 14 * 60 * 1000;
 
 function normalizeToken(value, fieldName) {
   const token = String(value || '').trim().toUpperCase();
@@ -230,7 +231,10 @@ function delay(ms) {
 export async function monitorAndroidPrintAndAcknowledge(
   dispatch,
   nativePrintResponse,
-  { pollIntervalMs = 1000, maxPolls = 120 } = {}
+  {
+    pollIntervalMs = 2000,
+    maxMonitorMs = PRINT_ACK_MONITOR_WINDOW_MS,
+  } = {}
 ) {
   const capabilities = NativeCapabilities.getCapabilities();
   if (!capabilities.isNative || String(capabilities.platform || '').toUpperCase() !== 'ANDROID') {
@@ -243,8 +247,11 @@ export async function monitorAndroidPrintAndAcknowledge(
     return { monitored: false, reason: 'PLATFORM_PRINT_JOB_ID_MISSING' };
   }
 
-  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+  const monitorStartedAt = Date.now();
+  let attempt = 0;
+  while (Date.now() - monitorStartedAt < maxMonitorMs) {
     if (attempt > 0) await delay(pollIntervalMs);
+    attempt += 1;
 
     const attestationResponse = await NativeCapabilities.sendNativeMessage(
       'ATTEST_PRINT_JOB_RESULT',
@@ -339,4 +346,5 @@ export {
   ATTESTATION_VERSION,
   PRINT_ATTESTATION_VERSION,
   ATTESTATION_ALGORITHM,
+  PRINT_ACK_MONITOR_WINDOW_MS,
 };

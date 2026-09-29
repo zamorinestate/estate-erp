@@ -172,3 +172,15 @@ test('REC-04E persists explicit V2 attestation lineage for migration safety', ()
     'Migration logic must prefer explicit V2 lineage while still recognizing pre-marker V2 jobs by digest'
   );
 });
+
+
+test('REC-04E Android monitor window remains inside the server challenge TTL without premature two-minute abandonment', () => {
+  const frontend = fs.readFileSync(frontendPath, 'utf8');
+
+  assert.match(frontend, /PRINT_ACK_MONITOR_WINDOW_MS = 14 \* 60 \* 1000/);
+  assert.match(frontend, /pollIntervalMs = 2000/);
+  assert.match(frontend, /maxMonitorMs = PRINT_ACK_MONITOR_WINDOW_MS/);
+  assert.match(frontend, /while \(Date\.now\(\) - monitorStartedAt < maxMonitorMs\)/);
+  assert.doesNotMatch(frontend, /maxPolls = 120/);
+  assert.ok(14 * 60 * 1000 < attestationService.PRINT_ACK_CHALLENGE_TTL_MS);
+});
