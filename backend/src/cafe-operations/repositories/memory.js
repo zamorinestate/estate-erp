@@ -31,6 +31,12 @@ function create() {
       async create(data) { const id = nextId('enr'); const rec = { id, ...data }; enrollmentTokens.set(id, rec); return rec; },
       async findByHash(hash) { return [...enrollmentTokens.values()].find(t => t.tokenHash === hash) || null; },
       async update(id, patch) { const rec = enrollmentTokens.get(String(id)); if (!rec) return null; Object.assign(rec, patch); return rec; },
+      async issueHardwareAttestationChallenge(id, patch) {
+        const rec = enrollmentTokens.get(String(id));
+        if (!rec || rec.status !== 'PENDING' || new Date() > new Date(rec.expiresAt)) return null;
+        Object.assign(rec, patch);
+        return rec;
+      },
       async consumeIfPending(id, patch) {
         const rec = enrollmentTokens.get(String(id));
         if (!rec || rec.status !== 'PENDING' || new Date() > new Date(rec.expiresAt)) return null;

@@ -23,8 +23,18 @@ function create() {
     },
     enrollmentTokens: {
       async create(data) { return toPlain(await models.DeviceEnrollmentToken.create(data)); },
-      async findByHash(hash) { return toPlain(await models.DeviceEnrollmentToken.findOne({ tokenHash: hash }).select('+tokenHash')); },
+      async findByHash(hash) {
+        return toPlain(await models.DeviceEnrollmentToken.findOne({ tokenHash: hash })
+          .select('+tokenHash +hardwareAttestationChallengeHash'));
+      },
       async update(id, patch) { return toPlain(await models.DeviceEnrollmentToken.findByIdAndUpdate(id, patch, { new: true })); },
+      async issueHardwareAttestationChallenge(id, patch) {
+        return toPlain(await models.DeviceEnrollmentToken.findOneAndUpdate(
+          { _id: id, status: 'PENDING', expiresAt: { $gt: new Date() } },
+          { $set: patch },
+          { new: true }
+        ).select('+hardwareAttestationChallengeHash'));
+      },
       async consumeIfPending(id, patch) {
         return toPlain(await models.DeviceEnrollmentToken.findOneAndUpdate(
           { _id: id, status: 'PENDING', expiresAt: { $gt: new Date() } },
