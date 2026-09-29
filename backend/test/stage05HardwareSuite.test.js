@@ -33,6 +33,14 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     role: 'STAFF',
     organisationId: 'ORG-ZAMORIN',
     primaryCafeId: 'ZC-0001',
+    assignedCafeIds: ['ZC-0001'],
+    deviceContext: {
+      deviceId: 'DV-ZC0001-POS-01',
+      deviceClass: 'CAFE_OWNED',
+      boundCafeId: 'ZC-0001',
+      status: 'ACTIVE',
+      trustLevel: 'ENROLLED',
+    },
   };
 
   t.before(async () => {
@@ -318,16 +326,66 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     assert.equal(kickResult.success, true);
     assert.equal(kickResult.terminalId, terminal.terminalId);
     assert.equal(kickResult.pin, 2);
+    assert.equal(kickResult.status, 'PREPARED');
+    assert.equal(kickResult.dispatched, false);
+    assert.equal(kickResult.acknowledged, false);
     assert.ok(Buffer.isBuffer(kickResult.kickBuffer));
 
     // Verify immutable audit log recorded in terminal
     const refreshedTerminal = await HardwareTerminal.findOne({ terminalId: terminal.terminalId });
     assert.ok(refreshedTerminal.auditEvents.length >= 1);
     const audit = refreshedTerminal.auditEvents[refreshedTerminal.auditEvents.length - 1];
-    assert.equal(audit.event, 'DRAWER_KICK_TRIGGERED');
+    assert.equal(audit.event, 'DRAWER_KICK_PREPARED');
     assert.equal(audit.actorUserId, authStaff.userId);
     assert.equal(audit.transactionId, 'TXN-2026-999');
     assert.equal(audit.reason, 'Customer cash sale change tender');
+
+    // Cross-café drawer access must fail even inside the same organisation.
+    const foreignTerminal = await hardwareBridgeService.registerOrUpdateTerminal(
+      {
+        terminalId: 'TERM-ZC0002-CASHIER',
+        cafeId: 'ZC-0002',
+        terminalName: 'Foreign Cafe Cashier',
+        drawerConfig: { enabled: true, pin: 2 },
+      },
+      authMaster
+    );
+
+    await assert.rejects(
+      () => hardwareBridgeService.issueDrawerKick(
+        foreignTerminal.terminalId,
+        authStaff,
+        { reason: 'Cross-cafe attempt' }
+      ),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CROSS_CAFE_RESOURCE_DENIED');
+        return true;
+      }
+    );
+
+    // Personal/unverified devices may not prepare physical drawer commands.
+    const personalDeviceStaff = {
+      ...authStaff,
+      deviceContext: {
+        deviceId: 'PERSONAL-01',
+        deviceClass: 'PERSONAL',
+        boundCafeId: null,
+        status: 'UNREGISTERED',
+      },
+    };
+    await assert.rejects(
+      () => hardwareBridgeService.issueDrawerKick(
+        terminal.terminalId,
+        personalDeviceStaff,
+        { reason: 'Untrusted-device attempt' }
+      ),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CAFE_OWNED_DEVICE_REQUIRED');
+        return true;
+      }
+    );
 
     // Test rejection when drawer is disabled
     const disabledTerminal = await hardwareBridgeService.registerOrUpdateTerminal(
