@@ -882,33 +882,27 @@ async function renderPage() {
     case "cafe-operations-login":
     case "cafe-operator-signin":
       // Stop inactivity timer while sign-in UI is visible.
-      // REC-04D: Existing native terminals bind their persistent signing key
-      // before an operator can enter Café Operations.
       stopCafeOpsInactivityTimer();
-      try {
-        await ensureNativeDeviceAttestationBinding();
-      } catch (attestationErr) {
-        console.error("[Device Attestation] Native terminal trust upgrade failed:", attestationErr);
-        const code = attestationErr?.code || "";
-        if (code === "DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT") {
-          showToast("This terminal signing key changed. Re-enrollment is required before Café Operations can continue.", "error");
-          navigate("cafe-device-enroll");
-          break;
-        }
-        content.innerHTML = renderModuleErrorState({
-          title: "Terminal security verification failed",
-          message: "This native terminal could not verify its device signing key. Café Operations remains locked until device security is restored.",
-          retryLabel: "Retry",
-          retryActionId: "btn-retry-device-attestation",
-        });
-        content.querySelector("#btn-retry-device-attestation")?.addEventListener("click", () => {
-          navigate("cafe-operator-signin");
-        });
-        break;
-      }
       content.innerHTML = renderCafeOperatorSignIn();
       wireCafeOperatorSignIn(content, {
-        onSignIn: () => {
+        onSignIn: async () => {
+          // REC-04D: Existing native terminals bind their persistent signing key
+          // only after fresh 4-part Café Operations authentication succeeds, but
+          // before the operator is allowed into the dashboard.
+          try {
+            await ensureNativeDeviceAttestationBinding();
+          } catch (attestationErr) {
+            console.error("[Device Attestation] Native terminal trust upgrade failed:", attestationErr);
+            const code = attestationErr?.code || "";
+            if (code === "DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT") {
+              showToast("This terminal signing key changed. Re-enrollment is required before Café Operations can continue.", "error");
+              navigate("cafe-device-enroll");
+              return;
+            }
+            throw new Error(
+              "Terminal security verification failed. Café Operations remains locked until device signing trust is restored."
+            );
+          }
           navigate("dashboard");
         },
       });
