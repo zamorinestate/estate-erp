@@ -526,3 +526,21 @@ test('REC-04E DeviceRegistration validation enforces hardware-backed trust evide
   });
   await strongBox.validate();
 });
+
+
+test('REC-04E Cafe Operations native enrollment carries the signing identity in the one-time enrollment ceremony', () => {
+  const api = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'api', 'cafeOpsApi.js'), 'utf8');
+
+  assert.match(api, /function isNativeEnrollmentPlatform\(platform\)/);
+  assert.match(api, /GET_DEVICE_ATTESTATION_KEY/);
+  assert.match(api, /function validateNativeSigningIdentity\(identity, platform\)/);
+  assert.match(api, /ANDROID_KEYSTORE/);
+  assert.match(api, /WINDOWS_CNG/);
+  assert.match(api, /APPLE_SECURE_ENCLAVE/);
+  assert.match(api, /APPLE_KEYCHAIN/);
+  assert.match(api, /publicSigningKey/);
+  assert.match(api, /signingKeyAlgorithm/);
+  assert.match(api, /signingKeyProvider/);
+  assert.match(api, /enrollDevice: async \(input\)/);
+  assert.match(api, /body: await prepareEnrollmentInput\(input\)/);
+});

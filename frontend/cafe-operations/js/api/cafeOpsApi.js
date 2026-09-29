@@ -36,6 +36,144 @@
   function setSessionToken(token) { try { sessionStorage.setItem(SESSION_TOKEN_KEY, token); } catch (_) {} }
   function clearSessionToken() { try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch (_) {} }
 
+  function isNativeEnrollmentPlatform(platform) {
+    return ['android', 'ios', 'macos', 'windows'].includes(
+      String(platform || '').trim().toLowerCase()
+    );
+  }
+
+  function validateNativeSigningIdentity(identity, platform) {
+    const result = identity?.result || identity || {};
+    const jwk = typeof result.publicKeyJwk === 'string'
+      ? JSON.parse(result.publicKeyJwk)
+      : result.publicKeyJwk;
+
+    if (
+      !jwk ||
+      jwk.kty !== 'EC' ||
+      jwk.crv !== 'P-256' ||
+      typeof jwk.x !== 'string' ||
+      typeof jwk.y !== 'string' ||
+      jwk.d
+    ) {
+      const err = new Error('Native device returned an invalid public signing key.');
+      err.code = 'INVALID_DEVICE_SIGNING_KEY';
+      throw err;
+    }
+
+    const algorithm = String(result.algorithm || '').trim().toUpperCase();
+    const provider = String(result.provider || '').trim().toUpperCase();
+    const expectedProviders = {
+      android: new Set(['ANDROID_KEYSTORE']),
+      windows: new Set(['WINDOWS_CNG']),
+      ios: new Set(['APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN']),
+      macos: new Set(['APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN']),
+    };
+    const normalizedPlatform = String(platform || '').trim().toLowerCase();
+
+    if (algorithm !== 'ES256') {
+      const err = new Error('Native device returned an unsupported signing algorithm.');
+      err.code = 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM';
+      throw err;
+    }
+
+    if (!expectedProviders[normalizedPlatform]?.has(provider)) {
+      const err = new Error('Native signing provider does not match the selected platform.');
+      err.code = 'DEVICE_SIGNING_PROVENANCE_MISMATCH';
+      throw err;
+    }
+
+    return {
+      publicSigningKey: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y },
+      signingKeyAlgorithm: algorithm,
+      signingKeyProvider: provider,
+    };
+  }
+
+  async function sendNativeEnrollmentMessage(action, payload = {}) {
+    const requestId = `cafeops_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const message = { requestId, action, payload };
+
+    const awaitWindowReply = (dispatch) => new Promise((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        global.removeEventListener('message', handler);
+        const err = new Error('Native signing identity request timed out.');
+        err.code = 'NATIVE_DEVICE_ATTESTATION_TIMEOUT';
+        reject(err);
+      }, 15000);
+
+      const handler = (event) => {
+        try {
+          const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (!data || data.requestId !== requestId || settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          global.removeEventListener('message', handler);
+          if (data.success === false) {
+            const err = new Error(data.errorMessage || 'Native signing identity is unavailable.');
+            err.code = data.errorCode || 'NATIVE_DEVICE_ATTESTATION_UNAVAILABLE';
+            reject(err);
+            return;
+          }
+          resolve(data);
+        } catch (_) {}
+      };
+
+      global.addEventListener('message', handler);
+      try {
+        dispatch();
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          global.removeEventListener('message', handler);
+          reject(err);
+        }
+      }
+    });
+
+    if (global.chrome?.webview?.postMessage) {
+      return awaitWindowReply(() => global.chrome.webview.postMessage(JSON.stringify(message)));
+    }
+
+    if (global.webkit?.messageHandlers?.ZamorinNativeBridge?.postMessage) {
+      return awaitWindowReply(() => global.webkit.messageHandlers.ZamorinNativeBridge.postMessage(message));
+    }
+
+    if (global.ZamorinNativeBridge?.postMessage) {
+      return awaitWindowReply(() => global.ZamorinNativeBridge.postMessage(JSON.stringify(message)));
+    }
+
+    const err = new Error('Native bridge is unavailable for device enrollment.');
+    err.code = 'NATIVE_DEVICE_ATTESTATION_UNAVAILABLE';
+    throw err;
+  }
+
+  async function prepareEnrollmentInput(input = {}) {
+    const prepared = { ...input };
+    if (!isNativeEnrollmentPlatform(prepared.platform)) return prepared;
+
+    if (
+      prepared.publicSigningKey &&
+      prepared.signingKeyAlgorithm &&
+      prepared.signingKeyProvider
+    ) {
+      return prepared;
+    }
+
+    const nativeIdentity = await sendNativeEnrollmentMessage(
+      'GET_DEVICE_ATTESTATION_KEY',
+      {}
+    );
+    return {
+      ...prepared,
+      ...validateNativeSigningIdentity(nativeIdentity, prepared.platform),
+    };
+  }
+
   async function apiRequest(path, { method, body, auth } = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (auth !== 'none') {
@@ -68,7 +206,10 @@
 
   const CafeOpsApi = {
     // ---- Device ------------------------------------------------------
-    enrollDevice: (input) => apiRequest('/devices/enroll', { body: input, auth: 'none' }),
+    enrollDevice: async (input) => apiRequest('/devices/enroll', {
+      body: await prepareEnrollmentInput(input),
+      auth: 'none',
+    }),
     deviceStatus: () => apiRequest('/devices/status', { method: 'GET' }),
     devicePolicy: () => apiRequest('/devices/policy', { method: 'GET' }),
 
