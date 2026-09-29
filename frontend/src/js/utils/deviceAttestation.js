@@ -1,6 +1,6 @@
 'use strict';
 
-import { apiPost } from '../apiClient.js';
+import { apiPost, getCafeOpsDeviceToken } from '../apiClient.js';
 import { NativeCapabilities } from './nativeCapabilities.js';
 
 const ATTESTATION_VERSION = 'ZAMORIN_DEVICE_ACK_V1';
@@ -90,6 +90,36 @@ export async function getNativeDeviceAttestationIdentity({ requiredForNative = t
       errorCode: err.code || 'DEVICE_ATTESTATION_UNAVAILABLE',
     };
   }
+}
+
+export async function ensureNativeDeviceAttestationBinding() {
+  const capabilities = NativeCapabilities.getCapabilities();
+  const deviceToken = getCafeOpsDeviceToken();
+
+  if (!capabilities.isNative || !deviceToken) {
+    return {
+      attempted: false,
+      capable: false,
+      reason: !capabilities.isNative ? 'WEB_RUNTIME' : 'DEVICE_NOT_ENROLLED',
+    };
+  }
+
+  const identity = await getNativeDeviceAttestationIdentity({
+    requiredForNative: true,
+  });
+
+  const response = await apiPost('/cafe-ops/devices/attestation/key', {
+    publicSigningKey: identity.publicKeyJwk,
+    signingKeyAlgorithm: identity.algorithm,
+    signingKeyProvider: identity.provider,
+  });
+
+  return {
+    attempted: true,
+    capable: true,
+    identity,
+    binding: response?.data || response,
+  };
 }
 
 export async function buildPrintAckPayload(attestationContext, acknowledgement = {}) {
