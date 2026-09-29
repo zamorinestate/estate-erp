@@ -1355,6 +1355,7 @@ class PosOrderService {
         allowDrawerKick: true,
       });
       const dispatchedDeviceId = resolveDispatchDeviceId(authContext, cafeId);
+      const attestationBinding = await resolveAttestationBinding(authContext, cafeId);
       const drawerKickRequested = printResult.drawerKickIncluded === true;
 
       let printTrackingPersisted = false;
@@ -1372,6 +1373,10 @@ class PosOrderService {
           status: 'DISPATCHED',
           requestedBy: authContext.userId || 'CASHIER',
           dispatchedDeviceId,
+          ackChallenge: attestationBinding.challenge,
+          ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
+          attestationRequired: attestationBinding.required,
+          attestationKeyThumbprint: attestationBinding.keyThumbprint,
           drawerKickRequested,
           drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
           printBufferBase64: printResult.printBufferBase64,
@@ -1393,6 +1398,8 @@ class PosOrderService {
           status: 'DISPATCHED',
           dispatchedAt: new Date(),
           dispatchedDeviceId,
+          attestationRequired: attestationBinding.required,
+          attestationKeyThumbprint: attestationBinding.keyThumbprint,
           drawerKickRequested,
           drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
         });
@@ -1420,6 +1427,10 @@ class PosOrderService {
         printTrackingWarnings,
         dispatchedDeviceId,
         deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+        cryptographicAttestationRequired: attestationBinding.required,
+        attestationAlgorithm: attestationBinding.algorithm,
+        attestationKeyThumbprint: attestationBinding.keyThumbprint,
+        ackChallenge: attestationBinding.challenge,
         drawerKickRequested,
         drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
         printBuffer: printResult.printBufferBase64,
@@ -1823,6 +1834,7 @@ class PosOrderService {
       allowDrawerKick: false,
     });
     const dispatchedDeviceId = resolveDispatchDeviceId(authContext, bill.cafeId);
+    const attestationBinding = await resolveAttestationBinding(authContext, bill.cafeId);
 
     const printJobId = createPrintJobId('RECEIPT');
     let printTrackingPersisted = false;
@@ -1838,6 +1850,10 @@ class PosOrderService {
         status: 'DISPATCHED',
         requestedBy: authContext.userId || 'STAFF',
         dispatchedDeviceId,
+        ackChallenge: attestationBinding.challenge,
+        ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
+        attestationRequired: attestationBinding.required,
+        attestationKeyThumbprint: attestationBinding.keyThumbprint,
         drawerKickRequested: false,
         drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
@@ -1862,6 +1878,10 @@ class PosOrderService {
       printTrackingWarning,
       dispatchedDeviceId,
       deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+      cryptographicAttestationRequired: attestationBinding.required,
+      attestationAlgorithm: attestationBinding.algorithm,
+      attestationKeyThumbprint: attestationBinding.keyThumbprint,
+      ackChallenge: attestationBinding.challenge,
       drawerKickRequested: false,
       drawerKickStatus: 'NOT_REQUESTED',
       printBuffer: printResult.printBufferBase64,
@@ -1931,6 +1951,7 @@ class PosOrderService {
       allowDrawerKick: false,
     });
     const dispatchedDeviceId = resolveDispatchDeviceId(authContext, bill.cafeId);
+    const attestationBinding = await resolveAttestationBinding(authContext, bill.cafeId);
 
     const printJobId = createPrintJobId('REPRINT');
     let printTrackingPersisted = false;
@@ -1946,6 +1967,10 @@ class PosOrderService {
         status: 'DISPATCHED',
         requestedBy: authContext.userId || 'STAFF',
         dispatchedDeviceId,
+        ackChallenge: attestationBinding.challenge,
+        ackChallengeIssuedAt: attestationBinding.challenge ? new Date() : null,
+        attestationRequired: attestationBinding.required,
+        attestationKeyThumbprint: attestationBinding.keyThumbprint,
         drawerKickRequested: false,
         drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
@@ -1973,6 +1998,10 @@ class PosOrderService {
       printTrackingWarning,
       dispatchedDeviceId,
       deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+      cryptographicAttestationRequired: attestationBinding.required,
+      attestationAlgorithm: attestationBinding.algorithm,
+      attestationKeyThumbprint: attestationBinding.keyThumbprint,
+      ackChallenge: attestationBinding.challenge,
       drawerKickRequested: false,
       drawerKickStatus: 'NOT_REQUESTED',
       printBuffer: printResult.printBufferBase64,
