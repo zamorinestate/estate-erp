@@ -90,6 +90,31 @@ const printJobSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    ackChallenge: {
+      type: String,
+      default: null,
+    },
+    ackChallengeIssuedAt: {
+      type: Date,
+      default: null,
+    },
+    attestationRequired: {
+      type: Boolean,
+      default: false,
+    },
+    attestationKeyThumbprint: {
+      type: String,
+      default: null,
+    },
+    attestationVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+    ackSignatureHash: {
+      type: String,
+      default: null,
+    },
     drawerKickRequested: {
       type: Boolean,
       default: false,
