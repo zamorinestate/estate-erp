@@ -1005,30 +1005,33 @@ const getStaffToday = asyncHandler(async (request, response) => {
   }
 
   const defaultShift = resolvedShift ? {
-    shiftId: resolvedShift.shiftId || 'SH-MRN-01',
-    shiftName: resolvedShift.shiftName || 'Morning Roastery Shift',
-    scheduledStartAt: resolvedShift.startTime ? buildShiftDateTime(businessDate, resolvedShift.startTime).toISOString() : `${businessDate}T09:00:00.000Z`,
-    scheduledEndAt: resolvedShift.endTime ? buildShiftDateTime(businessDate, resolvedShift.endTime).toISOString() : `${businessDate}T17:30:00.000Z`,
-    assignedCafeName: assignedCafeName || 'Assigned Café',
-    unpaidBreakMinutes: 30,
-  } : {
-    shiftId: 'SH-MRN-01',
-    shiftName: 'Morning Roastery Shift',
-    scheduledStartAt: `${businessDate}T09:00:00.000Z`,
-    scheduledEndAt: `${businessDate}T17:30:00.000Z`,
-    assignedCafeName: assignedCafeName || 'Assigned Café',
-    unpaidBreakMinutes: 30,
-  };
+    shiftId: resolvedShift.shiftId || null,
+    shiftName: resolvedShift.shiftName || resolvedShift.name || null,
+    scheduledStartAt: resolvedShift.startTime
+      ? buildShiftDateTime(businessDate, resolvedShift.startTime).toISOString()
+      : null,
+    scheduledEndAt: resolvedShift.endTime
+      ? buildShiftDateTime(businessDate, resolvedShift.endTime).toISOString()
+      : null,
+    assignedCafeName: assignedCafeName || null,
+    unpaidBreakMinutes: Number.isFinite(Number(resolvedShift.unpaidBreakMinutes))
+      ? Number(resolvedShift.unpaidBreakMinutes)
+      : null,
+  } : null;
 
   return response.status(200).json({
     success: true,
     data: {
       attendance: attendance || null,
-      shift: attendance?.scheduledStartAt ? {
-        shiftId: attendance.shiftId,
-        shiftName: attendance.shiftName,
-        scheduledStartAt: attendance.scheduledStartAt,
-        scheduledEndAt: attendance.scheduledEndAt,
+      shift: attendance?.scheduledStartAt || attendance?.scheduledEndAt || attendance?.shiftId || attendance?.shiftName ? {
+        shiftId: attendance.shiftId || null,
+        shiftName: attendance.shiftName || null,
+        scheduledStartAt: attendance.scheduledStartAt || null,
+        scheduledEndAt: attendance.scheduledEndAt || null,
+        assignedCafeName: assignedCafeName || null,
+        unpaidBreakMinutes: Number.isFinite(Number(attendance.unpaidBreakMinutes))
+          ? Number(attendance.unpaidBreakMinutes)
+          : null,
       } : defaultShift,
       canCheckIn,
       canCheckOut,
