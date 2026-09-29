@@ -44,6 +44,8 @@ test('P2 forensic evidence integrity: smoke/static checks cannot masquerade as p
 
 test('P2 forensic credential integrity: executable scripts cannot bypass hardcoded-password scanning', () => {
   const scanner = read('scripts/scan_repository_secrets.mjs');
+  assert.match(scanner, /Hardcoded Browser Password Input/);
+  assert.match(scanner, /Hardcoded Login Helper Password/);
   assert.doesNotMatch(scanner, /filePath\.includes\(['"]scripts['"]\)/, 'scripts directory must not be blanket-exempt from password scanning');
 
   for (const rel of [
