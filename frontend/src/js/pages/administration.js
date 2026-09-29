@@ -1603,7 +1603,7 @@ async function openCafeEditModal(root, cafeId) {
             </div>
             <div class="form-group">
               <label class="form-label" style="font-size:12px;font-weight:700;">City</label>
-              <input type="text" id="edit-cafe-city" class="form-control" value="${escHtml(cafe.city || '')}" />
+              <input type="text" id="edit-cafe-city" class="form-control" value="${escHtml(cafe.address?.city || cafe.city || '')}" />
             </div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
@@ -1616,9 +1616,36 @@ async function openCafeEditModal(root, cafeId) {
               <input type="text" id="edit-cafe-phone" class="form-control" value="${escHtml(cafe.phone || '')}" />
             </div>
           </div>
-          <div class="form-group" style="margin-bottom:18px;">
+          <div class="form-group" style="margin-bottom:14px;">
             <label class="form-label" style="font-size:12px;font-weight:700;">Address</label>
-            <input type="text" id="edit-cafe-address" class="form-control" value="${escHtml(cafe.address || '')}" />
+            <input type="text" id="edit-cafe-address" class="form-control" value="${escHtml(cafe.address?.line1 || cafe.address?.street || cafe.addressLine1 || '')}" />
+          </div>
+
+          <div class="card" style="padding:14px;margin-bottom:18px;background:var(--surface-sunken);border:1px solid var(--line);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+              <div>
+                <div style="font-size:12px;font-weight:800;color:var(--ink);">Attendance Geofence</div>
+                <div style="font-size:11px;color:var(--muted);">Required for QR → GPS → selfie attendance.</div>
+              </div>
+              <button class="btn btn-xs btn-secondary" id="edit-cafe-use-location" type="button">📍 Use Current Location</button>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+              <div class="form-group">
+                <label class="form-label" style="font-size:11.5px;font-weight:700;">Latitude</label>
+                <input type="number" step="0.000001" min="-90" max="90" id="edit-cafe-latitude" class="form-control" value="${cafe.address?.latitude ?? ''}" />
+              </div>
+              <div class="form-group">
+                <label class="form-label" style="font-size:11.5px;font-weight:700;">Longitude</label>
+                <input type="number" step="0.000001" min="-180" max="180" id="edit-cafe-longitude" class="form-control" value="${cafe.address?.longitude ?? ''}" />
+              </div>
+              <div class="form-group">
+                <label class="form-label" style="font-size:11.5px;font-weight:700;">Radius (m)</label>
+                <input type="number" min="10" max="1000" step="1" id="edit-cafe-geofence-radius" class="form-control" value="${cafe.address?.geofenceRadiusMetres ?? 100}" />
+              </div>
+            </div>
+            <div id="edit-cafe-location-status" style="font-size:11px;color:var(--muted);margin-top:8px;">
+              ${Number.isFinite(cafe.address?.latitude) && Number.isFinite(cafe.address?.longitude) ? 'Geofence configured.' : 'Geofence not configured — attendance GPS will fail closed.'}
+            </div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--line);padding-top:14px;">
             <button class="btn btn-sm btn-ghost" data-close-modal type="button">Cancel</button>
@@ -1629,6 +1656,34 @@ async function openCafeEditModal(root, cafeId) {
     </div>
   `;
   mount.querySelectorAll("[data-close-modal]").forEach((b) => b.addEventListener("click", () => mount.innerHTML = ""));
+
+  mount.querySelector("#edit-cafe-use-location")?.addEventListener("click", () => {
+    const button = mount.querySelector("#edit-cafe-use-location");
+    const statusEl = mount.querySelector("#edit-cafe-location-status");
+    if (!navigator.geolocation) {
+      if (statusEl) statusEl.textContent = "Geolocation is not supported by this browser.";
+      return;
+    }
+
+    if (button) button.disabled = true;
+    if (statusEl) statusEl.textContent = "Acquiring high-accuracy café coordinates…";
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = mount.querySelector("#edit-cafe-latitude");
+        const lng = mount.querySelector("#edit-cafe-longitude");
+        if (lat) lat.value = Number(position.coords.latitude).toFixed(6);
+        if (lng) lng.value = Number(position.coords.longitude).toFixed(6);
+        if (statusEl) statusEl.textContent = `Location captured (±${Math.round(position.coords.accuracy || 0)} m). Save to apply.`;
+        if (button) button.disabled = false;
+      },
+      (error) => {
+        if (statusEl) statusEl.textContent = error?.message || "Unable to capture location. Enter coordinates manually.";
+        if (button) button.disabled = false;
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+
   mount.querySelector("#edit-cafe-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = mount.querySelector("#edit-cafe-name")?.value?.trim();
@@ -1637,7 +1692,36 @@ async function openCafeEditModal(root, cafeId) {
     const city = mount.querySelector("#edit-cafe-city")?.value?.trim();
     const managerName = mount.querySelector("#edit-cafe-manager")?.value?.trim();
     const phone = mount.querySelector("#edit-cafe-phone")?.value?.trim();
-    const address = mount.querySelector("#edit-cafe-address")?.value?.trim();
+    const addressLine1 = mount.querySelector("#edit-cafe-address")?.value?.trim();
+    const latitudeRaw = mount.querySelector("#edit-cafe-latitude")?.value?.trim();
+    const longitudeRaw = mount.querySelector("#edit-cafe-longitude")?.value?.trim();
+    const radiusRaw = mount.querySelector("#edit-cafe-geofence-radius")?.value?.trim();
+    const latitude = latitudeRaw ? Number(latitudeRaw) : null;
+    const longitude = longitudeRaw ? Number(longitudeRaw) : null;
+    const geofenceRadiusMetres = radiusRaw ? Number(radiusRaw) : 100;
+
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+      showToast("A valid café latitude is required for attendance geofencing.", "danger");
+      return;
+    }
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      showToast("A valid café longitude is required for attendance geofencing.", "danger");
+      return;
+    }
+    if (!Number.isFinite(geofenceRadiusMetres) || geofenceRadiusMetres < 10 || geofenceRadiusMetres > 1000) {
+      showToast("Attendance geofence radius must be between 10 and 1000 metres.", "danger");
+      return;
+    }
+
+    const address = {
+      ...(cafe.address && typeof cafe.address === "object" ? cafe.address : {}),
+      line1: addressLine1 || "",
+      street: addressLine1 || cafe.address?.street || "",
+      city: city || "",
+      latitude,
+      longitude,
+      geofenceRadiusMetres,
+    };
 
     try {
       await apiPatch(`/cafes/${cafeId}`, {
