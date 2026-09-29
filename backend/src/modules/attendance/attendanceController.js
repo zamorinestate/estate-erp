@@ -1464,7 +1464,19 @@ const staffCheckOut = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'NOT_CHECKED_IN', 'You must be checked in before checking out.');
   }
 
-  // Validate QR challenge token if provided
+  // Secure presence parity with check-in: check-out must never be accepted
+  // without a fresh rotating QR, live GPS coordinates, and a distinct selfie.
+  if (!qrToken) {
+    throw new ApiError(400, 'QR_TOKEN_REQUIRED', 'Rotating attendance QR token is required for check-out.');
+  }
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+    throw new ApiError(400, 'GEOLOCATION_REQUIRED', 'Live GPS geolocation coordinates are required for check-out.');
+  }
+  if (!selfieMediaId) {
+    throw new ApiError(400, 'SELFIE_EVIDENCE_REQUIRED', 'A fresh live selfie verification photograph is required for check-out.');
+  }
+
+  // Validate the mandatory QR challenge token.
   let qrValidation = null;
   if (qrToken) {
     qrValidation = await attendanceQrService.validateChallengeToken(qrToken, {
