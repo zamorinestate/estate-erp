@@ -13,6 +13,8 @@ import { ROLES } from "../navigation.js";
 import { generateInvoicePdf } from "../utils/invoicePdfGenerator.js";
 import { offlineManager, QUEUE_STATUSES } from "../utils/offlineManager.js";
 import { generateQR, buildUpiUri, initClipboard, initSpeedDial } from "../flowbiteUtils.js";
+import { NativeCapabilities } from "../utils/nativeCapabilities.js";
+import { monitorAndroidPrintAndAcknowledge } from "../utils/deviceAttestation.js";
 
 
 function resolvePosCafeId() {
@@ -50,6 +52,53 @@ function getOperatorSession() {
     primaryCafeName: user.primaryCafeName || (resolvedCafe ? `Outlet ${resolvedCafe}` : "Café Outlet"),
     deviceId: user.deviceId || state.deviceId || getCanonicalDeviceId() || "",
     businessDate: new Date().toISOString().slice(0, 10),
+  };
+}
+
+async function dispatchReceiptToClient(dispatch, bill, { isReprint = false } = {}) {
+  const capabilities = NativeCapabilities.getCapabilities();
+  const jobName = `Zamorin_${isReprint ? "Reprint" : "Receipt"}_${bill?.invoiceNumber || bill?.billId || "POS"}`;
+
+  if (capabilities.isNative && capabilities.canPrint) {
+    const nativeResponse = await NativeCapabilities.sendNativeMessage(
+      "OPEN_SYSTEM_PRINT",
+      { jobName }
+    );
+    const nativeResult = nativeResponse?.result || nativeResponse || {};
+
+    if (nativeResponse?.success !== true) {
+      const err = new Error(
+        nativeResponse?.errorMessage ||
+        nativeResult?.error ||
+        "Native print operation was cancelled or could not be started."
+      );
+      err.code = nativeResponse?.errorCode || "NATIVE_PRINT_NOT_STARTED";
+      throw err;
+    }
+
+    if (
+      String(capabilities.platform || "").toUpperCase() === "ANDROID" &&
+      dispatch?.cryptographicAttestationRequired === true &&
+      dispatch?.attestationContext &&
+      nativeResult?.platformJobId
+    ) {
+      monitorAndroidPrintAndAcknowledge(dispatch, nativeResponse).catch((ackErr) => {
+        console.warn("[REC-04D] Android signed print acknowledgement deferred:", ackErr?.message || ackErr);
+      });
+    }
+
+    return {
+      method: "NATIVE_SYSTEM_PRINT",
+      platform: capabilities.platform,
+      nativeResult,
+    };
+  }
+
+  window.print();
+  return {
+    method: "BROWSER_PRINT_DIALOG",
+    platform: "WEB",
+    physicalCompletionVerified: false,
   };
 }
 
@@ -2030,7 +2079,9 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       );
     } else {
       showToast(
-        posAction === "SAVE" ? `Bill saved: ${billData.invoiceNumber || billData.billId}` : `Payment of ₹${grandTotal} confirmed — receipt issued.`,
+        posAction === "SAVE"
+          ? `Bill saved: ${billData.invoiceNumber || billData.billId}`
+          : `Payment of ₹${grandTotal} confirmed — receipt dispatch prepared.`,
         "mint"
       );
     }
@@ -2041,7 +2092,9 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
     cashReceivedAmount = 0;
     isPaymentInProgress = false;
 
-    openReceiptModal(billData, false);
+    const originalPrintDispatch =
+      posAction === "SAVE_AND_PRINT" && res?.printJobId ? res : null;
+    openReceiptModal(billData, false, originalPrintDispatch);
     refreshPOSView(root);
   } catch (err) {
     isPaymentInProgress = false;
@@ -2121,7 +2174,7 @@ function openOfflineReceiptModal(queued) {
 }
 
 
-function openReceiptModal(bill, isReprint = false) {
+function openReceiptModal(bill, isReprint = false, initialDispatch = null) {
   const subtotal = bill.subtotalPaisa ? bill.subtotalPaisa / 100 : bill.totalPaisa ? bill.totalPaisa / 100 : 0;
   const gst = bill.taxPaisa ? bill.taxPaisa / 100 : Math.round(subtotal * 0.05);
   const grandTotal = bill.totalPaisa ? bill.totalPaisa / 100 : subtotal + gst;
@@ -2153,6 +2206,7 @@ function openReceiptModal(bill, isReprint = false) {
   };
 
   let isPrintingActive = false;
+  let pendingInitialDispatch = initialDispatch?.printJobId ? initialDispatch : null;
   const printThermal = async () => {
     if (isPrintingActive) return;
     isPrintingActive = true;
@@ -2162,32 +2216,43 @@ function openReceiptModal(bill, isReprint = false) {
       printBtn.textContent = "⏳ Printing...";
     }
 
-    // REC-04: Send print command to backend (logs PrintJob, generates thermal buffer)
-    // then invoke browser print as the local rendering fallback.
-    if (bill.billId && !bill.billId.startsWith("PREVIEW")) {
-      try {
+    // REC-04C/04D: Consume the original SAVE_AND_PRINT dispatch exactly once.
+    // Subsequent explicit print clicks create a new canonical PrintJob.
+    let dispatch = pendingInitialDispatch;
+    pendingInitialDispatch = null;
+
+    try {
+      if (!dispatch && bill.billId && !bill.billId.startsWith("PREVIEW")) {
         const endpoint = isReprint
           ? `/pos/orders/${bill.billId}/reprint`
           : `/pos/orders/${bill.billId}/print`;
-        const dispatch = await apiPost(endpoint, {
+        dispatch = await apiPost(endpoint, {
           reason: isReprint ? "Terminal duplicate receipt reprint" : "Terminal thermal print",
           paperWidth: currentPaperWidth,
         });
-        if (dispatch?.printTrackingWarning) {
-          showToast("Print payload dispatched, but durable print tracking reported a warning.", "warning");
-        } else {
-          showToast(
-            isReprint ? "Reprint job dispatched to POS printer." : "Thermal print job dispatched to POS printer.",
-            "mint"
-          );
-        }
-      } catch (printErr) {
-        // Non-fatal: log and fall through to browser print
-        console.warn("[POS] Backend print endpoint error:", printErr.message);
-        showToast("Printer bridge unavailable — printing via browser fallback.", "warning");
       }
+
+      if (dispatch?.printTrackingWarning) {
+        showToast("Print payload prepared, but durable print tracking reported a warning.", "warning");
+      }
+
+      await dispatchReceiptToClient(dispatch, bill, { isReprint });
+
+      showToast(
+        isReprint ? "Reprint submitted to the print client." : "Receipt submitted to the print client.",
+        "mint"
+      );
+    } catch (printErr) {
+      // Sale state is already committed. A print error must never recreate the sale.
+      console.warn("[POS] Print client error:", printErr?.message || printErr);
+      showToast(
+        printErr?.code === "NATIVE_PRINT_NOT_STARTED"
+          ? "Print was cancelled or could not be started. The bill remains safely saved."
+          : "Print client unavailable. The bill remains safely saved and can be reprinted.",
+        "warning"
+      );
     }
-    window.print();
+
     setTimeout(() => {
       isPrintingActive = false;
       if (printBtn) {
@@ -2374,6 +2439,13 @@ function openReceiptModal(bill, isReprint = false) {
       openReceiptModal(bill, true);
       showToast("Reprint mode opened. Use Thermal Print or Save & Print to dispatch the audited reprint.", "mint");
     });
+
+    if (pendingInitialDispatch) {
+      // SAVE_AND_PRINT must use the PrintJob created by the sale commit itself;
+      // do not create a second print job merely to start client rendering.
+      printThermal();
+    }
+
   }, 50);
 }
 
