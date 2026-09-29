@@ -91,6 +91,9 @@ function renderMultiStepWizard(container, opts) {
     pincode: '',
     country: 'India',
     possessionType: 'RENTED',
+    latitude: null,
+    longitude: null,
+    geofenceRadiusMetres: 100,
 
     // 4. Contacts
     phone: '',
@@ -148,6 +151,12 @@ function renderMultiStepWizard(container, opts) {
       formData.state = container.querySelector('#wiz-f-state')?.value || formData.state;
       formData.pincode = container.querySelector('#wiz-f-pin')?.value?.trim() || formData.pincode;
       formData.possessionType = container.querySelector('#wiz-f-poss')?.value || formData.possessionType;
+      const latitudeValue = container.querySelector('#wiz-f-latitude')?.value?.trim();
+      const longitudeValue = container.querySelector('#wiz-f-longitude')?.value?.trim();
+      const radiusValue = container.querySelector('#wiz-f-geofence-radius')?.value?.trim();
+      formData.latitude = latitudeValue ? Number(latitudeValue) : null;
+      formData.longitude = longitudeValue ? Number(longitudeValue) : null;
+      formData.geofenceRadiusMetres = radiusValue ? Number(radiusValue) : 100;
     } else if (currentStep === 4) {
       formData.phone = container.querySelector('#wiz-f-phone')?.value?.trim() || formData.phone;
       formData.alternatePhone = container.querySelector('#wiz-f-altphone')?.value?.trim() || formData.alternatePhone;
@@ -192,6 +201,20 @@ function renderMultiStepWizard(container, opts) {
       if (!formData.city) return showStepError('City is required.');
       if (!formData.pincode || !/^\d{6}$/.test(formData.pincode)) {
         return showStepError('A valid 6-digit PIN code is required.');
+      }
+      const hasLat = Number.isFinite(formData.latitude);
+      const hasLng = Number.isFinite(formData.longitude);
+      if (formData.initialStatus !== 'DRAFT' && (!hasLat || !hasLng)) {
+        return showStepError('Attendance geofence coordinates are required before an operational café can be created. Use Current Location or enter latitude and longitude.');
+      }
+      if (hasLat && (formData.latitude < -90 || formData.latitude > 90)) {
+        return showStepError('Latitude must be between -90 and 90.');
+      }
+      if (hasLng && (formData.longitude < -180 || formData.longitude > 180)) {
+        return showStepError('Longitude must be between -180 and 180.');
+      }
+      if (!Number.isFinite(formData.geofenceRadiusMetres) || formData.geofenceRadiusMetres < 10 || formData.geofenceRadiusMetres > 1000) {
+        return showStepError('Attendance geofence radius must be between 10 and 1000 metres.');
       }
     } else if (step === 4) {
       if (!formData.phone || !/^\+?[0-9\s-]{10,15}$/.test(formData.phone)) {
@@ -456,6 +479,33 @@ function renderMultiStepWizard(container, opts) {
                 <input type="text" id="wiz-f-pin" class="input" value="${escHtml(data.pincode)}" placeholder="683511" maxlength="6" required style="width:100%;background:#101a30;border:1px solid #29374f;color:#ede8e1;padding:8px 12px;border-radius:6px;" />
               </div>
             </div>
+
+            <div style="background:#101a30;border:1px solid #3d4f6f;border-radius:8px;padding:14px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+                <div>
+                  <div style="font-size:12px;font-weight:800;color:#c99a5c;">Attendance Geofence *</div>
+                  <div style="font-size:11px;color:#8892a0;margin-top:2px;">Used for employee QR → GPS → live selfie Check-In and Check-Out.</div>
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary" id="wiz-use-current-location-btn">📍 Use Current Location</button>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div>
+                  <label style="font-size:11.5px;font-weight:700;display:block;margin-bottom:4px;color:#ede8e1;">Latitude</label>
+                  <input type="number" id="wiz-f-latitude" step="0.000001" min="-90" max="90" class="input" value="${data.latitude ?? ''}" placeholder="10.786730" style="width:100%;background:#1a2740;border:1px solid #29374f;color:#ede8e1;padding:8px 10px;border-radius:6px;" />
+                </div>
+                <div>
+                  <label style="font-size:11.5px;font-weight:700;display:block;margin-bottom:4px;color:#ede8e1;">Longitude</label>
+                  <input type="number" id="wiz-f-longitude" step="0.000001" min="-180" max="180" class="input" value="${data.longitude ?? ''}" placeholder="76.654793" style="width:100%;background:#1a2740;border:1px solid #29374f;color:#ede8e1;padding:8px 10px;border-radius:6px;" />
+                </div>
+                <div>
+                  <label style="font-size:11.5px;font-weight:700;display:block;margin-bottom:4px;color:#ede8e1;">Allowed Radius (metres)</label>
+                  <input type="number" id="wiz-f-geofence-radius" min="10" max="1000" step="1" class="input" value="${data.geofenceRadiusMetres ?? 100}" style="width:100%;background:#1a2740;border:1px solid #29374f;color:#ede8e1;padding:8px 10px;border-radius:6px;" />
+                </div>
+              </div>
+              <div id="wiz-geofence-location-status" style="font-size:11px;color:#8892a0;margin-top:8px;">
+                Set the café's physical attendance point. The browser may ask for location permission.
+              </div>
+            </div>
           </div>
         `;
 
@@ -707,6 +757,35 @@ function renderMultiStepWizard(container, opts) {
       }
     });
 
+    const useCurrentLocationBtn = container.querySelector('#wiz-use-current-location-btn');
+    useCurrentLocationBtn?.addEventListener('click', () => {
+      const statusEl = container.querySelector('#wiz-geofence-location-status');
+      if (!navigator.geolocation) {
+        if (statusEl) statusEl.textContent = 'Geolocation is not supported by this browser.';
+        return;
+      }
+
+      useCurrentLocationBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Acquiring high-accuracy café coordinates…';
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const latInput = container.querySelector('#wiz-f-latitude');
+          const lngInput = container.querySelector('#wiz-f-longitude');
+          if (latInput) latInput.value = Number(position.coords.latitude).toFixed(6);
+          if (lngInput) lngInput.value = Number(position.coords.longitude).toFixed(6);
+          formData.latitude = Number(position.coords.latitude);
+          formData.longitude = Number(position.coords.longitude);
+          if (statusEl) statusEl.textContent = `Location captured (±${Math.round(position.coords.accuracy || 0)} m). Verify the point before creating the café.`;
+          useCurrentLocationBtn.disabled = false;
+        },
+        (error) => {
+          if (statusEl) statusEl.textContent = error?.message || 'Unable to capture current location. Enter coordinates manually.';
+          useCurrentLocationBtn.disabled = false;
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    });
+
     // Step 5 toggle visibility
     const gstCheck = container.querySelector('#wiz-f-gstapp');
     gstCheck?.addEventListener('change', (e) => {
@@ -802,6 +881,9 @@ function renderMultiStepWizard(container, opts) {
             stateCode: formData.stateCode,
             pincode: formData.pincode,
             country: formData.country,
+            latitude: formData.latitude,
+            longitude: formData.longitude,
+            geofenceRadiusMetres: formData.geofenceRadiusMetres,
             phone: formData.phone,
             alternatePhone: formData.alternatePhone,
             email: formData.email,
