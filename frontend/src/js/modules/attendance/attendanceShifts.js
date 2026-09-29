@@ -24,6 +24,7 @@ let selectedUserId = "";
 let selectedRosterCafe = "";
 let selectedRosterWeekOffset = 0;
 let selectedCalendarMonth = new Date().toISOString().slice(0, 7);
+let cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
 
 let cachedShifts = [];
 let cachedExceptions = [];
@@ -981,110 +982,166 @@ function renderShiftsMasterSubpanel() {
 function renderCalendar360Subpanel() {
   const role = state.role || state.user?.role || ROLES.MASTER;
   const isCafeAdmin = role === ROLES.CAFE_ADMIN;
-  const days = Array.from({ length: 31 }, (_, i) => i + 1);
 
-  // Derive employee profile from roster data
-  const assignedCafe360 = state.user?.assignedCafeIds?.[0] || state.currentCafeId || "";
-  const rosterStaff360 = cafeRosterSchedules[assignedCafe360] || Object.values(cafeRosterSchedules)[0] || [];
-  const emp = rosterStaff360.find(s => s.id === selectedUserId) || rosterStaff360[0] || { name: selectedUserId || "Employee", role: "", id: selectedUserId || "" };
+  const rosterStaff = Object.values(cafeRosterSchedules || {}).flat();
+  const staffMap = new Map();
+  for (const staff of rosterStaff) {
+    const id = staff?.id || staff?.userId || staff?.employeeId;
+    if (id && !staffMap.has(id)) staffMap.set(id, { id, name: staff.name || id, role: staff.role || "" });
+  }
+  for (const row of cachedLiveAttendance || []) {
+    const id = row?.userId || row?.employeeId;
+    if (id && !staffMap.has(id)) staffMap.set(id, { id, name: row.name || id, role: row.role || "" });
+  }
+  const staffList = [...staffMap.values()];
+
+  if (!selectedUserId && staffList.length > 0) {
+    selectedUserId = staffList[0].id;
+  }
+
+  const employee = staffMap.get(selectedUserId) || {
+    id: selectedUserId || "",
+    name: selectedUserId || "Select an employee",
+    role: "",
+  };
+
+  const activeData =
+    cachedCalendar360.userId === selectedUserId &&
+    cachedCalendar360.month === selectedCalendarMonth
+      ? cachedCalendar360
+      : { records: [], summary: null };
+
+  const records = activeData.records || [];
+  const summary = activeData.summary || {};
+  const [year, month] = selectedCalendarMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const leadingSlots = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  const monthLabel = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const recordsByDate = new Map(records.filter(r => r?.businessDate).map(r => [String(r.businessDate), r]));
+
+  const monthOptions = Array.from({ length: 12 }, (_, index) => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - index);
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = d.toLocaleString("en-IN", { month: "long", year: "numeric" });
+    return `<option value="${value}" ${selectedCalendarMonth === value ? "selected" : ""}>${label}</option>`;
+  }).join("");
+
+  const calendarCells = [];
+  for (let i = 0; i < leadingSlots; i++) {
+    calendarCells.push('<div aria-hidden="true" style="min-height:92px; opacity:0.18; background:var(--surface-sunken); border-radius:6px;"></div>');
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const record = recordsByDate.get(dateKey);
+    const attendanceId = String(record?.attendanceId || record?._id || "").replace(/"/g, "&quot;");
+    const status = String(record?.status || "").toUpperCase();
+    const isLate = record?.isLate === true || Number(record?.lateMinutes || 0) > 0;
+    const checkIn = record?.checkInAt
+      ? new Date(record.checkInAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true })
+      : "—";
+    const checkOut = record?.checkOutAt
+      ? new Date(record.checkOutAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true })
+      : "—";
+    const inEvidence = record?.attendanceEvidence?.checkIn || null;
+    const outEvidence = record?.attendanceEvidence?.checkOut || null;
+    const hasInSelfie = Boolean(inEvidence?.photoFileId || inEvidence?.selfieMediaId || record?.selfieFileId);
+    const hasOutSelfie = Boolean(outEvidence?.photoFileId || outEvidence?.selfieMediaId);
+
+    let statusText = "No record";
+    let statusColor = "var(--muted)";
+    let borderColor = "var(--line)";
+    if (status === "CHECKED_OUT") {
+      statusText = isLate ? "Late · Complete" : "Complete";
+      statusColor = isLate ? "var(--color-warning)" : "var(--color-success)";
+      borderColor = isLate ? "var(--color-warning)" : "var(--line)";
+    } else if (status === "CHECKED_IN" || status === "ON_BREAK") {
+      statusText = isLate ? "Late · Present" : "Present";
+      statusColor = isLate ? "var(--color-warning)" : "var(--color-success)";
+      borderColor = isLate ? "var(--color-warning)" : "var(--line)";
+    } else if (status === "ABSENT") {
+      statusText = "Absent";
+      statusColor = "var(--color-danger)";
+    } else if (status === "ON_LEAVE") {
+      statusText = "Leave";
+      statusColor = "var(--brand-gold)";
+    }
+
+    calendarCells.push(`
+      <div
+        class="calendar-day-card"
+        data-date="${dateKey}"
+        data-attendance-id="${attendanceId}"
+        style="padding:10px; border:1px solid ${borderColor}; border-radius:6px; background:var(--surface-sunken); min-height:92px; cursor:${record ? "pointer" : "default"}; transition:transform 0.15s ease, box-shadow 0.15s ease;"
+        title="${record ? "Open authoritative check-in/check-out evidence" : "No attendance record"}"
+      >
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted);">
+          <strong>${day}</strong>
+          ${isLate ? '<span style="color:var(--color-warning); font-weight:700;">!</span>' : ""}
+        </div>
+        <div style="font-size:11.5px; font-weight:700; color:${statusColor}; margin-top:6px;">${statusText}</div>
+        ${record ? `<div style="font-size:10.5px; color:var(--muted); font-family:var(--font-mono); margin-top:3px;">${checkIn} – ${checkOut}</div>` : ""}
+        ${record ? `<div style="font-size:9.5px; color:var(--muted); margin-top:4px;">${hasInSelfie ? "📷 IN" : ""}${hasInSelfie && hasOutSelfie ? " · " : ""}${hasOutSelfie ? "📷 OUT" : ""}</div>` : ""}
+      </div>
+    `);
+  }
 
   return `
     <div class="card" style="padding:22px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border-subtle); padding-bottom:16px;">
         <div>
           <h3 style="font-size:17px; font-weight:800; margin:0 0 2px; color:var(--ink);">
-            ${isCafeAdmin ? "Staff Attendance History" : "Employee Attendance 360°"} — ${emp.name} (${selectedUserId})
+            ${isCafeAdmin ? "Staff Attendance History" : "Employee Attendance 360°"} — ${employee.name}${employee.id ? ` (${employee.id})` : ""}
           </h3>
           <p style="font-size:12.5px; color:var(--muted); margin:0;">
-            Role: <strong>${emp.role}</strong> · Monthly punch history, timesheet breakdown and biometric stamps.
+            ${monthLabel} · Authoritative punches and secure presence evidence.
           </p>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <div style="display:flex; align-items:center; gap:6px;">
             <label style="font-size:12px; font-weight:700; color:var(--ink);">Employee:</label>
             <select id="calendar-user-select" class="input" style="font-size:12.5px; width:auto; font-weight:600;">
-              ${rosterStaff360.length > 0
-                ? rosterStaff360.map(s => `<option value="${s.id}" ${selectedUserId === s.id ? 'selected' : ''}>${s.name} (${s.id}${s.role ? ' — ' + s.role : ''})</option>`).join('')
-                : '<option value="">No staff in roster</option>'}
+              ${staffList.length
+                ? staffList.map(s => `<option value="${s.id}" ${selectedUserId === s.id ? "selected" : ""}>${s.name} (${s.id}${s.role ? ` — ${s.role}` : ""})</option>`).join("")
+                : '<option value="">No employee records available</option>'}
             </select>
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
             <label style="font-size:12px; font-weight:700; color:var(--ink);">Month:</label>
             <select id="calendar-month-select" class="input" style="font-size:12.5px; width:auto; font-weight:600;">
-              <option value="2026-08" ${selectedCalendarMonth === "2026-08" ? "selected" : ""}>August 2026</option>
-              <option value="2026-07" ${selectedCalendarMonth === "2026-07" ? "selected" : ""}>July 2026</option>
-              <option value="2026-06" ${selectedCalendarMonth === "2026-06" ? "selected" : ""}>June 2026</option>
+              ${monthOptions}
             </select>
           </div>
         </div>
       </div>
 
-      <!-- Month Summary Strip -->
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:20px;">
         <div style="padding:10px 14px; background:var(--surface-sunken); border-radius:6px; border:1px solid var(--line);">
           <div style="font-size:11px; color:var(--muted);">Total Worked</div>
-          <strong style="font-size:16px; color:var(--ink); font-family:var(--font-mono);">${emp.totalWorked}</strong>
+          <strong style="font-size:16px; color:var(--ink); font-family:var(--font-mono);">${summary.totalHoursWorked ?? "0.0"}h</strong>
         </div>
         <div style="padding:10px 14px; background:var(--surface-sunken); border-radius:6px; border:1px solid var(--line);">
           <div style="font-size:11px; color:var(--muted);">Overtime</div>
-          <strong style="font-size:16px; color:var(--color-accent-amber); font-family:var(--font-mono);">${emp.ot}</strong>
+          <strong style="font-size:16px; color:var(--color-accent-amber); font-family:var(--font-mono);">${summary.totalOvertimeHours ?? "0.0"}h</strong>
         </div>
         <div style="padding:10px 14px; background:var(--surface-sunken); border-radius:6px; border:1px solid var(--line);">
           <div style="font-size:11px; color:var(--muted);">Days Present</div>
-          <strong style="font-size:16px; color:var(--color-success); font-family:var(--font-mono);">${emp.presentDays} Days</strong>
+          <strong style="font-size:16px; color:var(--color-success); font-family:var(--font-mono);">${summary.daysPresent ?? 0}</strong>
         </div>
         <div style="padding:10px 14px; background:var(--surface-sunken); border-radius:6px; border:1px solid var(--line);">
           <div style="font-size:11px; color:var(--muted);">Late Arrivals</div>
-          <strong style="font-size:16px; color:var(--color-warning); font-family:var(--font-mono);">${emp.lateDays} ${emp.lateDays === 1 ? "Day" : "Days"}</strong>
+          <strong style="font-size:16px; color:var(--color-warning); font-family:var(--font-mono);">${summary.daysLate ?? 0}</strong>
         </div>
       </div>
 
-      <!-- 31-Day Calendar Grid -->
-      <div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:8px;">
-        ${days
-          .map((d) => {
-            const isPresent = d <= 19 && d % 7 !== 0 && d % 7 !== 6;
-            const isWeeklyOff = d % 7 === 0 || d % 7 === 6;
-            const isFuture = d > 19;
-            const isLate = d === emp.lateDayNum;
-
-            let bg = "var(--surface-sunken)";
-            let borderColor = "var(--line)";
-            let statusText = "Present";
-            let statusColor = "var(--color-success)";
-
-            if (isWeeklyOff) {
-              statusText = "Weekly Off";
-              statusColor = "var(--muted)";
-            } else if (isFuture) {
-              statusText = "Scheduled";
-              statusColor = "var(--muted)";
-            } else if (isLate) {
-              statusText = "Late (18m)";
-              statusColor = "var(--color-warning)";
-              borderColor = "var(--color-warning)";
-            }
-
-            return `
-            <div class="calendar-day-card" 
-              data-day-num="${d}" 
-              data-is-present="${isPresent}" 
-              data-is-late="${isLate}" 
-              data-is-off="${isWeeklyOff}" 
-              data-is-future="${isFuture}" 
-              data-status-text="${statusText}"
-              style="padding:10px; border:1px solid ${borderColor}; border-radius:6px; background:${bg}; min-height:70px; cursor:pointer; transition:transform 0.15s ease, box-shadow 0.15s ease;"
-              title="Click to view punch audit details for Aug ${d}">
-              <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted);">
-                <strong>Aug ${d}</strong>
-                ${isLate ? `<span style="color:var(--color-warning); font-weight:700;">!</span>` : ""}
-              </div>
-              <div style="font-size:12px; font-weight:700; color:${statusColor}; margin-top:8px;">${statusText}</div>
-              ${isPresent ? `<div style="font-size:11px; color:var(--muted); font-family:var(--font-mono);">06:42 – 15:10</div>` : ""}
-            </div>
-          `;
-          })
-          .join("")}
+      <div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:8px; margin-bottom:8px;">
+        ${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(day => `<div style="font-size:10.5px; font-weight:700; color:var(--muted); text-align:center;">${day}</div>`).join("")}
+        ${calendarCells.join("")}
+      </div>
+      <div style="font-size:11px; color:var(--muted); margin-top:12px;">
+        📷 IN / OUT indicates stored secure selfie evidence. Click a recorded day to open the Check-In / Check-Out evidence viewer.
       </div>
     </div>
   `;
@@ -1838,6 +1895,25 @@ async function loadLiveAttendanceData() {
   }
 }
 
+async function loadCalendar360Data() {
+  if (!selectedUserId || !selectedCalendarMonth) {
+    cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
+    return;
+  }
+
+  const [year, month] = selectedCalendarMonth.split("-").map(Number);
+  const res = await apiGet(
+    `/api/v1/attendance/calendar-360/${encodeURIComponent(selectedUserId)}?year=${year}&month=${month}`
+  );
+
+  cachedCalendar360 = {
+    userId: selectedUserId,
+    month: selectedCalendarMonth,
+    records: res?.data?.records || [],
+    summary: res?.data?.summary || null,
+  };
+}
+
 function rerender(root) {
   if (!state.route?.startsWith("attendance") && state.route !== "staff-attendance") return;
   const subpanelRoot = root?.querySelector ? root.querySelector("#attendance-subpanel-root") : null;
@@ -1860,6 +1936,16 @@ function rerender(root) {
 }
 
 function wireAttendanceSubpanelActions(root) {
+  if (
+    activeSubTab === "calendar360" &&
+    selectedUserId &&
+    (cachedCalendar360.userId !== selectedUserId || cachedCalendar360.month !== selectedCalendarMonth)
+  ) {
+    loadCalendar360Data()
+      .then(() => rerender(root))
+      .catch((err) => showToast(err?.message || "Unable to load employee attendance history.", "error"));
+  }
+
   // Clickable KPI filters
   root.querySelectorAll(".kpi-card-clickable").forEach((card) => {
     card.addEventListener("click", (e) => {
@@ -1907,9 +1993,10 @@ function wireAttendanceSubpanelActions(root) {
 
   // Attendance History / 360 buttons
   root.querySelectorAll(".view-employee-history-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
+    btn.addEventListener("click", async (e) => {
       selectedUserId = e.currentTarget.dataset.user;
       activeSubTab = "calendar360";
+      cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
       rerender(root);
     });
   });
@@ -2266,20 +2353,20 @@ function wireAttendanceSubpanelActions(root) {
   // Calendar 360: Employee Selection
   const calUserSel = root.querySelector("#calendar-user-select");
   if (calUserSel) {
-    calUserSel.addEventListener("change", (e) => {
+    calUserSel.addEventListener("change", async (e) => {
       selectedUserId = e.target.value;
+      cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
       rerender(root);
-      showToast(`Loaded timesheet and 360° history for ${selectedUserId}`, "info");
     });
   }
 
   // Calendar 360: Month Selection
   const calMonthSel = root.querySelector("#calendar-month-select");
   if (calMonthSel) {
-    calMonthSel.addEventListener("change", (e) => {
+    calMonthSel.addEventListener("change", async (e) => {
       selectedCalendarMonth = e.target.value;
+      cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
       rerender(root);
-      showToast(`Switched calendar month to ${selectedCalendarMonth}`, "info");
     });
   }
 
@@ -2290,30 +2377,13 @@ function wireAttendanceSubpanelActions(root) {
     });
   });
 
-  // Calendar 360: Clickable Day Cards (Punch Telemetry Breakdown)
+  // Calendar 360: Click a recorded day to inspect the exact Check-In / Check-Out evidence.
   root.querySelectorAll(".calendar-day-card").forEach((card) => {
     card.addEventListener("click", (e) => {
-      const target = e.currentTarget;
-      const dayNum = target.dataset.dayNum;
-      const isPresent = target.dataset.isPresent === "true";
-      const isLate = target.dataset.isLate === "true";
-      const isWeeklyOff = target.dataset.isOff === "true";
-      const isFuture = target.dataset.isFuture === "true";
-      const statusText = target.dataset.statusText || "Present";
-
-      const rosterList = cafeRosterSchedules[assignedCafe] || Object.values(cafeRosterSchedules)[0] || [];
-      const emp = rosterList.find(s => s.id === selectedUserId) || rosterList[0] || { name: selectedUserId || "Employee", role: "" };
-
-      openDayAttendanceDetailsModal({
-        root,
-        dayNum,
-        emp,
-        isPresent,
-        isLate,
-        isWeeklyOff,
-        isFuture,
-        statusText,
-      });
+      const attendanceId = e.currentTarget.dataset.attendanceId;
+      if (attendanceId) {
+        openAttendanceEvidenceViewer({ attendanceId });
+      }
     });
   });
 
