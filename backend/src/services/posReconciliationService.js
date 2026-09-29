@@ -133,6 +133,117 @@ async function resolveReconciliationAuthority(job, authContext = {}) {
   return canonicalUser;
 }
 
+
+async function resolveReconciliationViewAuthority({ organisationId, cafeId = null }, authContext = {}) {
+  const requestedOrg = normalizeId(organisationId);
+  const requestedCafe = normalizeId(cafeId);
+  const authOrg = normalizeId(authContext?.organisationId);
+  const claimedRole = normalizeId(authContext?.role);
+  const userId = normalizeId(authContext?.userId);
+
+  if (!requestedOrg || !authOrg || requestedOrg !== authOrg) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Reconciliation queue does not belong to the authenticated organisation.'
+    );
+  }
+
+  if (!['CAFE_ADMIN', 'MASTER', 'OWNER'].includes(claimedRole)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'This role is not authorized to view POS reconciliation queues.'
+    );
+  }
+
+  if (claimedRole === 'MASTER' && authContext?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER reconciliation access.'
+    );
+  }
+
+  if (!userId) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Canonical user identity is required to view POS reconciliation queues.'
+    );
+  }
+
+  const canonicalUser = await User.findOne({
+    organisationId: authOrg,
+    userId,
+  }).lean();
+
+  if (!canonicalUser) {
+    throw new ApiError(
+      403,
+      claimedRole === 'MASTER' ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED' : 'AUTHORIZATION_DENIED',
+      'Reconciliation view authority could not be verified against the canonical user record.'
+    );
+  }
+
+  const accountStatus = normalizeId(canonicalUser.accountStatus || canonicalUser.status || 'ACTIVE');
+  if (['DISABLED', 'TERMINATED', 'SUSPENDED', 'DEACTIVATED', 'ARCHIVED', 'LOCKED', 'EXITED'].includes(accountStatus)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      `User ${userId} is currently ${accountStatus}; reconciliation view is denied.`
+    );
+  }
+
+  const activeRole = normalizeId(canonicalUser.role);
+  if (activeRole !== claimedRole) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_CONTEXT_STALE',
+      'Authorization context is stale because the canonical role has changed. Re-authentication is required.'
+    );
+  }
+
+  if (activeRole === 'MASTER') {
+    if (canonicalUser.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER reconciliation access.'
+      );
+    }
+    return canonicalUser;
+  }
+
+  if (activeRole === 'CAFE_ADMIN') {
+    if (!requestedCafe) {
+      throw new ApiError(
+        400,
+        'CAFE_ID_REQUIRED',
+        'cafeId is required for Café Admin reconciliation views.'
+      );
+    }
+
+    const assignedCafes = [
+      ...(Array.isArray(canonicalUser.assignedCafeIds) ? canonicalUser.assignedCafeIds : []),
+      canonicalUser.primaryCafeId,
+      canonicalUser.cafeId,
+    ]
+      .filter(Boolean)
+      .map(normalizeId);
+
+    if (!assignedCafes.includes(requestedCafe)) {
+      throw new ApiError(
+        403,
+        'CAFE_ACCESS_DENIED',
+        'Café Admin is not assigned to the requested reconciliation café.'
+      );
+    }
+  }
+
+  return canonicalUser;
+}
+
 class PosReconciliationService {
   /**
    * Records a durable reconciliation job for a failed mandatory post-sale side effect.
@@ -481,7 +592,11 @@ class PosReconciliationService {
   /**
    * Retrieves pending or manual-review reconciliation jobs for operational visibility.
    */
-  static async getPendingReconciliations({ organisationId, cafeId = null, status = null }) {
+  static async getPendingReconciliations({ organisationId, cafeId = null, status = null, authContext = null }) {
+    if (authContext) {
+      await resolveReconciliationViewAuthority({ organisationId, cafeId }, authContext);
+    }
+
     const query = {
       organisationId: normalizeId(organisationId),
     };
