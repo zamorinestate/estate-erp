@@ -894,8 +894,12 @@ async function renderPage() {
           } catch (attestationErr) {
             console.error("[Device Attestation] Native terminal trust upgrade failed:", attestationErr);
             const code = attestationErr?.code || "";
-            if (code === "DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT") {
-              showToast("This terminal signing key changed. Re-enrollment is required before Café Operations can continue.", "error");
+            if (
+              code === "DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT" ||
+              code === "DEVICE_ATTESTATION_REENROLLMENT_REQUIRED" ||
+              code === "DEVICE_ATTESTATION_PROVENANCE_MISMATCH"
+            ) {
+              showToast("This terminal signing identity must be re-enrolled before Café Operations can continue.", "error");
               navigate("cafe-device-enroll");
               return;
             }

@@ -48,6 +48,13 @@ router.post('/enroll', async (req, res, next) => {
     if (err.code === 'ENROLLMENT_UNAVAILABLE') {
       return fail(res, 400, 'ENROLLMENT_UNAVAILABLE', 'This registration code is invalid, expired, or has already been used.');
     }
+    if (
+      err.code === 'NATIVE_DEVICE_ATTESTATION_REQUIRED' ||
+      err.code === 'DEVICE_SIGNING_PROVENANCE_MISMATCH' ||
+      err.code === 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM'
+    ) {
+      return fail(res, 400, err.code, err.message);
+    }
     next(err);
   }
 });
@@ -68,12 +75,16 @@ router.post('/attestation/key', deviceContext, authenticate, async (req, res, ne
 
     return ok(res, result);
   } catch (err) {
-    if (err.code === 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT') {
+    if (
+      err.code === 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT' ||
+      err.code === 'DEVICE_ATTESTATION_REENROLLMENT_REQUIRED' ||
+      err.code === 'DEVICE_ATTESTATION_PROVENANCE_MISMATCH'
+    ) {
       return fail(
         res,
         409,
         err.code,
-        'This terminal already has a different signing key. Controlled re-enrollment is required before key rotation.'
+        'This terminal signing identity is not eligible for post-enrollment trust establishment. Controlled re-enrollment is required.'
       );
     }
     if (

@@ -244,3 +244,23 @@ test('REC-04E uses one server-authoritative challenge lifetime across persistenc
   assert.match(frontend, /Math\.min\(localMonitorDeadline, serverChallengeExpiresAt - 5000\)/);
   assert.match(frontend, /PRINT_ACK_CHALLENGE_WINDOW_EXPIRED/);
 });
+
+
+test('REC-04E Android purpose-bound attestation requires enrollment-time Android Keystore provenance', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const deviceService = fs.readFileSync(path.join(__dirname, '..', 'src', 'cafe-operations', 'services', 'deviceService.js'), 'utf8');
+  const router = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'router.js'), 'utf8');
+
+  assert.match(source, /signingProvider === 'ANDROID_KEYSTORE'/);
+  assert.match(source, /DEVICE_SIGNING_PROVIDER_UNTRUSTED/);
+
+  assert.match(deviceService, /function assertSigningProviderMatchesPlatform/);
+  assert.match(deviceService, /NATIVE_DEVICE_ATTESTATION_REQUIRED/);
+  assert.match(deviceService, /DEVICE_ATTESTATION_REENROLLMENT_REQUIRED/);
+  assert.match(deviceService, /DEVICE_ATTESTATION_PROVENANCE_MISMATCH/);
+  assert.match(deviceService, /reasonCode: 'DEVICE_ATTESTATION_KEY_VERIFIED'/);
+  assert.doesNotMatch(deviceService, /reasonCode: 'DEVICE_ATTESTATION_KEY_BOUND'/);
+
+  assert.match(router, /getNativeDeviceAttestationIdentity\([\s\S]{0,500}?publicSigningKey: signingIdentity\.capable \? signingIdentity\.publicKeyJwk : null/);
+  assert.match(router, /DEVICE_ATTESTATION_REENROLLMENT_REQUIRED/);
+});

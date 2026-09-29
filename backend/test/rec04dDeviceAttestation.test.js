@@ -308,7 +308,7 @@ test('REC-04D — key replacement after dispatch cannot acknowledge old challeng
   );
 });
 
-test('REC-04D — legacy key migration rolls canonical registry back when fleet update fails', async (t) => {
+test('REC-04D — post-enrollment first signing-key bind is refused and requires controlled re-enrollment', async (t) => {
   cafeRepositories.resetRepositories();
   const repos = cafeRepositories.initRepositories('memory');
   const device = await repos.devices.create({
@@ -316,32 +316,27 @@ test('REC-04D — legacy key migration rolls canonical registry back when fleet 
     displayName: 'Legacy Counter',
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0001',
+    platform: 'android',
     lifecycleStatus: 'ACTIVE',
     deviceTokenHash: 'legacy-token-hash',
     signingKeyThumbprint: null,
   });
 
   const { publicJwk } = makeKeyPair();
-  let canonicalSaveCount = 0;
   const canonical = {
     publicSigningKey: null,
     signingKeyThumbprint: null,
     signingKeyAlgorithm: null,
     signingKeyProvider: null,
     signingKeyCreatedAt: null,
+    platform: 'ANDROID',
     metadata: { existing: true },
     async save() {
-      canonicalSaveCount += 1;
-      return this;
+      throw new Error('canonical save must not run for an unbound post-enrollment bootstrap');
     },
   };
 
   t.mock.method(DeviceRegistration, 'findOne', async () => canonical);
-  t.mock.method(repos.devices, 'update', async () => {
-    const err = new Error('SIMULATED_FLEET_WRITE_FAILURE');
-    err.code = 'SIMULATED_FLEET_WRITE_FAILURE';
-    throw err;
-  });
 
   await assert.rejects(
     () => cafeDeviceService.bindAttestationKey(device, {
@@ -350,21 +345,17 @@ test('REC-04D — legacy key migration rolls canonical registry back when fleet 
       signingKeyProvider: 'ANDROID_KEYSTORE',
     }),
     (err) => {
-      assert.equal(err.code, 'SIMULATED_FLEET_WRITE_FAILURE');
+      assert.equal(err.code, 'DEVICE_ATTESTATION_REENROLLMENT_REQUIRED');
       return true;
     }
   );
 
-  assert.equal(canonicalSaveCount, 2, 'canonical registry must be saved once then rolled back');
   assert.equal(canonical.publicSigningKey, null);
   assert.equal(canonical.signingKeyThumbprint, null);
-  assert.equal(canonical.signingKeyAlgorithm, null);
   assert.equal(canonical.signingKeyProvider, null);
-  assert.deepEqual(canonical.metadata, { existing: true });
 
   cafeRepositories.resetRepositories();
 });
-
 test('REC-04D — native bridges keep private signing keys inside platform stores', () => {
   const android = fs.readFileSync(androidBridgePath, 'utf8');
   const windows = fs.readFileSync(windowsBridgePath, 'utf8');
@@ -398,11 +389,13 @@ test('REC-04D — native bridges keep private signing keys inside platform store
   assert.match(router, /publicSigningKey: signingIdentity\.capable \? signingIdentity\.publicKeyJwk : null/);
   assert.match(router, /onSignIn:\s*async\s*\(\)\s*=>\s*\{[\s\S]{0,900}?await ensureNativeDeviceAttestationBinding\(\)[\s\S]{0,900}?navigate\("dashboard"\)/);
   assert.match(router, /DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT/);
+  assert.match(router, /DEVICE_ATTESTATION_REENROLLMENT_REQUIRED/);
   assert.match(
     deviceEnrollmentRoutes,
     /router\.post\('\/attestation\/key',\s*deviceContext,\s*authenticate,/,
-    'Legacy key binding must require both the enrolled device token and an authenticated ERP user'
+    'Post-enrollment identity verification still requires both device and authenticated operator context'
   );
+  assert.match(deviceEnrollmentRoutes, /DEVICE_ATTESTATION_REENROLLMENT_REQUIRED/);
 });
 
 test('REC-04D — Android spooler terminal state is the only native path that can produce signed PRINTED', () => {

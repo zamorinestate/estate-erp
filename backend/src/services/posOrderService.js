@@ -185,8 +185,10 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
 
   const platform = normalizeId(registration?.platform || 'UNKNOWN');
   const supported = platform === 'ANDROID';
+  const signingProvider = normalizeId(registration?.signingKeyProvider || 'UNKNOWN');
   const signingCapable = Boolean(
     supported &&
+    signingProvider === 'ANDROID_KEYSTORE' &&
     registration?.publicSigningKey &&
     normalizeId(registration.signingKeyAlgorithm) === ATTESTATION_ALGORITHM
   );
@@ -197,7 +199,11 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
       supported,
       platform,
       unavailableReason: supported
-        ? 'DEVICE_SIGNING_KEY_UNAVAILABLE'
+        ? (
+            signingProvider !== 'ANDROID_KEYSTORE'
+              ? 'DEVICE_SIGNING_PROVIDER_UNTRUSTED'
+              : 'DEVICE_SIGNING_KEY_UNAVAILABLE'
+          )
         : 'PLATFORM_PRINT_ATTESTOR_UNAVAILABLE',
       challenge: null,
       challengeIssuedAt: null,

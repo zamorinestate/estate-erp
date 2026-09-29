@@ -24,6 +24,29 @@ function resolveCanonicalDevicePlatform(platform, signingKeyProvider = null) {
   return 'UNKNOWN';
 }
 
+function assertSigningProviderMatchesPlatform(platform, signingKeyProvider) {
+  const declaredPlatform = resolveCanonicalDevicePlatform(platform, null);
+  const provider = String(signingKeyProvider || '').trim().toUpperCase();
+
+  const allowed = {
+    ANDROID: new Set(['ANDROID_KEYSTORE']),
+    IOS: new Set(['APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN']),
+    DESKTOP: new Set(['WINDOWS_CNG', 'APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN']),
+    WEB_POS: new Set(['WEB_CRYPTO']),
+  };
+
+  if (!allowed[declaredPlatform] || !allowed[declaredPlatform].has(provider)) {
+    const err = new Error('DEVICE_SIGNING_PROVENANCE_MISMATCH');
+    err.code = 'DEVICE_SIGNING_PROVENANCE_MISMATCH';
+    throw err;
+  }
+
+  return {
+    platform: declaredPlatform,
+    provider,
+  };
+}
+
 async function resolveCanonicalDeviceScope(device) {
   const rawCafeId = String(device?.cafeId || '').trim();
   const rawOrganisationId = String(device?.organisationId || '').trim();
@@ -91,6 +114,9 @@ async function enrollDevice({
     await auditService.record({ eventType: SECURITY_EVENT_TYPE.DEVICE_ENROLLMENT_FAILED, metadata: { reason: !enrollment ? 'NOT_FOUND' : enrollment.status } });
     const err = new Error('ENROLLMENT_UNAVAILABLE'); err.code = 'ENROLLMENT_UNAVAILABLE'; throw err;
   }
+  const declaredPlatform = resolveCanonicalDevicePlatform(platform, null);
+  const nativeEnrollment = ['ANDROID', 'IOS', 'DESKTOP'].includes(declaredPlatform);
+
   let canonicalSigningKey = null;
   let signingKeyThumbprint = null;
   let normalizedSigningKeyProvider = null;
@@ -100,9 +126,15 @@ async function enrollDevice({
       err.code = 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM';
       throw err;
     }
+
+    const provenance = assertSigningProviderMatchesPlatform(platform, signingKeyProvider);
     canonicalSigningKey = canonicalPublicJwk(publicSigningKey);
     signingKeyThumbprint = publicKeyThumbprint(canonicalSigningKey);
-    normalizedSigningKeyProvider = String(signingKeyProvider || 'UNKNOWN').trim().toUpperCase();
+    normalizedSigningKeyProvider = provenance.provider;
+  } else if (nativeEnrollment) {
+    const err = new Error('NATIVE_DEVICE_ATTESTATION_REQUIRED');
+    err.code = 'NATIVE_DEVICE_ATTESTATION_REQUIRED';
+    throw err;
   }
 
   const deviceToken = generateOpaqueToken();
@@ -357,9 +389,40 @@ async function bindAttestationKey(device, {
   }
 
   const canonicalThumbprint = String(canonical.signingKeyThumbprint || '').trim().toLowerCase();
-  if (canonicalThumbprint && canonicalThumbprint !== keyThumbprint.toLowerCase()) {
+  const canonicalProvider = String(canonical.signingKeyProvider || '').trim().toUpperCase();
+  const canonicalAlgorithm = String(canonical.signingKeyAlgorithm || '').trim().toUpperCase();
+  const deviceProvider = String(device.signingKeyProvider || '').trim().toUpperCase();
+  const deviceAlgorithm = String(device.signingKeyAlgorithm || '').trim().toUpperCase();
+
+  if (
+    !canonical.publicSigningKey ||
+    !canonicalThumbprint ||
+    !existingThumbprint
+  ) {
+    const err = new Error('DEVICE_ATTESTATION_REENROLLMENT_REQUIRED');
+    err.code = 'DEVICE_ATTESTATION_REENROLLMENT_REQUIRED';
+    throw err;
+  }
+
+  if (
+    canonicalThumbprint !== keyThumbprint.toLowerCase() ||
+    existingThumbprint !== keyThumbprint.toLowerCase()
+  ) {
     const err = new Error('DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT');
     err.code = 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT';
+    throw err;
+  }
+
+  const provenance = assertSigningProviderMatchesPlatform(device.platform, provider);
+  if (
+    canonicalProvider !== provider ||
+    (deviceProvider && deviceProvider !== provider) ||
+    canonicalAlgorithm !== ATTESTATION_ALGORITHM ||
+    (deviceAlgorithm && deviceAlgorithm !== ATTESTATION_ALGORITHM) ||
+    String(canonical.platform || 'UNKNOWN').trim().toUpperCase() !== provenance.platform
+  ) {
+    const err = new Error('DEVICE_ATTESTATION_PROVENANCE_MISMATCH');
+    err.code = 'DEVICE_ATTESTATION_PROVENANCE_MISMATCH';
     throw err;
   }
 
@@ -374,12 +437,12 @@ async function bindAttestationKey(device, {
     metadata: { ...(canonical.metadata || {}) },
   };
 
-  canonical.publicSigningKey = canonicalSigningKey;
-  canonical.signingKeyThumbprint = keyThumbprint;
-  canonical.signingKeyAlgorithm = ATTESTATION_ALGORITHM;
-  canonical.signingKeyProvider = provider;
-  canonical.signingKeyCreatedAt = canonical.signingKeyCreatedAt || new Date();
-  canonical.platform = resolveCanonicalDevicePlatform(device.platform, provider);
+  canonical.publicSigningKey = canonical.publicSigningKey;
+  canonical.signingKeyThumbprint = canonical.signingKeyThumbprint;
+  canonical.signingKeyAlgorithm = canonical.signingKeyAlgorithm;
+  canonical.signingKeyProvider = canonical.signingKeyProvider;
+  canonical.signingKeyCreatedAt = canonical.signingKeyCreatedAt;
+  canonical.platform = canonical.platform;
   canonical.metadata = {
     ...(canonical.metadata || {}),
     attestationCapable: true,
@@ -422,12 +485,12 @@ async function bindAttestationKey(device, {
       deviceId: device.id,
       cafeId: device.cafeId,
       organisationId: device.organisationId,
-      reasonCode: 'DEVICE_ATTESTATION_KEY_BOUND',
+      reasonCode: 'DEVICE_ATTESTATION_KEY_VERIFIED',
       metadata: {
         keyThumbprint,
         algorithm: ATTESTATION_ALGORITHM,
         provider,
-        idempotentReplay: Boolean(existingThumbprint),
+        idempotentReplay: true,
       },
     });
   } catch (_) {
@@ -441,7 +504,7 @@ async function bindAttestationKey(device, {
       algorithm: ATTESTATION_ALGORITHM,
       keyThumbprint,
       provider,
-      idempotentReplay: Boolean(existingThumbprint),
+      idempotentReplay: true,
     },
   };
 }
