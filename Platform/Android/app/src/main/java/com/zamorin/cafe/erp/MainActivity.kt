@@ -447,6 +447,7 @@ class MainActivity : AppCompatActivity(), ZamorinNativeBridge.BridgeCallbacks {
             put("printed", false)
             put("printDispatched", result.success)
             put("status", result.status)
+            put("spoolerCompletionVerified", false)
             put("physicalCompletionVerified", false)
             put("completed", result.completed)
             if (result.platformJobId != null) put("platformJobId", result.platformJobId)

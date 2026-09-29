@@ -50,7 +50,12 @@ test('REC-04E Android spooler evidence cannot overclaim exact thermal delivery',
   assert.match(bridge,/"SPOOLER_TERMINAL_STATE"/);
   assert.match(bridge,/val contentBindingVerified = false/);
   assert.match(bridge,/val printerIdentityVerified = false/);
+  assert.match(pm,/spoolerCompletionVerified = status == "COMPLETED"/);
   assert.match(pm,/printerIdentity = printJob\.info\?\.printerId\?\.toString\(\)/);
+  assert.match(bridge,/put\("spoolerCompletionVerified", statusResult\.spoolerCompletionVerified\)/);
+  assert.match(bridge,/put\("physicalCompletionVerified", false\)/);
+  assert.match(front,/attestedResult\.spoolerCompletionVerified !== true/);
+  assert.match(front,/ANDROID_PHYSICAL_COMPLETION_OVERCLAIM/);
   assert.match(front,/ANDROID_PRINT_EVIDENCE_OVERCLAIM/);
   assert.match(till,/"OPEN_SYSTEM_PRINT"/);
   assert.doesNotMatch(till,/"OPEN_SYSTEM_PRINT"[\s\S]{0,500}?printBuffer/);

@@ -264,6 +264,7 @@ class ZamorinNativeBridge(
                                 put("platformJobId", platformJobId)
                                 put("status", statusResult.status)
                                 put("terminal", false)
+                                put("spoolerCompletionVerified", false)
                                 put("physicalCompletionVerified", false)
                             }
                             BridgeResponse(requestId = requestId, success = true, result = res)
@@ -380,7 +381,8 @@ class ZamorinNativeBridge(
                                     put("platformJobId", platformJobId)
                                     put("status", acknowledgementStatus)
                                     put("terminal", true)
-                                    put("physicalCompletionVerified", statusResult.status == "COMPLETED")
+                                    put("spoolerCompletionVerified", statusResult.spoolerCompletionVerified)
+                                    put("physicalCompletionVerified", false)
                                     put("drawerKickStatus", drawerKickStatus)
                                     put("failureCode", failureCode)
                                     put("failureReason", failureReason)

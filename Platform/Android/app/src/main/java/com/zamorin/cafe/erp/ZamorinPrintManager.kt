@@ -44,7 +44,7 @@ object ZamorinPrintManager {
         val platformJobId: String,
         val status: String,
         val terminal: Boolean,
-        val physicalCompletionVerified: Boolean,
+        val spoolerCompletionVerified: Boolean,
         val printerIdentity: String? = null,
         val error: String? = null
     )
@@ -178,7 +178,7 @@ object ZamorinPrintManager {
                 platformJobId = normalizedId,
                 status = "INVALID_ID",
                 terminal = true,
-                physicalCompletionVerified = false,
+                spoolerCompletionVerified = false,
                 error = "PLATFORM_PRINT_JOB_ID_REQUIRED"
             )
         }
@@ -190,7 +190,7 @@ object ZamorinPrintManager {
                     platformJobId = normalizedId,
                     status = "PRINT_SERVICE_UNAVAILABLE",
                     terminal = true,
-                    physicalCompletionVerified = false,
+                    spoolerCompletionVerified = false,
                     error = "PRINT_SERVICE_UNAVAILABLE"
                 )
 
@@ -201,7 +201,7 @@ object ZamorinPrintManager {
                 platformJobId = normalizedId,
                 status = "NOT_FOUND",
                 terminal = false,
-                physicalCompletionVerified = false
+                spoolerCompletionVerified = false
             )
 
             val status = when {
@@ -219,7 +219,7 @@ object ZamorinPrintManager {
                 platformJobId = normalizedId,
                 status = status,
                 terminal = status == "COMPLETED" || status == "FAILED" || status == "CANCELLED",
-                physicalCompletionVerified = status == "COMPLETED",
+                spoolerCompletionVerified = status == "COMPLETED",
                 printerIdentity = printJob.info?.printerId?.toString(),
                 error = if (status == "FAILED") "ANDROID_PRINT_JOB_FAILED" else null
             )
@@ -229,7 +229,7 @@ object ZamorinPrintManager {
                 platformJobId = normalizedId,
                 status = "QUERY_FAILED",
                 terminal = false,
-                physicalCompletionVerified = false,
+                spoolerCompletionVerified = false,
                 error = e.message ?: "PRINT_STATUS_QUERY_FAILED"
             )
         }

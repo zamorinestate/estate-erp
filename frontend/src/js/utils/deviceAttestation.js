@@ -268,10 +268,16 @@ export async function monitorAndroidPrintAndAcknowledge(
 
     if (
       status === 'PRINTED' &&
-      attestedResult.physicalCompletionVerified !== true
+      attestedResult.spoolerCompletionVerified !== true
     ) {
       const err = new Error('Android attempted to report PRINTED without spooler completion evidence.');
       err.code = 'ANDROID_PRINT_COMPLETION_EVIDENCE_REQUIRED';
+      throw err;
+    }
+
+    if (attestedResult.physicalCompletionVerified === true) {
+      const err = new Error('Android system print cannot claim physical receipt completion without hardware acknowledgement.');
+      err.code = 'ANDROID_PHYSICAL_COMPLETION_OVERCLAIM';
       throw err;
     }
 
