@@ -226,8 +226,8 @@ public class ZamorinNativeBridge: NSObject, WKScriptMessageHandler {
         ]
         var existing: CFTypeRef?
         if SecItemCopyMatching(query as CFDictionary, &existing) == errSecSuccess,
-           let key = existing as! SecKey? {
-            return key
+           let existingKey = existing {
+            return existingKey as! SecKey
         }
 
         let privateAttrs: [String: Any] = [
