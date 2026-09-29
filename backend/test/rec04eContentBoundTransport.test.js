@@ -5,6 +5,9 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const attestationService = require('../src/services/deviceAttestationService');
+const { PosOrderService } = require('../src/services/posOrderService');
+const { PrintJob } = require('../src/models/PrintJob');
+const { Bill } = require('../src/models/Bill');
 const root = path.join(__dirname, '..', '..');
 const posServicePath = path.join(__dirname, '..', 'src', 'services', 'posOrderService.js');
 const modelPath = path.join(__dirname, '..', 'src', 'models', 'PrintJob.js');
@@ -294,4 +297,112 @@ test('REC-04E snapshots signing-provider lineage and rejects provider drift or m
   assert.match(source, /ANDROID_SIGNING_PROVIDER_OVERCLAIM/);
   assert.match(source, /signedProvider !== 'ANDROID_KEYSTORE'/);
   assert.match(source, /job\.attestationKeyProvider = attestationProvider/);
+});
+
+
+test('REC-04E physical dispatch requires a durably persisted PrintJob', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const till = fs.readFileSync(posTillPath, 'utf8');
+
+  assert.match(source, /const printDispatchAuthorized = printTrackingPersisted === true/);
+  assert.match(source, /printStatus: printDispatchAuthorized \? 'PRINT_DISPATCHED' : 'PRINT_PENDING'/);
+  assert.match(source, /printJobId: printDispatchAuthorized \? printJobId : null/);
+  assert.match(source, /printBuffer: printDispatchAuthorized \? printResult\.printBufferBase64 : null/);
+  assert.match(source, /PRINT_TRACKING_UNAVAILABLE/);
+
+  assert.match(till, /dispatch\?\.printDispatchAuthorized !== true/);
+  assert.match(till, /dispatch\?\.printTrackingPersisted !== true/);
+  assert.match(till, /PRINT_DISPATCH_NOT_AUTHORIZED/);
+  assert.match(till, /res\?\.printDispatchAuthorized === true/);
+});
+
+test('REC-04E standalone PRINT persistence failure cannot authorize physical dispatch', async (t) => {
+  const bill = {
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    billId: 'BILL-TRACKING-FAIL-001',
+    invoiceNumber: 'INV-TRACK-001',
+    paymentMethod: 'UPI',
+    tenders: [],
+    lineItems: [],
+    reprints: [],
+    toObject() { return { ...this }; },
+  };
+  const auth = {
+    userId: 'EMP-ZC-1001',
+    role: 'STAFF',
+    organisationId: 'ORG-ZAMORIN',
+    assignedCafeIds: ['ZC-0001'],
+    primaryCafeId: 'ZC-0001',
+  };
+
+  t.mock.method(Bill, 'findOne', async () => bill);
+  t.mock.method(PosOrderService, 'generatePrintArtifacts', async () => ({
+    payloadSha256: 'a'.repeat(64),
+    payloadBytes: 16,
+    printBufferBase64: 'AA==',
+    htmlPreview: '<div>test</div>',
+    rawBuffer: Buffer.from([0]),
+    drawerKickIncluded: false,
+  }));
+  t.mock.method(PrintJob.prototype, 'save', async () => {
+    throw new Error('SIMULATED_PRINTJOB_WRITE_FAILURE');
+  });
+
+  await assert.rejects(
+    () => PosOrderService.printCommittedBill(bill.billId, auth),
+    (err) => {
+      assert.equal(err.statusCode, 503);
+      assert.equal(err.code, 'PRINT_TRACKING_UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('REC-04E reprint tracking failure does not increment audited reprint count', async (t) => {
+  let billSaveCount = 0;
+  const bill = {
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    billId: 'BILL-REPRINT-TRACK-001',
+    invoiceNumber: 'INV-RPT-001',
+    paymentMethod: 'UPI',
+    tenders: [],
+    lineItems: [],
+    reprints: [],
+    async save() { billSaveCount += 1; return this; },
+    toObject() { return { ...this, reprints: [...this.reprints] }; },
+  };
+  const auth = {
+    userId: 'EMP-ZC-1001',
+    role: 'STAFF',
+    organisationId: 'ORG-ZAMORIN',
+    assignedCafeIds: ['ZC-0001'],
+    primaryCafeId: 'ZC-0001',
+  };
+
+  t.mock.method(Bill, 'findOne', async () => bill);
+  t.mock.method(PosOrderService, 'generatePrintArtifacts', async () => ({
+    payloadSha256: 'b'.repeat(64),
+    payloadBytes: 16,
+    printBufferBase64: 'AA==',
+    htmlPreview: '<div>reprint</div>',
+    rawBuffer: Buffer.from([0]),
+    drawerKickIncluded: false,
+  }));
+  t.mock.method(PrintJob.prototype, 'save', async () => {
+    throw new Error('SIMULATED_REPRINT_PRINTJOB_WRITE_FAILURE');
+  });
+
+  await assert.rejects(
+    () => PosOrderService.reprintBill(bill.billId, auth, 'Tracking fault injection'),
+    (err) => {
+      assert.equal(err.statusCode, 503);
+      assert.equal(err.code, 'PRINT_TRACKING_UNAVAILABLE');
+      return true;
+    }
+  );
+
+  assert.equal(bill.reprints.length, 0);
+  assert.equal(billSaveCount, 0);
 });

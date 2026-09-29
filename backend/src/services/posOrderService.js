@@ -1437,30 +1437,35 @@ class PosOrderService {
         console.error('[POS Print] Failed to persist dispatched PrintJob', printJobId, trackingErr);
       }
 
+      const printDispatchAuthorized = printTrackingPersisted === true;
+
       try {
-        billDoc.printStatus = 'PRINT_DISPATCHED';
+        billDoc.printStatus = printDispatchAuthorized ? 'PRINT_DISPATCHED' : 'PRINT_PENDING';
         billDoc.printJobs = billDoc.printJobs || [];
-        billDoc.printJobs.push({
-          printJobId,
-          jobType: 'RECEIPT',
-          status: 'DISPATCHED',
-          dispatchedAt: new Date(),
-          dispatchedDeviceId,
-          attestationRequired: attestationBinding.required,
-          attestationVersion: PRINT_ATTESTATION_VERSION,
-          attestationKeyThumbprint: attestationBinding.keyThumbprint,
-          attestationKeyProvider: attestationBinding.keyProvider,
-          payloadSha256: printResult.payloadSha256,
-          payloadBytes: printResult.payloadBytes,
-          printerTarget: 'DEFAULT_THERMAL',
-          transportMode: 'UNBOUND',
-          evidenceLevel: 'NONE',
-          contentBindingVerified: false,
-          printerIdentityVerified: false,
-          drawerKickRequested,
-          drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
-        });
+        if (printDispatchAuthorized) {
+          billDoc.printJobs.push({
+            printJobId,
+            jobType: 'RECEIPT',
+            status: 'DISPATCHED',
+            dispatchedAt: new Date(),
+            dispatchedDeviceId,
+            attestationRequired: attestationBinding.required,
+            attestationVersion: PRINT_ATTESTATION_VERSION,
+            attestationKeyThumbprint: attestationBinding.keyThumbprint,
+            attestationKeyProvider: attestationBinding.keyProvider,
+            payloadSha256: printResult.payloadSha256,
+            payloadBytes: printResult.payloadBytes,
+            printerTarget: 'DEFAULT_THERMAL',
+            transportMode: 'UNBOUND',
+            evidenceLevel: 'NONE',
+            contentBindingVerified: false,
+            printerIdentityVerified: false,
+            drawerKickRequested,
+            drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
+          });
+        }
         await billDoc.save();
+        savedBillData.printStatus = billDoc.printStatus;
         billPrintStatePersisted = true;
       } catch (billPrintErr) {
         printTrackingWarnings.push('BILL_PRINT_STATE_PERSISTENCE_FAILED');
@@ -1471,30 +1476,35 @@ class PosOrderService {
         success: true,
         action: 'SAVE_AND_PRINT',
         saleFinalized: true,
-        message: 'Order saved and receipt dispatched to the POS print client.',
+        message: printDispatchAuthorized
+          ? 'Order saved and receipt dispatch is durably tracked.'
+          : 'Order saved, but automatic receipt dispatch was withheld because durable print tracking is unavailable.',
         bill: savedBillData,
         data: savedBillData,
         printed: false,
-        printDispatched: true,
-        printStatus: 'PRINT_DISPATCHED',
-        printJobId,
+        printDispatched: printDispatchAuthorized,
+        printDispatchAuthorized,
+        printStatus: printDispatchAuthorized ? 'PRINT_DISPATCHED' : 'PRINT_PENDING',
+        printJobId: printDispatchAuthorized ? printJobId : null,
         printTrackingPersisted,
         billPrintStatePersisted,
         printTrackingWarning: printTrackingWarnings[0] || null,
         printTrackingWarnings,
-        dispatchedDeviceId,
-        deviceAcknowledgementRequired: attestationBinding.required,
+        printDispatchBlockedReason: printDispatchAuthorized ? null : 'PRINT_JOB_PERSISTENCE_FAILED',
+        reprintAvailable: !printDispatchAuthorized,
+        dispatchedDeviceId: printDispatchAuthorized ? dispatchedDeviceId : null,
+        deviceAcknowledgementRequired: printDispatchAuthorized && attestationBinding.required,
         deviceAcknowledgementSupported: attestationBinding.supported,
         deviceAcknowledgementPlatform: attestationBinding.platform,
         deviceAcknowledgementUnavailableReason: attestationBinding.unavailableReason,
-        cryptographicAttestationRequired: attestationBinding.required,
-        attestationAlgorithm: attestationBinding.algorithm,
-        attestationKeyThumbprint: attestationBinding.keyThumbprint,
-        attestationKeyProvider: attestationBinding.keyProvider,
-        ackChallenge: attestationBinding.challenge,
-        ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
-        ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
-        attestationContext: attestationBinding.required ? {
+        cryptographicAttestationRequired: printDispatchAuthorized && attestationBinding.required,
+        attestationAlgorithm: printDispatchAuthorized ? attestationBinding.algorithm : null,
+        attestationKeyThumbprint: printDispatchAuthorized ? attestationBinding.keyThumbprint : null,
+        attestationKeyProvider: printDispatchAuthorized ? attestationBinding.keyProvider : null,
+        ackChallenge: printDispatchAuthorized ? attestationBinding.challenge : null,
+        ackChallengeIssuedAt: printDispatchAuthorized ? attestationBinding.challengeIssuedAt : null,
+        ackChallengeExpiresAt: printDispatchAuthorized ? attestationBinding.challengeExpiresAt : null,
+        attestationContext: printDispatchAuthorized && attestationBinding.required ? {
           version: PRINT_ATTESTATION_VERSION,
           algorithm: ATTESTATION_ALGORITHM,
           organisationId: orgId,
@@ -1510,9 +1520,9 @@ class PosOrderService {
         } : null,
         drawerKickRequested,
         drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
-        printBuffer: printResult.printBufferBase64,
+        printBuffer: printDispatchAuthorized ? printResult.printBufferBase64 : null,
         htmlPreview: printResult.htmlPreview,
-        rawBuffer: printResult.rawBuffer,
+        rawBuffer: printDispatchAuthorized ? printResult.rawBuffer : null,
       };
     } catch (printerErr) {
       // THE TRANSACTION REMAINS COMMITTED!
@@ -2285,12 +2295,21 @@ class PosOrderService {
       console.error('[POS Print] Failed to persist standalone PrintJob', printJobId, trackingErr);
     }
 
+    if (!printTrackingPersisted) {
+      throw new ApiError(
+        503,
+        'PRINT_TRACKING_UNAVAILABLE',
+        'Receipt dispatch was withheld because durable print tracking could not be established. Retry the print request.'
+      );
+    }
+
     return {
       success: true,
       action: 'PRINT',
       bill: billData,
       printed: false,
       printDispatched: true,
+      printDispatchAuthorized: true,
       printStatus: 'PRINT_DISPATCHED',
       printJobId,
       printTrackingPersisted,
@@ -2351,42 +2370,12 @@ class PosOrderService {
     }
 
     bill.reprints = Array.isArray(bill.reprints) ? bill.reprints : [];
-    bill.reprints.push({
-      reprintedBy: authContext.userId || 'STAFF',
-      reprintedAt: new Date(),
-      reason: cleanReason,
-    });
-
-    await bill.save();
-
-    // Audit Logging
-    try {
-      await auditService.recordRequestAudit({
-        request: {
-          auth: authContext,
-        },
-        module: 'BILLS_RECEIPTS',
-        action: 'REPRINT_RECEIPT',
-        entityType: 'BILL',
-        entityId: bill.billId,
-        after: {
-          billId: bill.billId,
-          invoiceNumber: bill.invoiceNumber,
-          reprintCount: bill.reprints.length,
-          reason: cleanReason,
-        },
-        result: 'SUCCESS',
-        riskClassification: 'LOW',
-      });
-    } catch {
-      // Audit non-fatal
-    }
-
-    const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
-    const printResult = await this.generatePrintArtifacts(billData, {
+    const nextReprintCount = bill.reprints.length + 1;
+    const billDataBeforeReprint = typeof bill.toObject === 'function' ? bill.toObject() : bill;
+    const printResult = await this.generatePrintArtifacts(billDataBeforeReprint, {
       ...options,
       isReprint: true,
-      reprintCount: bill.reprints.length,
+      reprintCount: nextReprintCount,
       allowDrawerKick: false,
     });
     const dispatchedDeviceId = resolveDispatchDeviceId(authContext, bill.cafeId);
@@ -2395,6 +2384,7 @@ class PosOrderService {
     const printJobId = createPrintJobId('REPRINT');
     let printTrackingPersisted = false;
     let printTrackingWarning = null;
+    let persistedPrintJob = null;
     try {
       const pj = new PrintJob({
         printJobId,
@@ -2422,21 +2412,80 @@ class PosOrderService {
         htmlPreview: printResult.htmlPreview,
       });
       await pj.save();
+      persistedPrintJob = pj;
       printTrackingPersisted = true;
     } catch (trackingErr) {
       printTrackingWarning = 'PRINT_JOB_PERSISTENCE_FAILED';
       console.error('[POS Print] Failed to persist reprint PrintJob', printJobId, trackingErr);
     }
 
+    if (!printTrackingPersisted) {
+      throw new ApiError(
+        503,
+        'PRINT_TRACKING_UNAVAILABLE',
+        'Reprint dispatch was withheld because durable print tracking could not be established. Retry the reprint request.'
+      );
+    }
+
+    bill.reprints.push({
+      reprintedBy: authContext.userId || 'STAFF',
+      reprintedAt: new Date(),
+      reason: cleanReason,
+    });
+
+    try {
+      await bill.save();
+    } catch (reprintStateErr) {
+      if (persistedPrintJob) {
+        try {
+          persistedPrintJob.status = 'CANCELLED';
+          persistedPrintJob.failureCode = 'REPRINT_STATE_PERSISTENCE_FAILED';
+          persistedPrintJob.failureReason = reprintStateErr?.message || 'Reprint state persistence failed.';
+          persistedPrintJob.completedAt = new Date();
+          await persistedPrintJob.save();
+        } catch (_) {}
+      }
+      throw new ApiError(
+        503,
+        'REPRINT_STATE_PERSISTENCE_FAILED',
+        'Reprint dispatch was withheld because the audited reprint state could not be persisted.'
+      );
+    }
+
+    try {
+      await auditService.recordRequestAudit({
+        request: {
+          auth: authContext,
+        },
+        module: 'BILLS_RECEIPTS',
+        action: 'REPRINT_RECEIPT',
+        entityType: 'BILL',
+        entityId: bill.billId,
+        after: {
+          billId: bill.billId,
+          invoiceNumber: bill.invoiceNumber,
+          reprintCount: bill.reprints.length,
+          reason: cleanReason,
+        },
+        result: 'SUCCESS',
+        riskClassification: 'LOW',
+      });
+    } catch {
+      // Audit delivery is non-fatal after durable print tracking and reprint state exist.
+    }
+
+    const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
+
     return {
       success: true,
       action: 'REPRINT',
-      message: `Receipt reprint dispatched to the POS print client (Request #${bill.reprints.length}).`,
+      message: `Receipt reprint dispatch is durably tracked (Request #${bill.reprints.length}).`,
       bill: billData,
       isReprint: true,
       reprintCount: bill.reprints.length,
       printed: false,
       printDispatched: true,
+      printDispatchAuthorized: true,
       printStatus: 'PRINT_DISPATCHED',
       printJobId,
       printTrackingPersisted,

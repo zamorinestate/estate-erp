@@ -56,6 +56,23 @@ function getOperatorSession() {
 }
 
 async function dispatchReceiptToClient(dispatch, bill, { isReprint = false } = {}) {
+  const billIdentity = String(bill?.billId || bill?.invoiceNumber || "");
+  const officialBill = Boolean(billIdentity && !billIdentity.startsWith("PREVIEW"));
+  if (
+    officialBill &&
+    (
+      dispatch?.printDispatchAuthorized !== true ||
+      dispatch?.printTrackingPersisted !== true ||
+      !dispatch?.printJobId
+    )
+  ) {
+    const err = new Error(
+      "Durable print tracking was not established; physical receipt dispatch is withheld. Retry the print."
+    );
+    err.code = "PRINT_DISPATCH_NOT_AUTHORIZED";
+    throw err;
+  }
+
   const capabilities = NativeCapabilities.getCapabilities();
   const jobName = `Zamorin_${isReprint ? "Reprint" : "Receipt"}_${bill?.invoiceNumber || bill?.billId || "POS"}`;
 
@@ -2081,7 +2098,12 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
     };
 
     // Surface any printer warning from the backend (non-fatal — DB commit is already done)
-    if (res?.printerWarning || res?.printStatus === "FAILED") {
+    if (res?.printStatus === "PRINT_PENDING" || res?.printDispatchBlockedReason === "PRINT_JOB_PERSISTENCE_FAILED") {
+      showToast(
+        `⚠️ Bill saved (${billData.invoiceNumber || billData.billId}). Automatic printing was withheld because durable print tracking is unavailable. Use Thermal Print to retry.`,
+        "warning"
+      );
+    } else if (res?.printerWarning || res?.printStatus === "FAILED") {
       showToast(
         `⚠️ Bill saved (${billData.invoiceNumber || billData.billId}). Printer offline — use Reprint when ready.`,
         "warning"
@@ -2102,7 +2124,12 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
     isPaymentInProgress = false;
 
     const originalPrintDispatch =
-      posAction === "SAVE_AND_PRINT" && res?.printJobId ? res : null;
+      posAction === "SAVE_AND_PRINT" &&
+      res?.printDispatchAuthorized === true &&
+      res?.printTrackingPersisted === true &&
+      res?.printJobId
+        ? res
+        : null;
     openReceiptModal(billData, false, originalPrintDispatch);
     refreshPOSView(root);
   } catch (err) {
@@ -2254,10 +2281,17 @@ function openReceiptModal(bill, isReprint = false, initialDispatch = null) {
     } catch (printErr) {
       // Sale state is already committed. A print error must never recreate the sale.
       console.warn("[POS] Print client error:", printErr?.message || printErr);
+      const trackingBlocked = [
+        "PRINT_TRACKING_UNAVAILABLE",
+        "PRINT_DISPATCH_NOT_AUTHORIZED",
+        "REPRINT_STATE_PERSISTENCE_FAILED",
+      ].includes(printErr?.code);
       showToast(
         printErr?.code === "NATIVE_PRINT_NOT_STARTED"
           ? "Print was cancelled or could not be started. The bill remains safely saved."
-          : "Print client unavailable. The bill remains safely saved and can be reprinted.",
+          : trackingBlocked
+            ? "Physical printing was withheld because durable print tracking is unavailable. Retry the print."
+            : "Print client unavailable. The bill remains safely saved and can be reprinted.",
         "warning"
       );
     }
