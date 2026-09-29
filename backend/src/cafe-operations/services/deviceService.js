@@ -207,4 +207,106 @@ async function getDiagnostics(device) {
   };
 }
 
-module.exports = { enrollDevice, transitionLifecycle, reassignCafe, getDiagnostics };
+
+async function bindAttestationKey(device, {
+  publicSigningKey,
+  signingKeyAlgorithm,
+  signingKeyProvider,
+} = {}) {
+  if (!device?.id) {
+    const err = new Error('DEVICE_CONTEXT_REQUIRED');
+    err.code = 'DEVICE_CONTEXT_REQUIRED';
+    throw err;
+  }
+
+  if (!publicSigningKey) {
+    const err = new Error('DEVICE_SIGNING_KEY_REQUIRED');
+    err.code = 'DEVICE_SIGNING_KEY_REQUIRED';
+    throw err;
+  }
+
+  if (String(signingKeyAlgorithm || ATTESTATION_ALGORITHM).toUpperCase() !== ATTESTATION_ALGORITHM) {
+    const err = new Error('UNSUPPORTED_DEVICE_SIGNING_ALGORITHM');
+    err.code = 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM';
+    throw err;
+  }
+
+  const canonicalSigningKey = canonicalPublicJwk(publicSigningKey);
+  const keyThumbprint = publicKeyThumbprint(canonicalSigningKey);
+  const provider = String(signingKeyProvider || 'UNKNOWN').trim().toUpperCase();
+  const existingThumbprint = String(device.signingKeyThumbprint || '').trim().toLowerCase();
+
+  if (existingThumbprint && existingThumbprint !== keyThumbprint.toLowerCase()) {
+    const err = new Error('DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT');
+    err.code = 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT';
+    throw err;
+  }
+
+  const repos = getRepositories();
+  const updated = await repos.devices.update(device.id, {
+    signingKeyThumbprint: keyThumbprint,
+    signingKeyAlgorithm: ATTESTATION_ALGORITHM,
+    signingKeyProvider: provider,
+    attestationCapable: true,
+    integrityState: 'READY',
+  });
+
+  const { DeviceRegistration } = require('../../models/DeviceRegistration');
+  const canonical = await DeviceRegistration.findOne({
+    $or: [
+      { deviceId: String(device.id) },
+      { 'metadata.deviceCode': String(device.deviceCode || '') },
+    ],
+  });
+
+  if (!canonical) {
+    const err = new Error('CANONICAL_DEVICE_REGISTRATION_NOT_FOUND');
+    err.code = 'CANONICAL_DEVICE_REGISTRATION_NOT_FOUND';
+    throw err;
+  }
+
+  const canonicalThumbprint = String(canonical.signingKeyThumbprint || '').trim().toLowerCase();
+  if (canonicalThumbprint && canonicalThumbprint !== keyThumbprint.toLowerCase()) {
+    const err = new Error('DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT');
+    err.code = 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT';
+    throw err;
+  }
+
+  canonical.publicSigningKey = canonicalSigningKey;
+  canonical.signingKeyThumbprint = keyThumbprint;
+  canonical.signingKeyAlgorithm = ATTESTATION_ALGORITHM;
+  canonical.signingKeyProvider = provider;
+  canonical.signingKeyCreatedAt = canonical.signingKeyCreatedAt || new Date();
+  canonical.metadata = {
+    ...(canonical.metadata || {}),
+    attestationCapable: true,
+  };
+  await canonical.save();
+
+  await auditService.record({
+    eventType: SECURITY_EVENT_TYPE.DEVICE_LIFECYCLE_EVENT,
+    deviceId: device.id,
+    cafeId: device.cafeId,
+    organisationId: device.organisationId,
+    reasonCode: 'DEVICE_ATTESTATION_KEY_BOUND',
+    metadata: {
+      keyThumbprint,
+      algorithm: ATTESTATION_ALGORITHM,
+      provider,
+      idempotentReplay: Boolean(existingThumbprint),
+    },
+  });
+
+  return {
+    device: updated,
+    attestation: {
+      capable: true,
+      algorithm: ATTESTATION_ALGORITHM,
+      keyThumbprint,
+      provider,
+      idempotentReplay: Boolean(existingThumbprint),
+    },
+  };
+}
+
+module.exports = { enrollDevice, bindAttestationKey, transitionLifecycle, reassignCafe, getDiagnostics };
