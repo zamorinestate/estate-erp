@@ -688,6 +688,7 @@ const billSchema = new mongoose.Schema(
         attestationRequired: { type: Boolean, default: false },
         attestationVersion: { type: String, default: null },
         attestationKeyThumbprint: { type: String, default: null },
+        attestationKeyProvider: { type: String, default: null },
         attestationVerifiedAt: { type: Date, default: null },
         ackSignatureHash: { type: String, default: null },
         payloadSha256: { type: String, default: null, lowercase: true },

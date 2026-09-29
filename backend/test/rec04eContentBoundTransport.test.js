@@ -279,3 +279,19 @@ test('REC-04E post-enrollment signing identity verification is read-only', () =>
   assert.doesNotMatch(bindSource, /canonical\.save\(\)/);
   assert.doesNotMatch(bindSource, /repos\.devices\.update\(device\.id/);
 });
+
+
+test('REC-04E snapshots signing-provider lineage and rejects provider drift or mismatch', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const model = fs.readFileSync(modelPath, 'utf8');
+
+  assert.match(model, /attestationKeyProvider/);
+  assert.match(source, /keyProvider: signingProvider/);
+  assert.match(source, /attestationKeyProvider: attestationBinding\.keyProvider/);
+  assert.match(source, /DEVICE_ATTESTATION_PROVIDER_UNTRUSTED/);
+  assert.match(source, /DEVICE_ATTESTATION_PROVIDER_CHANGED/);
+  assert.match(source, /DEVICE_ATTESTATION_PROVIDER_MISMATCH/);
+  assert.match(source, /ANDROID_SIGNING_PROVIDER_OVERCLAIM/);
+  assert.match(source, /signedProvider !== 'ANDROID_KEYSTORE'/);
+  assert.match(source, /job\.attestationKeyProvider = attestationProvider/);
+});

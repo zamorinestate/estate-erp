@@ -172,6 +172,7 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
       challengeIssuedAtEpochMs: null,
       challengeExpiresAtEpochMs: null,
       keyThumbprint: null,
+      keyProvider: null,
       algorithm: null,
     };
   }
@@ -211,6 +212,7 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
       challengeIssuedAtEpochMs: null,
       challengeExpiresAtEpochMs: null,
       keyThumbprint: null,
+      keyProvider: null,
       algorithm: null,
     };
   }
@@ -231,6 +233,7 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
     keyThumbprint:
       registration.signingKeyThumbprint ||
       publicKeyThumbprint(registration.publicSigningKey),
+    keyProvider: signingProvider,
     algorithm: ATTESTATION_ALGORITHM,
   };
 }
@@ -1421,6 +1424,7 @@ class PosOrderService {
           printerTarget: 'DEFAULT_THERMAL',
           attestationRequired: attestationBinding.required,
           attestationKeyThumbprint: attestationBinding.keyThumbprint,
+          attestationKeyProvider: attestationBinding.keyProvider,
           drawerKickRequested,
           drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
           printBufferBase64: printResult.printBufferBase64,
@@ -1445,6 +1449,7 @@ class PosOrderService {
           attestationRequired: attestationBinding.required,
           attestationVersion: PRINT_ATTESTATION_VERSION,
           attestationKeyThumbprint: attestationBinding.keyThumbprint,
+          attestationKeyProvider: attestationBinding.keyProvider,
           payloadSha256: printResult.payloadSha256,
           payloadBytes: printResult.payloadBytes,
           printerTarget: 'DEFAULT_THERMAL',
@@ -1485,6 +1490,7 @@ class PosOrderService {
         cryptographicAttestationRequired: attestationBinding.required,
         attestationAlgorithm: attestationBinding.algorithm,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
+        attestationKeyProvider: attestationBinding.keyProvider,
         ackChallenge: attestationBinding.challenge,
         ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
         ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
@@ -1779,6 +1785,7 @@ class PosOrderService {
       normalizeId(job.attestationVersion) === PRINT_ATTESTATION_VERSION ||
       Boolean(job.payloadSha256);
     let attestationProof = null;
+    let attestationProvider = null;
     let transportEvidence = null;
 
     if (isContentBoundJob && job.attestationRequired !== true) {
@@ -1817,6 +1824,35 @@ class PosOrderService {
         );
       }
 
+      const liveProvider = normalizeId(registration.signingKeyProvider || 'UNKNOWN');
+      attestationProvider = liveProvider;
+
+      if (isContentBoundJob && liveProvider !== 'ANDROID_KEYSTORE') {
+        throw new ApiError(
+          409,
+          'DEVICE_ATTESTATION_PROVIDER_UNTRUSTED',
+          'REC-04E print acknowledgement requires the enrolled Android Keystore signing provider.'
+        );
+      }
+
+      const expectedProvider = normalizeId(job.attestationKeyProvider || '');
+      if (expectedProvider && expectedProvider !== liveProvider) {
+        throw new ApiError(
+          409,
+          'DEVICE_ATTESTATION_PROVIDER_CHANGED',
+          'The enrolled device signing provider changed after this print job was dispatched.'
+        );
+      }
+
+      const suppliedProvider = normalizeId(acknowledgement.attestation?.provider || '');
+      if (suppliedProvider && suppliedProvider !== liveProvider) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_PROVIDER_MISMATCH',
+          'The acknowledgement reported a signing provider that does not match the enrolled device.'
+        );
+      }
+
       const liveKeyThumbprint =
         registration.signingKeyThumbprint ||
         publicKeyThumbprint(registration.publicSigningKey);
@@ -1846,6 +1882,7 @@ class PosOrderService {
       const isContentBoundEnvelope = Boolean(job.payloadSha256);
       if (isContentBoundEnvelope) {
         const attestation = acknowledgement.attestation || {};
+        const signedProvider = normalizeId(attestation.provider || '');
         const transportMode = normalizeId(attestation.transportMode || '');
         const evidenceLevel = normalizeId(attestation.evidenceLevel || '');
         const contentBindingVerified = attestation.contentBindingVerified === true;
@@ -1853,8 +1890,15 @@ class PosOrderService {
         const platformJobId = String(attestation.platformJobId || '').trim();
         const printerIdentity = String(attestation.printerIdentity || '').trim();
 
-        if (!transportMode || !evidenceLevel || !platformJobId) {
-          throw new ApiError(400, 'PRINT_TRANSPORT_EVIDENCE_REQUIRED', 'REC-04E acknowledgement requires transportMode, evidenceLevel, and platformJobId.');
+        if (!transportMode || !evidenceLevel || !platformJobId || !signedProvider) {
+          throw new ApiError(400, 'PRINT_TRANSPORT_EVIDENCE_REQUIRED', 'REC-04E acknowledgement requires signing provider, transportMode, evidenceLevel, and platformJobId.');
+        }
+        if (signedProvider !== 'ANDROID_KEYSTORE') {
+          throw new ApiError(
+            409,
+            'ANDROID_SIGNING_PROVIDER_OVERCLAIM',
+            'Android system-print acknowledgement must be signed by the enrolled Android Keystore provider.'
+          );
         }
 
         // REC-04E currently has exactly one implemented purpose-bound native
@@ -2011,6 +2055,9 @@ class PosOrderService {
     if (statusChanged && attestationProof) {
       job.attestationVerifiedAt = now;
       job.ackSignatureHash = attestationProof.signatureHash;
+      if (!job.attestationKeyProvider && attestationProvider) {
+        job.attestationKeyProvider = attestationProvider;
+      }
     }
 
     if (statusChanged) {
@@ -2057,6 +2104,7 @@ class PosOrderService {
           attestationRequired: Boolean(job.attestationRequired),
           attestationVersion: job.attestationVersion || null,
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+          attestationKeyProvider: job.attestationKeyProvider || null,
           attestationVerifiedAt: job.attestationVerifiedAt || null,
           ackSignatureHash: job.ackSignatureHash || null,
           payloadSha256: job.payloadSha256 || null,
@@ -2080,6 +2128,7 @@ class PosOrderService {
         billPrintJob.attestationRequired = Boolean(job.attestationRequired);
         billPrintJob.attestationVersion = job.attestationVersion || null;
         billPrintJob.attestationKeyThumbprint = job.attestationKeyThumbprint || null;
+        billPrintJob.attestationKeyProvider = job.attestationKeyProvider || null;
         billPrintJob.attestationVerifiedAt = job.attestationVerifiedAt || null;
         billPrintJob.ackSignatureHash = job.ackSignatureHash || null;
         billPrintJob.payloadSha256 = job.payloadSha256 || null;
@@ -2131,6 +2180,7 @@ class PosOrderService {
           attestationVersion: job.attestationVersion || null,
           attestationVerified: Boolean(attestationProof),
           attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+          attestationKeyProvider: job.attestationKeyProvider || null,
           ackSignatureHash: job.ackSignatureHash || null,
           payloadSha256: job.payloadSha256 || null,
           payloadBytes: job.payloadBytes || null,
@@ -2161,6 +2211,7 @@ class PosOrderService {
       attestationVersion: job.attestationVersion || null,
       attestationVerified: Boolean(attestationProof),
       attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+      attestationKeyProvider: job.attestationKeyProvider || null,
       payloadSha256: job.payloadSha256 || null,
       payloadBytes: job.payloadBytes || null,
       printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
@@ -2221,6 +2272,7 @@ class PosOrderService {
         printerTarget: 'DEFAULT_THERMAL',
         attestationRequired: attestationBinding.required,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
+        attestationKeyProvider: attestationBinding.keyProvider,
         drawerKickRequested: false,
         drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
@@ -2251,6 +2303,7 @@ class PosOrderService {
       cryptographicAttestationRequired: attestationBinding.required,
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
+      attestationKeyProvider: attestationBinding.keyProvider,
       ackChallenge: attestationBinding.challenge,
       ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
       ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
@@ -2362,6 +2415,7 @@ class PosOrderService {
         printerTarget: 'DEFAULT_THERMAL',
         attestationRequired: attestationBinding.required,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
+        attestationKeyProvider: attestationBinding.keyProvider,
         drawerKickRequested: false,
         drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
@@ -2395,6 +2449,7 @@ class PosOrderService {
       cryptographicAttestationRequired: attestationBinding.required,
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
+      attestationKeyProvider: attestationBinding.keyProvider,
       ackChallenge: attestationBinding.challenge,
       ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
       ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,

@@ -130,6 +130,11 @@ const printJobSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    attestationKeyProvider: {
+      type: String,
+      enum: ['ANDROID_KEYSTORE', 'APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN', 'WINDOWS_CNG', 'WEB_CRYPTO', 'UNKNOWN', null],
+      default: null,
+    },
     attestationVerifiedAt: {
       type: Date,
       default: null,
