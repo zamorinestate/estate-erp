@@ -33,8 +33,16 @@ function toBuffer(value) {
 }
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const base64Url = (value) => Buffer.from(value).toString('base64url');
-const serial = (value) =>
+const serialHex = (value) =>
   String(value || '').replace(/[^a-fA-F0-9]/g, '').toLowerCase().replace(/^0+/, '') || '0';
+function revocationLookupKeys(value) {
+  const hex = serialHex(value);
+  const keys = new Set([hex]);
+  try {
+    keys.add(BigInt(`0x${hex}`).toString(10));
+  } catch (_) {}
+  return Array.from(keys);
+}
 const normalizeDigest = (value) => String(value || '').toLowerCase().replace(/[^a-f0-9]/g, '');
 
 function expectedAndroidSigningDigests() {
@@ -272,13 +280,14 @@ async function verifyAndroidHardwareAttestation({
     };
   }
   for (const certificate of certificates) {
-    const key = serial(certificate.serialNumber);
-    if (revoked[key]) {
+    const revokedKey = revocationLookupKeys(certificate.serialNumber)
+      .find((key) => revoked[key]);
+    if (revokedKey) {
       return {
         verified: false,
         reason: 'ANDROID_ATTESTATION_CERTIFICATE_REVOKED',
         securityLevel: 'UNKNOWN',
-        revokedSerial: key,
+        revokedSerial: revokedKey,
         rootSha256,
       };
     }
@@ -351,7 +360,7 @@ async function verifyAndroidHardwareAttestation({
     appSigningCertSha256: normalizeDigest(matchingDigest),
     attestationVersion: Number(description.attestationVersion),
     keyMintVersion: Number(description.keyMintVersion ?? description.keymasterVersion ?? 0),
-    chainSerials: certificates.map((certificate) => serial(certificate.serialNumber)),
+    chainSerials: certificates.map((certificate) => serialHex(certificate.serialNumber)),
   };
 }
 
@@ -414,6 +423,7 @@ module.exports = {
   ANDROID_KEY_ATTESTATION_OID,
   GOOGLE_ATTESTATION_ROOTS_URL,
   GOOGLE_ATTESTATION_STATUS_URL,
+  revocationLookupKeys,
   verifyAndroidHardwareAttestation,
   applyVerifiedAndroidHardwareEvidence,
 };

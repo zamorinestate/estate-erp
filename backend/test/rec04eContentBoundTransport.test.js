@@ -11,6 +11,9 @@ const { Bill } = require('../src/models/Bill');
 const { DeviceRegistration } = require('../src/models/DeviceRegistration');
 const deviceService = require('../src/cafe-operations/services/deviceService');
 const { getRepositories, resetRepositories } = require('../src/cafe-operations/repositories');
+const {
+  revocationLookupKeys,
+} = require('../src/cafe-operations/services/androidHardwareAttestationService');
 const { sha256Hex } = require('../src/cafe-operations/utils/ids');
 const root = path.join(__dirname, '..', '..');
 const posServicePath = path.join(__dirname, '..', 'src', 'services', 'posOrderService.js');
@@ -702,4 +705,38 @@ test('REC-04E Android enrollment generates the runtime signing key from the serv
   );
   assert.match(route, /router\.post\('\/attestation\/challenge'/);
   assert.match(route, /hardwareAttestation/);
+});
+
+
+test('REC-04E revocation lookup covers both hexadecimal and decimal certificate serial encodings', () => {
+  const keys = new Set(revocationLookupKeys('5B'));
+  assert.equal(keys.has('5b'), true);
+  assert.equal(keys.has('91'), true);
+
+  const large = new Set(revocationLookupKeys('5CB8A37B'));
+  assert.equal(large.has('5cb8a37b'), true);
+  assert.equal(
+    large.has(BigInt('0x5CB8A37B').toString(10)),
+    true
+  );
+});
+
+test('REC-04E Android hardware attestation can fail soft to enrolled signing identity without granting hardware trust', () => {
+  const cafeOpsApi = fs.readFileSync(
+    path.join(root, 'frontend', 'cafe-operations', 'js', 'api', 'cafeOpsApi.js'),
+    'utf8'
+  );
+
+  assert.match(cafeOpsApi, /hardwareAttestationChallengeBound !== true/);
+  assert.match(cafeOpsApi, /fallbackEligible = new Set/);
+  assert.match(cafeOpsApi, /DEVICE_ATTESTATION_KEY_FAILED/);
+  assert.match(cafeOpsApi, /ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID/);
+  assert.match(
+    cafeOpsApi,
+    /const fallbackIdentity = await sendNativeEnrollmentMessage/
+  );
+  assert.doesNotMatch(
+    cafeOpsApi,
+    /hardwareBackedSigningKeyVerified:\s*true/
+  );
 });

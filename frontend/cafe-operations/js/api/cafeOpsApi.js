@@ -173,30 +173,52 @@
         auth: 'none',
       });
 
-      const nativeIdentity = await sendNativeEnrollmentMessage(
-        'GET_DEVICE_ATTESTATION_KEY',
-        { hardwareAttestationChallenge: challenge.challenge }
-      );
-      const nativeResult = nativeIdentity?.result || nativeIdentity || {};
-      if (
-        !Array.isArray(nativeResult.certificateChain) ||
-        nativeResult.certificateChain.length < 2
-      ) {
-        const err = new Error(
-          'Android did not return a hardware-attestation certificate chain.'
+      try {
+        const nativeIdentity = await sendNativeEnrollmentMessage(
+          'GET_DEVICE_ATTESTATION_KEY',
+          { hardwareAttestationChallenge: challenge.challenge }
         );
-        err.code = 'ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID';
-        throw err;
-      }
+        const nativeResult = nativeIdentity?.result || nativeIdentity || {};
+        if (
+          nativeResult.hardwareAttestationChallengeBound !== true ||
+          !Array.isArray(nativeResult.certificateChain) ||
+          nativeResult.certificateChain.length < 2
+        ) {
+          const err = new Error(
+            'Android did not return a challenge-bound hardware-attestation certificate chain.'
+          );
+          err.code = 'ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID';
+          throw err;
+        }
 
-      return {
-        ...prepared,
-        ...validateNativeSigningIdentity(nativeIdentity, prepared.platform),
-        hardwareAttestation: {
-          challengeId: challenge.challengeId,
-          certificateChain: nativeResult.certificateChain,
-        },
-      };
+        return {
+          ...prepared,
+          ...validateNativeSigningIdentity(nativeIdentity, prepared.platform),
+          hardwareAttestation: {
+            challengeId: challenge.challengeId,
+            certificateChain: nativeResult.certificateChain,
+          },
+        };
+      } catch (hardwareErr) {
+        const fallbackEligible = new Set([
+          'DEVICE_ATTESTATION_KEY_FAILED',
+          'NATIVE_DEVICE_ATTESTATION_TIMEOUT',
+          'ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID',
+        ]);
+        if (!fallbackEligible.has(hardwareErr?.code)) throw hardwareErr;
+
+        const fallbackIdentity = await sendNativeEnrollmentMessage(
+          'GET_DEVICE_ATTESTATION_KEY',
+          {}
+        );
+        return {
+          ...prepared,
+          ...validateNativeSigningIdentity(
+            fallbackIdentity,
+            prepared.platform
+          ),
+        };
+      }
     }
 
     const nativeIdentity = await sendNativeEnrollmentMessage(
