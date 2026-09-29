@@ -525,6 +525,7 @@ test('GEO-01: Café with missing coordinates throws GEOFENCE_NOT_CONFIGURED and 
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'ZC-9999',
         latitude: 12.9352,
         longitude: 77.6245,
