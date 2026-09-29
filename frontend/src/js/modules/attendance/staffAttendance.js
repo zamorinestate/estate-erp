@@ -31,6 +31,7 @@ let currentMonth = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolk
 let serverTimeOffset = 0;
 let cachedToday = null;
 let cachedShift = null;
+let cachedPolicy = null;
 let cachedSchedule = [];
 let cachedHistory = [];
 let cachedSummary = null;
@@ -300,11 +301,11 @@ function renderTodayTab() {
       <div id="explainer-content" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border-subtle); display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; font-size:12px; color:var(--text-secondary);">
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">⏱️ Grace Period</div>
-          <div>15-minute grace threshold for morning punches before lateness is counted.</div>
+          <div>${Number.isFinite(Number(cachedPolicy?.gracePeriodMinutes)) ? `${Number(cachedPolicy.gracePeriodMinutes)}-minute configured grace threshold.` : "Attendance grace policy is unavailable."}</div>
         </div>
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-          <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">☕ Unpaid Break</div>
-          <div>30 minutes standard deduction applied automatically to total shift duration.</div>
+          <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">☕ Unpaid Break Policy</div>
+          <div>${Number.isFinite(Number(cachedPolicy?.unpaidBreakMinutes)) ? `${Number(cachedPolicy.unpaidBreakMinutes)} minutes configured by the current attendance policy.` : "Break policy is unavailable."}</div>
         </div>
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">📍 Geofence Privacy</div>
@@ -312,7 +313,7 @@ function renderTodayTab() {
         </div>
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">🔒 Evidence Retention</div>
-          <div>Selfie photos are encrypted and retained for 90 days for statutory verification.</div>
+          <div>Attendance photos are private evidence. Retention and purge are controlled by authorised evidence-governance actions; no fixed retention period is implied here.</div>
         </div>
       </div>
     </div>
@@ -1023,12 +1024,13 @@ export function wireStaffAttendance(root) {
   // 2. Fetch server time, today's status & weekly roster
   async function loadInitialData() {
     try {
-      const [timeRes, todayRes, historyRes, scheduleRes, correctionsRes] = await Promise.all([
+      const [timeRes, todayRes, historyRes, scheduleRes, correctionsRes, policyRes] = await Promise.all([
         apiGet("/attendance/server-time").catch(() => null),
         apiGet("/attendance/today").catch(() => null),
         apiGet(`/attendance/history?month=${currentMonth}`).catch(() => null),
         apiGet("/shifts/me/schedule").catch(() => null),
         apiGet(`/attendance/corrections/mine?month=${currentMonth}`).catch(() => null),
+        apiGet("/attendance/policy").catch(() => null),
       ]);
 
       if (timeRes?.data?.utc) {
@@ -1047,6 +1049,9 @@ export function wireStaffAttendance(root) {
       }
       if (correctionsRes?.data) {
         cachedCorrections = correctionsRes.data.requests || [];
+      }
+      if (policyRes?.data) {
+        cachedPolicy = policyRes.data;
       }
 
       refreshTabContent();
