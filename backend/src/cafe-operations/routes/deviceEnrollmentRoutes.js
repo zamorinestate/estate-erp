@@ -51,6 +51,40 @@ router.post('/enroll', async (req, res, next) => {
   }
 });
 
+router.post('/attestation/key', deviceContext, async (req, res, next) => {
+  try {
+    const {
+      publicSigningKey,
+      signingKeyAlgorithm,
+      signingKeyProvider,
+    } = req.body || {};
+
+    const result = await deviceService.bindAttestationKey(req.cafeOpsDevice, {
+      publicSigningKey,
+      signingKeyAlgorithm,
+      signingKeyProvider,
+    });
+
+    return ok(res, result);
+  } catch (err) {
+    if (err.code === 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT') {
+      return fail(
+        res,
+        409,
+        err.code,
+        'This terminal already has a different signing key. Controlled re-enrollment is required before key rotation.'
+      );
+    }
+    if (
+      err.code === 'DEVICE_SIGNING_KEY_REQUIRED' ||
+      err.code === 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM'
+    ) {
+      return fail(res, 400, err.code, err.message);
+    }
+    next(err);
+  }
+});
+
 router.get('/status', deviceContext, async (req, res, next) => {
   try {
     const diagnostics = await deviceService.getDiagnostics(req.cafeOpsDevice);
