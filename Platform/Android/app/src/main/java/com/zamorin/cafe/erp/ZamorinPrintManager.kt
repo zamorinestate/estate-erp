@@ -33,7 +33,10 @@ object ZamorinPrintManager {
     data class PrintResult(
         val success: Boolean,
         val jobName: String,
-        val error: String? = null
+        val error: String? = null,
+        val status: String = "UNKNOWN",
+        val completed: Boolean = false,
+        val platformJobId: String? = null
     )
 
     /**
@@ -56,7 +59,10 @@ object ZamorinPrintManager {
             val printJob = printManager.print(safeJobName, printAdapter, printAttributes)
             PrintResult(
                 success = true,
-                jobName = safeJobName
+                jobName = safeJobName,
+                status = "QUEUED",
+                completed = false,
+                platformJobId = printJob.id.toString()
             )
         } catch (e: Exception) {
             PrintResult(false, jobName, e.message ?: "PRINT_EXCEPTION")
@@ -140,7 +146,10 @@ object ZamorinPrintManager {
             val printJob = printManager.print(safeJobName, adapter, printAttributes)
             PrintResult(
                 success = true,
-                jobName = safeJobName
+                jobName = safeJobName,
+                status = "QUEUED",
+                completed = false,
+                platformJobId = printJob.id.toString()
             )
         } catch (e: Exception) {
             PrintResult(false, jobName, e.message ?: "PRINT_EXCEPTION")
