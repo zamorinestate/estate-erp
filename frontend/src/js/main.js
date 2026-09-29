@@ -366,6 +366,25 @@ export function getSafeInternalRedirect(target) {
   return null;
 }
 
+function capturePendingAttendanceQrIntent(role, targetRoute) {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search || "");
+  const attendanceQr = String(params.get("attendanceQr") || "").trim();
+  if (!attendanceQr) return;
+
+  const normalizedRoute = String(targetRoute || "")
+    .replace(/^#\/?/, "")
+    .split("?")[0]
+    .trim();
+
+  const isValidOpaqueChallenge = /^ZAM_ATT_[a-f0-9]{64}$/i.test(attendanceQr);
+  if (role === "staff" && normalizedRoute === "staff-attendance" && isValidOpaqueChallenge) {
+    try {
+      sessionStorage.setItem("zamorin.pendingAttendanceQr", attendanceQr);
+    } catch {}
+  }
+}
+
 function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
@@ -713,6 +732,8 @@ function handleAuthenticatedUserSession(user) {
     }
   }
 
+  capturePendingAttendanceQrIntent(role, targetRoute);
+
   // Clear any residual dev/preview role overrides so the authenticated employee profile is strictly authoritative
   try {
     if (typeof localStorage !== "undefined") {
@@ -923,15 +944,27 @@ function applyAuthenticatedUser(
         : "dashboard"
     );
 
+  let effectiveRequestedRoute = requestedRoute;
+  if (!effectiveRequestedRoute && typeof window !== "undefined") {
+    const searchParams = new URLSearchParams(window.location.search || "");
+    const candidate = searchParams.get("returnTo") || searchParams.get("redirect") || searchParams.get("next");
+    const safeTarget = getSafeInternalRedirect(candidate);
+    if (safeTarget && isRouteAllowed(role, safeTarget, isPrimaryMaster)) {
+      effectiveRequestedRoute = safeTarget;
+    }
+  }
+
   const initialRoute =
-    requestedRoute &&
+    effectiveRequestedRoute &&
     isRouteAllowed(
       role,
-      requestedRoute,
+      effectiveRequestedRoute,
       isPrimaryMaster
     )
-      ? requestedRoute
+      ? effectiveRequestedRoute
       : defaultRoute;
+
+  capturePendingAttendanceQrIntent(role, initialRoute);
 
   setState({
     auth: {
