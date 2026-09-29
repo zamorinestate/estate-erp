@@ -11,6 +11,48 @@ const {
   publicKeyThumbprint,
 } = require('../../services/deviceAttestationService');
 
+async function resolveCanonicalDeviceScope(device) {
+  const rawCafeId = String(device?.cafeId || '').trim();
+  const rawOrganisationId = String(device?.organisationId || '').trim();
+
+  if (/^ZC-(?:CAF-)?\d{4,}$/i.test(rawCafeId) && rawOrganisationId) {
+    return {
+      cafeId: rawCafeId.toUpperCase(),
+      organisationId: rawOrganisationId.toUpperCase(),
+    };
+  }
+
+  const models = require('../models');
+  const CafeModel = models.getExternalCafeModel();
+  if (!CafeModel) {
+    const err = new Error('CANONICAL_CAFE_MODEL_UNAVAILABLE');
+    err.code = 'CANONICAL_CAFE_MODEL_UNAVAILABLE';
+    throw err;
+  }
+
+  let cafe = null;
+  try {
+    cafe = await CafeModel.findById(device.cafeId).lean();
+  } catch (_) {
+    cafe = null;
+  }
+
+  if (!cafe && rawCafeId) {
+    cafe = await CafeModel.findOne({ cafeId: rawCafeId.toUpperCase() }).lean();
+  }
+
+  if (!cafe?.cafeId || !cafe?.organisationId) {
+    const err = new Error('CANONICAL_CAFE_SCOPE_NOT_FOUND');
+    err.code = 'CANONICAL_CAFE_SCOPE_NOT_FOUND';
+    throw err;
+  }
+
+  return {
+    cafeId: String(cafe.cafeId).trim().toUpperCase(),
+    organisationId: String(cafe.organisationId).trim().toUpperCase(),
+  };
+}
+
 async function enrollDevice({
   enrollmentCodePlain,
   displayName,
@@ -68,16 +110,29 @@ async function enrollDevice({
     integrityState: canonicalSigningKey ? 'READY' : 'UNKNOWN',
     enrolledAt: new Date(),
   });
-  await repos.enrollmentTokens.update(enrollment.id, { status: 'USED', usedAt: new Date(), usedByDeviceId: device.id });
+
+  const consumed = await repos.enrollmentTokens.consumeIfPending(enrollment.id, {
+    usedAt: new Date(),
+    usedByDeviceId: device.id,
+  });
+
+  if (!consumed) {
+    try { await repos.devices.delete(device.id); } catch (_) {}
+    const err = new Error('ENROLLMENT_UNAVAILABLE');
+    err.code = 'ENROLLMENT_UNAVAILABLE';
+    throw err;
+  }
+
   try {
+    const canonicalScope = await resolveCanonicalDeviceScope(device);
     const { DeviceRegistration } = require('../../models/DeviceRegistration');
     await DeviceRegistration.findOneAndUpdate(
       { deviceId: String(device.id) },
       {
         deviceId: String(device.id),
-        organisationId: device.organisationId,
+        organisationId: canonicalScope.organisationId,
         deviceClass: 'CAFE_OWNED',
-        assignedCafeId: device.cafeId,
+        assignedCafeId: canonicalScope.cafeId,
         deviceName: device.displayName,
         platform: 'WEB_POS',
         status: 'ACTIVE',
@@ -90,12 +145,43 @@ async function enrollDevice({
         lastSeenAt: new Date(),
         metadata: {
           deviceCode: device.deviceCode,
+          cafeOpsOrganisationRef: String(device.organisationId || ''),
+          cafeOpsCafeRef: String(device.cafeId || ''),
           attestationCapable: Boolean(canonicalSigningKey),
         },
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, runValidators: true }
     );
-  } catch (_) {}
+  } catch (canonicalErr) {
+    const rollbackErrors = [];
+    try {
+      await repos.devices.delete(device.id);
+    } catch (deviceRollbackErr) {
+      rollbackErrors.push(deviceRollbackErr);
+    }
+    try {
+      const restored = await repos.enrollmentTokens.restoreIfUsedByDevice(
+        enrollment.id,
+        device.id
+      );
+      if (!restored) {
+        const restoreErr = new Error('ENROLLMENT_TOKEN_COMPENSATION_NOT_APPLIED');
+        restoreErr.code = 'ENROLLMENT_TOKEN_COMPENSATION_NOT_APPLIED';
+        rollbackErrors.push(restoreErr);
+      }
+    } catch (tokenRollbackErr) {
+      rollbackErrors.push(tokenRollbackErr);
+    }
+
+    if (rollbackErrors.length) {
+      canonicalErr.code = 'DEVICE_ENROLLMENT_ROLLBACK_FAILED';
+      canonicalErr.rollbackErrors = rollbackErrors;
+    } else if (!canonicalErr.code) {
+      canonicalErr.code = 'CANONICAL_DEVICE_REGISTRATION_FAILED';
+    }
+    throw canonicalErr;
+  }
+
   try {
     logSecurityEvent({
       action: SECURITY_ACTIONS.DEVICE_ENROLLED,
