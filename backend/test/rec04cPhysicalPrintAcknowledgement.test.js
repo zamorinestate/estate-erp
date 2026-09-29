@@ -8,6 +8,7 @@ const path = require('node:path');
 const { PosOrderService } = require('../src/services/posOrderService');
 const { PrintJob } = require('../src/models/PrintJob');
 const { Bill } = require('../src/models/Bill');
+const { OperatorSession } = require('../src/models/OperatorSession');
 const auditService = require('../src/services/auditService');
 
 const deviceContextPath = path.join(__dirname, '..', 'src', 'middleware', 'deviceContext.js');
@@ -29,6 +30,7 @@ function activeCafeDevice(deviceId = 'DV-ZC0001-POS-01', cafeId = 'ZC-0001') {
     userId: 'EMP-ZC-1001',
     role: 'STAFF',
     organisationId: 'ORG-ZAMORIN',
+    operatorSessionId: 'OPS-REC04C-001',
     assignedCafeIds: [cafeId],
     primaryCafeId: cafeId,
     deviceContext: {
@@ -93,6 +95,19 @@ test('REC-04C — device-bound print acknowledgement state machine', async (t) =
     ) return bill;
     return null;
   });
+
+  t.mock.method(OperatorSession, 'findOne', (query) => ({
+    lean: async () => (
+      query.operatorSessionId === 'OPS-REC04C-001' &&
+      query.organisationId === 'ORG-ZAMORIN' &&
+      query.cafeId === 'ZC-0001' &&
+      query.deviceId === 'DV-ZC0001-POS-01' &&
+      query.operatorUserId === 'EMP-ZC-1001' &&
+      query.status === 'ACTIVE'
+        ? { ...query }
+        : null
+    ),
+  }));
 
   t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
 
@@ -159,6 +174,34 @@ test('REC-04C — device-bound print acknowledgement state machine', async (t) =
     (err) => {
       assert.equal(err.statusCode, 403);
       assert.equal(err.code, 'CROSS_CAFE_PRINT_ACK_DENIED');
+      return true;
+    }
+  );
+
+  const missingSessionAuth = { ...auth, operatorSessionId: null };
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(
+      job.printJobId,
+      missingSessionAuth,
+      { status: 'PRINTED' }
+    ),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'ACTIVE_OPERATOR_SESSION_REQUIRED');
+      return true;
+    }
+  );
+
+  const mismatchedSessionAuth = { ...auth, operatorSessionId: 'OPS-WRONG-999' };
+  await assert.rejects(
+    () => PosOrderService.acknowledgePrintJob(
+      job.printJobId,
+      mismatchedSessionAuth,
+      { status: 'PRINTED' }
+    ),
+    (err) => {
+      assert.equal(err.statusCode, 403);
+      assert.equal(err.code, 'OPERATOR_SESSION_DEVICE_MISMATCH');
       return true;
     }
   );
