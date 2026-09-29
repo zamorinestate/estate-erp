@@ -532,6 +532,10 @@ test('REC-04D — canonical registry failure compensates provisional enrollment 
   t.mock.method(DeviceRegistration, 'findOneAndUpdate', async () => {
     throw new Error('SIMULATED_CANONICAL_REGISTRY_FAILURE');
   });
+  t.mock.method(DeviceRegistration, 'deleteOne', async () => ({
+    acknowledged: true,
+    deletedCount: 0,
+  }));
 
   const compensationKey = makeKeyPair().publicJwk;
 

@@ -193,7 +193,9 @@ test('REC-04E Android monitor window remains inside the server challenge TTL wit
   assert.match(frontend, /PRINT_ACK_MONITOR_WINDOW_MS = 14 \* 60 \* 1000/);
   assert.match(frontend, /pollIntervalMs = 2000/);
   assert.match(frontend, /maxMonitorMs = PRINT_ACK_MONITOR_WINDOW_MS/);
-  assert.match(frontend, /while \(Date\.now\(\) - monitorStartedAt < maxMonitorMs\)/);
+  assert.match(frontend, /const monitorDeadline =/);
+  assert.match(frontend, /Math\.min\(localMonitorDeadline, serverChallengeExpiresAt - 5000\)/);
+  assert.match(frontend, /while \(Date\.now\(\) < monitorDeadline\)/);
   assert.doesNotMatch(frontend, /maxPolls = 120/);
   assert.ok(14 * 60 * 1000 < attestationService.PRINT_ACK_CHALLENGE_TTL_MS);
 });
