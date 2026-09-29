@@ -114,6 +114,12 @@ const attendanceCorrectionRequestSchema = new mongoose.Schema(
 
     requestedBreaks: [correctionBreakSchema],
 
+    requestedBreakMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
     requestedStatus: {
       type: String,
       trim: true,
