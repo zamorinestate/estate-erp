@@ -196,3 +196,15 @@ test('REC-04E GET_PRINT_JOB_STATUS exposes spooler evidence without physical ove
   assert.match(bridge, /put\("physicalCompletionVerified", false\)/);
   assert.doesNotMatch(bridge, /status\.physicalCompletionVerified/);
 });
+
+
+test('REC-04E dispatch advertises purpose-bound acknowledgement only where an attestor actually exists', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+
+  assert.match(source, /const supported = platform === 'ANDROID'/);
+  assert.match(source, /PLATFORM_PRINT_ATTESTOR_UNAVAILABLE/);
+  assert.match(source, /DEVICE_SIGNING_KEY_UNAVAILABLE/);
+  assert.match(source, /deviceAcknowledgementRequired: attestationBinding\.required/);
+  assert.match(source, /deviceAcknowledgementSupported: attestationBinding\.supported/);
+  assert.doesNotMatch(source, /deviceAcknowledgementRequired: Boolean\(dispatchedDeviceId\)/);
+});

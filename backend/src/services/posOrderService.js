@@ -163,6 +163,9 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
   if (!deviceId) {
     return {
       required: false,
+      supported: false,
+      platform: null,
+      unavailableReason: 'DEVICE_NOT_BOUND',
       challenge: null,
       keyThumbprint: null,
       algorithm: null,
@@ -176,12 +179,22 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
     status: 'ACTIVE',
   }).lean();
 
-  if (
-    !registration?.publicSigningKey ||
-    normalizeId(registration.signingKeyAlgorithm) !== ATTESTATION_ALGORITHM
-  ) {
+  const platform = normalizeId(registration?.platform || 'UNKNOWN');
+  const supported = platform === 'ANDROID';
+  const signingCapable = Boolean(
+    supported &&
+    registration?.publicSigningKey &&
+    normalizeId(registration.signingKeyAlgorithm) === ATTESTATION_ALGORITHM
+  );
+
+  if (!signingCapable) {
     return {
       required: false,
+      supported,
+      platform,
+      unavailableReason: supported
+        ? 'DEVICE_SIGNING_KEY_UNAVAILABLE'
+        : 'PLATFORM_PRINT_ATTESTOR_UNAVAILABLE',
       challenge: null,
       keyThumbprint: null,
       algorithm: null,
@@ -190,6 +203,9 @@ async function resolveAttestationBinding(authContext = {}, cafeId) {
 
   return {
     required: true,
+    supported: true,
+    platform,
+    unavailableReason: null,
     challenge: createChallenge(),
     keyThumbprint:
       registration.signingKeyThumbprint ||
@@ -1441,7 +1457,10 @@ class PosOrderService {
         printTrackingWarning: printTrackingWarnings[0] || null,
         printTrackingWarnings,
         dispatchedDeviceId,
-        deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+        deviceAcknowledgementRequired: attestationBinding.required,
+        deviceAcknowledgementSupported: attestationBinding.supported,
+        deviceAcknowledgementPlatform: attestationBinding.platform,
+        deviceAcknowledgementUnavailableReason: attestationBinding.unavailableReason,
         cryptographicAttestationRequired: attestationBinding.required,
         attestationAlgorithm: attestationBinding.algorithm,
         attestationKeyThumbprint: attestationBinding.keyThumbprint,
@@ -2200,7 +2219,10 @@ class PosOrderService {
       printTrackingPersisted,
       printTrackingWarning,
       dispatchedDeviceId,
-      deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+      deviceAcknowledgementRequired: attestationBinding.required,
+      deviceAcknowledgementSupported: attestationBinding.supported,
+      deviceAcknowledgementPlatform: attestationBinding.platform,
+      deviceAcknowledgementUnavailableReason: attestationBinding.unavailableReason,
       cryptographicAttestationRequired: attestationBinding.required,
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
@@ -2337,7 +2359,10 @@ class PosOrderService {
       printTrackingPersisted,
       printTrackingWarning,
       dispatchedDeviceId,
-      deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+      deviceAcknowledgementRequired: attestationBinding.required,
+      deviceAcknowledgementSupported: attestationBinding.supported,
+      deviceAcknowledgementPlatform: attestationBinding.platform,
+      deviceAcknowledgementUnavailableReason: attestationBinding.unavailableReason,
       cryptographicAttestationRequired: attestationBinding.required,
       attestationAlgorithm: attestationBinding.algorithm,
       attestationKeyThumbprint: attestationBinding.keyThumbprint,
