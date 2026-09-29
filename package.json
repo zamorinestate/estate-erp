@@ -27,6 +27,7 @@
     "rollback:manage": "node scripts/rollback_manager.mjs",
     "triage:incident": "node scripts/incident_triage_cli.mjs",
     "check:deploy-readiness": "node scripts/check_deploy_readiness.mjs",
+    "check:pr16-merge-readiness": "node scripts/check_pr16_merge_readiness.mjs",
     "accept:rec04e:hardware": "node scripts/run_rec04e_hardware_acceptance.mjs",
     "verify:rec04e:hardware": "node scripts/verify_rec04e_hardware_acceptance.mjs",
     "scan:secrets": "node scripts/scan_repository_secrets.mjs",

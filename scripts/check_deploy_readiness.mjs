@@ -119,7 +119,9 @@ export function runDeploymentReadinessCheck({ targetEnv = process.env.NODE_ENV |
   return {
     targetEnvironment: targetEnv,
     isDeployReady: isReady,
-    summary: isReady ? 'READY FOR DEPLOYMENT' : 'DEPLOYMENT BLOCKED BY PRE-FLIGHT CHECKS',
+    summary: isReady
+      ? 'PRE-FLIGHT CONFIGURATION PASSED — RELEASE CERTIFICATION STILL REQUIRED'
+      : 'DEPLOYMENT BLOCKED BY PRE-FLIGHT CHECKS',
     checks,
     issues,
     warnings,

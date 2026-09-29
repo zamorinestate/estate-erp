@@ -168,7 +168,8 @@ async function runPreFlightCheck() {
   console.log(`Failed / Action Items : ${failedChecks > 0 ? `${RED}${failedChecks}${RESET}` : `${GREEN}0${RESET}`}`);
 
   if (failedChecks === 0) {
-    console.log(`\n${BOLD}${GREEN}✔ ALL PRE-FLIGHT DEPLOYMENT INVARIANTS PASSED! READY FOR PRODUCTION LAUNCH.${RESET}\n`);
+    console.log(`\n${BOLD}${GREEN}✔ ALL CONFIGURATION PRE-FLIGHT INVARIANTS PASSED.${RESET}`);
+    console.log(`${YELLOW}Release certification still requires exact-head CI, repository invariants, and REC-04E real-hardware acceptance.${RESET}\n`);
     process.exit(0);
   } else {
     console.log(`\n${BOLD}${YELLOW}⚠ ACTION REQUIRED BEFORE DEPLOYMENT:${RESET}`);

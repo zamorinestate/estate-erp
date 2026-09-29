@@ -121,3 +121,27 @@ test('FINAL POS RECEIPT LINEAGE — offline capture cannot impersonate the serve
     'Offline queue must never allocate a final statutory invoice'
   );
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — deployment pre-flight cannot overclaim release certification', () => {
+  const preflight = readRepo('backend/src/scripts/verifyDeploymentConfig.js');
+  const readiness = readRepo('scripts/check_deploy_readiness.mjs');
+  const finalGate = readRepo('scripts/check_pr16_merge_readiness.mjs');
+  const rootPkg = JSON.parse(readRepo('package.json'));
+
+  assert.doesNotMatch(preflight, /READY FOR PRODUCTION LAUNCH/);
+  assert.match(preflight, /Release certification still requires exact-head CI/);
+  assert.match(readiness, /PRE-FLIGHT CONFIGURATION PASSED — RELEASE CERTIFICATION STILL REQUIRED/);
+
+  assert.match(finalGate, /REC04E_HARDWARE_REPORT_REQUIRED/);
+  assert.match(finalGate, /CANDIDATE_SHA_MISMATCH/);
+  assert.match(finalGate, /WORKING_TREE_NOT_CLEAN/);
+  assert.match(finalGate, /retiredMasterPersonaInvariant\.test\.js/);
+  assert.match(finalGate, /posFinalReceiptLineageGate\.test\.js/);
+  assert.match(finalGate, /posFinalFinancialIntegrityGate\.test\.js/);
+  assert.match(finalGate, /verify_rec04e_hardware_acceptance\.mjs/);
+  assert.equal(
+    rootPkg.scripts['check:pr16-merge-readiness'],
+    'node scripts/check_pr16_merge_readiness.mjs'
+  );
+});
