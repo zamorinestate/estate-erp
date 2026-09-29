@@ -14,6 +14,7 @@
 
 require('dotenv').config({ quiet: true });
 const mongoose = require('mongoose');
+const crypto = require('node:crypto');
 const { loadEnvironment } = require('../config/environment');
 
 const BOLD = '\x1b[1m';
@@ -95,6 +96,32 @@ async function runPreFlightCheck() {
       : (androidCertPolicyValid
         ? `${androidCertDigests.length} production signing digest(s) configured`
         : 'ZAMORIN_ANDROID_APP_CERT_SHA256 must contain one or more 64-hex SHA-256 digests')
+  );
+
+  const dispatchPrivateKey = String(
+    process.env.ZAMORIN_PRINT_DISPATCH_PRIVATE_KEY_PKCS8_B64 || ''
+  ).trim();
+  let dispatchSigningKeyValid = false;
+  if (dispatchPrivateKey) {
+    try {
+      const key = crypto.createPrivateKey({
+        key: Buffer.from(dispatchPrivateKey, 'base64'),
+        format: 'der',
+        type: 'pkcs8',
+      });
+      dispatchSigningKeyValid = key.asymmetricKeyType === 'ed25519';
+    } catch (_) {
+      dispatchSigningKeyValid = false;
+    }
+  }
+  recordResult(
+    'Local ESC/POS Dispatch Authorization Signing Key',
+    nodeEnv !== 'production' || dispatchSigningKeyValid,
+    nodeEnv !== 'production'
+      ? (dispatchSigningKeyValid ? 'Valid Ed25519 key configured' : 'Optional outside production')
+      : (dispatchSigningKeyValid
+        ? 'Production Ed25519 dispatch signer configured'
+        : 'ZAMORIN_PRINT_DISPATCH_PRIVATE_KEY_PKCS8_B64 must be valid base64 PKCS#8 Ed25519 private key')
   );
 
   // 4. Initial Master Credentials & Storage Config

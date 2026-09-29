@@ -43,6 +43,8 @@ services:
         value: com.zamorin.cafe.erp
       - key: ZAMORIN_ANDROID_APP_CERT_SHA256
         sync: false
+      - key: ZAMORIN_PRINT_DISPATCH_PRIVATE_KEY_PKCS8_B64
+        sync: false
       - key: INITIAL_ORGANISATION_ID
         value: ZAMORIN
       - key: INITIAL_MASTER_NAME
