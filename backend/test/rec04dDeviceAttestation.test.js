@@ -13,6 +13,8 @@ const { Bill } = require('../src/models/Bill');
 const { OperatorSession } = require('../src/models/OperatorSession');
 const { DeviceRegistration } = require('../src/models/DeviceRegistration');
 const auditService = require('../src/services/auditService');
+const cafeDeviceService = require('../src/cafe-operations/services/deviceService');
+const cafeRepositories = require('../src/cafe-operations/repositories');
 
 const root = path.join(__dirname, '..', '..');
 const androidBridgePath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinNativeBridge.kt');
@@ -301,6 +303,63 @@ test('REC-04D — key replacement after dispatch cannot acknowledge old challeng
   );
 });
 
+test('REC-04D — legacy key migration rolls canonical registry back when fleet update fails', async (t) => {
+  cafeRepositories.resetRepositories();
+  const repos = cafeRepositories.initRepositories('memory');
+  const device = await repos.devices.create({
+    deviceCode: 'DV-LEGACY-REC04D',
+    displayName: 'Legacy Counter',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    lifecycleStatus: 'ACTIVE',
+    deviceTokenHash: 'legacy-token-hash',
+    signingKeyThumbprint: null,
+  });
+
+  const { publicJwk } = makeKeyPair();
+  let canonicalSaveCount = 0;
+  const canonical = {
+    publicSigningKey: null,
+    signingKeyThumbprint: null,
+    signingKeyAlgorithm: null,
+    signingKeyProvider: null,
+    signingKeyCreatedAt: null,
+    metadata: { existing: true },
+    async save() {
+      canonicalSaveCount += 1;
+      return this;
+    },
+  };
+
+  t.mock.method(DeviceRegistration, 'findOne', async () => canonical);
+  t.mock.method(repos.devices, 'update', async () => {
+    const err = new Error('SIMULATED_FLEET_WRITE_FAILURE');
+    err.code = 'SIMULATED_FLEET_WRITE_FAILURE';
+    throw err;
+  });
+
+  await assert.rejects(
+    () => cafeDeviceService.bindAttestationKey(device, {
+      publicSigningKey: publicJwk,
+      signingKeyAlgorithm: 'ES256',
+      signingKeyProvider: 'ANDROID_KEYSTORE',
+    }),
+    (err) => {
+      assert.equal(err.code, 'SIMULATED_FLEET_WRITE_FAILURE');
+      return true;
+    }
+  );
+
+  assert.equal(canonicalSaveCount, 2, 'canonical registry must be saved once then rolled back');
+  assert.equal(canonical.publicSigningKey, null);
+  assert.equal(canonical.signingKeyThumbprint, null);
+  assert.equal(canonical.signingKeyAlgorithm, null);
+  assert.equal(canonical.signingKeyProvider, null);
+  assert.deepEqual(canonical.metadata, { existing: true });
+
+  cafeRepositories.resetRepositories();
+});
+
 test('REC-04D — native bridges keep private signing keys inside platform stores', () => {
   const android = fs.readFileSync(androidBridgePath, 'utf8');
   const windows = fs.readFileSync(windowsBridgePath, 'utf8');
@@ -330,5 +389,9 @@ test('REC-04D — native bridges keep private signing keys inside platform store
   assert.match(frontend, /GET_DEVICE_ATTESTATION_KEY/);
   assert.match(frontend, /SIGN_DEVICE_ATTESTATION/);
   assert.match(frontend, /DEVICE_ATTESTATION_SIGNATURE_MISSING/);
+  assert.match(frontend, /ensureNativeDeviceAttestationBinding/);
+  assert.match(frontend, /\/cafe-ops\/devices\/attestation\/key/);
   assert.match(router, /publicSigningKey: signingIdentity\.capable \? signingIdentity\.publicKeyJwk : null/);
+  assert.match(router, /await ensureNativeDeviceAttestationBinding\(\)/);
+  assert.match(router, /DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT/);
 });
