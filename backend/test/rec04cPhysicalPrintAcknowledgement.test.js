@@ -30,7 +30,7 @@ function activeCafeDevice(deviceId = 'DV-ZC0001-POS-01', cafeId = 'ZC-0001') {
     userId: 'EMP-ZC-1001',
     role: 'STAFF',
     organisationId: 'ORG-ZAMORIN',
-    operatorSessionId: 'OPS-REC04C-001',
+    operatorSessionId: `OPS-${deviceId}`,
     assignedCafeIds: [cafeId],
     primaryCafeId: cafeId,
     deviceContext: {
@@ -98,10 +98,10 @@ test('REC-04C — device-bound print acknowledgement state machine', async (t) =
 
   t.mock.method(OperatorSession, 'findOne', (query) => ({
     lean: async () => (
-      query.operatorSessionId === 'OPS-REC04C-001' &&
+      query.operatorSessionId === `OPS-${query.deviceId}` &&
       query.organisationId === 'ORG-ZAMORIN' &&
-      query.cafeId === 'ZC-0001' &&
-      query.deviceId === 'DV-ZC0001-POS-01' &&
+      ['ZC-0001', 'ZC-0002'].includes(query.cafeId) &&
+      ['DV-ZC0001-POS-01', 'DV-ZC0001-POS-02', 'DV-ZC0002-POS-01'].includes(query.deviceId) &&
       query.operatorUserId === 'EMP-ZC-1001' &&
       query.status === 'ACTIVE'
         ? { ...query }
