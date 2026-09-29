@@ -458,3 +458,12 @@ test('REC-04E HARDWARE_BACKED trust cannot exist without verified hardware attes
   assert.match(deviceModelSource, /HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY/);
   assert.match(deviceModelSource, /pre\(\['updateOne', 'updateMany', 'findOneAndUpdate'\]/);
 });
+
+
+test('REC-04E acknowledgement API distinguishes signature verification from hardware-backed key verification', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+
+  assert.match(source, /signatureVerified: Boolean\(attestationProof\)/);
+  assert.match(source, /hardwareBackedKeyVerified: job\.attestationKeyHardwareBackedVerified === true/);
+  assert.match(source, /attestationVerified: Boolean\(attestationProof\)/);
+});
