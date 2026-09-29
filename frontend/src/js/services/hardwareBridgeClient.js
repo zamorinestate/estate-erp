@@ -149,6 +149,59 @@ class HardwareBridgeClient {
   }
 
   /**
+   * Sends the exact server-generated ESC/POS buffer to the local bridge.
+   * A successful response proves content-bound transport only; it does not
+   * prove printer identity or physical paper output.
+   */
+  async printCanonicalEscPos(dispatch = {}) {
+    if (
+      dispatch?.printDispatchAuthorized !== true ||
+      dispatch?.printTrackingPersisted !== true ||
+      !dispatch?.printJobId ||
+      !dispatch?.printBuffer ||
+      !dispatch?.payloadSha256 ||
+      !Number.isSafeInteger(Number(dispatch?.payloadBytes))
+    ) {
+      return null;
+    }
+
+    const isAlive = await this.checkBridgeHealth(9199, 500);
+    if (!isAlive) return null;
+
+    const bridgeRes = await fetch('http://127.0.0.1:9199/print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printJobId: dispatch.printJobId,
+        printBufferBase64: dispatch.printBuffer,
+        expectedPayloadSha256: dispatch.payloadSha256,
+        expectedPayloadBytes: Number(dispatch.payloadBytes),
+        printerTarget: dispatch.printerTarget || 'DEFAULT_THERMAL',
+        drawerKickRequested: dispatch.drawerKickRequested === true,
+      }),
+    });
+
+    if (!bridgeRes.ok) return null;
+    const result = await bridgeRes.json();
+    if (
+      result?.success !== true ||
+      result?.transportAccepted !== true ||
+      result?.contentBindingVerified !== true ||
+      result?.payloadSha256 !== dispatch.payloadSha256 ||
+      Number(result?.payloadBytes) !== Number(dispatch.payloadBytes)
+    ) {
+      return null;
+    }
+
+    return {
+      ...result,
+      success: true,
+      method: 'LOCAL_RAW_ESC_POS',
+      physicalCompletionVerified: false,
+    };
+  }
+
+  /**
    * Dispatches a print job.
    * Cascading order:
    * 1. Local WebSocket Proxy / Bridge (if connected)

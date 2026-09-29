@@ -15,6 +15,7 @@ import { offlineManager, QUEUE_STATUSES } from "../utils/offlineManager.js";
 import { generateQR, buildUpiUri, initClipboard, initSpeedDial } from "../flowbiteUtils.js";
 import { NativeCapabilities } from "../utils/nativeCapabilities.js";
 import { monitorAndroidPrintAndAcknowledge } from "../utils/deviceAttestation.js";
+import { hardwareBridge } from "../services/hardwareBridgeClient.js";
 
 
 function resolvePosCafeId() {
@@ -118,6 +119,23 @@ async function dispatchReceiptToClient(dispatch, bill, { isReprint = false } = {
       platform: capabilities.platform,
       nativeResult,
     };
+  }
+
+  try {
+    const bridgeResult = await hardwareBridge.printCanonicalEscPos(dispatch);
+    if (bridgeResult?.success === true) {
+      return {
+        method: "LOCAL_RAW_ESC_POS",
+        platform: "WEB",
+        nativeResult: bridgeResult,
+        transportAccepted: bridgeResult.transportAccepted === true,
+        contentBindingVerified: bridgeResult.contentBindingVerified === true,
+        printerIdentityVerified: bridgeResult.printerIdentityVerified === true,
+        physicalCompletionVerified: false,
+      };
+    }
+  } catch (bridgeErr) {
+    console.warn("[REC-04E] Local raw ESC/POS transport unavailable:", bridgeErr?.message || bridgeErr);
   }
 
   window.print();

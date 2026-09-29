@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const net = require('node:net');
+const { pathToFileURL } = require('node:url');
 const attestationService = require('../src/services/deviceAttestationService');
 const { PosOrderService } = require('../src/services/posOrderService');
 const { PrintJob } = require('../src/models/PrintJob');
@@ -1157,4 +1159,87 @@ test('REC-04E fresh revocation cache is usable without weakening expiry semantic
   const entries = await androidAttestationTestOnly.revocations();
   assert.equal(entries.abcd.status, 'REVOKED');
   assert.deepEqual(revocationLookupKeys('00:AB:CD'), ['abcd', '43981']);
+});
+
+
+test('REC-04E local bridge writes the exact canonical ESC/POS bytes to configured TCP transport', async (t) => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const received = [];
+  const tcpServer = net.createServer((socket) => {
+    socket.on('data', (chunk) => received.push(Buffer.from(chunk)));
+  });
+
+  await new Promise((resolve, reject) => {
+    tcpServer.once('error', reject);
+    tcpServer.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => tcpServer.close());
+
+  const address = tcpServer.address();
+  const canonicalBytes = Buffer.from([0x1b, 0x40, 0x5a, 0x41, 0x4d, 0x4f, 0x52, 0x49, 0x4e, 0x0a]);
+  const digest = crypto.createHash('sha256').update(canonicalBytes).digest('hex');
+  const validated = bridgeModule.validatePrintRequest({
+    printJobId: 'PJ-REC04E-TCP-001',
+    printBufferBase64: canonicalBytes.toString('base64'),
+    expectedPayloadSha256: digest,
+    expectedPayloadBytes: canonicalBytes.length,
+    printerTarget: 'DEFAULT_THERMAL',
+  });
+  assert.deepEqual(validated.buffer, canonicalBytes);
+
+  const result = await bridgeModule.dispatchNetworkPrint(canonicalBytes, {
+    host: '127.0.0.1',
+    port: address.port,
+    printerId: 'TEST-THERMAL-01',
+    connectTimeoutMs: 2000,
+  });
+  assert.equal(result.transportAccepted, true);
+  assert.equal(result.bytesDispatched, canonicalBytes.length);
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual(Buffer.concat(received), canonicalBytes);
+});
+
+test('REC-04E local bridge rejects mutated payload bytes before any printer transport', async () => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const canonicalBytes = Buffer.from('canonical receipt bytes');
+  const digest = crypto.createHash('sha256').update(canonicalBytes).digest('hex');
+  const mutated = Buffer.from('mutated receipt bytes');
+
+  assert.throws(
+    () => bridgeModule.validatePrintRequest({
+      printJobId: 'PJ-REC04E-TCP-002',
+      printBufferBase64: mutated.toString('base64'),
+      expectedPayloadSha256: digest,
+      expectedPayloadBytes: mutated.length,
+      printerTarget: 'DEFAULT_THERMAL',
+    }),
+    (err) => err.code === 'PRINT_PAYLOAD_HASH_MISMATCH'
+  );
+});
+
+test('REC-04E raw TCP transport never overclaims printer identity or physical paper completion', () => {
+  const bridge = fs.readFileSync(localBridgePath, 'utf8');
+  const client = fs.readFileSync(hardwareClientPath, 'utf8');
+  const till = fs.readFileSync(posTillPath, 'utf8');
+  const source = fs.readFileSync(posServicePath, 'utf8');
+
+  assert.match(bridge, /transportMode: 'LOCAL_RAW_ESC_POS'/);
+  assert.match(bridge, /evidenceLevel: 'CONTENT_BOUND_TRANSPORT'/);
+  assert.match(bridge, /contentBindingVerified: true/);
+  assert.match(bridge, /printerIdentityVerified: false/);
+  assert.match(bridge, /physicalCompletionVerified: false/);
+  assert.match(bridge, /dispatchNetworkPrint/);
+  assert.match(bridge, /PRINT_PAYLOAD_HASH_MISMATCH/);
+
+  assert.match(client, /async printCanonicalEscPos\(dispatch = \{\}\)/);
+  assert.match(client, /result\?\.payloadSha256 !== dispatch\.payloadSha256/);
+  assert.match(till, /hardwareBridge\.printCanonicalEscPos\(dispatch\)/);
+  assert.ok(
+    till.indexOf('hardwareBridge.printCanonicalEscPos(dispatch)') < till.indexOf('window.print();'),
+    'Exact-byte local bridge must be attempted before browser print dialog fallback'
+  );
+
+  assert.match(source, /payloadSha256: printDispatchAuthorized \? printResult\.payloadSha256 : null/);
+  assert.match(source, /payloadBytes: printDispatchAuthorized \? printResult\.payloadBytes : null/);
 });
