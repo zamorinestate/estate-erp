@@ -13,6 +13,7 @@ const {
   previewOrder,
   printOrder,
   reprintOrder,
+  acknowledgePrintJob,
   getActiveOrders,
   getLastCommittedBill,
   getOrderStatusByIdempotency,
@@ -45,6 +46,7 @@ router.post('/offline-sync', syncOfflineOrders);
 router.post('/orders/preview', previewOrder);
 router.post('/orders/:billId/print', printOrder);
 router.post('/orders/:billId/reprint', reprintOrder);
+router.post('/print-jobs/:printJobId/ack', acknowledgePrintJob);
 router.get('/orders/active/:cafeId', getActiveOrders);
 router.get('/orders/last/:cafeId', getLastCommittedBill);
 
