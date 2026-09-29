@@ -243,14 +243,6 @@ async function bindAttestationKey(device, {
   }
 
   const repos = getRepositories();
-  const updated = await repos.devices.update(device.id, {
-    signingKeyThumbprint: keyThumbprint,
-    signingKeyAlgorithm: ATTESTATION_ALGORITHM,
-    signingKeyProvider: provider,
-    attestationCapable: true,
-    integrityState: 'READY',
-  });
-
   const { DeviceRegistration } = require('../../models/DeviceRegistration');
   const canonical = await DeviceRegistration.findOne({
     $or: [
@@ -272,6 +264,16 @@ async function bindAttestationKey(device, {
     throw err;
   }
 
+  // Snapshot canonical state so a second-write failure can be compensated.
+  const previousCanonical = {
+    publicSigningKey: canonical.publicSigningKey || null,
+    signingKeyThumbprint: canonical.signingKeyThumbprint || null,
+    signingKeyAlgorithm: canonical.signingKeyAlgorithm || null,
+    signingKeyProvider: canonical.signingKeyProvider || null,
+    signingKeyCreatedAt: canonical.signingKeyCreatedAt || null,
+    metadata: { ...(canonical.metadata || {}) },
+  };
+
   canonical.publicSigningKey = canonicalSigningKey;
   canonical.signingKeyThumbprint = keyThumbprint;
   canonical.signingKeyAlgorithm = ATTESTATION_ALGORITHM;
@@ -283,19 +285,52 @@ async function bindAttestationKey(device, {
   };
   await canonical.save();
 
-  await auditService.record({
-    eventType: SECURITY_EVENT_TYPE.DEVICE_LIFECYCLE_EVENT,
-    deviceId: device.id,
-    cafeId: device.cafeId,
-    organisationId: device.organisationId,
-    reasonCode: 'DEVICE_ATTESTATION_KEY_BOUND',
-    metadata: {
-      keyThumbprint,
-      algorithm: ATTESTATION_ALGORITHM,
-      provider,
-      idempotentReplay: Boolean(existingThumbprint),
-    },
-  });
+  let updated;
+  try {
+    updated = await repos.devices.update(device.id, {
+      signingKeyThumbprint: keyThumbprint,
+      signingKeyAlgorithm: ATTESTATION_ALGORITHM,
+      signingKeyProvider: provider,
+      attestationCapable: true,
+      integrityState: 'READY',
+    });
+    if (!updated) {
+      throw new Error('CAFE_OPS_DEVICE_UPDATE_FAILED');
+    }
+  } catch (writeErr) {
+    // Compensating rollback: never leave canonical and CafeOps device registries split.
+    canonical.publicSigningKey = previousCanonical.publicSigningKey;
+    canonical.signingKeyThumbprint = previousCanonical.signingKeyThumbprint;
+    canonical.signingKeyAlgorithm = previousCanonical.signingKeyAlgorithm;
+    canonical.signingKeyProvider = previousCanonical.signingKeyProvider;
+    canonical.signingKeyCreatedAt = previousCanonical.signingKeyCreatedAt;
+    canonical.metadata = previousCanonical.metadata;
+    try {
+      await canonical.save();
+    } catch (rollbackErr) {
+      writeErr.rollbackError = rollbackErr;
+      writeErr.code = 'DEVICE_ATTESTATION_BIND_ROLLBACK_FAILED';
+    }
+    throw writeErr;
+  }
+
+  try {
+    await auditService.record({
+      eventType: SECURITY_EVENT_TYPE.DEVICE_LIFECYCLE_EVENT,
+      deviceId: device.id,
+      cafeId: device.cafeId,
+      organisationId: device.organisationId,
+      reasonCode: 'DEVICE_ATTESTATION_KEY_BOUND',
+      metadata: {
+        keyThumbprint,
+        algorithm: ATTESTATION_ALGORITHM,
+        provider,
+        idempotentReplay: Boolean(existingThumbprint),
+      },
+    });
+  } catch (_) {
+    // Security audit delivery is non-fatal after both authoritative registries agree.
+  }
 
   return {
     device: updated,
