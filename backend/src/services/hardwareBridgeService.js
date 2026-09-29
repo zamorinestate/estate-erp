@@ -307,8 +307,10 @@ function compileThermalReceipt(orderData = {}, terminal = {}, cafeInfo = {}) {
   parts.push(ESC_POS_COMMANDS.FEED_5_LINES);
   parts.push(terminal.printerConfig?.cutType === 'FULL' ? ESC_POS_COMMANDS.CUT_FULL : ESC_POS_COMMANDS.CUT_PARTIAL);
 
-  // Trigger cash drawer kick if cash tendered
-  if (terminal.drawerConfig?.enabled && (orderData.paymentMethod === 'CASH' || orderData.triggerDrawerKick)) {
+  // REC-04C: Drawer kick is an explicit one-shot side effect controlled by the
+  // original sale dispatch. PRINT / REPRINT must never infer a new kick merely
+  // because the historical tender was CASH.
+  if (terminal.drawerConfig?.enabled && orderData.triggerDrawerKick === true) {
     parts.push(buildDrawerKickBuffer(terminal.drawerConfig.pin || 2));
   }
 
