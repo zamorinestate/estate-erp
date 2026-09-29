@@ -475,16 +475,25 @@ test('REC-04D — concurrent reuse of one enrollment code creates exactly one tr
     save: async function save() { return this; },
   }));
 
+  const raceKeyA = makeKeyPair().publicJwk;
+  const raceKeyB = makeKeyPair().publicJwk;
+
   const attempts = await Promise.allSettled([
     cafeDeviceService.enrollDevice({
       enrollmentCodePlain: enrollmentCode,
       displayName: 'Race POS A',
       platform: 'android',
+      publicSigningKey: raceKeyA,
+      signingKeyAlgorithm: 'ES256',
+      signingKeyProvider: 'ANDROID_KEYSTORE',
     }),
     cafeDeviceService.enrollDevice({
       enrollmentCodePlain: enrollmentCode,
       displayName: 'Race POS B',
       platform: 'android',
+      publicSigningKey: raceKeyB,
+      signingKeyAlgorithm: 'ES256',
+      signingKeyProvider: 'ANDROID_KEYSTORE',
     }),
   ]);
 
@@ -524,11 +533,16 @@ test('REC-04D — canonical registry failure compensates provisional enrollment 
     throw new Error('SIMULATED_CANONICAL_REGISTRY_FAILURE');
   });
 
+  const compensationKey = makeKeyPair().publicJwk;
+
   await assert.rejects(
     () => cafeDeviceService.enrollDevice({
       enrollmentCodePlain: enrollmentCode,
       displayName: 'Compensation POS',
       platform: 'android',
+      publicSigningKey: compensationKey,
+      signingKeyAlgorithm: 'ES256',
+      signingKeyProvider: 'ANDROID_KEYSTORE',
     }),
     (err) => {
       assert.equal(err.code, 'CANONICAL_DEVICE_REGISTRATION_FAILED');
