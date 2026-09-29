@@ -145,3 +145,19 @@ test('FINAL POS RECEIPT LINEAGE — deployment pre-flight cannot overclaim relea
     'node scripts/check_pr16_merge_readiness.mjs'
   );
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — physical acceptance evidence defaults outside the Git working tree', () => {
+  const runner = readRepo('scripts/run_rec04e_hardware_acceptance.mjs');
+  const gitignore = readRepo('.gitignore');
+
+  assert.match(
+    runner,
+    /\.local-evidence-storage\/rec04e-hardware/
+  );
+  assert.match(gitignore, /\.local-evidence-storage\//);
+  assert.doesNotMatch(
+    runner,
+    /args\.output \|\| 'artifacts\/rec04e-hardware'/
+  );
+});

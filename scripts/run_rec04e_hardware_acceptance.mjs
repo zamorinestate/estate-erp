@@ -133,7 +133,9 @@ const report = {
   certified,
 };
 
-const outDir = path.resolve(args.output || 'artifacts/rec04e-hardware');
+const outDir = path.resolve(
+  args.output || '.local-evidence-storage/rec04e-hardware'
+);
 await mkdir(outDir, { recursive: true });
 const reportPath = path.join(outDir, `${acceptanceId}.json`);
 await writeFile(reportPath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
