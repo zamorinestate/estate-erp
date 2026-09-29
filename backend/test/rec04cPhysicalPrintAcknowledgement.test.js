@@ -13,6 +13,9 @@ const auditService = require('../src/services/auditService');
 const deviceContextPath = path.join(__dirname, '..', 'src', 'middleware', 'deviceContext.js');
 const posRoutesPath = path.join(__dirname, '..', 'src', 'routes', 'posRoutes.js');
 const servicePath = path.join(__dirname, '..', 'src', 'services', 'posOrderService.js');
+const hardwareServicePath = path.join(__dirname, '..', 'src', 'services', 'hardwareBridgeService.js');
+const hardwareControllerPath = path.join(__dirname, '..', 'src', 'controllers', 'hardwareController.js');
+const hardwareRoutesPath = path.join(__dirname, '..', 'src', 'routes', 'hardwareRoutes.js');
 
 function activeCafeDevice(deviceId = 'DV-ZC0001-POS-01', cafeId = 'ZC-0001') {
   return {
@@ -220,3 +223,30 @@ test('REC-04C — only original sale dispatch can request a drawer kick', () => 
     'PRINT and REPRINT must explicitly suppress drawer kick'
   );
 });
+
+test('REC-04C — manual drawer API is truthful, café-scoped, and device-bound', () => {
+  const service = fs.readFileSync(hardwareServicePath, 'utf8');
+  const controller = fs.readFileSync(hardwareControllerPath, 'utf8');
+  const routes = fs.readFileSync(hardwareRoutesPath, 'utf8');
+
+  assert.match(service, /DRAWER_KICK_PREPARED/);
+  assert.doesNotMatch(service, /DRAWER_KICK_TRIGGERED/);
+  assert.match(service, /CROSS_CAFE_RESOURCE_DENIED/);
+  assert.match(service, /CAFE_OWNED_DEVICE_REQUIRED/);
+  assert.match(service, /status:\s*'PREPARED'/);
+  assert.match(service, /dispatched:\s*false/);
+  assert.match(service, /acknowledged:\s*false/);
+
+  assert.match(controller, /Physical drawer opening is not yet acknowledged/);
+  assert.doesNotMatch(controller, /pulse emitted/);
+
+  const authIndex = routes.indexOf('router.use(authenticate)');
+  const deviceIndex = routes.indexOf('router.use(attachDeviceContext)');
+  assert.ok(deviceIndex > authIndex, 'Hardware routes must attach canonical device context after authentication');
+  assert.doesNotMatch(
+    routes,
+    /allowedRoles:\s*\['MASTER',\s*'OWNER',\s*'CAFE_ADMIN',\s*'STAFF'\][\s\S]{0,100}?triggerDrawerKick/,
+    'Owner must not have operational cash-drawer authority'
+  );
+});
+
