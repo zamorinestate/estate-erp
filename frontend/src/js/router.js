@@ -899,7 +899,10 @@ async function renderPage() {
           title: "Terminal security verification failed",
           message: "This native terminal could not verify its device signing key. Café Operations remains locked until device security is restored.",
           retryLabel: "Retry",
-          onRetry: () => navigate("cafe-operator-signin"),
+          retryActionId: "btn-retry-device-attestation",
+        });
+        content.querySelector("#btn-retry-device-attestation")?.addEventListener("click", () => {
+          navigate("cafe-operator-signin");
         });
         break;
       }
