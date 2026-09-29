@@ -122,6 +122,31 @@ function createPrintJobId(jobType = 'RECEIPT') {
   return `PJ-${tag}-${crypto.randomUUID().toUpperCase()}`;
 }
 
+function resolveDispatchDeviceId(authContext = {}, cafeId) {
+  const device = authContext.deviceContext || {};
+  const deviceId = normalizeId(device.deviceId);
+  const boundCafeId = normalizeId(device.boundCafeId);
+  const targetCafeId = normalizeId(cafeId);
+
+  if (
+    deviceId &&
+    deviceId !== 'UNKNOWN_PERSONAL_DEVICE' &&
+    normalizeId(device.deviceClass) === 'CAFE_OWNED' &&
+    normalizeId(device.status) === 'ACTIVE' &&
+    boundCafeId &&
+    boundCafeId === targetCafeId
+  ) {
+    return deviceId;
+  }
+
+  return null;
+}
+
+function hasCashTender(billData = {}) {
+  return normalizeId(billData.paymentMethod) === 'CASH' ||
+    (Array.isArray(billData.tenders) && billData.tenders.some((t) => normalizeId(t.paymentMethod) === 'CASH'));
+}
+
 const SETTLEMENT_TENDER_METHODS = new Set([
   'CASH',
   'UPI',
@@ -1276,7 +1301,10 @@ class PosOrderService {
         throw new Error('Simulated printer hardware timeout / disconnect.');
       }
 
-      const printResult = await this.generatePrintArtifacts(savedBillData, options);
+      const printResult = await this.generatePrintArtifacts(savedBillData, {
+        ...options,
+        allowDrawerKick: true,
+      });
 
       let printTrackingPersisted = false;
       let billPrintStatePersisted = false;
@@ -1448,7 +1476,7 @@ class PosOrderService {
       isReprint: Boolean(options.isReprint),
       reprintCount: options.reprintCount || (billData.reprints ? billData.reprints.length : 0),
       isVoid: billData.status === 'VOIDED',
-      triggerDrawerKick: billData.paymentMethod === 'CASH' || (billData.tenders && billData.tenders.some((t) => t.paymentMethod === 'CASH')),
+      triggerDrawerKick: options.allowDrawerKick === true && hasCashTender(billData),
       upiQrString: billData.upiPaymentIntent?.upiString || `upi://pay?pa=zamorin@icici&pn=Zamorin%20Cafe&am=${((billData.totalPaisa || 0) / 100).toFixed(2)}&tr=${billData.billId}`,
     };
 
@@ -1464,6 +1492,7 @@ class PosOrderService {
       rawBuffer: escPosBuffer,
       printBufferBase64: escPosBuffer.toString('base64'),
       htmlPreview: htmlReceipt,
+      drawerKickIncluded: orderDataForPrinter.triggerDrawerKick === true,
     };
   }
 
