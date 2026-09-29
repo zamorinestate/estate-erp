@@ -116,6 +116,12 @@ function requireOrganisationId(authContext = {}) {
   return organisationId;
 }
 
+function createPrintJobId(jobType = 'RECEIPT') {
+  const normalizedType = normalizeId(jobType);
+  const tag = normalizedType === 'REPRINT' ? 'REP' : 'PRT';
+  return `PJ-${tag}-${crypto.randomUUID().toUpperCase()}`;
+}
+
 const SETTLEMENT_TENDER_METHODS = new Set([
   'CASH',
   'UPI',
@@ -1264,7 +1270,7 @@ class PosOrderService {
 
     // 10. If action is SAVE_AND_PRINT: compile receipt and handle printer failure safely
     // Safe Printer Failure Resilience: DB commit is NEVER rolled back if printer fails!
-    const printJobId = `PJ-${datePart}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const printJobId = createPrintJobId('RECEIPT');
     try {
       if (options.simulatePrinterFailure) {
         throw new Error('Simulated printer hardware timeout / disconnect.');
@@ -1459,7 +1465,7 @@ class PosOrderService {
     const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
     const printResult = await this.generatePrintArtifacts(billData, options);
 
-    const printJobId = `PJ-PRT-${Date.now()}`;
+    const printJobId = createPrintJobId('RECEIPT');
     try {
       const pj = new PrintJob({
         printJobId,
@@ -1550,7 +1556,7 @@ class PosOrderService {
       reprintCount: bill.reprints.length,
     });
 
-    const printJobId = `PJ-REP-${Date.now()}`;
+    const printJobId = createPrintJobId('REPRINT');
     try {
       const pj = new PrintJob({
         printJobId,
