@@ -125,16 +125,18 @@ public class MainWindowController: NSWindowController, WKNavigationDelegate, Zam
         printOperation.jobTitle = jobName
         printOperation.showsPrintPanel = true
 
-        printOperation.runModal(for: window!, delegate: nil, didRun: nil, contextInfo: nil)
+        let systemCompleted = printOperation.run()
         bridge.respond(
             requestId: requestId,
-            success: true,
+            success: systemCompleted,
             result: [
                 "jobName": jobName,
-                "status": "SYSTEM_COMPLETED",
-                "systemPrintCompleted": true,
+                "status": systemCompleted ? "SYSTEM_COMPLETED" : "CANCELLED_OR_FAILED",
+                "systemPrintCompleted": systemCompleted,
                 "physicalCompletionVerified": false
-            ]
+            ],
+            errorCode: systemCompleted ? nil : "PRINT_CANCELLED_OR_FAILED",
+            errorMessage: systemCompleted ? nil : "The macOS print operation did not complete successfully."
         )
     }
 
