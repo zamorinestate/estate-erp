@@ -317,6 +317,58 @@ test('QR-007: validateChallengeToken permits Primary Master across any cafe in o
   assert.equal(verified.cafeId, 'CAFE-CALICUT-02');
 });
 
+test('QR-008: verified scan grant is user-bound, transition-bound, and punch-valid', async () => {
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+
+  const verification = await attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+
+  const grant = attendanceQrService.issueScanGrant({
+    verification,
+    userId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+    transition: 'CHECK_IN',
+  });
+
+  assert.match(grant.token, /^ZAM_ASG_/);
+  assert.equal(grant.transition, 'CHECK_IN');
+
+  const proof = await attendanceQrService.validatePunchQrProof(grant.token, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeUserId: 'EMP-STAFF-1',
+    expectedTransition: 'CHECK_IN',
+  });
+
+  assert.equal(proof.verified, true);
+  assert.equal(proof.resolvedCafeId, 'CAFE-KNR-01');
+  assert.equal(proof.scanGrantVerified, true);
+
+  await assert.rejects(
+    async () => attendanceQrService.validatePunchQrProof(grant.token, {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeUserId: 'EMP-STAFF-2',
+      expectedTransition: 'CHECK_IN',
+    }),
+    { statusCode: 403, code: 'ATTENDANCE_SCAN_GRANT_SCOPE_MISMATCH' }
+  );
+
+  await assert.rejects(
+    async () => attendanceQrService.validatePunchQrProof(grant.token, {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeUserId: 'EMP-STAFF-1',
+      expectedTransition: 'CHECK_OUT',
+    }),
+    { statusCode: 403, code: 'ATTENDANCE_SCAN_GRANT_SCOPE_MISMATCH' }
+  );
+});
+
 // ---------------------------------------------------------------------------
 // 2. GEOFENCE & HAVERSINE DISTANCE VERIFICATION
 // ---------------------------------------------------------------------------
