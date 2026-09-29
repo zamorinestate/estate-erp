@@ -253,10 +253,28 @@ deviceRegistrationSchema.pre('validate', function enforceHardwareTrustEvidence()
 
 deviceRegistrationSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function blockUnceremonialHardwareTrust() {
   const update = this.getUpdate() || {};
-  const nextTrustLevel = update?.$set?.trustLevel ?? update?.trustLevel;
+  const set = update.$set || update;
+  const nextTrustLevel = set?.trustLevel;
+  const nextHardwareVerified = set?.signingKeyHardwareBackedVerified;
+  const nextHardwareSecurityLevel = String(
+    set?.signingKeyHardwareSecurityLevel || ''
+  ).trim().toUpperCase();
+  const nextHardwareVerifiedAt = set?.signingKeyHardwareAttestationVerifiedAt;
+
   if (String(nextTrustLevel || '').trim().toUpperCase() === 'HARDWARE_BACKED') {
     const err = new Error('HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY');
     err.code = 'HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY';
+    throw err;
+  }
+
+  const createsPositiveHardwareEvidence =
+    nextHardwareVerified === true ||
+    ['TRUSTED_ENVIRONMENT', 'STRONGBOX'].includes(nextHardwareSecurityLevel) ||
+    Boolean(nextHardwareVerifiedAt);
+
+  if (createsPositiveHardwareEvidence) {
+    const err = new Error('HARDWARE_ATTESTATION_EVIDENCE_REQUIRES_VERIFIED_CEREMONY');
+    err.code = 'HARDWARE_ATTESTATION_EVIDENCE_REQUIRES_VERIFIED_CEREMONY';
     throw err;
   }
 });

@@ -575,3 +575,21 @@ test('REC-04E exported frontend canonical-payload helper supports both legacy V1
   assert.doesNotMatch(frontend, /Physical print device reported failure/);
   assert.doesNotMatch(frontend, /Physical print job was cancelled/);
 });
+
+
+test('REC-04E query updates cannot manufacture positive hardware-attestation evidence', () => {
+  const deviceModelSource = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'models', 'DeviceRegistration.js'),
+    'utf8'
+  );
+
+  assert.match(deviceModelSource, /createsPositiveHardwareEvidence/);
+  assert.match(deviceModelSource, /signingKeyHardwareBackedVerified/);
+  assert.match(deviceModelSource, /TRUSTED_ENVIRONMENT/);
+  assert.match(deviceModelSource, /STRONGBOX/);
+  assert.match(deviceModelSource, /signingKeyHardwareAttestationVerifiedAt/);
+  assert.match(
+    deviceModelSource,
+    /HARDWARE_ATTESTATION_EVIDENCE_REQUIRES_VERIFIED_CEREMONY/
+  );
+});
