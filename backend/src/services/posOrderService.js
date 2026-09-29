@@ -1305,6 +1305,8 @@ class PosOrderService {
         ...options,
         allowDrawerKick: true,
       });
+      const dispatchedDeviceId = resolveDispatchDeviceId(authContext, cafeId);
+      const drawerKickRequested = printResult.drawerKickIncluded === true;
 
       let printTrackingPersisted = false;
       let billPrintStatePersisted = false;
@@ -1320,6 +1322,9 @@ class PosOrderService {
           jobType: 'RECEIPT',
           status: 'DISPATCHED',
           requestedBy: authContext.userId || 'CASHIER',
+          dispatchedDeviceId,
+          drawerKickRequested,
+          drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
           printBufferBase64: printResult.printBufferBase64,
           htmlPreview: printResult.htmlPreview,
         });
@@ -1338,6 +1343,9 @@ class PosOrderService {
           jobType: 'RECEIPT',
           status: 'DISPATCHED',
           dispatchedAt: new Date(),
+          dispatchedDeviceId,
+          drawerKickRequested,
+          drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
         });
         await billDoc.save();
         billPrintStatePersisted = true;
@@ -1361,6 +1369,10 @@ class PosOrderService {
         billPrintStatePersisted,
         printTrackingWarning: printTrackingWarnings[0] || null,
         printTrackingWarnings,
+        dispatchedDeviceId,
+        deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+        drawerKickRequested,
+        drawerKickStatus: drawerKickRequested ? 'DISPATCHED' : 'NOT_REQUESTED',
         printBuffer: printResult.printBufferBase64,
         htmlPreview: printResult.htmlPreview,
         rawBuffer: printResult.rawBuffer,
@@ -1513,7 +1525,11 @@ class PosOrderService {
     assertCafeAccess(authContext, bill.cafeId);
 
     const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
-    const printResult = await this.generatePrintArtifacts(billData, options);
+    const printResult = await this.generatePrintArtifacts(billData, {
+      ...options,
+      allowDrawerKick: false,
+    });
+    const dispatchedDeviceId = resolveDispatchDeviceId(authContext, bill.cafeId);
 
     const printJobId = createPrintJobId('RECEIPT');
     let printTrackingPersisted = false;
@@ -1528,6 +1544,9 @@ class PosOrderService {
         jobType: 'RECEIPT',
         status: 'DISPATCHED',
         requestedBy: authContext.userId || 'STAFF',
+        dispatchedDeviceId,
+        drawerKickRequested: false,
+        drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
         htmlPreview: printResult.htmlPreview,
       });
@@ -1548,6 +1567,10 @@ class PosOrderService {
       printJobId,
       printTrackingPersisted,
       printTrackingWarning,
+      dispatchedDeviceId,
+      deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+      drawerKickRequested: false,
+      drawerKickStatus: 'NOT_REQUESTED',
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
@@ -1612,7 +1635,9 @@ class PosOrderService {
       ...options,
       isReprint: true,
       reprintCount: bill.reprints.length,
+      allowDrawerKick: false,
     });
+    const dispatchedDeviceId = resolveDispatchDeviceId(authContext, bill.cafeId);
 
     const printJobId = createPrintJobId('REPRINT');
     let printTrackingPersisted = false;
@@ -1627,6 +1652,9 @@ class PosOrderService {
         jobType: 'REPRINT',
         status: 'DISPATCHED',
         requestedBy: authContext.userId || 'STAFF',
+        dispatchedDeviceId,
+        drawerKickRequested: false,
+        drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
         htmlPreview: printResult.htmlPreview,
       });
@@ -1650,6 +1678,10 @@ class PosOrderService {
       printJobId,
       printTrackingPersisted,
       printTrackingWarning,
+      dispatchedDeviceId,
+      deviceAcknowledgementRequired: Boolean(dispatchedDeviceId),
+      drawerKickRequested: false,
+      drawerKickStatus: 'NOT_REQUESTED',
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
