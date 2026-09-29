@@ -9,14 +9,39 @@ const router = express.Router();
 
 router.post('/enroll', async (req, res, next) => {
   try {
-    const { enrollmentCode, displayName, platform, appVersion, osVersion } = req.body || {};
+    const {
+      enrollmentCode,
+      displayName,
+      platform,
+      appVersion,
+      osVersion,
+      publicSigningKey,
+      signingKeyAlgorithm,
+      signingKeyProvider,
+    } = req.body || {};
     if (!enrollmentCode) return fail(res, 400, 'INVALID_INPUT', 'Enter your registration code.');
-    const { device, deviceToken } = await deviceService.enrollDevice({
-      enrollmentCodePlain: enrollmentCode, displayName, platform, appVersion, osVersion,
+    const { device, deviceToken, attestation } = await deviceService.enrollDevice({
+      enrollmentCodePlain: enrollmentCode,
+      displayName,
+      platform,
+      appVersion,
+      osVersion,
+      publicSigningKey,
+      signingKeyAlgorithm,
+      signingKeyProvider,
     });
     return ok(res, {
       deviceToken,
-      device: { id: device.id, displayName: device.displayName, cafeId: device.cafeId, cafeName: device.cafeDisplayName || null, lifecycleStatus: device.lifecycleStatus },
+      attestation,
+      device: {
+        id: device.id,
+        displayName: device.displayName,
+        cafeId: device.cafeId,
+        cafeName: device.cafeDisplayName || null,
+        lifecycleStatus: device.lifecycleStatus,
+        attestationCapable: Boolean(device.attestationCapable),
+        signingKeyThumbprint: device.signingKeyThumbprint || null,
+      },
     });
   } catch (err) {
     if (err.code === 'ENROLLMENT_UNAVAILABLE') {
