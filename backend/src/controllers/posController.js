@@ -128,6 +128,7 @@ const acknowledgePrintJob = asyncHandler(async (request, response) => {
     failureCode = null,
     failureReason = null,
     drawerKickStatus = null,
+    attestation = null,
   } = request.body || {};
 
   const result = await PosOrderService.acknowledgePrintJob(
@@ -138,6 +139,7 @@ const acknowledgePrintJob = asyncHandler(async (request, response) => {
       failureCode,
       failureReason,
       drawerKickStatus,
+      attestation,
     }
   );
 
