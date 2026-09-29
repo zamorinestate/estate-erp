@@ -522,35 +522,66 @@ function renderCalendarTab() {
 }
 
 function renderCalendarDays() {
+  const [year, month] = currentMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const leadingSlots = (new Date(year, month - 1, 1).getDay() + 6) % 7; // Monday-first
+  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const recordsByDate = new Map(
+    (cachedHistory || [])
+      .filter((record) => record?.businessDate)
+      .map((record) => [String(record.businessDate), record])
+  );
+
   let html = "";
-  // Empty slots for leading days
-  for (let i = 0; i < 5; i++) {
-    html += `<div style="opacity:0.2; padding:12px 6px; background:var(--bg-surface-2); border-radius:var(--radius-sm);"></div>`;
+  for (let i = 0; i < leadingSlots; i++) {
+    html += `<div aria-hidden="true" style="opacity:0.18; min-height:86px; background:var(--bg-surface-2); border-radius:var(--radius-sm);"></div>`;
   }
 
-  for (let d = 1; d <= 31; d++) {
-    const dayStr = String(d).padStart(2, "0");
-    const dateKey = `2026-08-${dayStr}`;
-    const isToday = d === 19;
-    const isPast = d <= 19;
-    let badgeColor = "transparent";
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const record = recordsByDate.get(dateKey) || null;
+    const attendanceId = String(record?.attendanceId || record?.id || record?._id || "").replace(/"/g, "&quot;");
+    const isToday = dateKey === todayKey;
+    const status = String(record?.status || "").toUpperCase();
+    const isLate = record?.isLate === true || Number(record?.lateMinutes || 0) > 0;
+    const checkInEvidence = record?.attendanceEvidence?.checkIn || null;
+    const checkOutEvidence = record?.attendanceEvidence?.checkOut || null;
+    const hasCheckInSelfie = Boolean(checkInEvidence?.photoFileId || checkInEvidence?.selfieMediaId || record?.selfieFileId);
+    const hasCheckOutSelfie = Boolean(checkOutEvidence?.photoFileId || checkOutEvidence?.selfieMediaId);
 
-    if (isPast) {
-      if (d === 15) {
-        badgeColor = "var(--brand-gold)"; // Holiday
-      } else if (d === 17) {
-        badgeColor = "var(--color-accent-coral)"; // Late
-      } else if (d % 7 === 2) {
-        badgeColor = "var(--text-muted)"; // Weekly off
-      } else {
-        badgeColor = "var(--color-accent-mint)"; // Present
-      }
+    let badgeColor = "transparent";
+    let statusLabel = "";
+    if (status === "ABSENT") {
+      badgeColor = "var(--color-accent-coral)";
+      statusLabel = "Absent";
+    } else if (status === "CHECKED_IN" || status === "ON_BREAK") {
+      badgeColor = isLate ? "var(--color-accent-coral)" : "var(--color-accent-mint)";
+      statusLabel = isLate ? "Late · In" : "Checked In";
+    } else if (status === "CHECKED_OUT") {
+      badgeColor = isLate ? "var(--color-accent-coral)" : "var(--color-accent-mint)";
+      statusLabel = isLate ? "Late · Complete" : "Complete";
+    } else if (status === "ON_LEAVE") {
+      badgeColor = "var(--brand-gold)";
+      statusLabel = "Leave";
     }
 
+    const punchLine = record
+      ? `${record.checkInAt ? formatTimeStr(record.checkInAt) : "—"} – ${record.checkOutAt ? formatTimeStr(record.checkOutAt) : "—"}`
+      : "";
+
     html += `
-      <div class="calendar-day-cell" data-date="${dateKey}" style="padding:10px 4px; background:${isToday ? "rgba(200,157,92,0.12)" : "var(--bg-surface-2)"}; border:${isToday ? "1px solid var(--brand-gold)" : "1px solid var(--border-subtle)"}; border-radius:var(--radius-sm); cursor:pointer; min-height:54px; display:flex; flex-direction:column; align-items:center; justify-content:space-between;">
-        <span style="font-size:12px; font-weight:${isToday ? "800" : "600"}; color:${isToday ? "var(--brand-gold)" : "var(--text-primary)"};">${d}</span>
-        <span style="width:6px; height:6px; border-radius:50%; background:${badgeColor}; margin-top:4px;"></span>
+      <div
+        class="calendar-day-cell"
+        data-date="${dateKey}"
+        data-att-id="${attendanceId}"
+        style="padding:8px 6px; background:${isToday ? "rgba(200,157,92,0.12)" : "var(--bg-surface-2)"}; border:${isToday ? "1px solid var(--brand-gold)" : "1px solid var(--border-subtle)"}; border-radius:var(--radius-sm); cursor:${record ? "pointer" : "default"}; min-height:86px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:4px;"
+        title="${record ? "Open authoritative attendance evidence" : "No attendance record"}"
+      >
+        <span style="font-size:12px; font-weight:${isToday ? "800" : "600"}; color:${isToday ? "var(--brand-gold)" : "var(--text-primary)"};">${day}</span>
+        <span style="width:6px; height:6px; border-radius:50%; background:${badgeColor};"></span>
+        <span style="font-size:9.5px; font-weight:700; color:var(--text-muted); min-height:12px;">${statusLabel}</span>
+        ${record ? `<span style="font-size:9.5px; color:var(--text-muted); font-family:var(--font-mono, monospace);">${punchLine}</span>` : ""}
+        ${record ? `<span style="font-size:9px; color:var(--text-muted);">${hasCheckInSelfie ? "📷 IN" : ""}${hasCheckInSelfie && hasCheckOutSelfie ? " · " : ""}${hasCheckOutSelfie ? "📷 OUT" : ""}</span>` : ""}
       </div>
     `;
   }
@@ -2039,12 +2070,17 @@ function openDayDrilldownModal(dateStr, record) {
   modal.className = "modal-backdrop flex items-center justify-center";
   modal.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1050; padding:16px;";
 
-  const punchIn = record?.checkInAt ? formatTimeStr(record.checkInAt) : "09:02 AM IST";
-  const punchOut = record?.checkOutAt ? formatTimeStr(record.checkOutAt) : "05:34 PM IST";
-  const worked = record?.totalWorkedMinutes > 0
+  const punchIn = record?.checkInAt ? formatTimeStr(record.checkInAt) : "—";
+  const punchOut = record?.checkOutAt ? formatTimeStr(record.checkOutAt) : "—";
+  const worked = Number(record?.totalWorkedMinutes) > 0
     ? `${Math.floor(record.totalWorkedMinutes / 60)}h ${record.totalWorkedMinutes % 60}m`
-    : "8h 02m";
+    : "—";
   const attId = record?.id || record?.attendanceId || record?._id;
+  const checkInSelfie = record?.attendanceEvidence?.checkIn?.photoFileId || record?.attendanceEvidence?.checkIn?.selfieMediaId || record?.selfieFileId || null;
+  const checkOutSelfie = record?.attendanceEvidence?.checkOut?.photoFileId || record?.attendanceEvidence?.checkOut?.selfieMediaId || null;
+  const scheduledLabel = record?.scheduledStartAt || record?.scheduledEndAt
+    ? `${record?.scheduledStartAt ? formatTimeStr(record.scheduledStartAt) : "—"} – ${record?.scheduledEndAt ? formatTimeStr(record.scheduledEndAt) : "—"}`
+    : (record?.shiftName || record?.shiftLabel || record?.shift || "—");
 
   modal.innerHTML = `
     <div class="card" style="width:100%; max-width:480px; padding:24px; background:var(--bg-surface-1); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg);">
@@ -2061,7 +2097,7 @@ function openDayDrilldownModal(dateStr, record) {
 
       <div style="display:flex; flex-direction:column; gap:10px; font-size:13px; margin-bottom:20px;">
         <div class="flex justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-          <span>Scheduled Shift:</span><strong>${record?.shiftLabel || record?.shift || "09:00 AM – 05:30 PM (8.5h)"}</strong>
+          <span>Scheduled Shift:</span><strong>${scheduledLabel}</strong>
         </div>
         <div class="flex justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <span>Actual Punch In:</span><strong style="color:var(--color-accent-mint);">${punchIn}</strong>
@@ -2073,13 +2109,13 @@ function openDayDrilldownModal(dateStr, record) {
           <span>Worked Total:</span><strong>${worked}</strong>
         </div>
         <div class="flex justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-          <span>Verification Evidence:</span><strong style="color:var(--color-accent-mint);">Geo + QR + Selfie Sealed</strong>
+          <span>Presence Selfies:</span><strong style="color:var(--color-accent-mint);">${checkInSelfie ? "Check-In ✓" : "Check-In —"} · ${checkOutSelfie ? "Check-Out ✓" : "Check-Out —"}</strong>
         </div>
       </div>
 
       <!-- View Presence Evidence Button -->
-      <button class="btn btn-sm btn-primary" id="ddmodal-view-evidence-btn" style="width:100%; margin-bottom:14px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px;">
-        📷 View Presence Evidence
+      <button class="btn btn-sm btn-primary" id="ddmodal-view-evidence-btn" ${attId ? "" : "disabled"} style="width:100%; margin-bottom:14px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px;">
+        📷 View Check-In / Check-Out Evidence
       </button>
 
       <!-- Controlled Evidence Preview Option -->
