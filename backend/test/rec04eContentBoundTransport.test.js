@@ -1243,3 +1243,61 @@ test('REC-04E raw TCP transport never overclaims printer identity or physical pa
   assert.match(source, /payloadSha256: printDispatchAuthorized \? printResult\.payloadSha256 : null/);
   assert.match(source, /payloadBytes: printDispatchAuthorized \? printResult\.payloadBytes : null/);
 });
+
+
+test('REC-04E raw network printer endpoint is pinned without falsely verifying printer hardware identity', async () => {
+  const bridgeModule = await import(pathToFileURL(localBridgePath).href);
+  const base = {
+    ZAMORIN_PRINTER_TRANSPORT: 'NETWORK_TCP',
+    ZAMORIN_PRINTER_HOST: '192.0.2.44',
+    ZAMORIN_PRINTER_PORT: '9100',
+    ZAMORIN_PRINTER_ID: 'COUNTER-01-THERMAL',
+  };
+  const expected = bridgeModule.printerEndpointFingerprint({
+    transport: 'NETWORK_TCP',
+    host: '192.0.2.44',
+    port: 9100,
+    printerId: 'COUNTER-01-THERMAL',
+  });
+
+  const missingPin = bridgeModule.resolveNetworkPrinterConfig(base);
+  assert.equal(missingPin.configured, false);
+  assert.equal(missingPin.endpointPinned, false);
+  assert.equal(missingPin.reason, 'PRINTER_ENDPOINT_PIN_REQUIRED');
+  assert.equal(missingPin.endpointFingerprint, expected);
+
+  const pinned = bridgeModule.resolveNetworkPrinterConfig({
+    ...base,
+    ZAMORIN_PRINTER_ENDPOINT_SHA256: expected,
+  });
+  assert.equal(pinned.configured, true);
+  assert.equal(pinned.endpointPinned, true);
+
+  const tampered = bridgeModule.resolveNetworkPrinterConfig({
+    ...base,
+    ZAMORIN_PRINTER_HOST: '192.0.2.45',
+    ZAMORIN_PRINTER_ENDPOINT_SHA256: expected,
+  });
+  assert.equal(tampered.configured, false);
+  assert.equal(tampered.endpointPinned, false);
+  assert.equal(tampered.reason, 'PRINTER_ENDPOINT_PIN_MISMATCH');
+
+  const bridge = fs.readFileSync(localBridgePath, 'utf8');
+  assert.match(bridge, /printerEndpointPinned: printerConfig\.endpointPinned === true/);
+  assert.match(bridge, /printerIdentityVerified: false/);
+  assert.doesNotMatch(
+    bridge,
+    /printerIdentityVerified:\s*printerConfig\.endpointPinned/,
+    'Endpoint pinning must never be promoted into physical-printer identity verification'
+  );
+});
+
+test('REC-04E local bridge ships an explicit non-secret endpoint-pinning configuration template', () => {
+  const template = fs.readFileSync(
+    path.join(root, 'scripts', 'zamorin_local_printer_bridge.env.example'),
+    'utf8'
+  );
+  assert.match(template, /ZAMORIN_PRINTER_TRANSPORT=NETWORK_TCP/);
+  assert.match(template, /ZAMORIN_PRINTER_ENDPOINT_SHA256=/);
+  assert.match(template, /NOT cryptographic proof/);
+});

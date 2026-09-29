@@ -41,21 +41,54 @@ function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+function printerEndpointFingerprint({ transport, host, port, printerId } = {}) {
+  const canonical = [
+    'ZAMORIN_PRINTER_ENDPOINT_V1',
+    `transport=${String(transport || '').trim().toUpperCase()}`,
+    `host=${String(host || '').trim().toLowerCase()}`,
+    `port=${Number(port) || 0}`,
+    `printerId=${String(printerId || '').trim()}`,
+  ].join('\n');
+  return sha256Hex(Buffer.from(canonical, 'utf8'));
+}
+
 function resolveNetworkPrinterConfig(env = process.env) {
   const transport = String(env.ZAMORIN_PRINTER_TRANSPORT || '').trim().toUpperCase();
   const host = String(env.ZAMORIN_PRINTER_HOST || '').trim();
   const port = Number(env.ZAMORIN_PRINTER_PORT || 9100);
   const printerId = String(env.ZAMORIN_PRINTER_ID || '').trim();
-  const configured =
+  const endpointBaseConfigured =
     transport === 'NETWORK_TCP' &&
     Boolean(host) &&
     Number.isInteger(port) &&
     port > 0 &&
     port <= 65535 &&
     Boolean(printerId);
+  const endpointFingerprint = endpointBaseConfigured
+    ? printerEndpointFingerprint({ transport, host, port, printerId })
+    : null;
+  const expectedFingerprint = String(
+    env.ZAMORIN_PRINTER_ENDPOINT_SHA256 || ''
+  ).trim().toLowerCase();
+  const endpointPinConfigured = /^[a-f0-9]{64}$/.test(expectedFingerprint);
+  const endpointPinned =
+    endpointBaseConfigured &&
+    endpointPinConfigured &&
+    expectedFingerprint === endpointFingerprint;
+  const configured = endpointBaseConfigured && endpointPinned;
+
+  let reason = null;
+  if (!endpointBaseConfigured) reason = 'HARDWARE_TRANSPORT_NOT_CONFIGURED';
+  else if (!endpointPinConfigured) reason = 'PRINTER_ENDPOINT_PIN_REQUIRED';
+  else if (!endpointPinned) reason = 'PRINTER_ENDPOINT_PIN_MISMATCH';
 
   return {
     configured,
+    endpointBaseConfigured,
+    endpointPinned,
+    endpointFingerprint,
+    expectedFingerprint: endpointPinConfigured ? expectedFingerprint : null,
+    reason,
     transport,
     host,
     port,
@@ -256,10 +289,12 @@ const server = http.createServer(async (req, res) => {
       hardwareReady: printerConfig.configured,
       transportMode: printerConfig.configured ? 'LOCAL_RAW_ESC_POS' : 'UNBOUND',
       evidenceLevel: 'NONE',
-      configuredPrinterId: printerConfig.configured ? printerConfig.printerId : null,
+      configuredPrinterId: printerConfig.endpointBaseConfigured ? printerConfig.printerId : null,
+      printerEndpointFingerprint: printerConfig.endpointFingerprint,
+      printerEndpointPinned: printerConfig.endpointPinned === true,
       printerIdentityVerified: false,
       physicalCompletionVerified: false,
-      reason: printerConfig.configured ? null : 'HARDWARE_TRANSPORT_NOT_CONFIGURED',
+      reason: printerConfig.reason,
       timestamp: new Date().toISOString(),
     });
     return;
@@ -300,6 +335,8 @@ const server = http.createServer(async (req, res) => {
         evidenceLevel: 'CONTENT_BOUND_TRANSPORT',
         contentBindingVerified: true,
         printerIdentity: printerConfig.printerId,
+        printerEndpointFingerprint: printerConfig.endpointFingerprint,
+        printerEndpointPinned: printerConfig.endpointPinned === true,
         printerIdentityVerified: false,
         physicalCompletionVerified: false,
         drawerState: 'UNKNOWN',
@@ -363,6 +400,7 @@ export {
   server,
   PORT,
   HOST,
+  printerEndpointFingerprint,
   resolveNetworkPrinterConfig,
   validatePrintRequest,
   dispatchNetworkPrint,

@@ -187,6 +187,7 @@ class HardwareBridgeClient {
       result?.success !== true ||
       result?.transportAccepted !== true ||
       result?.contentBindingVerified !== true ||
+      result?.printerEndpointPinned !== true ||
       result?.payloadSha256 !== dispatch.payloadSha256 ||
       Number(result?.payloadBytes) !== Number(dispatch.payloadBytes)
     ) {
