@@ -218,3 +218,13 @@ test('FINAL POS RECEIPT LINEAGE — malformed explicit hardware candidate SHA fa
     'explicit invalid candidate SHA must not silently fall back to Git HEAD'
   );
 });
+
+
+test('FINAL POS RECEIPT LINEAGE — final PR certifier runs both repository secret scanners fail-closed', () => {
+  const finalGate = readRepo('scripts/check_pr16_merge_readiness.mjs');
+
+  assert.match(finalGate, /scripts\/scan_secrets\.mjs/);
+  assert.match(finalGate, /scripts\/scan_repository_secrets\.mjs/);
+  assert.match(finalGate, /REPOSITORY_SECRET_SCAN_FAILED/);
+  assert.match(finalGate, /repositorySecretScansVerified: true/);
+});

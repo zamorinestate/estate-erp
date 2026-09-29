@@ -109,6 +109,22 @@ for (const suite of requiredSuites) {
   }
 }
 
+for (const scanner of [
+  'scripts/scan_secrets.mjs',
+  'scripts/scan_repository_secrets.mjs',
+]) {
+  const scan = spawnSync(process.execPath, [path.resolve(scanner)], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (scan.status !== 0) {
+    fail(
+      'REPOSITORY_SECRET_SCAN_FAILED',
+      String(scan.stderr || scan.stdout || `${scanner} failed`).trim()
+    );
+  }
+}
+
 const reportPath = path.resolve(hardwareReport);
 if (!fs.existsSync(reportPath)) {
   fail(
@@ -141,6 +157,7 @@ console.log(JSON.stringify({
   candidateSha: actualSha,
   workingTreeClean: true,
   canonicalGatesVerified: requiredSuites,
+  repositorySecretScansVerified: true,
   hardwareAcceptanceReport: reportPath,
   hardwareAcceptanceCandidateShaBound: true,
   githubExactHeadCiRequired: true,
