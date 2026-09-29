@@ -160,6 +160,7 @@ class HardwareBridgeClient {
       !dispatch?.printJobId ||
       !dispatch?.printBuffer ||
       !dispatch?.payloadSha256 ||
+      !dispatch?.printDispatchAuthorization ||
       !Number.isSafeInteger(Number(dispatch?.payloadBytes))
     ) {
       return null;
@@ -178,6 +179,7 @@ class HardwareBridgeClient {
         expectedPayloadBytes: Number(dispatch.payloadBytes),
         printerTarget: dispatch.printerTarget || 'DEFAULT_THERMAL',
         drawerKickRequested: dispatch.drawerKickRequested === true,
+        printDispatchAuthorization: dispatch.printDispatchAuthorization,
       }),
     });
 

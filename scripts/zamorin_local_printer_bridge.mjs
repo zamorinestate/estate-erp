@@ -16,6 +16,11 @@ import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
 import { mkdir, readFile, rename, unlink, writeFile } from 'fs/promises';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { verificationKeyInfo, verifyPrintDispatchAuthorization } =
+  require('../backend/src/services/printDispatchAuthorizationService.js');
 
 const PORT = 9199;
 const HOST = '127.0.0.1';
@@ -545,33 +550,36 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://${HOST}:${PORT}`);
   const pathname = parsedUrl.pathname;
   const printerConfig = resolveNetworkPrinterConfig();
+  const dispatchVerifier = verificationKeyInfo();
 
   if (req.method === 'GET' && (pathname === '/health' || pathname === '/')) {
     writeJson(res, 200, {
-      status: printerConfig.configured ? 'TRANSPORT_CONFIGURED' : 'SERVICE_REACHABLE',
+      status: printerConfig.configured && dispatchVerifier.ready ? 'TRANSPORT_CONFIGURED' : 'SERVICE_REACHABLE',
       service: 'Zamorin Local ESC/POS Printer Bridge',
       version: '3.0.0-rec04e',
       binding: `${HOST}:${PORT}`,
       uptimeSeconds: Math.floor(process.uptime()),
-      hardwareReady: printerConfig.configured,
-      transportMode: printerConfig.configured ? 'LOCAL_RAW_ESC_POS' : 'UNBOUND',
+      hardwareReady: printerConfig.configured && dispatchVerifier.ready,
+      transportMode: printerConfig.configured && dispatchVerifier.ready ? 'LOCAL_RAW_ESC_POS' : 'UNBOUND',
       evidenceLevel: 'NONE',
       configuredPrinterId: printerConfig.endpointBaseConfigured ? printerConfig.printerId : null,
       printerEndpointFingerprint: printerConfig.endpointFingerprint,
       printerEndpointPinned: printerConfig.endpointPinned === true,
       printerIdentityVerified: false,
       physicalCompletionVerified: false,
-      reason: printerConfig.reason,
+      dispatchAuthorizationReady: dispatchVerifier.ready,
+      dispatchAuthorizationKeyId: dispatchVerifier.keyId,
+      reason: printerConfig.reason || dispatchVerifier.reason,
       timestamp: new Date().toISOString(),
     });
     return;
   }
 
   if (req.method === 'POST' && pathname === '/print') {
-    if (!printerConfig.configured) {
+    if (!printerConfig.configured || !dispatchVerifier.ready) {
       writeJson(res, 503, {
         success: false,
-        error: 'HARDWARE_TRANSPORT_NOT_CONFIGURED',
+        error: printerConfig.reason || dispatchVerifier.reason || 'HARDWARE_TRANSPORT_NOT_CONFIGURED',
         bytesDispatched: 0,
         dispatched: false,
         transportAccepted: false,
@@ -585,14 +593,33 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const payload = await parseJsonBody(req);
+      const validated = validatePrintRequest(payload);
+      const authorization = payload.printDispatchAuthorization;
+      const dispatchAuthorization = verifyPrintDispatchAuthorization(
+        authorization,
+        {
+          organisationId: authorization?.organisationId,
+          cafeId: authorization?.cafeId,
+          deviceId: authorization?.deviceId,
+          printJobId: validated.printJobId,
+          payloadSha256: validated.expectedPayloadSha256,
+          payloadBytes: validated.expectedPayloadBytes,
+          printerTarget: validated.printerTarget,
+          drawerKickRequested: validated.drawerKickRequested,
+        }
+      );
       const result = await processJournaledPrint(payload, printerConfig);
-      writeJson(res, 200, result);
+      writeJson(res, 200, {
+        ...result,
+        serverDispatchAuthorized: true,
+        dispatchAuthorizationKeyId: dispatchAuthorization.keyId,
+      });
     } catch (err) {
       const statusCode =
         err.code === 'PAYLOAD_TOO_LARGE' ? 413 :
           err.code === 'PRINT_JOB_PAYLOAD_CONFLICT' ? 409 :
             err.code === 'PRINT_TRANSPORT_OUTCOME_UNKNOWN' ? 409 :
-              ['PRINT_BUFFER_INVALID', 'PRINT_CONTENT_BINDING_REQUIRED', 'PRINT_PAYLOAD_LENGTH_MISMATCH', 'PRINT_PAYLOAD_HASH_MISMATCH', 'UNSUPPORTED_PRINTER_TARGET'].includes(err.code)
+              ['PRINT_BUFFER_INVALID', 'PRINT_CONTENT_BINDING_REQUIRED', 'PRINT_PAYLOAD_LENGTH_MISMATCH', 'PRINT_PAYLOAD_HASH_MISMATCH', 'UNSUPPORTED_PRINTER_TARGET', 'PRINT_DISPATCH_AUTHORIZATION_REQUIRED', 'PRINT_DISPATCH_AUTHORIZATION_INVALID', 'PRINT_DISPATCH_AUTHORIZATION_BINDING_MISMATCH', 'PRINT_DISPATCH_AUTHORIZATION_KEY_MISMATCH', 'PRINT_DISPATCH_AUTHORIZATION_SIGNATURE_INVALID', 'PRINT_DISPATCH_AUTHORIZATION_EXPIRED'].includes(err.code)
                 ? 400
                 : 503;
       writeJson(res, statusCode, {
@@ -656,4 +683,6 @@ export {
   validatePrintRequest,
   dispatchNetworkPrint,
   processJournaledPrint,
+  verificationKeyInfo,
+  verifyPrintDispatchAuthorization,
 };

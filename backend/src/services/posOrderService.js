@@ -54,6 +54,7 @@ const {
   generateFallbackHtmlReceipt,
   buildDrawerKickBuffer,
 } = require('./hardwareBridgeService');
+const { createPrintDispatchAuthorization } = require('./printDispatchAuthorizationService');
 
 // In-memory idempotency cache (TTL: 60 minutes) — fast path read cache
 const IDEMPOTENCY_TTL_MS = 60 * 60 * 1000;
@@ -64,6 +65,14 @@ const idempotencyCache = new Map();
 // The authoritative correctness barrier across processes/instances lives in MongoDB:
 // unique indexes on IdempotencyRecord and Bill, plus atomic database state transitions.
 const activeIdempotencyLocks = new Map();
+
+function optionalPrintDispatchAuthorization(binding) {
+  try { return createPrintDispatchAuthorization(binding); }
+  catch (error) {
+    console.error('[POS Print] Server dispatch authorization unavailable:', error?.code || error?.message);
+    return null;
+  }
+}
 
 function cleanExpiredIdempotency() {
   const now = Date.now();
@@ -1447,6 +1456,13 @@ class PosOrderService {
       }
 
       const printDispatchAuthorized = printTrackingPersisted === true;
+      const printDispatchAuthorization = printDispatchAuthorized
+        ? optionalPrintDispatchAuthorization({
+            organisationId: orgId, cafeId, deviceId: dispatchedDeviceId, printJobId,
+            payloadSha256: printResult.payloadSha256, payloadBytes: printResult.payloadBytes,
+            printerTarget: 'DEFAULT_THERMAL', drawerKickRequested,
+          })
+        : null;
 
       try {
         billDoc.printStatus = printDispatchAuthorized ? 'PRINT_DISPATCHED' : 'PRINT_PENDING';
@@ -1536,6 +1552,7 @@ class PosOrderService {
         payloadSha256: printDispatchAuthorized ? printResult.payloadSha256 : null,
         payloadBytes: printDispatchAuthorized ? printResult.payloadBytes : null,
         printerTarget: printDispatchAuthorized ? 'DEFAULT_THERMAL' : null,
+        printDispatchAuthorization,
         printBuffer: printDispatchAuthorized ? printResult.printBufferBase64 : null,
         htmlPreview: printResult.htmlPreview,
         rawBuffer: printDispatchAuthorized ? printResult.rawBuffer : null,
@@ -2539,6 +2556,12 @@ class PosOrderService {
       );
     }
 
+    const printDispatchAuthorization = optionalPrintDispatchAuthorization({
+      organisationId: normalizeId(bill.organisationId), cafeId: normalizeId(bill.cafeId),
+      deviceId: dispatchedDeviceId, printJobId, payloadSha256: printResult.payloadSha256,
+      payloadBytes: printResult.payloadBytes, printerTarget: 'DEFAULT_THERMAL', drawerKickRequested: false,
+    });
+
     return {
       success: true,
       action: 'PRINT',
@@ -2583,6 +2606,7 @@ class PosOrderService {
       payloadSha256: printResult.payloadSha256,
       payloadBytes: printResult.payloadBytes,
       printerTarget: 'DEFAULT_THERMAL',
+      printDispatchAuthorization,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
@@ -2718,6 +2742,11 @@ class PosOrderService {
     }
 
     const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
+    const printDispatchAuthorization = optionalPrintDispatchAuthorization({
+      organisationId: normalizeId(bill.organisationId), cafeId: normalizeId(bill.cafeId),
+      deviceId: dispatchedDeviceId, printJobId, payloadSha256: printResult.payloadSha256,
+      payloadBytes: printResult.payloadBytes, printerTarget: 'DEFAULT_THERMAL', drawerKickRequested: false,
+    });
 
     return {
       success: true,
@@ -2766,6 +2795,7 @@ class PosOrderService {
       payloadSha256: printResult.payloadSha256,
       payloadBytes: printResult.payloadBytes,
       printerTarget: 'DEFAULT_THERMAL',
+      printDispatchAuthorization,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
