@@ -2618,6 +2618,7 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     success: true,
     message: 'Selfie uploaded successfully.',
     data: {
+      fileId: privateFile.fileId,
       mediaId: privateFile.fileId,
       sizeBytes: privateFile.sizeBytes,
       mimeType: privateFile.mimeType,
