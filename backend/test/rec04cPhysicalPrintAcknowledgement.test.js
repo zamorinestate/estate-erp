@@ -16,6 +16,13 @@ const servicePath = path.join(__dirname, '..', 'src', 'services', 'posOrderServi
 const hardwareServicePath = path.join(__dirname, '..', 'src', 'services', 'hardwareBridgeService.js');
 const hardwareControllerPath = path.join(__dirname, '..', 'src', 'controllers', 'hardwareController.js');
 const hardwareRoutesPath = path.join(__dirname, '..', 'src', 'routes', 'hardwareRoutes.js');
+const androidPrintManagerPath = path.join(__dirname, '..', '..', 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinPrintManager.kt');
+const androidMainPath = path.join(__dirname, '..', '..', 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'MainActivity.kt');
+const windowsBridgePath = path.join(__dirname, '..', '..', 'Platform', 'Windows', 'ZamorinCafeERP', 'ZamorinNativeBridge.cs');
+const iosBridgePath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'ios', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
+const iosControllerPath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'ios', 'ZamorinCafeERP', 'ViewController.swift');
+const macBridgePath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'ZamorinNativeBridge.swift');
+const macControllerPath = path.join(__dirname, '..', '..', 'Platform', 'Apple', 'macos', 'ZamorinCafeERP', 'MainWindowController.swift');
 
 function activeCafeDevice(deviceId = 'DV-ZC0001-POS-01', cafeId = 'ZC-0001') {
   return {
@@ -248,5 +255,40 @@ test('REC-04C — manual drawer API is truthful, café-scoped, and device-bound'
     /allowedRoles:\s*\['MASTER',\s*'OWNER',\s*'CAFE_ADMIN',\s*'STAFF'\][\s\S]{0,100}?triggerDrawerKick/,
     'Owner must not have operational cash-drawer authority'
   );
+});
+
+test('REC-04C — native print shells never equate dialog/spool acceptance with physical completion', () => {
+  const androidPrintManager = fs.readFileSync(androidPrintManagerPath, 'utf8');
+  const androidMain = fs.readFileSync(androidMainPath, 'utf8');
+  const windowsBridge = fs.readFileSync(windowsBridgePath, 'utf8');
+  const iosBridge = fs.readFileSync(iosBridgePath, 'utf8');
+  const iosController = fs.readFileSync(iosControllerPath, 'utf8');
+  const macBridge = fs.readFileSync(macBridgePath, 'utf8');
+  const macController = fs.readFileSync(macControllerPath, 'utf8');
+
+  assert.ok(
+    (androidPrintManager.match(/status = "QUEUED"/g) || []).length >= 2,
+    'Android WebView and PDF jobs must report queued state after PrintManager.print'
+  );
+  assert.match(androidMain, /put\("printed", false\)/);
+  assert.match(androidMain, /put\("physicalCompletionVerified", false\)/);
+
+  assert.match(windowsBridge, /\["printed"\] = false/);
+  assert.match(windowsBridge, /\["physicalCompletionVerified"\] = false/);
+
+  for (const appleBridge of [iosBridge, macBridge]) {
+    const start = appleBridge.indexOf('case "PRINT_DOCUMENT", "OPEN_SYSTEM_PRINT":');
+    const end = appleBridge.indexOf('\n        case ', start + 1);
+    assert.ok(start >= 0 && end > start);
+    const printCase = appleBridge.slice(start, end);
+    assert.doesNotMatch(
+      printCase,
+      /buildResponse\(requestId:\s*requestId,\s*success:\s*true/,
+      'Apple bridge must not send an immediate success before its print delegate responds'
+    );
+  }
+
+  assert.match(iosController, /"physicalCompletionVerified": false/);
+  assert.match(macController, /"physicalCompletionVerified": false/);
 });
 
