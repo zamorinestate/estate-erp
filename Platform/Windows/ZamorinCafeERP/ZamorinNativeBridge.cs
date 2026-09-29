@@ -129,7 +129,10 @@ namespace Zamorin.Cafe.ERP
                         var printSuccess = await _callbacks.OnOpenSystemPrintAsync(requestId, jobName);
                         var res = new JsonObject
                         {
-                            ["printed"] = printSuccess,
+                            ["printed"] = false,
+                            ["printDispatched"] = printSuccess,
+                            ["status"] = printSuccess ? "SYSTEM_DIALOG_OPENED" : "FAILED",
+                            ["physicalCompletionVerified"] = false,
                             ["jobName"] = jobName
                         };
                         return CreateResponse(requestId, printSuccess, res);
