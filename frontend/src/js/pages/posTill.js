@@ -62,7 +62,16 @@ async function dispatchReceiptToClient(dispatch, bill, { isReprint = false } = {
   if (capabilities.isNative && capabilities.canPrint) {
     const nativeResponse = await NativeCapabilities.sendNativeMessage(
       "OPEN_SYSTEM_PRINT",
-      { jobName }
+      {
+        jobName,
+        attestationContext:
+          dispatch?.cryptographicAttestationRequired === true && dispatch?.attestationContext
+            ? {
+                ...dispatch.attestationContext,
+                drawerKickRequested: Boolean(dispatch.drawerKickRequested),
+              }
+            : null,
+      }
     );
     const nativeResult = nativeResponse?.result || nativeResponse || {};
 
