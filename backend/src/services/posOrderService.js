@@ -2051,7 +2051,9 @@ class PosOrderService {
       }
     }
 
-    if (statusChanged) {
+    const applyTerminalJobMutation = () => {
+      if (!statusChanged) return;
+
       if (requestedDrawerStatus) {
         job.drawerKickStatus = requestedDrawerStatus;
       }
@@ -2060,6 +2062,7 @@ class PosOrderService {
       job.acknowledgedAt = now;
       job.completedAt = now;
       if (job.attestationRequired) job.ackChallengeConsumedAt = now;
+
       if (transportEvidence) {
         job.transportMode = transportEvidence.transportMode;
         job.platformJobId = transportEvidence.platformJobId;
@@ -2076,15 +2079,15 @@ class PosOrderService {
         job.failureCode = null;
         job.failureReason = null;
       }
-    }
 
-    if (statusChanged && attestationProof) {
-      job.attestationVerifiedAt = now;
-      job.ackSignatureHash = attestationProof.signatureHash;
-      if (!job.attestationKeyProvider && attestationProvider) {
-        job.attestationKeyProvider = attestationProvider;
+      if (attestationProof) {
+        job.attestationVerifiedAt = now;
+        job.ackSignatureHash = attestationProof.signatureHash;
+        if (!job.attestationKeyProvider && attestationProvider) {
+          job.attestationKeyProvider = attestationProvider;
+        }
       }
-    }
+    };
 
     // REC-04E: terminal print evidence, device verification metadata, and the
     // Bill audit copy form one financial/audit state transition. In production,
@@ -2233,6 +2236,11 @@ class PosOrderService {
       }
 
       if (statusChanged) {
+        // Apply the terminal mutation only after live operator, job binding,
+        // challenge, and device trust have all been revalidated in the same
+        // finalization transaction. This prevents aborted acknowledgements from
+        // leaving misleading in-memory terminal state in fallback/test paths.
+        applyTerminalJobMutation();
         await job.save(session ? { session } : undefined);
       }
 

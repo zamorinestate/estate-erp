@@ -1897,3 +1897,20 @@ test('REC-04E Android attestation trust-service timeout aborts and fails closed 
     }
   );
 });
+
+
+test('REC-04E terminal PrintJob mutation occurs only after execution-time revalidation', () => {
+  const source = fs.readFileSync(posServicePath, 'utf8');
+  const mutationIndex = source.indexOf('applyTerminalJobMutation();');
+  const operatorIndex = source.indexOf('const liveOperatorSession = await readLean(OperatorSession.findOne');
+  const liveJobIndex = source.indexOf('const liveJob = await readLean(PrintJob.findOne');
+  const registrationIndex = source.indexOf('const liveRegistration = await readLean(DeviceRegistration.findOne');
+
+  assert.ok(operatorIndex >= 0);
+  assert.ok(liveJobIndex > operatorIndex);
+  assert.ok(registrationIndex > liveJobIndex);
+  assert.ok(
+    mutationIndex > registrationIndex,
+    'terminal PrintJob mutation must happen only after execution-time authority and binding revalidation'
+  );
+});
