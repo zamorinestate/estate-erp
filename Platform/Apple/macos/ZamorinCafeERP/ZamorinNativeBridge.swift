@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import Security
 
 /// ZAMORIN CAFÉ ERP — macOS NATIVE MESSAGE BRIDGE
 /// Implements Section 10 & 24 WKScriptMessageHandler protocol for macOS desktop.
@@ -115,6 +116,76 @@ public class ZamorinNativeBridge: NSObject, WKScriptMessageHandler {
                 deliverResponse(res, completion: completion)
             }
 
+        case "GET_DEVICE_ATTESTATION_KEY":
+            do {
+                let key = try loadOrCreateAttestationKey()
+                let jwk = try publicJwk(for: key)
+                let res = buildResponse(
+                    requestId: requestId,
+                    success: true,
+                    result: [
+                        "algorithm": "ES256",
+                        "provider": attestationProvider(for: key),
+                        "publicKeyJwk": jwk
+                    ]
+                )
+                deliverResponse(res, completion: completion)
+            } catch {
+                let res = buildResponse(
+                    requestId: requestId,
+                    success: false,
+                    result: nil,
+                    errorCode: "DEVICE_ATTESTATION_KEY_FAILED",
+                    errorMessage: error.localizedDescription
+                )
+                deliverResponse(res, completion: completion)
+            }
+
+        case "SIGN_DEVICE_ATTESTATION":
+            guard let canonicalPayload = payload["payload"] as? String,
+                  !canonicalPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                let res = buildResponse(
+                    requestId: requestId,
+                    success: false,
+                    result: nil,
+                    errorCode: "ATTESTATION_PAYLOAD_REQUIRED",
+                    errorMessage: "A canonical attestation payload is required."
+                )
+                deliverResponse(res, completion: completion)
+                return
+            }
+            do {
+                let key = try loadOrCreateAttestationKey()
+                var signError: Unmanaged<CFError>?
+                guard let signature = SecKeyCreateSignature(
+                    key,
+                    .ecdsaSignatureMessageX962SHA256,
+                    Data(canonicalPayload.utf8) as CFData,
+                    &signError
+                ) as Data? else {
+                    throw signError?.takeRetainedValue() ?? attestationError("Unable to create device attestation signature.")
+                }
+                let res = buildResponse(
+                    requestId: requestId,
+                    success: true,
+                    result: [
+                        "algorithm": "ES256",
+                        "provider": attestationProvider(for: key),
+                        "signature": base64Url(signature)
+                    ]
+                )
+                deliverResponse(res, completion: completion)
+            } catch {
+                let res = buildResponse(
+                    requestId: requestId,
+                    success: false,
+                    result: nil,
+                    errorCode: "DEVICE_ATTESTATION_SIGN_FAILED",
+                    errorMessage: error.localizedDescription
+                )
+                deliverResponse(res, completion: completion)
+            }
+
         case "PRINT_DOCUMENT", "OPEN_SYSTEM_PRINT":
             let jobName = payload["jobName"] as? String ?? "Zamorin_Document"
             // Print is asynchronous. The delegate owns the single terminal response;
@@ -142,6 +213,89 @@ public class ZamorinNativeBridge: NSObject, WKScriptMessageHandler {
             let res = buildResponse(requestId: requestId, success: false, result: nil, errorCode: "UNSUPPORTED_ACTION", errorMessage: "Action '\(action)' is not supported on macOS.")
             deliverResponse(res, completion: completion)
         }
+    }
+
+    private let attestationKeyTag = "com.zamorin.cafe.erp.device-attestation.v1".data(using: .utf8)!
+
+    private func loadOrCreateAttestationKey() throws -> SecKey {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: attestationKeyTag,
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecReturnRef as String: true
+        ]
+        var existing: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &existing) == errSecSuccess,
+           let key = existing as! SecKey? {
+            return key
+        }
+
+        let privateAttrs: [String: Any] = [
+            kSecAttrIsPermanent as String: true,
+            kSecAttrApplicationTag as String: attestationKeyTag
+        ]
+        var secureAttrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits as String: 256,
+            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+            kSecPrivateKeyAttrs as String: privateAttrs
+        ]
+        var error: Unmanaged<CFError>?
+        if let secureKey = SecKeyCreateRandomKey(secureAttrs as CFDictionary, &error) {
+            return secureKey
+        }
+
+        secureAttrs.removeValue(forKey: kSecAttrTokenID as String)
+        error = nil
+        if let keychainKey = SecKeyCreateRandomKey(secureAttrs as CFDictionary, &error) {
+            return keychainKey
+        }
+        throw error?.takeRetainedValue() ?? attestationError("Unable to initialize Apple device signing key.")
+    }
+
+    private func publicJwk(for privateKey: SecKey) throws -> [String: Any] {
+        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+            throw attestationError("Device public signing key is unavailable.")
+        }
+        var error: Unmanaged<CFError>?
+        guard let external = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
+            throw error?.takeRetainedValue() ?? attestationError("Unable to export device public signing key.")
+        }
+        let bytes = [UInt8](external)
+        guard bytes.count == 65, bytes[0] == 0x04 else {
+            throw attestationError("Unexpected P-256 public key encoding.")
+        }
+        return [
+            "kty": "EC",
+            "crv": "P-256",
+            "x": base64Url(Data(bytes[1...32])),
+            "y": base64Url(Data(bytes[33...64]))
+        ]
+    }
+
+    private func attestationProvider(for key: SecKey) -> String {
+        guard let attrs = SecKeyCopyAttributes(key) as? [String: Any],
+              let tokenId = attrs[kSecAttrTokenID as String] else {
+            return "APPLE_KEYCHAIN"
+        }
+        return String(describing: tokenId) == String(describing: kSecAttrTokenIDSecureEnclave)
+            ? "APPLE_SECURE_ENCLAVE"
+            : "APPLE_KEYCHAIN"
+    }
+
+    private func base64Url(_ data: Data) -> String {
+        return data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func attestationError(_ message: String) -> NSError {
+        return NSError(
+            domain: "com.zamorin.cafe.erp.attestation",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 
     public func buildResponse(
