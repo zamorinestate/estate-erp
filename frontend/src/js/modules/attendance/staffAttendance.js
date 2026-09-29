@@ -36,6 +36,7 @@ let cachedHistory = [];
 let cachedSummary = null;
 let cachedCorrections = [];
 let historyFilterStatus = "ALL";
+let pendingAttendanceIntentConsumed = false;
 
 export function renderStaffAttendance() {
   return `
@@ -918,6 +919,24 @@ export function wireStaffAttendance(root) {
       }
 
       refreshTabContent();
+
+      if (!pendingAttendanceIntentConsumed && typeof window !== "undefined") {
+        try {
+          const pendingQr = String(sessionStorage.getItem("zamorin.pendingAttendanceQr") || "").trim();
+          if (/^ZAM_ATT_[a-f0-9]{64}$/i.test(pendingQr)) {
+            pendingAttendanceIntentConsumed = true;
+            sessionStorage.removeItem("zamorin.pendingAttendanceQr");
+            const activeStatus = String(cachedToday?.status || "").toUpperCase();
+            const flowType = (activeStatus === "CHECKED_IN" || activeStatus === "ON_BREAK")
+              ? "CHECK_OUT"
+              : "CHECK_IN";
+            openVerificationModal(flowType, () => {
+              refreshTabContent();
+              loadInitialData();
+            }, { preScannedQrToken: pendingQr });
+          }
+        } catch {}
+      }
     } catch {}
   }
 
@@ -1159,7 +1178,7 @@ export function wireStaffAttendance(root) {
 }
 
 // ── VERIFICATION FLOW MODAL (ROTATING QR + GPS + LIVE SELFIE) ────────────────
-export function openVerificationModal(flowType, onDoneCallback) {
+export function openVerificationModal(flowType, onDoneCallback, { preScannedQrToken = null } = {}) {
   let existing = document.getElementById("attendance-verification-modal");
   if (existing) {
     if (typeof existing._cleanup === "function") existing._cleanup();
@@ -1580,8 +1599,16 @@ export function openVerificationModal(flowType, onDoneCallback) {
     }
   }
 
-  // Start sequence at Step 1
-  startQrScanner();
+  // Start sequence at Step 1. A QR deep-link has already been scanned by
+  // the employee's phone camera, so verify that exact short-lived challenge
+  // directly instead of asking the employee to scan the same QR a second time.
+  if (preScannedQrToken && /^ZAM_ATT_[a-f0-9]{64}$/i.test(String(preScannedQrToken))) {
+    handleQrScanned(String(preScannedQrToken)).catch((err) => {
+      showError(err?.message || "Attendance QR verification failed.");
+    });
+  } else {
+    startQrScanner();
+  }
 }
 
 export { openVerificationModal as openPunchVerificationModal };
