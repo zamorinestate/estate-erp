@@ -39,6 +39,15 @@ object ZamorinPrintManager {
         val platformJobId: String? = null
     )
 
+    data class PrintStatusResult(
+        val found: Boolean,
+        val platformJobId: String,
+        val status: String,
+        val terminal: Boolean,
+        val physicalCompletionVerified: Boolean,
+        val error: String? = null
+    )
+
     /**
      * Prints the current active WebView document content using Android Print Framework.
      */
@@ -155,4 +164,73 @@ object ZamorinPrintManager {
             PrintResult(false, jobName, e.message ?: "PRINT_EXCEPTION")
         }
     }
+
+    /**
+     * Queries the Android system spooler for a print job previously created by this app.
+     * Only Android's terminal COMPLETED / FAILED / CANCELLED states are treated as final.
+     */
+    fun getPrintJobStatus(context: Context, platformJobId: String): PrintStatusResult {
+        val normalizedId = platformJobId.trim()
+        if (normalizedId.isEmpty()) {
+            return PrintStatusResult(
+                found = false,
+                platformJobId = normalizedId,
+                status = "INVALID_ID",
+                terminal = true,
+                physicalCompletionVerified = false,
+                error = "PLATFORM_PRINT_JOB_ID_REQUIRED"
+            )
+        }
+
+        return try {
+            val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+                ?: return PrintStatusResult(
+                    found = false,
+                    platformJobId = normalizedId,
+                    status = "PRINT_SERVICE_UNAVAILABLE",
+                    terminal = true,
+                    physicalCompletionVerified = false,
+                    error = "PRINT_SERVICE_UNAVAILABLE"
+                )
+
+            val printJob = printManager.printJobs.firstOrNull {
+                it.id.toString() == normalizedId
+            } ?: return PrintStatusResult(
+                found = false,
+                platformJobId = normalizedId,
+                status = "NOT_FOUND",
+                terminal = false,
+                physicalCompletionVerified = false
+            )
+
+            val status = when {
+                printJob.isCompleted -> "COMPLETED"
+                printJob.isFailed -> "FAILED"
+                printJob.isCancelled -> "CANCELLED"
+                printJob.isBlocked -> "BLOCKED"
+                printJob.isStarted -> "STARTED"
+                printJob.isQueued -> "QUEUED"
+                else -> "UNKNOWN"
+            }
+
+            PrintStatusResult(
+                found = true,
+                platformJobId = normalizedId,
+                status = status,
+                terminal = status == "COMPLETED" || status == "FAILED" || status == "CANCELLED",
+                physicalCompletionVerified = status == "COMPLETED",
+                error = if (status == "FAILED") "ANDROID_PRINT_JOB_FAILED" else null
+            )
+        } catch (e: Exception) {
+            PrintStatusResult(
+                found = false,
+                platformJobId = normalizedId,
+                status = "QUERY_FAILED",
+                terminal = false,
+                physicalCompletionVerified = false,
+                error = e.message ?: "PRINT_STATUS_QUERY_FAILED"
+            )
+        }
+    }
+
 }
