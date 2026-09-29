@@ -25,6 +25,7 @@ const { CashTransaction } = require('../models/CashTransaction');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { IdempotencyRecord } = require('../models/IdempotencyRecord');
 const { PrintJob } = require('../models/PrintJob');
+const { OperatorSession } = require('../models/OperatorSession');
 const { BomDepletionService } = require('./bomDepletionService');
 const {
   allocateInvoiceNumber,
@@ -1544,6 +1545,32 @@ class PosOrderService {
         403,
         'PRINT_DEVICE_TRUST_REQUIRED',
         'Physical print acknowledgement requires an active café-owned device.'
+      );
+    }
+
+    const operatorSessionId = normalizeId(authContext.operatorSessionId);
+    if (!operatorSessionId) {
+      throw new ApiError(
+        403,
+        'ACTIVE_OPERATOR_SESSION_REQUIRED',
+        'Physical print acknowledgement requires an active operator session bound to this device.'
+      );
+    }
+
+    const operatorSession = await OperatorSession.findOne({
+      operatorSessionId,
+      organisationId: orgId,
+      cafeId: boundCafeId,
+      deviceId,
+      operatorUserId: normalizeId(authContext.userId),
+      status: 'ACTIVE',
+    }).lean();
+
+    if (!operatorSession) {
+      throw new ApiError(
+        403,
+        'OPERATOR_SESSION_DEVICE_MISMATCH',
+        'The active operator session could not be verified for this user, café, and device.'
       );
     }
 
