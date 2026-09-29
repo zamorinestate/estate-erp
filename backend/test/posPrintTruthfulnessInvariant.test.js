@@ -44,3 +44,13 @@ test('POS print truthfulness: browser flow describes backend print work as queue
   assert.match(frontend, /Thermal print job queued on POS printer\./);
   assert.match(frontend, /window\.print\(\)/);
 });
+
+test('POS print audit identities are collision-resistant and not timestamp-derived', () => {
+  const source = fs.readFileSync(servicePath, 'utf8');
+
+  assert.match(source, /crypto\.randomUUID\(\)/);
+  assert.doesNotMatch(source, /PJ-PRT-\$\{Date\.now\(\)\}/);
+  assert.doesNotMatch(source, /PJ-REP-\$\{Date\.now\(\)\}/);
+  assert.doesNotMatch(source, /Math\.floor\(100000 \+ Math\.random\(\) \* 900000\)/);
+});
+
