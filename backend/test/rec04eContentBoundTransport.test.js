@@ -8,6 +8,7 @@ const net = require('node:net');
 const { pathToFileURL } = require('node:url');
 const os = require('node:os');
 const fsp = require('node:fs/promises');
+const { spawnSync } = require('node:child_process');
 const attestationService = require('../src/services/deviceAttestationService');
 const printDispatchAuthService = require('../src/services/printDispatchAuthorizationService');
 const { PosOrderService } = require('../src/services/posOrderService');
@@ -2182,4 +2183,73 @@ test('REC-04E hardware acceptance report signature detects post-generation tampe
     signed.runtimeEvidenceBoundary.physicalPrintCryptographicallyVerified,
     false
   );
+});
+
+
+test('REC-04E hardware acceptance verifier accepts canonical server-issued POS PrintJob IDs', async (t) => {
+  const verifierPath = path.join(root, 'scripts', 'verify_rec04e_hardware_acceptance.mjs');
+  const signatureModule = await import(
+    pathToFileURL(path.join(root, 'scripts', 'rec04e_hardware_acceptance_signature.mjs')).href
+  );
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const privateKeyBase64 = privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
+  const publicKeyBase64 = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
+  const candidateSha = 'b'.repeat(40);
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'zamorin-rec04e-verifier-'));
+  const reportPath = path.join(tempDir, 'report.json');
+
+  t.after(async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const report = signatureModule.signAcceptanceReport({
+    schemaVersion: 'REC04E_HARDWARE_ACCEPTANCE_V1',
+    candidateSha,
+    acceptanceId: 'REC04E-CANONICAL-PRINTJOB-001',
+    printJobId: 'PJ-PRT-12345678-1234-1234-1234-123456789ABC',
+    printer: {
+      endpointPinned: true,
+      endpointFingerprint: 'c'.repeat(64),
+      model: 'TEST-THERMAL',
+      serial: 'SERIAL-001',
+    },
+    payload: {
+      sha256: 'd'.repeat(64),
+      bytes: 42,
+      drawerKickRequested: false,
+    },
+    transport: { contentTransportVerified: true },
+    physicalObservation: {
+      paperOutputConfirmed: true,
+      cutterConfirmed: true,
+      drawerOpenedConfirmed: null,
+      confirmationSource: 'HUMAN_OPERATOR',
+    },
+    runtimeEvidenceBoundary: {
+      printerIdentityCryptographicallyVerified: false,
+      physicalPrintCryptographicallyVerified: false,
+    },
+    certified: true,
+  }, { privateKeyBase64 });
+
+  await fsp.writeFile(reportPath, JSON.stringify(report), 'utf8');
+
+  const verified = spawnSync(
+    process.execPath,
+    [verifierPath, reportPath, `--expected-sha=${candidateSha}`],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        REC04E_HARDWARE_ACCEPTANCE_PUBLIC_KEY_SPKI_B64: publicKeyBase64,
+      },
+    }
+  );
+
+  assert.equal(
+    verified.status,
+    0,
+    `canonical POS PrintJob must verify: ${verified.stderr || verified.stdout}`
+  );
+  assert.match(verified.stdout, /"valid": true/);
 });
