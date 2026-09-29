@@ -202,26 +202,35 @@ const hardwareTerminalSchema = new mongoose.Schema(
     status: {
       online: {
         type: Boolean,
-        default: true,
+        default: false,
       },
       lastHeartbeat: {
         type: Date,
-        default: Date.now,
+        default: null,
+      },
+      evidenceSource: {
+        type: String,
+        enum: ['NONE', 'DEVICE_ATTESTED', 'TRUSTED_PROXY'],
+        default: 'NONE',
+      },
+      hardwareVerifiedAt: {
+        type: Date,
+        default: null,
       },
       paperStatus: {
         type: String,
         enum: ['NORMAL', 'NEAR_END', 'EMPTY', 'UNKNOWN'],
-        default: 'NORMAL',
+        default: 'UNKNOWN',
       },
       coverStatus: {
         type: String,
-        enum: ['CLOSED', 'OPEN'],
-        default: 'CLOSED',
+        enum: ['CLOSED', 'OPEN', 'UNKNOWN'],
+        default: 'UNKNOWN',
       },
       drawerStatus: {
         type: String,
-        enum: ['CLOSED', 'OPEN'],
-        default: 'CLOSED',
+        enum: ['CLOSED', 'OPEN', 'UNKNOWN'],
+        default: 'UNKNOWN',
       },
     },
     auditEvents: {

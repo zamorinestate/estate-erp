@@ -95,7 +95,8 @@ function buildEscPosQrBuffer(text, moduleSize = 5) {
 }
 
 /**
- * Compiles a Diagnostic Test Receipt byte buffer for hardware readiness testing.
+ * Compiles a diagnostic ESC/POS test payload.
+ * Payload generation alone is not physical printer readiness evidence.
  */
 function compileDiagnosticTestReceipt(terminal = {}, cafeInfo = {}) {
   const width = terminal.printerConfig?.paperWidth === 58 ? 32 : 48;
@@ -152,17 +153,13 @@ function compileDiagnosticTestReceipt(terminal = {}, cafeInfo = {}) {
   parts.push(Buffer.from('Universal QR Code Test:\n', 'utf8'));
   parts.push(buildEscPosQrBuffer(`https://zamorin.app/test/hardware/${terminal.terminalId || '01'}`, 4));
 
-  parts.push(Buffer.from(`*** HARDWARE READINESS VERIFIED ***\n`, 'utf8'));
+  parts.push(Buffer.from(`*** HARDWARE READINESS NOT VERIFIED ***\n`, 'utf8'));
   parts.push(Buffer.from(`${divider}\n\n`, 'utf8'));
 
-  // Footer & Feed & Cut
+  // Footer & Feed & Cut. A diagnostic print payload must never carry an
+  // implicit cash-drawer side effect; drawer actuation has its own authorized path.
   parts.push(ESC_POS_COMMANDS.FEED_5_LINES);
   parts.push(terminal.printerConfig?.cutType === 'FULL' ? ESC_POS_COMMANDS.CUT_FULL : ESC_POS_COMMANDS.CUT_PARTIAL);
-
-  // Optional drawer kick pulse
-  if (terminal.drawerConfig?.enabled) {
-    parts.push(buildDrawerKickBuffer(terminal.drawerConfig.pin || 2));
-  }
 
   return Buffer.concat(parts);
 }
@@ -760,15 +757,27 @@ async function checkTerminalHealth(terminalId, organisationId) {
     throw new ApiError(404, 'TERMINAL_NOT_FOUND', `Hardware terminal ${terminalId} not found.`);
   }
 
-  terminal.status.lastHeartbeat = new Date();
-  terminal.status.online = true;
-  await terminal.save();
+  const evidenceSource = String(terminal.status?.evidenceSource || 'NONE').trim().toUpperCase();
+  const hardwareVerifiedAt = terminal.status?.hardwareVerifiedAt || null;
+  const trustedEvidence = (
+    ['DEVICE_ATTESTED', 'TRUSTED_PROXY'].includes(evidenceSource) &&
+    Boolean(hardwareVerifiedAt) &&
+    Boolean(terminal.status?.lastHeartbeat)
+  );
 
   return {
     terminalId: terminal.terminalId,
     terminalName: terminal.terminalName,
     deviceType: terminal.deviceType,
-    status: terminal.status,
+    status: {
+      online: trustedEvidence && terminal.status?.online === true,
+      lastHeartbeat: trustedEvidence ? terminal.status.lastHeartbeat : null,
+      evidenceSource: trustedEvidence ? evidenceSource : 'NONE',
+      hardwareVerifiedAt: trustedEvidence ? hardwareVerifiedAt : null,
+      paperStatus: trustedEvidence ? (terminal.status?.paperStatus || 'UNKNOWN') : 'UNKNOWN',
+      coverStatus: trustedEvidence ? (terminal.status?.coverStatus || 'UNKNOWN') : 'UNKNOWN',
+      drawerStatus: trustedEvidence ? (terminal.status?.drawerStatus || 'UNKNOWN') : 'UNKNOWN',
+    },
     printerConfig: {
       enabled: terminal.printerConfig?.enabled,
       connectionType: terminal.printerConfig?.connectionType,

@@ -165,7 +165,12 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     assert.ok(bufferString.includes('ZAMORIN CAFE'));
     assert.ok(bufferString.includes('DIAGNOSTIC TEST RECEIPT'));
     assert.ok(bufferString.includes('TERM-ZC0001-POS1'));
-    assert.ok(bufferString.includes('HARDWARE READINESS VERIFIED'));
+    assert.ok(bufferString.includes('HARDWARE READINESS NOT VERIFIED'));
+    assert.equal(
+      buffer.includes(hardwareBridgeService.buildDrawerKickBuffer(2)),
+      false,
+      'Diagnostic print payload must never contain an implicit drawer-kick pulse'
+    );
   });
 
   await t.test('05.5: Thermal Sales Receipt Compilation with Stage 02 QR and Tax Breakdown', async () => {
@@ -462,10 +467,19 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     const terminals = await hardwareBridgeService.getTerminalsForCafe('ZC-0001', authMaster.organisationId);
     assert.ok(terminals.length >= 2);
 
-    // Health check
+    // A read-only health query must not manufacture live hardware evidence.
     const health = await hardwareBridgeService.checkTerminalHealth('TERM-ZC0001-KDS1', authMaster.organisationId);
     assert.equal(health.terminalId, 'TERM-ZC0001-KDS1');
-    assert.equal(health.status.online, true);
-    assert.ok(health.status.lastHeartbeat);
+    assert.equal(health.status.online, false);
+    assert.equal(health.status.lastHeartbeat, null);
+    assert.equal(health.status.evidenceSource, 'NONE');
+    assert.equal(health.status.paperStatus, 'UNKNOWN');
+    assert.equal(health.status.coverStatus, 'UNKNOWN');
+    assert.equal(health.status.drawerStatus, 'UNKNOWN');
+
+    const persisted = await HardwareTerminal.findOne({ terminalId: 'TERM-ZC0001-KDS1' }).lean();
+    assert.equal(persisted.status.online, false);
+    assert.equal(persisted.status.lastHeartbeat, null);
+    assert.equal(persisted.status.evidenceSource, 'NONE');
   });
 });

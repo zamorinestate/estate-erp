@@ -70,9 +70,9 @@ class HardwareBridgeClient {
       clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
-        this.bridgeAvailable = true;
         this.bridgeInfo = data;
-        return true;
+        this.bridgeAvailable = data?.hardwareReady === true;
+        return this.bridgeAvailable;
       }
     } catch (_) {
       // Bridge daemon not running on localhost — normal fallback condition
@@ -160,19 +160,10 @@ class HardwareBridgeClient {
   async printThermalReceipt(orderData, terminalId, cafeId, options = {}) {
     const paperWidth = options.paperWidth || orderData?.paperWidth || (typeof localStorage !== 'undefined' && localStorage.getItem('zamorin_pos_paper_width')) || '80';
 
-    // 1. Try local proxy socket if connected
+    // 1. A connected socket is not print acknowledgement. REC-04E keeps this
+    // path disabled until a content-bound request/ack protocol is implemented.
     if (this.proxyConnected && this.proxyWs && this.proxyWs.readyState === WebSocket.OPEN) {
-      try {
-        this.proxyWs.send(JSON.stringify({
-          action: 'PRINT_RECEIPT',
-          orderData: { ...orderData, paperWidth },
-          terminalId,
-          paperWidth,
-        }));
-        return { success: true, method: 'LOCAL_PROXY' };
-      } catch (err) {
-        // Fall through to HTTP / WebUSB / browser fallback
-      }
+      // Deliberately do not send an unacknowledged print command.
     }
 
     // 2. Try Local HTTP Bridge daemon if available
@@ -189,24 +180,29 @@ class HardwareBridgeClient {
           }),
         });
         if (bridgeRes.ok) {
-          return { success: true, method: 'LOCAL_HTTP_BRIDGE' };
+          const bridgeResult = await bridgeRes.json();
+          if (
+            bridgeResult?.success === true &&
+            bridgeResult?.contentBindingVerified === true &&
+            bridgeResult?.printerIdentityVerified === true
+          ) {
+            return {
+              ...bridgeResult,
+              success: true,
+              method: 'LOCAL_HTTP_BRIDGE',
+            };
+          }
         }
       }
     } catch (_) {
       // Bridge not reachable, continue cascade
     }
 
-    // 3. Try WebUSB if active
+    // 3. Merely having an opened WebUSB device is not evidence that receipt
+    // bytes were transferred or accepted. Keep this path non-authoritative
+    // until transferOut + device-bound acknowledgement are implemented.
     if (typeof navigator !== 'undefined' && navigator.usb && (this.activeUsbDevice || (typeof window !== 'undefined' && window._activeUsbPrinter))) {
-      try {
-        const device = this.activeUsbDevice || window._activeUsbPrinter;
-        if (device && device.opened) {
-          // ESC/POS transfer via USB endpoint
-          return { success: true, method: 'WEB_USB' };
-        }
-      } catch (err) {
-        // Fall through
-      }
+      // Deliberately fall through to a visibly unverified browser fallback.
     }
 
     // 4. Graceful fallback: render clean thermal HTML preview for window.print()
@@ -223,7 +219,13 @@ class HardwareBridgeClient {
         if (printWindow) {
           printWindow.document.write(htmlContent);
           printWindow.document.close();
-          return { success: true, method: 'WINDOW_PRINT_FALLBACK' };
+          return {
+            success: true,
+            method: 'WINDOW_PRINT_FALLBACK',
+            physicalCompletionVerified: false,
+            contentBindingVerified: false,
+            printerIdentityVerified: false,
+          };
         }
       }
     } catch (fallbackErr) {
@@ -251,13 +253,13 @@ class HardwareBridgeClient {
   }
 
   /**
-   * Dispatches diagnostic test print for hardware readiness verification.
+   * Prepares a diagnostic ESC/POS payload. Physical readiness is not inferred.
    */
   async runDiagnosticTestPrint(terminalId) {
     try {
       const res = await apiPost('/hardware/test-print', { terminalId, format: 'json' });
       if (typeof showToast === 'function') {
-        showToast('Diagnostic test ticket dispatched to terminal.', 'success');
+        showToast('Diagnostic ESC/POS payload prepared. Physical printer readiness is not yet verified.', 'info');
       }
       return res.data;
     } catch (err) {

@@ -12,6 +12,10 @@ const frontendPath = path.join(root, 'frontend', 'src', 'js', 'utils', 'deviceAt
 const androidBridgePath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinNativeBridge.kt');
 const androidPrintManagerPath = path.join(root, 'Platform', 'Android', 'app', 'src', 'main', 'java', 'com', 'zamorin', 'cafe', 'erp', 'ZamorinPrintManager.kt');
 const posTillPath = path.join(root, 'frontend', 'src', 'js', 'pages', 'posTill.js');
+const hardwareModelPath = path.join(__dirname, '..', 'src', 'models', 'HardwareTerminal.js');
+const hardwareServicePath = path.join(__dirname, '..', 'src', 'services', 'hardwareBridgeService.js');
+const hardwareClientPath = path.join(root, 'frontend', 'src', 'js', 'services', 'hardwareBridgeClient.js');
+const localBridgePath = path.join(root, 'scripts', 'zamorin_local_printer_bridge.mjs');
 
 test('REC-04E V2 binds payload and transport evidence', () => {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -53,4 +57,33 @@ test('REC-04E keeps legacy V1 verification for in-flight REC-04D jobs', () => {
   const payload=attestationService.buildPrintAckPayload({organisationId:'ORG-ZAMORIN',cafeId:'ZC-0001',deviceId:'DV-ZC0001-POS-01',printJobId:'PJ-LEGACY-001',challenge:'legacy-challenge',status:'FAILED',drawerKickStatus:'UNCHANGED',failureCode:'DEVICE_PRINT_FAILED',failureReason:'legacy failure'});
   assert.ok(payload.startsWith('ZAMORIN_DEVICE_ACK_V1\n'));
   assert.doesNotMatch(payload,/expectedPayloadSha256/);
+});
+
+
+test('REC-04E hardware state and local bridge fail closed without physical evidence', () => {
+  const model = fs.readFileSync(hardwareModelPath, 'utf8');
+  const service = fs.readFileSync(hardwareServicePath, 'utf8');
+  const client = fs.readFileSync(hardwareClientPath, 'utf8');
+  const localBridge = fs.readFileSync(localBridgePath, 'utf8');
+
+  assert.match(model, /evidenceSource/);
+  assert.match(model, /hardwareVerifiedAt/);
+  assert.match(model, /default:\s*false/);
+  assert.match(model, /default:\s*'UNKNOWN'/);
+
+  assert.doesNotMatch(service, /status\.lastHeartbeat\s*=\s*new Date\(\)/);
+  assert.doesNotMatch(service, /status\.online\s*=\s*true/);
+  assert.match(service, /HARDWARE READINESS NOT VERIFIED/);
+
+  assert.match(client, /data\?\.hardwareReady === true/);
+  assert.doesNotMatch(client, /return \{ success: true, method: 'WEB_USB' \}/);
+  assert.doesNotMatch(client, /return \{ success: true, method: 'LOCAL_PROXY' \}/);
+
+  assert.match(localBridge, /hardwareReady:\s*false/);
+  assert.match(localBridge, /HARDWARE_TRANSPORT_NOT_CONFIGURED/);
+  assert.match(localBridge, /DRAWER_TRANSPORT_NOT_CONFIGURED/);
+  assert.match(localBridge, /bytesDispatched:\s*0/);
+  assert.match(localBridge, /emitted:\s*false/);
+  assert.doesNotMatch(localBridge, /status:\s*'READY'/);
+  assert.doesNotMatch(localBridge, /DRAWER_KICK_PULSE_EMITTED/);
 });
