@@ -44,10 +44,14 @@ function mockResponse() {
 }
 
 async function executeAuthenticate(accessToken, preloadedAuth = null) {
+  const headers = accessToken ? { authorization: `Bearer ${accessToken}` } : {};
   const request = {
-    headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
+    headers,
     cookies: {},
     auth: preloadedAuth,
+    get(name) {
+      return headers[String(name || '').toLowerCase()] || undefined;
+    },
   };
   const response = mockResponse();
   let nextCalled = false;
@@ -250,7 +254,7 @@ test('P2-02 attack: revoked server session invalidates an otherwise valid access
 
   assert.equal(result.nextCalled, false);
   assert.equal(result.response.statusCode, 401);
-  assert.equal(result.response.body?.error?.code, 'AUTH_TOKEN_INVALID');
+  assert.equal(result.response.body?.error?.code, 'AUTH_SESSION_REVOKED');
 });
 
 test('P2-02 attack: stale token cafe claims cannot restore revoked cafe access', async () => {
