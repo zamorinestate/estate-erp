@@ -15,6 +15,7 @@ const { ShiftRoster } = require('../src/models/ShiftRoster');
 const { Cafe } = require('../src/models/Cafe');
 const { AuditEvent } = require('../src/models/AuditEvent');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
+const { User } = require('../src/models/User');
 
 // SequenceCounter mocks
 SequenceCounter.generateId = async ({ prefix }) => `${prefix}-0001`;
@@ -147,6 +148,31 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
   });
 
   t.mock.method(Attendance, 'updateMany', async () => ({ modifiedCount: 148 }));
+
+  t.mock.method(User, 'findOne', async (query = {}) => {
+    const users = [
+      {
+        userId: 'EMP-001',
+        organisationId: 'ORG-ZAMORIN',
+        assignedCafeIds: ['ZC-0001'],
+        primaryCafeId: 'ZC-0001',
+        accountStatus: 'ACTIVE',
+        employmentStatus: 'ACTIVE',
+      },
+      {
+        userId: 'EMP-002',
+        organisationId: 'ORG-ZAMORIN',
+        assignedCafeIds: ['ZC-0002'],
+        primaryCafeId: 'ZC-0002',
+        accountStatus: 'ACTIVE',
+        employmentStatus: 'ACTIVE',
+      },
+    ];
+    return users.find((user) =>
+      (!query.userId || user.userId === query.userId) &&
+      (!query.organisationId || user.organisationId === query.organisationId)
+    ) || null;
+  });
 
   t.mock.method(Cafe, 'find', (query = {}) => ({
     lean: async () => {
