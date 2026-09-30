@@ -17,6 +17,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { CompanyIdentityService } = require('../src/services/companyIdentityService');
+const { Cafe } = require('../src/models/Cafe');
 const {
   sanitizeCsvValue,
   generateCsv,
@@ -26,42 +27,133 @@ const {
 
 describe('Universal Export Engine & Company Identity Master Compliance', () => {
 
-  test('SEC-366: Resolves mandatory company identity fields from master', async () => {
+  test('SEC-366: Resolves mandatory company identity fields from configured master only', async (t) => {
+    t.mock.method(CompanyIdentityService, 'getCurrentIdentity', async (organisationId) => ({
+      _id: 'IDENTITY-EXPORT-TEST-V1',
+      organisationId,
+      legalName: 'Export Test Foods Private Limited',
+      brandName: 'Export Test Cafe',
+      tagline: 'Configured Test Identity',
+      registeredAddress: {
+        line1: '1 Test Road',
+        city: 'Kozhikode',
+        state: 'Kerala',
+        pincode: '673001',
+        country: 'India',
+      },
+      gstin: [
+        {
+          state: 'Kerala',
+          stateCode: '32',
+          number: '32AAACZ1234K1Z5',
+          isPrimary: true,
+        },
+      ],
+      licences: [
+        {
+          type: 'FSSAI Test Licence',
+          number: '12345678901234',
+        },
+      ],
+      contact: {
+        phone: '+91 99999 99999',
+        email: 'exports@example.invalid',
+        website: 'https://example.invalid',
+      },
+      logo: {
+        primarySvg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+        monochromeSvg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      },
+      version: 1,
+    }));
+
     const branding = await CompanyIdentityService.resolveExportBranding({
+      organisationId: 'ORG-EXPORT-TEST',
       cafeId: null,
-      sensitivityLevel: 'INTERNAL'
+      sensitivityLevel: 'TAX_INVOICE',
     });
 
-    assert.ok(branding, 'Export branding object must resolve');
-    assert.ok(branding.legalName, 'Legal name must be present');
-    assert.strictEqual(branding.legalName, 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.');
-    assert.ok(branding.brandName, 'Brand name must be present');
-    assert.strictEqual(branding.brandName, 'Zamorin Café');
-
-    assert.ok(branding.gstin, 'GSTIN must be resolved');
-    assert.ok(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(branding.gstin), 'GSTIN must conform to statutory format');
-
-    assert.ok(branding.fssai, 'FSSAI number must be resolved');
-    assert.ok(/^\d{14}$/.test(branding.fssai), 'FSSAI must be a 14-digit statutory license number');
-
-    assert.ok(branding.address, 'Registered address must be resolved');
-    assert.ok(branding.contact, 'Contact details must be resolved');
-    assert.ok(branding.contact.email, 'Contact email must be present');
-    assert.ok(branding.contact.phone, 'Contact phone must be present');
-    assert.ok(branding.logoSvg, 'Vector logos must be resolved');
-    assert.ok(branding.logoSvg.includes('<svg'), 'Primary logo SVG must be valid SVG');
+    assert.equal(branding.organisationId, 'ORG-EXPORT-TEST');
+    assert.equal(branding.legalName, 'Export Test Foods Private Limited');
+    assert.equal(branding.brandName, 'Export Test Cafe');
+    assert.equal(branding.gstin, '32AAACZ1234K1Z5');
+    assert.equal(branding.fssai, '12345678901234');
+    assert.match(branding.address, /1 Test Road/);
+    assert.equal(branding.identityStatus, 'CONFIGURED');
   });
 
-  test('SEC-368: Two-tier resolution differentiates outlet vs organisation scope', async () => {
+  test('SEC-368: Two-tier resolution uses exact tenant cafe data without statutory fallback', async (t) => {
+    t.mock.method(CompanyIdentityService, 'getCurrentIdentity', async (organisationId) => ({
+      _id: 'IDENTITY-EXPORT-TEST-V1',
+      organisationId,
+      legalName: 'Export Test Foods Private Limited',
+      brandName: 'Export Test Cafe',
+      registeredAddress: {
+        line1: '1 Head Office Road',
+        city: 'Kozhikode',
+        state: 'Kerala',
+        pincode: '673001',
+        country: 'India',
+      },
+      gstin: [
+        {
+          state: 'Kerala',
+          stateCode: '32',
+          number: '32AAACZ1234K1Z5',
+          isPrimary: true,
+        },
+      ],
+      licences: [{ type: 'FSSAI Test Licence', number: '12345678901234' }],
+      contact: {},
+      logo: {},
+      version: 1,
+    }));
+
+    t.mock.method(Cafe, 'findOne', (filter) => ({
+      lean: async () => {
+        assert.equal(filter.organisationId, 'ORG-EXPORT-TEST');
+        assert.equal(filter.cafeId, 'ZC-EXPORT-0001');
+        return {
+          cafeId: 'ZC-EXPORT-0001',
+          name: 'Outlet Test',
+          displayName: 'Outlet Test',
+          address: {
+            building: '9',
+            street: 'Outlet Road',
+            city: 'Kochi',
+            state: 'Kerala',
+            pinCode: '682001',
+          },
+          registrations: {
+            gstDetails: {
+              isRegistered: true,
+              gstin: '32AAACZ1234K1Z5',
+              legalName: 'Export Test Foods Private Limited',
+            },
+            fssai: {
+              isApplicable: true,
+              number: '98765432109876',
+            },
+          },
+        };
+      },
+    }));
+
     const globalBranding = await CompanyIdentityService.resolveExportBranding({
-      cafeId: null
+      organisationId: 'ORG-EXPORT-TEST',
+      cafeId: null,
     });
-    assert.strictEqual(globalBranding.isOutletScoped, false);
+    assert.equal(globalBranding.isOutletScoped, false);
 
     const outletBranding = await CompanyIdentityService.resolveExportBranding({
-      cafeId: 'CAFE-NORTH'
+      organisationId: 'ORG-EXPORT-TEST',
+      cafeId: 'ZC-EXPORT-0001',
+      sensitivityLevel: 'TAX_INVOICE',
     });
-    assert.strictEqual(outletBranding.isOutletScoped, true);
+    assert.equal(outletBranding.isOutletScoped, true);
+    assert.equal(outletBranding.cafeId, 'ZC-EXPORT-0001');
+    assert.equal(outletBranding.fssai, '98765432109876');
+    assert.match(outletBranding.address, /Outlet Road/);
   });
 
   test('SEC-197 / CWE-1236: CSV Formula Injection Neutralization', () => {
