@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const { PrivateFile } = require('../models/PrivateFile');
 const { Attendance } = require('../modules/attendance/Attendance');
+const { RetentionPolicy } = require('../models/RetentionPolicy');
 const { attendanceEvidenceStorageService } = require('./attendanceEvidenceStorageService');
 
 const DEFAULT_ORPHAN_GRACE_MINUTES = 60;
@@ -164,6 +165,91 @@ function buildCommittedEvidenceRetentionCandidateFilter({
     'attendanceRetention.policyVersion': { $nin: [null, ''] },
     'attendanceRetention.purgeEligibleAfter': { $ne: null, $lte: nowDate },
     'attendanceRetention.holdStatus': { $ne: 'HELD' },
+  };
+}
+
+async function getAttendanceEvidenceRetentionReadiness({
+  organisationId,
+  now = new Date(),
+} = {}) {
+  const orgId = normalizeRetentionIdentity(organisationId);
+  const nowDate = now instanceof Date ? now : new Date(now);
+  if (!orgId || Number.isNaN(nowDate.getTime())) {
+    throw new TypeError('Valid organisationId and now are required.');
+  }
+
+  const policyQuery = RetentionPolicy.findOne({
+    organisationId: orgId,
+    entityType: 'ATTENDANCE_EVIDENCE',
+  }).sort({ effectiveFrom: -1, version: -1 });
+  const policy = typeof policyQuery.lean === 'function'
+    ? await policyQuery.lean()
+    : await policyQuery;
+
+  const committedFilter = {
+    organisationId: orgId,
+    'attendanceLink.status': 'COMMITTED',
+  };
+  const assignedFilter = {
+    ...committedFilter,
+    'attendanceRetention.policyVersion': { $nin: [null, ''] },
+    'attendanceRetention.purgeEligibleAfter': { $ne: null },
+  };
+  const metadataGateFilter = buildCommittedEvidenceRetentionCandidateFilter({
+    organisationId: orgId,
+    now: nowDate,
+  });
+
+  const [
+    committedEvidence,
+    activeHolds,
+    policyAssigned,
+    metadataGateMatches,
+  ] = await Promise.all([
+    PrivateFile.countDocuments(committedFilter),
+    PrivateFile.countDocuments({
+      ...committedFilter,
+      'attendanceRetention.holdStatus': 'HELD',
+    }),
+    PrivateFile.countDocuments(assignedFilter),
+    PrivateFile.countDocuments(metadataGateFilter),
+  ]);
+
+  const committedCount = Number(committedEvidence || 0);
+  const assignedCount = Number(policyAssigned || 0);
+  const holdCount = Number(activeHolds || 0);
+  const metadataGateCount = Number(metadataGateMatches || 0);
+
+  return {
+    checkedAt: nowDate.toISOString(),
+    formalPolicyConfigured: Boolean(policy),
+    formalPolicy: policy
+      ? {
+          policyId: policy.policyId,
+          name: policy.name,
+          version: policy.version,
+          retentionDurationDays: policy.retentionDurationDays,
+          retentionStartBasis: policy.retentionStartBasis,
+          effectiveFrom: policy.effectiveFrom,
+        }
+      : null,
+    committedEvidencePurgeEnabled: false,
+    status: policy
+      ? 'FORMAL_POLICY_PRESENT_PURGE_DISABLED'
+      : 'FORMAL_POLICY_NOT_CONFIGURED',
+    counts: {
+      committedEvidence: committedCount,
+      activeHolds: holdCount,
+      policyAssigned: assignedCount,
+      policyUnassigned: Math.max(0, committedCount - assignedCount),
+      metadataGateMatches: metadataGateCount,
+    },
+    safeguards: {
+      activeHoldBlocksFuturePurge: true,
+      policyVersionRequired: true,
+      purgeEligibilityTimestampRequired: true,
+      committedPurgeFailClosed: true,
+    },
   };
 }
 
@@ -586,6 +672,7 @@ module.exports = {
   resolveCommittedEvidenceFileId,
   setCommittedAttendanceEvidenceHold,
   buildCommittedEvidenceRetentionCandidateFilter,
+  getAttendanceEvidenceRetentionReadiness,
   buildAttendanceEvidenceReferenceQuery,
   buildReservationAttendanceReferenceQuery,
   reconcileStaleAttendanceEvidenceReservations,
