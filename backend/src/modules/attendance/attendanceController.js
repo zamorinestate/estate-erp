@@ -1943,10 +1943,10 @@ const correctAttendance = asyncHandler(async (request, response) => {
 
   await ensurePeriodNotLocked(request.auth.organisationId, attendance.businessDate);
 
-  if (request.auth.role === 'CAFE_ADMIN') {
-    ensureCafeOperationsAllowed(request);
-    ensureCafeAccess(request, attendance.cafeId);
-  }
+  // Re-check live management authority and café scope for every administrative
+  // role. This rejects retired/non-primary MASTER claims and cross-café Owner/Admin edits.
+  ensureCafeOperationsAllowed(request);
+  ensureCafeAccess(request, attendance.cafeId);
 
   const beforeSnapshot = {
     status: attendance.status,
@@ -1960,20 +1960,47 @@ const correctAttendance = asyncHandler(async (request, response) => {
     isOvertime: attendance.isOvertime,
   };
 
-  if (status && ATTENDANCE_STATUSES.includes(status)) {
+  if (status !== undefined) {
+    if (!ATTENDANCE_STATUSES.includes(status)) {
+      throw new ApiError(400, 'ATTENDANCE_STATUS_INVALID', 'Attendance status is invalid.');
+    }
+    if (status === 'ON_LEAVE') {
+      throw new ApiError(
+        400,
+        'LEAVE_WORKFLOW_REQUIRED',
+        'Approved leave status must be applied through the leave approval/reconciliation workflow.'
+      );
+    }
     attendance.status = status;
   }
+
   if (checkInAt !== undefined) {
-    attendance.checkInAt = checkInAt ? new Date(checkInAt) : null;
+    const parsedCheckIn = checkInAt ? new Date(checkInAt) : null;
+    if (parsedCheckIn && Number.isNaN(parsedCheckIn.getTime())) {
+      throw new ApiError(400, 'CHECK_IN_TIME_INVALID', 'Corrected check-in timestamp is invalid.');
+    }
+    attendance.checkInAt = parsedCheckIn;
   }
   if (checkOutAt !== undefined) {
-    attendance.checkOutAt = checkOutAt ? new Date(checkOutAt) : null;
+    const parsedCheckOut = checkOutAt ? new Date(checkOutAt) : null;
+    if (parsedCheckOut && Number.isNaN(parsedCheckOut.getTime())) {
+      throw new ApiError(400, 'CHECK_OUT_TIME_INVALID', 'Corrected check-out timestamp is invalid.');
+    }
+    attendance.checkOutAt = parsedCheckOut;
+  }
+
+  if (attendance.checkInAt && attendance.checkOutAt && attendance.checkOutAt < attendance.checkInAt) {
+    throw new ApiError(400, 'ATTENDANCE_TIME_ORDER_INVALID', 'Corrected check-out cannot be earlier than check-in.');
   }
   if (breakMinutes !== undefined) {
     attendance.breakMinutes = Math.max(0, Number(breakMinutes) || 0);
   }
   if (approvedOvertimeMinutes !== undefined) {
-    attendance.approvedOvertimeMinutes = Math.max(0, Number(approvedOvertimeMinutes) || 0);
+    throw new ApiError(
+      400,
+      'OVERTIME_DECISION_WORKFLOW_REQUIRED',
+      'Overtime approval cannot be changed through generic attendance correction. Use the overtime decision workflow.'
+    );
   }
   if (shiftId !== undefined) attendance.shiftId = shiftId;
   if (shiftName !== undefined) attendance.shiftName = shiftName;
@@ -1985,15 +2012,6 @@ const correctAttendance = asyncHandler(async (request, response) => {
   attendance.isCorrection = true;
   attendance.correctionReason = reason.trim();
   attendance.updatedBy = request.auth.userId;
-
-  if (!Array.isArray(attendance.rawTimeEvents)) attendance.rawTimeEvents = [];
-  attendance.rawTimeEvents.push({
-    eventType: 'CHECK_IN',
-    timestamp: new Date(),
-    source: request.auth.role === 'MASTER' ? 'MASTER' : 'CAFE_ADMIN',
-    recordedByUserId: request.auth.userId,
-    notes: `Correction by ${request.auth.role} (${request.auth.userId}): ${reason.trim()}`,
-  });
 
   const metrics = calculateAttendanceMetrics({
     checkInAt: attendance.checkInAt,
