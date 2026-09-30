@@ -217,6 +217,25 @@ test('AUTH-02: non-primary MASTER is rejected by the QR service boundary', async
   );
 });
 
+test('AUTH-02B: non-primary MASTER is rejected when verifying attendance QR', async () => {
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    requestedByRole: 'MASTER',
+    requestedByUserId: 'PRIMARY-MASTER-01',
+    isPrimaryMaster: true,
+  });
+
+  await assert.rejects(
+    async () => attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeRole: 'MASTER',
+      isPrimaryMaster: false,
+    }),
+    { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
+  );
+});
+
 test('AUTH-03: Café Operations device is strictly bound to its assigned café and blocked from other cafés', async () => {
   // Bound café -> ALLOW
   const allowed = await attendanceQrService.getActiveOrNewChallenge({
