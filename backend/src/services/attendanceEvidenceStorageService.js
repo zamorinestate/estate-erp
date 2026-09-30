@@ -84,6 +84,12 @@ class AttendanceEvidenceStorageService {
     }
   }
 
+  async objectExists({ fileKey }) {
+    const storageKey = String(fileKey || '').trim();
+    if (!storageKey) return false;
+    return documentStorageAdapter.exists({ storageKey });
+  }
+
   async deleteObject({ fileKey }) {
     const storageKey = String(fileKey || '').trim();
     if (!storageKey) return false;
