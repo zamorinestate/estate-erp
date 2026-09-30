@@ -12,6 +12,161 @@ const DEFAULT_ORPHAN_BATCH_SIZE = 100;
 const MAX_ORPHAN_BATCH_SIZE = 500;
 const CLAIM_STALE_MINUTES = 15;
 
+
+function normalizeRetentionIdentity(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function resolveCommittedEvidenceFileId(attendance, punchType) {
+  const type = normalizeRetentionIdentity(punchType);
+  if (type === 'CHECK_IN') {
+    return normalizeRetentionIdentity(
+      attendance?.attendanceEvidence?.checkIn?.selfieMediaId ||
+      attendance?.attendanceEvidence?.checkIn?.photoFileId ||
+      attendance?.selfieFileId
+    );
+  }
+  if (type === 'CHECK_OUT') {
+    return normalizeRetentionIdentity(
+      attendance?.attendanceEvidence?.checkOut?.selfieMediaId ||
+      attendance?.attendanceEvidence?.checkOut?.photoFileId
+    );
+  }
+  return '';
+}
+
+async function setCommittedAttendanceEvidenceHold({
+  organisationId,
+  attendance,
+  punchType,
+  actorUserId,
+  reason,
+  action = 'HOLD',
+  now = new Date(),
+} = {}) {
+  const orgId = normalizeRetentionIdentity(organisationId);
+  const attendanceId = normalizeRetentionIdentity(attendance?.attendanceId);
+  const type = normalizeRetentionIdentity(punchType);
+  const actorId = normalizeRetentionIdentity(actorUserId);
+  const normalizedAction = normalizeRetentionIdentity(action);
+  const holdReason = String(reason || '').trim();
+  const nowDate = now instanceof Date ? now : new Date(now);
+
+  if (!orgId || !attendanceId || !actorId) {
+    throw new TypeError('organisationId, attendance.attendanceId and actorUserId are required.');
+  }
+  if (!['CHECK_IN', 'CHECK_OUT'].includes(type)) {
+    throw new TypeError('punchType must be CHECK_IN or CHECK_OUT.');
+  }
+  if (!['HOLD', 'RELEASE'].includes(normalizedAction)) {
+    throw new TypeError('action must be HOLD or RELEASE.');
+  }
+  if (holdReason.length < 10) {
+    const err = new Error('A specific hold reason of at least 10 characters is required.');
+    err.code = 'ATTENDANCE_EVIDENCE_HOLD_REASON_REQUIRED';
+    throw err;
+  }
+  if (Number.isNaN(nowDate.getTime())) {
+    throw new TypeError('now must be a valid Date.');
+  }
+
+  const fileId = resolveCommittedEvidenceFileId(attendance, type);
+  if (!fileId) {
+    const err = new Error('Committed attendance evidence file reference is missing.');
+    err.code = 'ATTENDANCE_EVIDENCE_FILE_NOT_FOUND';
+    throw err;
+  }
+
+  const baseFilter = {
+    organisationId: orgId,
+    fileId,
+    'attendanceLink.status': 'COMMITTED',
+    'attendanceLink.attendanceId': attendanceId,
+    'attendanceLink.punchType': type,
+  };
+
+  const filter = normalizedAction === 'HOLD'
+    ? {
+        ...baseFilter,
+        'attendanceRetention.holdStatus': { $ne: 'HELD' },
+      }
+    : {
+        ...baseFilter,
+        'attendanceRetention.holdStatus': 'HELD',
+      };
+
+  const update = normalizedAction === 'HOLD'
+    ? {
+        $set: {
+          'attendanceRetention.holdStatus': 'HELD',
+          'attendanceRetention.holdReason': holdReason,
+          'attendanceRetention.holdPlacedAt': nowDate,
+          'attendanceRetention.holdPlacedByUserId': actorId,
+          'attendanceRetention.holdReleasedAt': null,
+          'attendanceRetention.holdReleasedByUserId': null,
+          'attendanceRetention.holdReleaseReason': '',
+        },
+      }
+    : {
+        $set: {
+          'attendanceRetention.holdStatus': 'NONE',
+          'attendanceRetention.holdReleasedAt': nowDate,
+          'attendanceRetention.holdReleasedByUserId': actorId,
+          'attendanceRetention.holdReleaseReason': holdReason,
+        },
+      };
+
+  const result = await PrivateFile.findOneAndUpdate(
+    filter,
+    update,
+    { new: true }
+  );
+
+  if (!result) {
+    const err = new Error(
+      normalizedAction === 'HOLD'
+        ? 'Evidence is already held, not committed, or the attendance binding changed.'
+        : 'Evidence hold is not active or the attendance binding changed.'
+    );
+    err.code = normalizedAction === 'HOLD'
+      ? 'ATTENDANCE_EVIDENCE_HOLD_CONFLICT'
+      : 'ATTENDANCE_EVIDENCE_HOLD_RELEASE_CONFLICT';
+    throw err;
+  }
+
+  return {
+    fileId,
+    attendanceId,
+    punchType: type,
+    holdStatus: result.attendanceRetention?.holdStatus || (normalizedAction === 'HOLD' ? 'HELD' : 'NONE'),
+    action: normalizedAction,
+    changedAt: nowDate,
+    actorUserId: actorId,
+  };
+}
+
+function buildCommittedEvidenceRetentionCandidateFilter({
+  organisationId,
+  now = new Date(),
+} = {}) {
+  const orgId = normalizeRetentionIdentity(organisationId);
+  const nowDate = now instanceof Date ? now : new Date(now);
+  if (!orgId || Number.isNaN(nowDate.getTime())) {
+    throw new TypeError('Valid organisationId and now are required.');
+  }
+
+  // Intentionally requires an explicit future policy version and eligibility
+  // timestamp. With the current default null values this filter matches no
+  // committed evidence, so committed purge remains fail-closed.
+  return {
+    organisationId: orgId,
+    'attendanceLink.status': 'COMMITTED',
+    'attendanceRetention.policyVersion': { $nin: [null, ''] },
+    'attendanceRetention.purgeEligibleAfter': { $ne: null, $lte: nowDate },
+    'attendanceRetention.holdStatus': { $ne: 'HELD' },
+  };
+}
+
 function clampInteger(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -428,6 +583,9 @@ module.exports = {
   MAX_ORPHAN_BATCH_SIZE,
   CLAIM_STALE_MINUTES,
   resolveOrphanGraceMinutes,
+  resolveCommittedEvidenceFileId,
+  setCommittedAttendanceEvidenceHold,
+  buildCommittedEvidenceRetentionCandidateFilter,
   buildAttendanceEvidenceReferenceQuery,
   buildReservationAttendanceReferenceQuery,
   reconcileStaleAttendanceEvidenceReservations,
