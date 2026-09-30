@@ -108,7 +108,7 @@ function buildQualityScopeFilter(request, extra = {}) {
   };
 
   const requestedCafeId = normalizeId(request.query?.cafeId || '');
-  if (requestedCafeId) {
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
     assertCafeAccess(request, requestedCafeId);
     filter.cafeId = requestedCafeId;
     return filter;
@@ -161,19 +161,14 @@ function capaSourceFromNcr(ncr) {
  * 1. GET /api/v1/quality/overview
  */
 const getQualityOverview = asyncHandler(async (request, response) => {
-  const { organisationId } = request.auth;
-  const effectiveCafe = resolveEffectiveCafeScope(request);
+  const filter = buildQualityScopeFilter(request);
+  const organisationId = request.auth.organisationId;
+  const singleCafeId = typeof filter.cafeId === 'string' ? filter.cafeId : null;
 
-  const filter = { organisationId };
-  if (effectiveCafe) {
-    filter.cafeId = effectiveCafe;
-  } else if (request.query.cafeId && request.query.cafeId !== 'ALL') {
-    const requestedCafeId = normalizeId(request.query.cafeId);
-    assertCafeAccess(request, requestedCafeId);
-    filter.cafeId = requestedCafeId;
-  }
-
-  const [dbChecklists, totalChecklists] = await Promise.all([
+  const [
+    dbChecklists,
+    totalChecklists,
+  ] = await Promise.all([
     QualityChecklist.find(filter)
       .sort({ createdAt: -1 })
       .limit(10)
@@ -181,45 +176,60 @@ const getQualityOverview = asyncHandler(async (request, response) => {
     QualityChecklist.countDocuments(filter),
   ]);
 
-  const openNcrs = inMemoryNcrs.filter(
-    (n) =>
-      n.organisationId === organisationId &&
-      n.status !== 'CLOSED' &&
-      (!filter.cafeId || n.cafeId === filter.cafeId)
-  );
-
   let activeHolds = [];
-  if (qualitySourceConnected(InventoryLot.find)) {
-    const holdQuery = InventoryLot.find({
-      organisationId,
-      ...(filter.cafeId ? { cafeId: filter.cafeId } : {}),
-      status: { $in: ['QUARANTINE', 'RECALL_HOLD'] },
-    }).limit(500);
+  if (qualitySourceConnected(QualityHold.find)) {
+    const holdQuery = QualityHold.find({
+      ...filter,
+      status: 'ON_HOLD',
+    })
+      .sort({ placedAt: -1 })
+      .limit(500);
     activeHolds = holdQuery && typeof holdQuery.lean === 'function'
       ? await holdQuery.lean()
       : await holdQuery;
     if (!Array.isArray(activeHolds)) activeHolds = [];
   }
 
+  let openNcrs = [];
+  if (qualitySourceConnected(QualityNonConformance.find)) {
+    const ncrQuery = QualityNonConformance.find({
+      ...filter,
+      status: { $ne: 'CLOSED' },
+    })
+      .sort({ reportedAt: -1 })
+      .limit(500);
+    openNcrs = ncrQuery && typeof ncrQuery.lean === 'function'
+      ? await ncrQuery.lean()
+      : await ncrQuery;
+    if (!Array.isArray(openNcrs)) openNcrs = [];
+  }
+
   let openCapas = [];
   if (qualitySourceConnected(CapaRecord.find)) {
     const capaQuery = CapaRecord.find({
-      organisationId,
-      ...(filter.cafeId ? { cafeId: filter.cafeId } : {}),
+      ...filter,
       status: { $ne: 'CLOSED' },
-    }).limit(500);
+    })
+      .sort({ dueDate: 1 })
+      .limit(500);
     openCapas = capaQuery && typeof capaQuery.lean === 'function'
       ? await capaQuery.lean()
       : await capaQuery;
     if (!Array.isArray(openCapas)) openCapas = [];
   }
 
+  const now = new Date();
+  const overdueCapas = openCapas.filter((entry) => {
+    const due = entry?.dueDate ? new Date(entry.dueDate) : null;
+    return due && !Number.isNaN(due.getTime()) && due < now;
+  });
+
   let temperatures = [];
-  if (filter.cafeId && qualitySourceConnected(FoodSafetyService.listTemperatures)) {
+  if (singleCafeId && qualitySourceConnected(FoodSafetyService.listTemperatures)) {
     try {
       temperatures = await FoodSafetyService.listTemperatures({
         organisationId,
-        cafeId: filter.cafeId,
+        cafeId: singleCafeId,
         limit: 5,
       });
     } catch (_) {
@@ -233,7 +243,7 @@ const getQualityOverview = asyncHandler(async (request, response) => {
       id: 'act-hold-1',
       type: 'QUALITY_HOLD',
       title: `${activeHolds.length} Inventory Lot(s) on Quality Quarantine`,
-      description: `${activeHolds[0].itemId || 'Inventory lot'} (${activeHolds[0].lotId}) isolated due to ${String(activeHolds[0].quarantineReason || 'quality hold').toLowerCase().replace(/_/g, ' ')}.`,
+      description: `${activeHolds[0].itemName || activeHolds[0].itemId || 'Inventory lot'} (${activeHolds[0].inventoryLotId}) isolated due to ${String(activeHolds[0].reason || 'quality hold').toLowerCase().replace(/_/g, ' ')}.`,
       deepTab: 'holds',
       severity: 'CRITICAL',
     });
@@ -264,9 +274,9 @@ const getQualityOverview = asyncHandler(async (request, response) => {
     data: {
       kpis: {
         checksDueToday: null,
-        checksDueTodayStatus: 'NOT_AVAILABLE_NO_DURABLE_CHECKLIST_SCHEDULE',
-        overdueActions: null,
-        overdueActionsStatus: 'NOT_AVAILABLE_VOLATILE_NCR_CAPA_STATE',
+        checksDueTodayStatus: 'NOT_AVAILABLE_NO_DURABLE_TEMPLATE_SCHEDULE_ENGINE',
+        overdueActions: overdueCapas.length,
+        overdueActionsStatus: 'DURABLE_CAPA_DUE_DATES',
         openNcrs: openNcrs.length,
         complianceDueSoon: null,
         complianceDueSoonStatus: 'LOAD_COMPLIANCE_REGISTER_FOR_AUTHORITATIVE_COUNT',
@@ -286,16 +296,17 @@ const getQualityOverview = asyncHandler(async (request, response) => {
       },
       sourceStatus: {
         checklistRecords: 'DURABLE',
-        temperatureRecords: filter.cafeId ? 'DURABLE_IF_AVAILABLE' : 'CAFE_SCOPE_REQUIRED',
-        qualityHolds: 'DURABLE_INVENTORY_LOT',
-        ncrs: 'VOLATILE_RUNTIME_ONLY',
-        capas: 'DURABLE_CAPA_RECORD',
-        audits: 'VOLATILE_RUNTIME_ONLY',
+        temperatureRecords: singleCafeId ? 'DURABLE_IF_AVAILABLE' : 'CAFE_SCOPE_REQUIRED',
+        qualityHolds: qualitySourceConnected(QualityHold.find) ? 'DURABLE' : 'UNAVAILABLE',
+        ncrs: qualitySourceConnected(QualityNonConformance.find) ? 'DURABLE' : 'UNAVAILABLE',
+        capas: qualitySourceConnected(CapaRecord.find) ? 'DURABLE' : 'UNAVAILABLE',
+        audits: qualitySourceConnected(AuditEvent.find) ? 'DURABLE_AUDIT_EVENTS' : 'UNAVAILABLE',
       },
     },
     correlationId: request.correlationId || null,
   });
 });
+
 /**
  * 2. GET /api/v1/quality/checklists
  */
@@ -304,16 +315,8 @@ const listChecklists = asyncHandler(async (request, response) => {
   const limit = parsePositiveInteger(request.query.limit, 25, 100);
   const skip = (page - 1) * limit;
 
-  const filter = { organisationId: request.auth.organisationId };
-  const { cafeId, date } = request.query;
-
-  if (cafeId) {
-    const normCafeId = normalizeId(cafeId);
-    assertCafeAccess(request, normCafeId);
-    filter.cafeId = normCafeId;
-  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
-    filter.cafeId = { $in: request.auth.assignedCafeIds };
-  }
+  const filter = buildQualityScopeFilter(request);
+  const { date } = request.query;
 
   if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
     filter.inspectionDate = date;
@@ -377,6 +380,8 @@ const submitChecklist = asyncHandler(async (request, response) => {
     organisationId: request.auth.organisationId,
     cafeId,
     title: titleText,
+    templateId: templateId ? normalizeId(templateId) : null,
+    templateVersion: templateVersion ? String(templateVersion).trim() : null,
     frequency: frequency ? normalizeId(frequency) : 'DAILY',
     items,
     overallResult: normResult,
@@ -385,26 +390,60 @@ const submitChecklist = asyncHandler(async (request, response) => {
     actionRequired: typeof actionRequired === 'string' ? actionRequired.trim() : '',
   });
 
-  await checklist.save();
+  let autoNcr = null;
+  let autoNcrId = null;
 
-  // If Critical Fail, auto-trigger NCR
   if (normResult === 'CRITICAL_FAIL') {
-    const ncrSeqId = `NCR-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
-    inMemoryNcrs.unshift({
-      ncrId: ncrSeqId,
+    if (!qualitySourceConnected(QualityNonConformance.findOne)) {
+      throw new ApiError(
+        503,
+        'NCR_SOURCE_UNAVAILABLE',
+        'Critical checklist submission is blocked because the durable NCR source is unavailable.'
+      );
+    }
+
+    autoNcrId = await SequenceCounter.generateId({
       organisationId: request.auth.organisationId,
-      cafeId,
-      source: 'CHECKLIST_CRITICAL_FAIL',
-      severity: 'CRITICAL',
-      title: `Critical Failure in ${titleText}`,
-      description: actionRequired || 'Inspection failed critical sanitation or temperature standard.',
-      immediateAction: 'Operations suspended in affected station until sanitised and re-inspected.',
-      status: 'OPEN',
-      reportedBy: request.auth.userId,
-      reportedAt: new Date().toISOString(),
-      checklistId: seqId,
+      sequenceKey: 'QUALITY_NCR',
+      prefix: 'NCR',
+      minimumDigits: 4,
     });
   }
+
+  await runQualityAtomic(async (session) => {
+    await checklist.save(session ? { session } : undefined);
+
+    if (normResult === 'CRITICAL_FAIL') {
+      const now = new Date();
+      autoNcr = new QualityNonConformance({
+        ncrId: autoNcrId,
+        organisationId: request.auth.organisationId,
+        cafeId,
+        source: 'CHECKLIST_CRITICAL_FAIL',
+        severity: 'CRITICAL',
+        title: `Critical Failure in ${titleText}`,
+        description: String(
+          actionRequired || 'Critical inspection failure requires immediate investigation.'
+        ).trim(),
+        immediateAction: String(
+          actionRequired || 'Affected operations must remain contained until an authorized review is completed.'
+        ).trim(),
+        status: 'OPEN',
+        reportedByUserId: request.auth.userId,
+        reportedAt: now,
+        linkedChecklistId: seqId,
+        auditHistory: [
+          {
+            action: 'AUTO_CREATED_FROM_CRITICAL_CHECKLIST',
+            performedByUserId: request.auth.userId,
+            performedAt: now,
+            notes: seqId,
+          },
+        ],
+      });
+      await autoNcr.save(session ? { session } : undefined);
+    }
+  });
 
   await recordRequestAudit({
     request,
@@ -419,7 +458,10 @@ const submitChecklist = asyncHandler(async (request, response) => {
 
   return response.status(201).json({
     success: true,
-    data: { checklist: checklist.toObject() },
+    data: {
+      checklist: checklist.toObject(),
+      autoNcrId: autoNcrId || null,
+    },
     correlationId: request.correlationId || null,
   });
 });
