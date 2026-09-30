@@ -2724,6 +2724,10 @@ function openEditAttendanceModal(root, attendanceId) {
 
   const role = state.role || state.user?.role || ROLES.MASTER;
   const currentStatus = record.status || "CHECKED_IN";
+  if (currentStatus === "ON_LEAVE") {
+    showToast("Approved leave records must be changed through the leave approval/reconciliation workflow.", "info");
+    return;
+  }
   const checkInVal = toIstTimeInput(record.checkInAt);
   const checkOutVal = toIstTimeInput(record.checkOutAt);
   const breakMinutesVal = record.breakMinutes ?? 0;
@@ -2761,7 +2765,6 @@ function openEditAttendanceModal(root, attendanceId) {
               <option value="ON_BREAK" ${currentStatus === "ON_BREAK" ? "selected" : ""}>ON_BREAK</option>
               <option value="HALF_DAY" ${currentStatus === "HALF_DAY" ? "selected" : ""}>HALF_DAY</option>
               <option value="MANUALLY_CORRECTED" ${currentStatus === "MANUALLY_CORRECTED" ? "selected" : ""}>MANUALLY_CORRECTED</option>
-              <option value="ON_LEAVE" ${currentStatus === "ON_LEAVE" ? "selected" : ""}>ON_LEAVE</option>
               <option value="ABSENT" ${currentStatus === "ABSENT" ? "selected" : ""}>ABSENT</option>
               <option value="MISSED_PUNCH" ${currentStatus === "MISSED_PUNCH" ? "selected" : ""}>MISSED_PUNCH</option>
             </select>
@@ -2783,11 +2786,6 @@ function openEditAttendanceModal(root, attendanceId) {
             <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Clock-Out Time (IST)</label>
             <input type="time" id="edit-att-out" class="input" value="${checkOutVal}" style="font-size:12.5px; width:100%;" />
           </div>
-        </div>
-
-        <div class="form-group" style="margin:0;">
-          <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Approved Overtime (Minutes) · Master Parity</label>
-          <input type="number" id="edit-att-ot" class="input" min="0" value="${approvedOtVal}" style="font-size:12.5px; width:100%;" />
         </div>
 
         <!-- Live Recalculation Engine Preview Box -->
@@ -2829,7 +2827,6 @@ function openEditAttendanceModal(root, attendanceId) {
       const inTime = document.querySelector("#edit-att-in")?.value;
       const outTime = document.querySelector("#edit-att-out")?.value;
       const breakMins = Number(document.querySelector("#edit-att-break")?.value) || 0;
-      const otMins = Number(document.querySelector("#edit-att-ot")?.value) || 0;
       const reason = document.querySelector("#edit-att-reason")?.value;
 
       if (!reason || !reason.trim()) {
@@ -2841,7 +2838,6 @@ function openEditAttendanceModal(root, attendanceId) {
         const payload = {
           status,
           breakMinutes: breakMins,
-          approvedOvertimeMinutes: otMins,
           reason: reason.trim(),
         };
         const checkInIso = istDateTimeToIso(businessDate, inTime);
@@ -2866,7 +2862,6 @@ function openEditAttendanceModal(root, attendanceId) {
     const inTime = document.querySelector("#edit-att-in")?.value;
     const outTime = document.querySelector("#edit-att-out")?.value;
     const breakMins = Number(document.querySelector("#edit-att-break")?.value) || 0;
-    const otMins = Number(document.querySelector("#edit-att-ot")?.value) || 0;
 
     if (!inTime) return;
     try {
@@ -2878,7 +2873,7 @@ function openEditAttendanceModal(root, attendanceId) {
         breakMinutes: breakMins,
         scheduledStartAt: record.scheduledStartAt || null,
         scheduledEndAt: record.scheduledEndAt || null,
-        approvedOvertimeMinutes: otMins,
+        approvedOvertimeMinutes: approvedOtVal,
       });
       if (res?.data?.metrics) {
         const m = res.data.metrics;
@@ -2898,7 +2893,6 @@ function openEditAttendanceModal(root, attendanceId) {
     document.querySelector("#edit-att-in")?.addEventListener("change", updatePreview);
     document.querySelector("#edit-att-out")?.addEventListener("change", updatePreview);
     document.querySelector("#edit-att-break")?.addEventListener("input", updatePreview);
-    document.querySelector("#edit-att-ot")?.addEventListener("input", updatePreview);
     updatePreview();
   }, 100);
 }
