@@ -1963,6 +1963,21 @@ function rerender(root) {
 }
 
 function wireAttendanceSubpanelActions(root) {
+  if (activeSubTab === "roster") {
+    const cafeId = getActiveRosterCafeId();
+    const weekStartDate = getRosterWeekStartDate();
+    const rosterMatches =
+      cachedRoster &&
+      String(cachedRoster.cafeId || "") === String(cafeId || "") &&
+      String(cachedRoster.weekStartDate || "") === String(weekStartDate);
+
+    if (cafeId && !rosterMatches && !rosterLoadPromise) {
+      loadRosterData({ cafeId, weekStartDate })
+        .then(() => rerender(root))
+        .catch((err) => showToast(err?.message || "Unable to load the authoritative weekly roster.", "error"));
+    }
+  }
+
   if (
     activeSubTab === "calendar360" &&
     selectedUserId &&
@@ -2113,135 +2128,126 @@ function wireAttendanceSubpanelActions(root) {
   // Roster Café Switching
   const rosterCafeSel = root.querySelector("#roster-cafe-select");
   if (rosterCafeSel) {
-    rosterCafeSel.addEventListener("change", (e) => {
+    rosterCafeSel.addEventListener("change", async (e) => {
       selectedRosterCafe = e.target.value;
-      showToast(`Switched roster view to ${CAFE_NAMES[selectedRosterCafe] || selectedRosterCafe}`, "info");
-      rerender(root);
+      cachedRoster = null;
+      try {
+        await loadRosterData();
+        rerender(root);
+      } catch (err) {
+        showToast(err?.message || "Unable to load the selected café roster.", "error");
+      }
     });
   }
 
-  // Week Navigation
+  async function moveRosterWeek(nextOffset) {
+    selectedRosterWeekOffset = nextOffset;
+    cachedRoster = null;
+    try {
+      await loadRosterData();
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Unable to load the selected roster week.", "error");
+    }
+  }
+
   root.querySelector("#roster-prev-week-btn")?.addEventListener("click", () => {
-    selectedRosterWeekOffset--;
-    rerender(root);
+    moveRosterWeek(selectedRosterWeekOffset - 1);
   });
-
   root.querySelector("#roster-today-btn")?.addEventListener("click", () => {
-    selectedRosterWeekOffset = 0;
-    rerender(root);
+    moveRosterWeek(0);
   });
-
   root.querySelector("#roster-next-week-btn")?.addEventListener("click", () => {
-    selectedRosterWeekOffset++;
-    rerender(root);
+    moveRosterWeek(selectedRosterWeekOffset + 1);
   });
 
-  // Click-to-Edit Shift Cells
+  // Click-to-edit is allowed only while the authoritative roster is a draft.
   root.querySelectorAll(".roster-shift-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
+      if (cachedRoster?.status === "PUBLISHED") {
+        showToast("Published rosters are immutable.", "info");
+        return;
+      }
       const target = e.currentTarget;
-      const staffIndex = Number(target.dataset.staffIndex);
-      const staffId = target.dataset.staffId;
-      const staffName = target.dataset.staffName;
-      const dayKey = target.dataset.dayKey;
-      const dayLabel = target.dataset.dayLabel;
-      const currentShift = target.dataset.currentShift;
-
       openEditShiftModal({
         root,
-        staffIndex,
-        staffId,
-        staffName,
-        dayKey,
-        dayLabel,
-        currentShift,
+        staffIndex: Number(target.dataset.staffIndex),
+        staffId: target.dataset.staffId,
+        staffName: target.dataset.staffName,
+        dayKey: target.dataset.dayKey,
+        dayLabel: target.dataset.dayLabel,
+        currentShift: target.dataset.currentShift,
       });
     });
   });
 
-  // Remove Staff Member from Roster Row
   root.querySelectorAll(".remove-staff-roster-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
+      if (cachedRoster?.status === "PUBLISHED") {
+        showToast("Published rosters are immutable.", "info");
+        return;
+      }
+
+      const activeCafeId = getActiveRosterCafeId();
+      const staffList = cafeRosterSchedules[activeCafeId] || [];
       const idx = Number(e.currentTarget.dataset.staffIndex);
-      const activeCafeId = state.role === ROLES.CAFE_ADMIN
-        ? (state.user?.assignedCafeIds?.[0] || state.currentCafeId || "")
-        : (selectedRosterCafe || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "");
-      const staffList = cafeRosterSchedules[activeCafeId] || Object.values(cafeRosterSchedules)[0] || [];
       const removed = staffList[idx];
-      confirmAction(`Remove ${removed?.name || "staff member"} from this week's roster?`, () => {
+      if (!removed) return;
+
+      confirmAction(`Remove ${removed.name || removed.id} from this week's draft roster?`, async () => {
+        const snapshot = staffList.map((row) => ({ ...row }));
         staffList.splice(idx, 1);
-        showToast(`${removed?.name || "Staff member"} removed from roster.`, "info");
-        rerender(root);
+        try {
+          await saveCurrentRosterDraft();
+          showToast(`${removed.name || removed.id} removed from the draft roster.`, "success");
+          rerender(root);
+        } catch (err) {
+          cafeRosterSchedules[activeCafeId] = snapshot;
+          showToast(err?.message || "Failed to save the roster change.", "error");
+          rerender(root);
+        }
       });
     });
   });
 
-  // Add Staff Member to Roster Button
   root.querySelector("#add-staff-roster-btn")?.addEventListener("click", () => {
+    if (cachedRoster?.status === "PUBLISHED") {
+      showToast("Published rosters are immutable.", "info");
+      return;
+    }
     openAddStaffToRosterModal(root);
   });
 
-  // Auto-Schedule AI / Minimum Coverage
-  root.querySelector("#auto-schedule-roster-btn")?.addEventListener("click", () => {
-    const activeCafeId = state.role === ROLES.CAFE_ADMIN
-      ? (state.user?.assignedCafeIds?.[0] || state.currentCafeId || "")
-      : (selectedRosterCafe || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "");
-    const staffList = cafeRosterSchedules[activeCafeId] || Object.values(cafeRosterSchedules)[0] || [];
-
-    confirmAction("Auto-generate balanced shift coverage? This assigns opening (06:30 – 15:00) and closing (13:00 – 21:30) rotations with 2 consecutive off-days per barista.", () => {
-      const templates = [
-        { mon: "06:30 - 15:00", tue: "06:30 - 15:00", wed: "OFF", thu: "13:00 - 21:30", fri: "06:30 - 15:00", sat: "06:30 - 15:00", sun: "OFF" },
-        { mon: "13:00 - 21:30", tue: "13:00 - 21:30", wed: "06:30 - 15:00", thu: "OFF", fri: "13:00 - 21:30", sat: "13:00 - 21:30", sun: "OFF" },
-        { mon: "06:30 - 15:00", tue: "OFF", wed: "06:30 - 15:00", thu: "06:30 - 15:00", fri: "OFF", sat: "06:30 - 15:00", sun: "13:00 - 21:30" },
-        { mon: "OFF", tue: "06:30 - 15:00", wed: "13:00 - 21:30", thu: "06:30 - 15:00", fri: "06:30 - 15:00", sat: "OFF", sun: "06:30 - 15:00" },
-      ];
-
-      staffList.forEach((s, idx) => {
-        const tmpl = templates[idx % templates.length];
-        Object.assign(s, tmpl);
-      });
-
-      showToast("Balanced opening/closing shift coverage auto-generated.", "success");
-      rerender(root);
-    });
-  });
-
-  // Copy Previous Week Roster
-  root.querySelector("#copy-prev-week-roster-btn")?.addEventListener("click", () => {
-    showToast("Previous week's shift roster schedule copied to active draft.", "success");
-    rerender(root);
-  });
-
-  // Export / Print Roster CSV
   root.querySelector("#export-roster-csv-btn")?.addEventListener("click", () => {
     exportRosterCsv();
   });
 
-  // Publish / Revert Weekly Roster
   root.querySelector("#publish-roster-btn")?.addEventListener("click", () => {
-    const activeCafeId = state.role === ROLES.CAFE_ADMIN
-      ? (state.user?.assignedCafeIds?.[0] || state.currentCafeId || "")
-      : (selectedRosterCafe || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "");
-    const isCurrentlyPublished = rosterPublishedMap[activeCafeId] ?? true;
+    if (cachedRoster?.status === "PUBLISHED") return;
 
-    if (isCurrentlyPublished) {
-      rosterPublishedMap[activeCafeId] = false;
-      showToast("Roster reverted to draft mode for edits.", "info");
-      rerender(root);
-    } else {
-      confirmAction("Publish the weekly shift roster? All assigned staff will immediately receive push shift notifications and roster updates on their mobile portal.", async () => {
-        if (cachedRoster?.rosterId) {
-          try {
-            await apiPost(`/attendance/roster/${cachedRoster.rosterId}/publish`);
-          } catch (err) {
-            console.warn("Backend publish roster notice:", err);
-          }
+    confirmAction("Publish this authoritative weekly roster and queue staff notifications?", async () => {
+      try {
+        let roster = cachedRoster;
+        if (!roster?.rosterId) {
+          roster = await saveCurrentRosterDraft();
         }
+
+        const res = await apiPost(`/attendance/roster/${encodeURIComponent(roster.rosterId)}/publish`);
+        const publishedRoster = res?.data?.roster;
+        if (!publishedRoster || publishedRoster.status !== "PUBLISHED") {
+          throw new Error("Roster publish did not return a published authoritative record.");
+        }
+
+        cachedRoster = publishedRoster;
+        const activeCafeId = getActiveRosterCafeId();
+        cafeRosterSchedules[activeCafeId] = normaliseRosterRows(publishedRoster);
         rosterPublishedMap[activeCafeId] = true;
-        showToast("Weekly Shift Roster published and broadcast to all staff devices.", "success");
+        showToast("Weekly roster published. Staff notification delivery has been queued.", "success");
         rerender(root);
-      });
-    }
+      } catch (err) {
+        showToast(err?.message || "Roster publish failed. No success state was applied.", "error");
+      }
+    });
   });
 
   // Shift Master: Create Shift Template Modal
