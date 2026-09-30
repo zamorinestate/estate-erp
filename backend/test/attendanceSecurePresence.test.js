@@ -595,6 +595,7 @@ test('STORE-001: attendanceEvidenceStorageService stores object buffer and retri
 
   assert.ok(uploadResult.fileKey);
   assert.equal(uploadResult.sizeBytes, testBuffer.length);
+  assert.equal(uploadResult.sha256, crypto.createHash('sha256').update(testBuffer).digest('hex'));
 
   const retrieved = await attendanceEvidenceStorageService.readObjectBuffer({ fileKey: uploadResult.fileKey });
   assert.ok(retrieved);
@@ -738,6 +739,7 @@ test('UPLOAD-003: selfie upload is bound to the verified employee scan grant', a
     assert.equal(createdPrivateFile.attendanceContext.challengeId, verification.challengeId);
     assert.equal(createdPrivateFile.attendanceContext.cafeId, 'CAFE-KNR-01');
     assert.equal(createdPrivateFile.attendanceContext.punchType, 'CHECK_IN');
+    assert.match(createdPrivateFile.sha256, /^[a-f0-9]{64}$/);
   } finally {
     PrivateFile.create = originalCreate;
   }
@@ -1343,6 +1345,53 @@ test('RBAC-006: evidence endpoint fails closed when stored selfie bytes are miss
         params: { mediaId: 'FILE-PHOTO-MISSING' },
       }, createMockRes()),
       { statusCode: 404, code: 'ATTENDANCE_EVIDENCE_BYTES_NOT_FOUND' }
+    );
+  } finally {
+    PrivateFile.findOne = origFindOnePrivateFile;
+    Attendance.findOne = origFindOneAttendance;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
+  }
+});
+
+test('RBAC-007: evidence endpoint rejects bytes that fail the stored SHA-256 checksum', async () => {
+  const origFindOnePrivateFile = PrivateFile.findOne;
+  const origFindOneAttendance = Attendance.findOne;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
+
+  const expectedBytes = Buffer.from('EXPECTED-SELFIE-BYTES');
+  const tamperedBytes = Buffer.from('TAMPERED-SELFIE-BYTES');
+
+  PrivateFile.findOne = () => ({
+    fileId: 'FILE-PHOTO-TAMPERED',
+    fileKey: 'org/selfie_tampered.jpg',
+    storagePath: 'org/selfie_tampered.jpg',
+    mimeType: 'image/jpeg',
+    sha256: crypto.createHash('sha256').update(expectedBytes).digest('hex'),
+    uploadedByUserId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+  });
+
+  Attendance.findOne = () => ({
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    attendanceEvidence: {
+      checkIn: { photoFileId: 'FILE-PHOTO-TAMPERED' },
+    },
+  });
+
+  attendanceEvidenceStorageService.readObjectBuffer = async () => tamperedBytes;
+
+  try {
+    await assert.rejects(
+      async () => getEvidenceMedia({
+        auth: {
+          userId: 'EMP-STAFF-1',
+          role: 'STAFF',
+          organisationId: 'ORG-ZAMORIN',
+        },
+        params: { mediaId: 'FILE-PHOTO-TAMPERED' },
+      }, createMockRes()),
+      { statusCode: 409, code: 'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE' }
     );
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
