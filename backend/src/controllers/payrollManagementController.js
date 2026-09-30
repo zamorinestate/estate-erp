@@ -10,6 +10,8 @@ const {
   PAYSLIP_STATUSES,
 } = require('../models/Payslip');
 
+const { User } = require('../models/User');
+
 const {
   canAccessCafe,
 } = require('../middleware/authorize');
@@ -777,16 +779,48 @@ const getPayrollPayments = asyncHandler(
     }
     payslips = Array.isArray(payslips) ? payslips : [];
 
-    const paymentItems = payslips.map((p, idx) => ({
-      itemId: `PMT-${idx + 1}`,
-      employeeUserId: p.employeeUserId,
-      amountPaise: p.netPayPaise,
-      currency: 'INR',
-      bankAccountMasked: '••••' + String(1000 + idx * 17).slice(-4),
-      ifscCode: 'HDFC0001234',
-      paymentMode: 'NEFT',
-      status: payrollRun.status === 'PAID' ? 'SETTLED' : 'READY',
-    }));
+    const employeeIds = [...new Set(
+      payslips
+        .map((p) => normalizeIdentifier(p.employeeUserId || p.employeeNumber))
+        .filter(Boolean)
+    )];
+
+    const userQuery = User.find({
+      organisationId: request.auth.organisationId,
+      userId: { $in: employeeIds },
+    });
+    const employees = userQuery && typeof userQuery.lean === 'function'
+      ? await userQuery.lean()
+      : await userQuery;
+    const employeeMap = new Map(
+      (employees || []).map((employee) => [normalizeIdentifier(employee.userId), employee])
+    );
+
+    const paymentItems = payslips.map((p, idx) => {
+      const employeeId = normalizeIdentifier(p.employeeUserId || p.employeeNumber);
+      const employee = employeeMap.get(employeeId);
+      const paymentMode = String(employee?.paymentMethod || 'BANK').trim().toUpperCase();
+      const accountNumber = String(employee?.bankDetails?.accountNumber || '').trim();
+      const ifscCode = String(employee?.bankDetails?.ifsc || '').trim().toUpperCase();
+      const bankReady =
+        paymentMode !== 'BANK' ||
+        (accountNumber.length >= 6 && /^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode));
+
+      return {
+        itemId: `PMT-${idx + 1}`,
+        employeeUserId: p.employeeUserId,
+        amountPaise: p.netPayPaise,
+        currency: 'INR',
+        bankAccountMasked: accountNumber
+          ? `${'•'.repeat(Math.max(0, accountNumber.length - 4))}${accountNumber.slice(-4)}`
+          : null,
+        ifscCode: ifscCode || null,
+        paymentMode,
+        status: !bankReady
+          ? 'BANK_DETAILS_REQUIRED'
+          : (payrollRun.status === 'PAID' ? 'SETTLED' : 'READY'),
+      };
+    });
 
     return response.status(200).json({
       success: true,
@@ -827,6 +861,59 @@ const generatePaymentBatch = asyncHandler(
 
     if (!['APPROVED', 'PAID'].includes(payrollRun.status)) {
       throw new ApiError(400, 'PAYROLL_RUN_NOT_APPROVED', 'Payroll run must be approved before generating a payment batch.');
+    }
+
+    const batchPayslipsQuery = Payslip.find({
+      organisationId: request.auth.organisationId,
+      payrollRunId,
+    });
+    const batchPayslips = batchPayslipsQuery && typeof batchPayslipsQuery.lean === 'function'
+      ? await batchPayslipsQuery.lean()
+      : await batchPayslipsQuery;
+
+    const batchEmployeeIds = [...new Set(
+      (batchPayslips || [])
+        .map((p) => normalizeIdentifier(p.employeeUserId || p.employeeNumber))
+        .filter(Boolean)
+    )];
+
+    const batchUsersQuery = User.find({
+      organisationId: request.auth.organisationId,
+      userId: { $in: batchEmployeeIds },
+    });
+    const batchUsers = batchUsersQuery && typeof batchUsersQuery.lean === 'function'
+      ? await batchUsersQuery.lean()
+      : await batchUsersQuery;
+    const batchUsersById = new Map(
+      (batchUsers || []).map((employee) => [normalizeIdentifier(employee.userId), employee])
+    );
+
+    const incompletePaymentProfiles = [];
+    for (const payslip of batchPayslips || []) {
+      const employeeId = normalizeIdentifier(payslip.employeeUserId || payslip.employeeNumber);
+      const employee = batchUsersById.get(employeeId);
+      if (!employee) {
+        incompletePaymentProfiles.push({ employeeId, issue: 'EMPLOYEE_MASTER_NOT_FOUND' });
+        continue;
+      }
+
+      const paymentMethod = String(employee.paymentMethod || 'BANK').trim().toUpperCase();
+      if (paymentMethod === 'BANK') {
+        const accountNumber = String(employee.bankDetails?.accountNumber || '').trim();
+        const ifscCode = String(employee.bankDetails?.ifsc || '').trim().toUpperCase();
+        if (!accountNumber || !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
+          incompletePaymentProfiles.push({ employeeId, issue: 'BANK_DETAILS_REQUIRED' });
+        }
+      }
+    }
+
+    if (incompletePaymentProfiles.length > 0) {
+      throw new ApiError(
+        409,
+        'PAYROLL_PAYMENT_PROFILE_INCOMPLETE',
+        `Payment batch generation is blocked because ${incompletePaymentProfiles.length} employee payment profile(s) are incomplete.`,
+        { incompletePaymentProfiles }
+      );
     }
 
     const batchId = `PB-${payrollRun.periodKey.replace('-', '')}-${payrollRun.cafeId}`;
