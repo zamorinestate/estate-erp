@@ -55,3 +55,42 @@ test('FIN-TRUTH-010: AP-to-GL and duplicate source posting are evidence-based in
   assert.ok(block.includes('POSTED_ACCOUNT_MAPPING'));
 });
 
+test('FIN-TRUTH-011: AP payment-run approval enforces maker-checker for every role and Café Admin scope', () => {
+  const text = source();
+  const start = text.indexOf('const decidePaymentRun = asyncHandler');
+  const end = text.indexOf('const executePaymentRun = asyncHandler', start);
+  const block = text.slice(start, end);
+
+  assert.ok(block.includes('normalizeFinanceId(run.makerUserId) === normalizeFinanceId(userId)'));
+  assert.ok(block.includes('MAKER_CHECKER_VIOLATION'));
+  assert.ok(block.includes('PAYMENT_RUN_CAFE_SCOPE_DENIED'));
+  assert.ok(block.includes('request.auth.assignedCafeIds'));
+  assert.equal(block.includes("run.makerUserId === userId && request.auth.role === 'CAFE_ADMIN'"), false);
+});
+
+test('FIN-TRUTH-012: AP execution requires exact authoritative passbook bank debit', () => {
+  const text = source();
+  const start = text.indexOf('const executePaymentRun = asyncHandler');
+  const end = text.indexOf('// 7. Accounts Receivable', start);
+  const block = text.slice(start, end);
+
+  assert.ok(block.includes('PassbookAccount.findOne'));
+  assert.ok(block.includes("accountType: 'BANK_OPERATING'"));
+  assert.ok(block.includes('PassbookTransaction.findOne'));
+  assert.ok(block.includes("direction: 'DEBIT'"));
+  assert.ok(block.includes("status: { $in: ['POSTED', 'CLEARED'] }"));
+  assert.ok(block.includes('amountPaisa: payableTotalPaisa'));
+  assert.ok(block.includes('PAYMENT_BANK_DEBIT_NOT_VERIFIED'));
+  assert.ok(block.includes('PAYMENT_BANK_DEBIT_ALREADY_APPLIED'));
+  assert.ok(block.includes('PAYMENT_BANK_DEBIT_CAFE_SCOPE_MISMATCH'));
+});
+
+test('FIN-TRUTH-013: AP payment history and PaymentRun schemas persist canonical bank transaction IDs', () => {
+  const apInvoice = fs.readFileSync(path.join(__dirname, '../src/models/APInvoice.js'), 'utf8');
+  const paymentRun = fs.readFileSync(path.join(__dirname, '../src/models/PaymentRun.js'), 'utf8');
+
+  assert.ok(apInvoice.includes('bankTransactionId'));
+  assert.ok(paymentRun.includes('bankTransactionId'));
+  assert.ok(paymentRun.includes('index: true'));
+});
+
