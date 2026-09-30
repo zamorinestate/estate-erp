@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 /**
  * Enterprise Production Redis Adapter Suite
  * 
@@ -19,23 +21,34 @@ const LUA_SCRIPTS = {
     local now = tonumber(ARGV[1])
     local windowMs = tonumber(ARGV[2])
     local maxRequests = tonumber(ARGV[3])
+    local reservationId = ARGV[4]
     local clearBefore = now - windowMs
 
     redis.call('ZREMRANGEBYSCORE', key, 0, clearBefore)
     local currentCount = redis.call('ZCARD', key)
 
     if currentCount < maxRequests then
-      redis.call('ZADD', key, now, tostring(now) .. '-' .. tostring(math.random(1000, 9999)))
+      redis.call('ZADD', key, now, reservationId)
       redis.call('PEXPIRE', key, windowMs)
-      return { 1, maxRequests - currentCount - 1, math.floor(windowMs / 1000) }
+      return { 1, maxRequests - currentCount - 1, math.floor(windowMs / 1000), reservationId }
     else
       local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
       local resetMs = windowMs
       if oldest and oldest[2] then
         resetMs = math.max(0, math.floor((tonumber(oldest[2]) + windowMs - now) / 1000))
       end
-      return { 0, 0, resetMs }
+      return { 0, 0, resetMs, '' }
     end
+  `,
+
+  RELEASE_RATE_LIMIT_RESERVATION: `
+    local key = KEYS[1]
+    local reservationId = ARGV[1]
+    local removed = redis.call('ZREM', key, reservationId)
+    if redis.call('ZCARD', key) == 0 then
+      redis.call('DEL', key)
+    end
+    return removed
   `,
 
   // Safe distributed mutex release (only owner can delete lock)
@@ -96,12 +109,13 @@ class RedisAdapterService {
     }
     const key = `${this.keyPrefix}rl:${scope}:${identifier}`;
     const now = Date.now();
+    const reservationId = crypto.randomUUID();
 
-    const [allowed, remaining, resetAfterSeconds] = await this.client.eval(
+    const [allowed, remaining, resetAfterSeconds, acceptedReservationId] = await this.client.eval(
       LUA_SCRIPTS.SLIDING_WINDOW_LIMITER,
       {
         keys: [key],
-        arguments: [String(now), String(windowMs), String(limit)],
+        arguments: [String(now), String(windowMs), String(limit), reservationId],
       }
     );
 
@@ -109,9 +123,27 @@ class RedisAdapterService {
       allowed: Boolean(allowed === 1),
       remaining: Number(remaining),
       resetAfterSeconds: Number(resetAfterSeconds),
+      reservationId: allowed === 1 ? String(acceptedReservationId || reservationId) : null,
       limit,
       windowMs,
     };
+  }
+
+  async releaseRateLimitReservation(scope, identifier, reservationId) {
+    if (!this.client) {
+      throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
+    }
+    const cleanReservationId = String(reservationId || '').trim();
+    if (!cleanReservationId) return false;
+    const key = `${this.keyPrefix}rl:${scope}:${identifier}`;
+    const removed = await this.client.eval(
+      LUA_SCRIPTS.RELEASE_RATE_LIMIT_RESERVATION,
+      {
+        keys: [key],
+        arguments: [cleanReservationId],
+      }
+    );
+    return Number(removed) > 0;
   }
 
   // --- 2. Realtime Event Bus Pub/Sub ---
