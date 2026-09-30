@@ -11,6 +11,7 @@ const { attendanceEvidenceStorageService } = require('../src/services/attendance
 const {
   DEFAULT_ORPHAN_GRACE_MINUTES,
   buildAttendanceEvidenceReferenceQuery,
+  buildReservationAttendanceReferenceQuery,
   reconcileExpiredOrphanAttendanceEvidence,
 } = require('../src/services/attendanceEvidenceRetentionService');
 
@@ -464,6 +465,8 @@ test('RET-007: stale reserved evidence is promoted only when Attendance already 
         status: 'RESERVED',
         claimId: 'CLAIM-LINKED',
         reservedAt: new Date('2026-09-30T02:30:00Z'),
+        attendanceId: 'AT-20260930-007',
+        punchType: 'CHECK_IN',
       },
     },
     {
@@ -478,6 +481,8 @@ test('RET-007: stale reserved evidence is promoted only when Attendance already 
         status: 'RESERVED',
         claimId: 'CLAIM-UNLINKED',
         reservedAt: new Date('2026-09-30T02:30:00Z'),
+        attendanceId: 'AT-20260930-008',
+        punchType: 'CHECK_OUT',
       },
     },
   ];
@@ -491,10 +496,16 @@ test('RET-007: stale reserved evidence is promoted only when Attendance already 
         : [],
   });
 
-  Attendance.exists = async (query) =>
-    JSON.stringify(query).includes('FILE-1007')
+  Attendance.exists = async (query) => {
+    const json = JSON.stringify(query);
+    return (
+      json.includes('FILE-1007') &&
+      json.includes('AT-20260930-007') &&
+      json.includes('CHECK_IN')
+    )
       ? { _id: 'AT-LINKED-1007' }
       : null;
+  };
 
   const updates = [];
   PrivateFile.updateOne = async (filter, update) => {
@@ -541,3 +552,43 @@ test('RET-007: stale reserved evidence is promoted only when Attendance already 
     attendanceEvidenceStorageService.deleteObject = originals.deleteObject;
   }
 });
+
+test('RET-008: stale reservation proof is bound to exact attendance ID and punch transition', () => {
+  const checkIn = buildReservationAttendanceReferenceQuery({
+    organisationId: 'ORG-ZAMORIN',
+    fileId: 'FILE-2001',
+    attendanceId: 'AT-20260930-201',
+    punchType: 'CHECK_IN',
+  });
+  const checkOut = buildReservationAttendanceReferenceQuery({
+    organisationId: 'ORG-ZAMORIN',
+    fileId: 'FILE-2002',
+    attendanceId: 'AT-20260930-202',
+    punchType: 'CHECK_OUT',
+  });
+
+  assert.equal(checkIn.attendanceId, 'AT-20260930-201');
+  assert.equal(checkOut.attendanceId, 'AT-20260930-202');
+
+  const checkInJson = JSON.stringify(checkIn);
+  const checkOutJson = JSON.stringify(checkOut);
+
+  assert.ok(checkInJson.includes('attendanceEvidence.checkIn'));
+  assert.ok(checkInJson.includes('CHECK_IN'));
+  assert.equal(checkInJson.includes('attendanceEvidence.checkOut'), false);
+
+  assert.ok(checkOutJson.includes('attendanceEvidence.checkOut'));
+  assert.ok(checkOutJson.includes('CHECK_OUT'));
+  assert.equal(checkOutJson.includes('attendanceEvidence.checkIn'), false);
+
+  assert.equal(
+    buildReservationAttendanceReferenceQuery({
+      organisationId: 'ORG-ZAMORIN',
+      fileId: 'FILE-2003',
+      attendanceId: '',
+      punchType: 'CHECK_IN',
+    }),
+    null
+  );
+});
+
