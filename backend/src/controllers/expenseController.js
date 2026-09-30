@@ -903,7 +903,16 @@ const liquidateAdvance = asyncHandler(async (request, response) => {
 const markExpensePaid = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const { expenseId } = request.params;
-  const { paymentReference = '', paidAt } = request.body;
+  const paymentReference = String(request.body?.paymentReference || '').trim();
+  const paidAtInput = request.body?.paidAt;
+
+  if (!paymentReference) {
+    throw new ApiError(
+      400,
+      'PAYMENT_REFERENCE_REQUIRED',
+      'A real payment reference is required before an expense can be marked paid.'
+    );
+  }
 
   const expense = await Expense.findOne({ organisationId, expenseId });
   if (!expense) {
@@ -912,26 +921,40 @@ const markExpensePaid = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, expense.cafeId);
 
+  if (expense.status === 'PAID') {
+    throw new ApiError(409, 'EXPENSE_ALREADY_PAID', 'This expense is already marked paid.');
+  }
+
   if (expense.status !== 'APPROVED') {
     throw new ApiError(400, 'INVALID_STATE', 'Only approved expenses can be marked as paid.');
   }
 
+  const paidAt = paidAtInput ? new Date(paidAtInput) : new Date();
+  if (Number.isNaN(paidAt.getTime())) {
+    throw new ApiError(400, 'INVALID_PAID_AT', 'paidAt must be a valid date/time.');
+  }
+
   expense.status = 'PAID';
-  expense.paidAt = paidAt ? new Date(paidAt) : new Date();
+  expense.paidAt = paidAt;
   expense.paidBy = userId;
   expense.paymentReference = paymentReference;
   expense.financeHandoff = {
     ...expense.financeHandoff,
     status: 'PAID',
     paymentStatus: 'PAID',
-    postingStatus: 'POSTED',
+    postingStatus: 'PAYMENT_RECORDED_GL_NOT_VERIFIED',
+    holdReason: '',
   };
   expense.updatedBy = userId;
   await expense.save();
 
   return response.status(200).json({
-    message: 'Expense marked as paid and settled in Finance.',
+    message: 'Expense payment recorded. General Ledger posting remains unverified until a canonical GL posting reference is linked.',
     expense,
+    financeActuality: {
+      paymentStatus: 'PAID',
+      glPostingStatus: 'NOT_VERIFIED',
+    },
   });
 });
 
