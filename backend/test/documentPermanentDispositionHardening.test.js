@@ -175,3 +175,30 @@ test('DOC-DISP-005: document storage adapter can verify/delete GridFS objects by
   assert.ok(source.includes('async delete({ storageKey = null, fileId = null } = {})'));
   assert.ok(source.includes('provider.deleteObject({ objectKey: storageKey, fileId })'));
 });
+
+test('DOC-RET-001: legal-hold release and retention shortening require immutable pre-authorization', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/documentAttachmentService.js'), 'utf8');
+  const start = source.indexOf('static async updateRetentionPolicy');
+  const end = source.indexOf('Rescans a quarantined', start);
+  const block = source.slice(start, end);
+
+  assert.ok(block.includes('releasesActiveHold'));
+  assert.ok(block.includes('shortensRetention'));
+  assert.ok(block.includes('RETENTION_PROTECTION_RELAXATION_AUTHORIZED'));
+  assert.ok(block.includes('RETENTION_RELAXATION_AUDIT_NOT_CONFIRMED'));
+
+  const auditIndex = block.indexOf('RETENTION_PROTECTION_RELAXATION_AUTHORIZED');
+  const retentionMutation = block.indexOf('doc.retentionUntil = newDate');
+  const holdMutation = block.indexOf('doc.legalHold = Boolean(legalHold)');
+  assert.ok(auditIndex >= 0);
+  assert.ok(retentionMutation > auditIndex);
+  assert.ok(holdMutation > auditIndex);
+});
+
+test('DOC-RET-002: protective retention changes stay active if post-write audit reporting fails', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/documentAttachmentService.js'), 'utf8');
+  assert.ok(source.includes('Protective changes (placing a hold or extending retention) stay in'));
+  assert.ok(source.includes('Protective retention change is active, but its post-write audit event could not be confirmed.'));
+  assert.equal(source.includes("await auditService.recordAuditEvent({\n      organisationId,\n      cafeId: doc.cafeId || 'GLOBAL',\n      actorUserId: auth.userId,\n      actorRole: auth.role,\n      module: 'DOCUMENT_ATTACHMENT',\n      action: 'RETENTION_POLICY_UPDATED'") && source.includes('.catch(() => {})'), false);
+});
+
