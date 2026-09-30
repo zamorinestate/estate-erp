@@ -332,7 +332,7 @@ class OperatorSessionService {
         cafeId: gatewayContext.cafeId,
       });
 
-      if (!cafeAccessDoc || cafeAccessDoc.accessStatus === 'LOCKED' || cafeAccessDoc.accessStatus === 'DISABLED') {
+      if (!cafeAccessDoc || cafeAccessDoc.accessStatus !== 'ACTIVE') {
         throw new ApiError(403, 'CAFE_ACCESS_UNAVAILABLE', 'Café Operations access is currently unavailable.');
       }
 
@@ -342,7 +342,7 @@ class OperatorSessionService {
         cafeId: gatewayContext.cafeId,
       });
 
-      if (!cafe || cafe.status === 'ARCHIVED' || cafe.status === 'CLOSED') {
+      if (!cafe || cafe.status !== 'ACTIVE') {
         throw new ApiError(403, 'CAFE_INACTIVE', 'Café Operations access is currently unavailable.');
       }
 
