@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { generateSixDigitPin } = require('../utils/secureRandom');
 const { AttendanceQrChallenge } = require('../models/AttendanceQrChallenge');
 const { AttendanceOfflineLease } = require('../models/AttendanceOfflineLease');
 const { DeviceRegistration } = require('../models/DeviceRegistration');
@@ -126,7 +127,7 @@ class AttendanceQrService {
     if (!challenge) {
       const challengeId = `CHL_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
       const opaqueToken = `ZAM_ATT_${crypto.randomBytes(32).toString('hex')}`;
-      const fallbackPin = Math.floor(100000 + Math.random() * 900000).toString();
+      const fallbackPin = generateSixDigitPin();
       const issuedAt = new Date();
       const expiresAt = new Date(Date.now() + rotationIntervalSeconds * 1000);
       const nonce = crypto.randomBytes(16).toString('hex');
