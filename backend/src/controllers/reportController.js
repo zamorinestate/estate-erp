@@ -1786,41 +1786,76 @@ const runForecast = asyncHandler(async (request, response) => {
       auth: request.auth,
     });
 
-    // 2. Fetch recipes and inventory stock
-    const recipes = await Recipe.find({
-      organisationId: baseFilter.organisationId,
-      status: { $in: ['APPROVED', 'EFFECTIVE'] },
-    }).lean();
+    // Ingredient requirement calculation requires a dimensioned per-menu-item
+    // forecast. Aggregate horizon points cannot be assigned to recipes without
+    // inventing item identity.
+    const itemForecasts = Array.isArray(menuResult.itemForecasts)
+      ? menuResult.itemForecasts
+      : [];
 
-    const stockLots = await InventoryLot.find({
-      organisationId: baseFilter.organisationId,
-      ...(baseFilter.cafeId ? { cafeId: baseFilter.cafeId } : {}),
-      status: { $nin: ['QUARANTINED', 'EXPIRED', 'DISPOSED'] },
-    }).lean();
+    if (menuResult.status !== 'READY' || itemForecasts.length === 0) {
+      result = {
+        forecastId: menuResult.forecastId || null,
+        targetMetricId: 'THEORETICAL_INGREDIENT_REQUIREMENT',
+        displayName: 'Theoretical BOM Ingredient Requirement Forecast',
+        scope: menuResult.scope,
+        status: 'SOURCE_UNAVAILABLE',
+        dataQuality: 'SOURCE_UNAVAILABLE',
+        actuality: 'UNAVAILABLE',
+        ingredientRequirements: [],
+        totalIngredientsTracked: 0,
+        shortfallCount: 0,
+        projectedStockGapCount: 0,
+        wasteBufferPercentApplied: parseFloat(request.query?.wasteBufferPercent) || 0,
+        supplyLimitations: 'PER_MENU_ITEM_DIMENSIONED_FORECAST_REQUIRED',
+        message:
+          'Ingredient requirement forecasting is unavailable because the current menu-demand forecast source does not provide authoritative per-item forecast rows. Aggregate forecast points are not assigned to synthetic menu items.',
+        provenance: {
+          upstreamForecastStatus: menuResult.status || 'SOURCE_UNAVAILABLE',
+          upstreamTargetMetricId: menuResult.targetMetricId || 'MENU_ITEM_QUANTITY',
+          itemForecastRowsAvailable: itemForecasts.length,
+          generatedAt: new Date().toISOString(),
+        },
+      };
+    } else {
+      const recipes = await Recipe.find({
+        organisationId: baseFilter.organisationId,
+        status: { $in: ['APPROVED', 'EFFECTIVE'] },
+      }).lean();
 
-    const forecastItems = (menuResult.pointForecasts || []).map((qty, i) => ({
-      itemName: 'Sample Dish',
-      forecastQuantity: qty,
-    }));
+      const stockLots = await InventoryLot.find({
+        organisationId: baseFilter.organisationId,
+        ...(baseFilter.cafeId ? { cafeId: baseFilter.cafeId } : {}),
+        status: { $nin: ['QUARANTINED', 'EXPIRED', 'DISPOSED'] },
+      }).lean();
 
-    const bomResult = calculateTheoreticalIngredientRequirement(
-      forecastItems,
-      recipes,
-      stockLots,
-      parseFloat(request.query?.wasteBufferPercent) || 0
-    );
+      const forecastItems = itemForecasts
+        .filter((row) => row && (row.itemName || row.recipeId || row.menuItemId))
+        .map((row) => ({
+          itemName: row.itemName || null,
+          recipeId: row.recipeId || row.menuItemId || null,
+          forecastQuantity: Number(row.forecastQuantity ?? row.pointForecast ?? 0),
+        }));
 
-    result = {
-      ...menuResult,
-      targetMetricId: 'THEORETICAL_INGREDIENT_REQUIREMENT',
-      displayName: 'Theoretical BOM Ingredient Requirement Forecast',
-      ingredientRequirements: bomResult.ingredientRequirements,
-      totalIngredientsTracked: bomResult.totalIngredientsTracked,
-      shortfallCount: bomResult.shortfallCount,
-      projectedStockGapCount: bomResult.projectedStockGapCount,
-      wasteBufferPercentApplied: bomResult.wasteBufferPercentApplied,
-      supplyLimitations: bomResult.supplyLimitations,
-    };
+      const bomResult = calculateTheoreticalIngredientRequirement(
+        forecastItems,
+        recipes,
+        stockLots,
+        parseFloat(request.query?.wasteBufferPercent) || 0
+      );
+
+      result = {
+        ...menuResult,
+        targetMetricId: 'THEORETICAL_INGREDIENT_REQUIREMENT',
+        displayName: 'Theoretical BOM Ingredient Requirement Forecast',
+        ingredientRequirements: bomResult.ingredientRequirements,
+        totalIngredientsTracked: bomResult.totalIngredientsTracked,
+        shortfallCount: bomResult.shortfallCount,
+        projectedStockGapCount: bomResult.projectedStockGapCount,
+        wasteBufferPercentApplied: bomResult.wasteBufferPercentApplied,
+        supplyLimitations: bomResult.supplyLimitations,
+      };
+    }
   } else {
     result = await executeGovernedForecast({
       targetMetricId: target,
