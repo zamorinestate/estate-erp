@@ -53,5 +53,6 @@ test('canonical settlement enforces exact tender totals and method-derived side 
   assert.match(posService, /totalCashSalesPaisa:\s*cashPaidPaisa/);
   assert.match(posService, /totalUpiSalesPaisa:\s*upiPaidPaisa/);
   assert.match(posService, /totalCardSalesPaisa:\s*cardPaidPaisa/);
-  assert.match(posService, /amount:\s*Math\.max\(0\.01,\s*cashPaidPaisa\s*\/\s*100\)/);
+  assert.match(posService, /isImmediateCompletion\s*&&\s*cashPaidPaisa\s*>\s*0/);
+  assert.match(posService, /amount:\s*cashPaidPaisa\s*\/\s*100/);
 });
