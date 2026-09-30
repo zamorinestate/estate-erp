@@ -1939,43 +1939,65 @@ const getQualityIntegrity = asyncHandler(async (request, response) => {
     lotCount,
     lotMissingProcurementLinkCount,
   ] = await Promise.all([
-    QualityChecklist.countDocuments({ organisationId }),
-    QualityChecklist.countDocuments({
-      organisationId,
-      $or: [
-        { templateId: { $in: [null, ''] } },
-        { templateVersion: { $in: [null, ''] } },
-      ],
-    }),
-    Cafe.find(cafeFilter).select('cafeId registrations.fssai').lean(),
-    CalibrationRecord.countDocuments({ organisationId, ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}) }),
-    CalibrationRecord.countDocuments({
-      organisationId,
-      ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
-      $or: [
-        { status: { $in: ['OVERDUE', 'FAILED'] } },
-        { nextDueDate: { $lt: new Date() } },
-      ],
-    }),
-    EmployeeTraining.countDocuments({
-      organisationId,
-      ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
-      trainingType: 'FOSTAC',
-      status: 'COMPLETED',
-      isFoodSafetySupervisor: true,
-      fostacVerificationStatus: {
-        $in: ['MANUALLY_VERIFIED', 'OFFICIAL_VERIFICATION_CONFIRMED'],
-      },
-    }),
-    InventoryLot.countDocuments({ organisationId, ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}) }),
-    InventoryLot.countDocuments({
-      organisationId,
-      ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
-      $or: [
-        { vendorId: { $in: [null, ''] } },
-        { procurementReference: { $in: [null, ''] } },
-      ],
-    }),
+    qualitySourceConnected(QualityChecklist.countDocuments)
+      ? QualityChecklist.countDocuments({ organisationId })
+      : 0,
+    qualitySourceConnected(QualityChecklist.countDocuments)
+      ? QualityChecklist.countDocuments({
+          organisationId,
+          $or: [
+            { templateId: { $in: [null, ''] } },
+            { templateVersion: { $in: [null, ''] } },
+          ],
+        })
+      : 0,
+    qualitySourceConnected(Cafe.find)
+      ? Cafe.find(cafeFilter).select('cafeId registrations.fssai').lean()
+      : [],
+    qualitySourceConnected(CalibrationRecord.countDocuments)
+      ? CalibrationRecord.countDocuments({
+          organisationId,
+          ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+        })
+      : 0,
+    qualitySourceConnected(CalibrationRecord.countDocuments)
+      ? CalibrationRecord.countDocuments({
+          organisationId,
+          ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+          $or: [
+            { status: { $in: ['OVERDUE', 'FAILED'] } },
+            { nextDueDate: { $lt: new Date() } },
+          ],
+        })
+      : 0,
+    qualitySourceConnected(EmployeeTraining.countDocuments)
+      ? EmployeeTraining.countDocuments({
+          organisationId,
+          ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+          trainingType: 'FOSTAC',
+          status: 'COMPLETED',
+          isFoodSafetySupervisor: true,
+          fostacVerificationStatus: {
+            $in: ['MANUALLY_VERIFIED', 'OFFICIAL_VERIFICATION_CONFIRMED'],
+          },
+        })
+      : 0,
+    qualitySourceConnected(InventoryLot.countDocuments)
+      ? InventoryLot.countDocuments({
+          organisationId,
+          ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+        })
+      : 0,
+    qualitySourceConnected(InventoryLot.countDocuments)
+      ? InventoryLot.countDocuments({
+          organisationId,
+          ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+          $or: [
+            { vendorId: { $in: [null, ''] } },
+            { procurementReference: { $in: [null, ''] } },
+          ],
+        })
+      : 0,
   ]);
 
   const fssaiApplicable = (cafes || []).filter((cafe) => cafe?.registrations?.fssai?.isApplicable !== false);
