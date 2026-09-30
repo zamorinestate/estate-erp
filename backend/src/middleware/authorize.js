@@ -3,6 +3,9 @@
 const {
   RolePermission,
 } = require('../models/RolePermission');
+const {
+  TemporaryAccessGrant,
+} = require('../models/TemporaryAccessGrant');
 
 const {
   logSecurityEvent,
@@ -512,9 +515,44 @@ function authorize(
         );
       }
 
+      const baseCafeAllowed =
+        !cafeId || canAccessCafe(auth, cafeId);
+
+      const temporaryGrantQuery = {
+        organisationId: auth.organisationId,
+        userId: auth.userId,
+        permissionCode: normalizedPermissionCode,
+        status: 'ACTIVE',
+        effectiveFrom: { $lte: new Date() },
+        effectiveTo: { $gt: new Date() },
+      };
+
+      if (!cafeId) {
+        temporaryGrantQuery.cafeId = null;
+      } else if (baseCafeAllowed) {
+        temporaryGrantQuery.cafeId = { $in: [null, cafeId] };
+      } else {
+        // A temporary grant may extend café scope only when it is explicitly
+        // bound to the exact requested café.
+        temporaryGrantQuery.cafeId = cafeId;
+      }
+
+      const temporaryGrant =
+        await TemporaryAccessGrant
+          .findOne(temporaryGrantQuery)
+          .lean();
+
+      const temporaryCafeAllowed =
+        Boolean(
+          cafeId &&
+          temporaryGrant &&
+          temporaryGrant.cafeId === cafeId
+        );
+
       if (
         cafeId &&
-        !canAccessCafe(auth, cafeId)
+        !baseCafeAllowed &&
+        !temporaryCafeAllowed
       ) {
         return sendAuthorizationError(
           response,
@@ -570,6 +608,31 @@ function authorize(
         selectEffectiveDecision(
           applicableRules
         );
+
+      // Explicit DENY rules remain authoritative. A temporary grant can only
+      // fill an otherwise-unruled permission gap and never bypass an explicit
+      // role-policy denial or an absolute role restriction.
+      if (!decision.allowed && !decision.rule && temporaryGrant) {
+        decision = {
+          allowed: true,
+          rule: {
+            permissionRuleId: temporaryGrant.grantId,
+            scope: temporaryGrant.cafeId ? 'CAFE' : 'RECORD',
+            requiresMfa: false,
+            requiresStepUpAuthentication: false,
+            requiresReauthentication: false,
+            requiresReason: false,
+            requiresAuditEvent: true,
+            fieldAccess: {
+              allowedFields: [],
+              deniedFields: [],
+              maskedFields: [],
+            },
+            temporaryGrantId: temporaryGrant.grantId,
+            temporaryGrantEffectiveTo: temporaryGrant.effectiveTo,
+          },
+        };
+      }
 
       if (!decision.allowed && !decision.rule) {
         // No explicit DB rule found. If the route explicitly permits this role,
@@ -640,6 +703,10 @@ function authorize(
         maskedFields:
           decision.rule.fieldAccess
             ?.maskedFields || [],
+        temporaryGrantId:
+          decision.rule.temporaryGrantId || null,
+        temporaryGrantEffectiveTo:
+          decision.rule.temporaryGrantEffectiveTo || null,
       };
 
       return next();
