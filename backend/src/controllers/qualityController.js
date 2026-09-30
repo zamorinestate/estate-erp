@@ -97,140 +97,20 @@ const inMemoryCapas = [];
 const inMemoryTemperatures = [];
 const inMemoryAudits = [];
 
-// Seed default initial state if empty
-function ensureQualitySeeded(organisationId, cafeId) {
-  if (inMemoryTemperatures.length === 0) {
-    inMemoryTemperatures.push(
-      {
-        logId: 'TEMP-2026-001',
-        organisationId,
-        cafeId: cafeId || 'CAFE-001',
-        assetId: 'AST-CHILL-01',
-        assetName: 'Main Chiller #1 (Dairy & Milk)',
-        location: 'Espresso Bar',
-        readingCelsius: 3.2,
-        expectedMinCelsius: 1.0,
-        expectedMaxCelsius: 4.0,
-        isExcursion: false,
-        source: 'MANUAL_PROBE',
-        recordedBy: 'EMP-MGR-01',
-        recordedAt: new Date(Date.now() - 3600000).toISOString(),
-      },
-      {
-        logId: 'TEMP-2026-002',
-        organisationId,
-        cafeId: cafeId || 'CAFE-001',
-        assetId: 'AST-FRZ-01',
-        assetName: 'Deep Freezer #1 (Gelato & Pastry)',
-        location: 'Back of House',
-        readingCelsius: -19.5,
-        expectedMinCelsius: -22.0,
-        expectedMaxCelsius: -18.0,
-        isExcursion: false,
-        source: 'SENSOR_TELEMETRY',
-        recordedBy: 'SYSTEM_IOT',
-        recordedAt: new Date(Date.now() - 1800000).toISOString(),
-      }
-    );
-  }
-
-  if (inMemoryQualityHolds.length === 0) {
-    inMemoryQualityHolds.push({
-      holdId: 'QHOLD-2026-001',
-      organisationId,
-      cafeId: cafeId || 'CAFE-001',
-      lotNumber: 'LOT-20260815-MILK',
-      itemSku: 'SKU-MILK-WHOLE',
-      itemName: 'Farm Fresh Whole Milk (50L)',
-      quantityHeld: 50,
-      unit: 'L',
-      reason: 'TEMPERATURE_DEVIATION',
-      description: 'Transit arrival temp logged at 7.8°C (above 4.0°C critical limit). Quarantined pending lab acidity check.',
-      status: 'ON_HOLD',
-      placedBy: 'EMP-MGR-01',
-      placedAt: new Date(Date.now() - 86400000).toISOString(),
-      disposition: null,
-      releasedAt: null,
-    });
-  }
-
-  if (inMemoryNcrs.length === 0) {
-    inMemoryNcrs.push({
-      ncrId: 'NCR-2026-001',
-      organisationId,
-      cafeId: cafeId || 'CAFE-001',
-      source: 'TEMPERATURE_MONITORING',
-      severity: 'MAJOR',
-      title: 'Inbound Milk Delivery Thermal Excursion',
-      description: 'Vehicle chilling unit malfunctioned during transit. Milk core temperature measured 7.8°C upon GRN inspection.',
-      immediateAction: 'Placed 50L batch on Quality Hold (QHOLD-2026-001). Rejected GRN receipt and notified supplier.',
-      status: 'CONTAINED',
-      reportedBy: 'EMP-MGR-01',
-      reportedAt: new Date(Date.now() - 86400000).toISOString(),
-      capaId: 'CAPA-2026-001',
-    });
-  }
-
-  if (inMemoryCapas.length === 0) {
-    inMemoryCapas.push({
-      capaId: 'CAPA-2026-001',
-      organisationId,
-      cafeId: cafeId || 'CAFE-001',
-      ncrId: 'NCR-2026-001',
-      title: 'Supplier Cold-Chain Transport Protocol Revision',
-      rootCauseMethod: '5_WHY',
-      rootCauseAnalysis: '1. Why was temp high? Chiller failed. 2. Why did it fail? Power lead disconnected in transit. 3. Why disconnected? No locking bracket on auxiliary battery. 4. Why no bracket? Supplier vehicle not retrofitted. 5. Root Cause: Supplier fleet maintenance SOP lacked pre-dispatch thermal check checklist.',
-      actionPlan: 'Require Nilgiri Dairy Co-operative to submit digital data logger graph for all refrigerated deliveries and install cable clamps on fleet.',
-      ownerUserId: 'EMP-MGR-01',
-      targetDate: '2026-08-30',
-      status: 'IMPLEMENTED',
-      effectivenessStatus: 'PENDING_VERIFICATION',
-      verifiedBy: null,
-      verifiedAt: null,
-    });
-  }
-
-  if (inMemoryAudits.length === 0) {
-    inMemoryAudits.push({
-      auditId: 'QAUD-2026-001',
-      organisationId,
-      cafeId: cafeId || 'CAFE-001',
-      auditType: 'INTERNAL_HYGIENE_READINESS',
-      standard: 'FSSAI_SCHEDULE_4_GHP',
-      title: 'Q3 Internal Food Safety & GMP Audit',
-      leadAuditor: 'EMP-MGR-01',
-      auditDate: '2026-08-18',
-      scorePercentage: 96,
-      findingsCount: 1,
-      status: 'COMPLETED',
-      findings: [
-        {
-          findingId: 'FND-01',
-          clause: 'Schedule 4 Part II Sec 3.2',
-          category: 'MINOR_NC',
-          description: 'Handwash station soap dispenser in bar prep was running low before afternoon shift change.',
-          correctiveActionRequired: 'Refilled immediately; added mid-day dispenser check to Washroom & Bar Hygiene template.',
-          status: 'CLOSED',
-        },
-      ],
-    });
-  }
-}
-
 /**
  * 1. GET /api/v1/quality/overview
  */
 const getQualityOverview = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
   const effectiveCafe = resolveEffectiveCafeScope(request);
-  const primaryCafeId = effectiveCafe || request.auth.assignedCafeIds?.[0] || 'CAFE-001';
-  ensureQualitySeeded(organisationId, primaryCafeId);
 
   const filter = { organisationId };
   if (effectiveCafe) {
     filter.cafeId = effectiveCafe;
   } else if (request.query.cafeId && request.query.cafeId !== 'ALL') {
-    filter.cafeId = request.query.cafeId.trim().toUpperCase();
+    const requestedCafeId = normalizeId(request.query.cafeId);
+    assertCafeAccess(request, requestedCafeId);
+    filter.cafeId = requestedCafeId;
   }
 
   const [dbChecklists, totalChecklists] = await Promise.all([
@@ -242,14 +122,36 @@ const getQualityOverview = asyncHandler(async (request, response) => {
   ]);
 
   const activeHolds = inMemoryQualityHolds.filter(
-    (h) => h.organisationId === organisationId && h.status === 'ON_HOLD' && (!effectiveCafe || h.cafeId === effectiveCafe)
+    (h) =>
+      h.organisationId === organisationId &&
+      h.status === 'ON_HOLD' &&
+      (!filter.cafeId || h.cafeId === filter.cafeId)
   );
   const openNcrs = inMemoryNcrs.filter(
-    (n) => n.organisationId === organisationId && n.status !== 'CLOSED' && (!effectiveCafe || n.cafeId === effectiveCafe)
+    (n) =>
+      n.organisationId === organisationId &&
+      n.status !== 'CLOSED' &&
+      (!filter.cafeId || n.cafeId === filter.cafeId)
   );
   const openCapas = inMemoryCapas.filter(
-    (c) => c.organisationId === organisationId && c.status !== 'CLOSED' && (!effectiveCafe || c.cafeId === effectiveCafe)
+    (entry) =>
+      entry.organisationId === organisationId &&
+      entry.status !== 'CLOSED' &&
+      (!filter.cafeId || entry.cafeId === filter.cafeId)
   );
+
+  let temperatures = [];
+  if (filter.cafeId && qualitySourceConnected(FoodSafetyService.listTemperatures)) {
+    try {
+      temperatures = await FoodSafetyService.listTemperatures({
+        organisationId,
+        cafeId: filter.cafeId,
+        limit: 5,
+      });
+    } catch (_) {
+      temperatures = [];
+    }
+  }
 
   const actionCentreItems = [];
   if (activeHolds.length > 0) {
@@ -257,7 +159,7 @@ const getQualityOverview = asyncHandler(async (request, response) => {
       id: 'act-hold-1',
       type: 'QUALITY_HOLD',
       title: `${activeHolds.length} Inventory Lot(s) on Quality Quarantine`,
-      description: `${activeHolds[0].itemName} (${activeHolds[0].lotNumber}) isolated due to ${activeHolds[0].reason.toLowerCase().replace(/_/g, ' ')}.`,
+      description: `${activeHolds[0].itemName} (${activeHolds[0].lotNumber}) isolated due to ${String(activeHolds[0].reason || 'quality hold').toLowerCase().replace(/_/g, ' ')}.`,
       deepTab: 'holds',
       severity: 'CRITICAL',
     });
@@ -267,17 +169,17 @@ const getQualityOverview = asyncHandler(async (request, response) => {
       id: 'act-ncr-1',
       type: 'OPEN_NCR',
       title: `${openNcrs.length} Non-Conformance Report(s) under Investigation`,
-      description: `${openNcrs[0].title} — immediate containment applied.`,
+      description: openNcrs[0].title || 'Open non-conformance requires review.',
       deepTab: 'ncrs',
       severity: 'ATTENTION',
     });
   }
-  if (openCapas.some((c) => c.effectivenessStatus === 'PENDING_VERIFICATION')) {
+  if (openCapas.some((entry) => entry.effectivenessStatus === 'PENDING_VERIFICATION')) {
     actionCentreItems.push({
       id: 'act-capa-1',
       type: 'CAPA_VERIFICATION',
       title: 'CAPA Effectiveness Verification Awaiting Review',
-      description: 'CAPA-2026-001 actions implemented; manager verification required for closure.',
+      description: 'A recorded CAPA is awaiting effectiveness verification.',
       deepTab: 'capas',
       severity: 'ATTENTION',
     });
@@ -287,29 +189,39 @@ const getQualityOverview = asyncHandler(async (request, response) => {
     success: true,
     data: {
       kpis: {
-        checksDueToday: 18,
-        overdueActions: 0,
+        checksDueToday: null,
+        checksDueTodayStatus: 'NOT_AVAILABLE_NO_DURABLE_CHECKLIST_SCHEDULE',
+        overdueActions: null,
+        overdueActionsStatus: 'NOT_AVAILABLE_VOLATILE_NCR_CAPA_STATE',
         openNcrs: openNcrs.length,
-        complianceDueSoon: 2,
+        complianceDueSoon: null,
+        complianceDueSoonStatus: 'LOAD_COMPLIANCE_REGISTER_FOR_AUTHORITATIVE_COUNT',
         activeHoldsCount: activeHolds.length,
         openCapasCount: openCapas.length,
         totalCompletedChecks: totalChecklists,
       },
       actionCentreItems,
       recentChecklists: dbChecklists,
-      temperatures: inMemoryTemperatures.slice(-5),
+      temperatures,
       prpStatus: {
-        cleaningSanitation: '100% VERIFIED',
-        pestControl: 'CURRENT (Next: 2026-09-01)',
-        waterSafety: 'POTABLE (Lab Report: 2026-08-10)',
-        personalHygiene: 'COMPLIANT',
-        allergenControls: 'ACTIVE',
+        cleaningSanitation: 'NOT_ASSESSED',
+        pestControl: 'NOT_ASSESSED',
+        waterSafety: 'NOT_ASSESSED',
+        personalHygiene: 'NOT_ASSESSED',
+        allergenControls: 'NOT_ASSESSED',
+      },
+      sourceStatus: {
+        checklistRecords: 'DURABLE',
+        temperatureRecords: filter.cafeId ? 'DURABLE_IF_AVAILABLE' : 'CAFE_SCOPE_REQUIRED',
+        qualityHolds: 'VOLATILE_RUNTIME_ONLY',
+        ncrs: 'VOLATILE_RUNTIME_ONLY',
+        capas: 'VOLATILE_RUNTIME_ONLY',
+        audits: 'VOLATILE_RUNTIME_ONLY',
       },
     },
     correlationId: request.correlationId || null,
   });
 });
-
 /**
  * 2. GET /api/v1/quality/checklists
  */
@@ -539,14 +451,6 @@ const listTemperatures = asyncHandler(async (request, response) => {
     logs = [];
   }
 
-  // Fallback to in-memory if DB is empty / offline
-  if (logs.length === 0) {
-    ensureQualitySeeded(organisationId);
-    logs = inMemoryTemperatures.filter((t) => t.organisationId === organisationId);
-    if (targetCafe) {
-      logs = logs.filter((t) => t.cafeId === targetCafe);
-    }
-  }
 
   return response.status(200).json({
     success: true,
@@ -890,7 +794,6 @@ const recordCalibration = asyncHandler(async (request, response) => {
  */
 const listQualityHolds = asyncHandler(async (request, response) => {
   const { organisationId, role, assignedCafeIds } = request.auth;
-  ensureQualitySeeded(organisationId);
 
   let holds = inMemoryQualityHolds.filter((h) => h.organisationId === organisationId);
   if (role !== 'MASTER' && role !== 'OWNER') {
@@ -995,7 +898,6 @@ const releaseQualityHold = asyncHandler(async (request, response) => {
  */
 const listNcrs = asyncHandler(async (request, response) => {
   const { organisationId, role, assignedCafeIds } = request.auth;
-  ensureQualitySeeded(organisationId);
 
   let ncrs = inMemoryNcrs.filter((n) => n.organisationId === organisationId);
   if (role !== 'MASTER' && role !== 'OWNER') {
@@ -1055,7 +957,6 @@ const createNcr = asyncHandler(async (request, response) => {
 
 const listCapas = asyncHandler(async (request, response) => {
   const { organisationId, role, assignedCafeIds } = request.auth;
-  ensureQualitySeeded(organisationId);
 
   let capas = inMemoryCapas.filter((c) => c.organisationId === organisationId);
   if (role !== 'MASTER' && role !== 'OWNER') {
@@ -1157,7 +1058,6 @@ const verifyCapa = asyncHandler(async (request, response) => {
  */
 const listAudits = asyncHandler(async (request, response) => {
   const { organisationId, role, assignedCafeIds } = request.auth;
-  ensureQualitySeeded(organisationId);
 
   let audits = inMemoryAudits.filter((a) => a.organisationId === organisationId);
   if (role !== 'MASTER' && role !== 'OWNER') {
