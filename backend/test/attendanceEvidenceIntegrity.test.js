@@ -21,6 +21,7 @@ const {
   classifyIntegrityFailure,
   buildSecurityAlertKey,
   quarantineAttendanceEvidenceFailures,
+  releaseQuarantinedAttendanceEvidence,
 } = require('../src/services/attendanceEvidenceIncidentService');
 const { notificationService } = require('../src/services/NotificationService');
 
@@ -800,5 +801,180 @@ test('EVI-021: immutable audit schema accepts every canonical evidence actor cla
     assert.ok(source.includes(`'${role}'`), `AuditEvent actor roles must include ${role}`);
   }
   assert.match(source, /enum:\s*AUDIT_ACTOR_ROLES/);
+});
+
+test('EVI-022: quarantine release requires a fresh PASS and preserves immutable release lineage', async () => {
+  const originals = {
+    findOne: Attendance.findOne,
+    updateOne: Attendance.updateOne,
+  };
+
+  const attendance = createAttendance({
+    _id: 'ATT-DOC-RELEASE-1',
+    attendanceId: 'AT-20260930-777',
+    attendanceEvidence: {
+      checkIn: {
+        selfieMediaId: 'FILE-777',
+        photoFileId: 'FILE-777',
+        verificationStatus: 'FLAGGED',
+        integrityState: 'QUARANTINED',
+        integrityAuditEventId: 'AUD-FAILURE-777',
+      },
+      checkOut: null,
+    },
+    selfieFileId: 'FILE-777',
+  });
+
+  Attendance.findOne = () => ({
+    lean: async () => attendance,
+  });
+
+  let updateCapture = null;
+  Attendance.updateOne = async (filter, update) => {
+    updateCapture = { filter, update };
+    return { matchedCount: 1, modifiedCount: 1 };
+  };
+
+  let verified = 0;
+  let audited = 0;
+
+  try {
+    const result = await releaseQuarantinedAttendanceEvidence({
+      request: {
+        auth: {
+          organisationId: 'ORG-ZAMORIN',
+          userId: 'MU-PRIMARY-01',
+          role: 'MASTER',
+          isPrimaryMaster: true,
+        },
+        correlationId: 'CORR-RELEASE-777',
+      },
+      attendanceId: 'AT-20260930-777',
+      punchType: 'CHECK_IN',
+      reason: 'Investigated storage repair and verified canonical bytes.',
+      verifyEvidence: async (args) => {
+        verified += 1;
+        assert.equal(args.verifyStorageBytes, true);
+        return {
+          status: 'PASS',
+          fileId: 'FILE-777',
+          failedChecks: [],
+        };
+      },
+      recordAudit: async (payload) => {
+        audited += 1;
+        assert.equal(payload.action, 'ATTENDANCE_EVIDENCE_QUARANTINE_RELEASE_VERIFIED');
+        assert.equal(payload.metadata.previousIntegrityAuditEventId, 'AUD-FAILURE-777');
+        return { auditEventId: 'AUD-RELEASE-777' };
+      },
+    });
+
+    assert.equal(verified, 1);
+    assert.equal(audited, 1);
+    assert.equal(result.integrityState, 'PASS');
+    assert.equal(result.releaseAuditEventId, 'AUD-RELEASE-777');
+    assert.equal(updateCapture.filter['attendanceEvidence.checkIn.integrityState'], 'QUARANTINED');
+    assert.equal(updateCapture.filter['attendanceEvidence.checkIn.verificationStatus'], 'FLAGGED');
+    assert.equal(updateCapture.update.$set['attendanceEvidence.checkIn.integrityState'], 'PASS');
+    assert.equal(updateCapture.update.$set['attendanceEvidence.checkIn.verificationStatus'], 'VERIFIED');
+    assert.equal(updateCapture.update.$set['attendanceEvidence.checkIn.integrityAuditEventId'], undefined);
+    assert.equal(
+      updateCapture.update.$set['attendanceEvidence.checkIn.integrityReleaseAuditEventId'],
+      'AUD-RELEASE-777'
+    );
+  } finally {
+    Attendance.findOne = originals.findOne;
+    Attendance.updateOne = originals.updateOne;
+  }
+});
+
+test('EVI-023: quarantine release fails closed when fresh forensic verification still fails', async () => {
+  const originals = {
+    findOne: Attendance.findOne,
+    updateOne: Attendance.updateOne,
+  };
+
+  const attendance = createAttendance({
+    _id: 'ATT-DOC-RELEASE-2',
+    attendanceId: 'AT-20260930-778',
+    attendanceEvidence: {
+      checkIn: {
+        selfieMediaId: 'FILE-778',
+        photoFileId: 'FILE-778',
+        verificationStatus: 'FLAGGED',
+        integrityState: 'QUARANTINED',
+        integrityAuditEventId: 'AUD-FAILURE-778',
+      },
+      checkOut: null,
+    },
+    selfieFileId: 'FILE-778',
+  });
+
+  Attendance.findOne = () => ({
+    lean: async () => attendance,
+  });
+
+  let updateCalled = false;
+  Attendance.updateOne = async () => {
+    updateCalled = true;
+    return { matchedCount: 1, modifiedCount: 1 };
+  };
+
+  let auditCalled = false;
+
+  try {
+    await assert.rejects(
+      async () => releaseQuarantinedAttendanceEvidence({
+        request: {
+          auth: {
+            organisationId: 'ORG-ZAMORIN',
+            userId: 'MU-PRIMARY-01',
+            role: 'MASTER',
+            isPrimaryMaster: true,
+          },
+        },
+        attendanceId: 'AT-20260930-778',
+        punchType: 'CHECK_IN',
+        reason: 'Retest after investigation still detects tampering.',
+        verifyEvidence: async () => ({
+          status: 'FAIL',
+          fileId: 'FILE-778',
+          failedChecks: ['storage_sha256_matches_metadata'],
+        }),
+        recordAudit: async () => {
+          auditCalled = true;
+          return { auditEventId: 'SHOULD-NOT-HAPPEN' };
+        },
+      }),
+      { statusCode: 409, code: 'ATTENDANCE_EVIDENCE_RELEASE_VERIFICATION_FAILED' }
+    );
+
+    assert.equal(updateCalled, false);
+    assert.equal(auditCalled, false);
+  } finally {
+    Attendance.findOne = originals.findOne;
+    Attendance.updateOne = originals.updateOne;
+  }
+});
+
+test('EVI-024: controlled release is Primary-Master-only and explicitly confirmed in routing/controller source', () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceController.js'),
+    'utf8'
+  );
+  const routesSource = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceRoutes.js'),
+    'utf8'
+  );
+  const viewerSource = fs.readFileSync(
+    path.join(__dirname, '../../frontend/src/js/modules/attendance/attendanceEvidenceViewer.js'),
+    'utf8'
+  );
+
+  assert.match(controllerSource, /Only the Primary Master may release quarantined attendance evidence/);
+  assert.match(controllerSource, /RELEASE_QUARANTINED_ATTENDANCE_EVIDENCE/);
+  assert.match(routesSource, /router\.post\('\/evidence\/integrity\/release', releaseAttendanceEvidenceQuarantine\)/);
+  assert.match(viewerSource, /Re-verify &amp; Release Quarantine/);
+  assert.match(viewerSource, /confirmation:\s*'RELEASE_QUARANTINED_ATTENDANCE_EVIDENCE'/);
 });
 
