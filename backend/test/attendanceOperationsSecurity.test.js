@@ -108,7 +108,25 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     save: async function () { return this; },
   };
 
-  const mockAttendance = [sampleAttendance, sampleAttendance2];
+  const sampleOvertimeAttendance = {
+    attendanceId: 'AT-20260822-003',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    userId: 'EMP-001',
+    businessDate: '2026-08-22',
+    status: 'CHECKED_OUT',
+    checkInAt: new Date('2026-08-22T06:00:00Z'),
+    checkOutAt: new Date('2026-08-22T15:30:00Z'),
+    regularMinutes: 480,
+    isLate: false,
+    overtimeStatus: 'PENDING_REVIEW',
+    detectedOvertimeMinutes: 90,
+    approvedOvertimeMinutes: 0,
+    rawTimeEvents: [],
+    save: async function () { return this; },
+  };
+
+  const mockAttendance = [sampleAttendance, sampleAttendance2, sampleOvertimeAttendance];
 
   t.mock.method(Attendance, 'find', (query = {}) => {
     let filtered = [...mockAttendance];
@@ -362,7 +380,7 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     const failApproveReq = {
       auth: adminAuth,
       body: {
-        attendanceId: 'AT-20260822-001',
+        attendanceId: 'AT-20260822-003',
         decision: 'APPROVE',
         approvedMinutes: 90,
       },
@@ -375,7 +393,7 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     const verifyReq = {
       auth: adminAuth,
       body: {
-        attendanceId: 'AT-20260822-001',
+        attendanceId: 'AT-20260822-003',
         decision: 'VERIFY_ADMIN',
       },
     };
@@ -393,7 +411,7 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     const masterApproveReq = {
       auth: primaryMasterAuth,
       body: {
-        attendanceId: 'AT-20260822-001',
+        attendanceId: 'AT-20260822-003',
         decision: 'APPROVE',
         approvedMinutes: 90,
         reason: 'Authorized peak hours shift extension',
