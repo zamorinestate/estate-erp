@@ -500,3 +500,32 @@ test('P0-WF-034: roster save and publish validate live employee café membership
   assert.ok(saveBlock.includes('await ensureRosterAssignmentCafeMembership({'));
   assert.ok(publishBlock.includes('await ensureRosterAssignmentCafeMembership({'));
 });
+
+
+test('P0-WF-035: manual attendance and Calendar 360 fail closed on state, employee café, and retired Master authority', () => {
+  const manualStart = attendanceController.indexOf('const recordMasterManualAttendance = asyncHandler');
+  const manualEnd = attendanceController.indexOf('// 4. GET /api/v1/attendance/calendar-360/:userId', manualStart);
+  const manualBlock = attendanceController.slice(manualStart, manualEnd);
+
+  assert.ok(manualBlock.includes("['CHECK_IN', 'CHECK_OUT'].includes(eventType)"));
+  assert.ok(manualBlock.includes("'MANUAL_EVENT_TYPE_UNSUPPORTED'"));
+  assert.ok(manualBlock.includes("'ATTENDANCE_EMPLOYEE_CAFE_MISMATCH'"));
+  assert.ok(manualBlock.includes("'MANUAL_CHECK_OUT_STATE_INVALID'"));
+  assert.ok(manualBlock.includes("'ATTENDANCE_RECORD_ALREADY_EXISTS'"));
+  assert.equal(manualBlock.includes("eventType === 'ON_LEAVE'"), false);
+  assert.equal(manualBlock.includes("eventType === 'FULL_DAY'"), false);
+
+  const calendarStart = attendanceController.indexOf('const getEmployeeMonthlyCalendar = asyncHandler');
+  const calendarEnd = attendanceController.indexOf('// 5. Shift Rosters', calendarStart);
+  const calendarBlock = attendanceController.slice(calendarStart, calendarEnd);
+  assert.ok(calendarBlock.includes('ensureCafeOperationsAllowed(request);'));
+  assert.ok(calendarBlock.includes("request.auth.role === 'OWNER' || request.auth.role === 'CAFE_ADMIN'"));
+  assert.ok(calendarBlock.includes("filter.cafeId = { $in: assigned };"));
+
+  const manualUiStart = attendanceShiftsPage.indexOf('async function openScopedManualAttendanceModal');
+  const manualUiEnd = attendanceShiftsPage.indexOf('// Modal: Interactive Click-to-Edit Shift', manualUiStart);
+  const manualUiBlock = attendanceShiftsPage.slice(manualUiStart, manualUiEnd);
+  assert.equal(manualUiBlock.includes('option value="FULL_DAY"'), false);
+  assert.equal(manualUiBlock.includes('option value="ON_LEAVE"'), false);
+  assert.ok(manualUiBlock.includes('time: effectiveTimestamp'));
+});
