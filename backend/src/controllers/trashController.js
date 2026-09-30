@@ -161,10 +161,28 @@ const listTrashItems = asyncHandler(async (request, response) => {
   const now = new Date();
   const processedItems = items.map((i) => {
     const daysRemaining = Math.max(0, Math.ceil((new Date(i.expiresAt) - now) / (1000 * 60 * 60 * 24)));
+    const isHoldActive = i.holdState === 'ACTIVE' || i.holds?.some((h) => !h.releasedAt);
+    const frozenStates = new Set([
+      'DISPOSITION_REVIEW',
+      'DISPOSITION_APPROVED',
+      'DISPOSITION_PROCESSING',
+      'DISPOSED',
+      'RESTORED',
+    ]);
+    let effectiveLifecycleStatus = i.lifecycleStatus;
+    if (isHoldActive) {
+      effectiveLifecycleStatus = 'ON_HOLD';
+    } else if (!frozenStates.has(i.lifecycleStatus)) {
+      effectiveLifecycleStatus = new Date(i.expiresAt) <= now
+        ? 'RETENTION_COMPLETE'
+        : (daysRemaining <= 7 ? 'EXPIRING_SOON' : 'RECOVERABLE');
+    }
+
     return {
       ...i,
+      lifecycleStatus: effectiveLifecycleStatus,
       daysRemaining,
-      isHoldActive: i.holdState === 'ACTIVE' || i.holds?.some((h) => !h.releasedAt),
+      isHoldActive,
     };
   });
 
