@@ -85,6 +85,13 @@ const paymentRunSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    bankTransactionId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+      index: true,
+    },
     paymentMethod: {
       type: String,
       enum: ['BANK_TRANSFER', 'NEFT', 'RTGS', 'IMPS', 'UPI', 'CHEQUE'],
