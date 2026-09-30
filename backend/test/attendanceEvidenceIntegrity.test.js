@@ -231,7 +231,12 @@ test('EVI-006: forensic audit controller is Primary-Master only', async () => {
   };
 
   await assert.rejects(
-    async () => auditAttendanceEvidence(request, {}),
+    async () => new Promise((resolve, reject) => {
+      auditAttendanceEvidence(request, {}, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    }),
     { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
   );
 });
