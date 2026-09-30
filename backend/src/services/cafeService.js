@@ -2604,7 +2604,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || cafe.status !== 'ACTIVE') {
+    if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2693,7 +2693,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || cafe.status !== 'ACTIVE') {
+    if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2758,7 +2758,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || cafe.status !== 'ACTIVE') {
+    if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2810,8 +2810,8 @@ class CafeService {
       throw new ApiError(404, 'CAFE_NOT_FOUND', 'Target café not found.');
     }
 
-    if (cafe.status !== 'ACTIVE') {
-      throw new ApiError(403, 'CAFE_INACTIVE', 'Café is not active.');
+    if (!['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
+      throw new ApiError(403, 'CAFE_INACTIVE', 'Café is not in an operational or commissioned test state.');
     }
 
     // 2. Role-based authorization binding check
@@ -3131,33 +3131,30 @@ class CafeService {
       testResults: cafe.readinessChecklist ? { ...cafe.readinessChecklist } : null,
     });
 
-    const requiresAccessTransition =
-      normalizedTarget === 'ACTIVE' ||
-      normalizedTarget === 'TEMPORARILY_CLOSED' ||
-      normalizedTarget === 'CLOSED';
+    const targetAccessStatus =
+      ['TEST_MODE', 'ACTIVE'].includes(normalizedTarget)
+        ? 'ACTIVE'
+        : 'DISABLED';
 
-    if (requiresAccessTransition) {
-      const targetAccessStatus = normalizedTarget === 'ACTIVE' ? 'ACTIVE' : 'DISABLED';
-      const accessResult = await CafeAccess.updateOne(
-        {
-          organisationId: cafe.organisationId,
-          cafeId: cafe.cafeId,
+    const accessResult = await CafeAccess.updateOne(
+      {
+        organisationId: cafe.organisationId,
+        cafeId: cafe.cafeId,
+      },
+      {
+        $set: {
+          accessStatus: targetAccessStatus,
+          updatedBy: auth.userId,
         },
-        {
-          $set: {
-            accessStatus: targetAccessStatus,
-            updatedBy: auth.userId,
-          },
-        }
-      );
-
-      if (!accessResult || accessResult.matchedCount !== 1) {
-        throw new ApiError(
-          409,
-          'CAFE_ACCESS_STATE_MISSING',
-          'Café lifecycle transition was not completed because its access record could not be updated.'
-        );
       }
+    );
+
+    if (!accessResult || accessResult.matchedCount !== 1) {
+      throw new ApiError(
+        409,
+        'CAFE_ACCESS_STATE_MISSING',
+        'Café lifecycle transition was not completed because its access record could not be updated.'
+      );
     }
 
     await cafe.save();
