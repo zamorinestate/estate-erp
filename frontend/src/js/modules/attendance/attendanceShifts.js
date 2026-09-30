@@ -1456,7 +1456,7 @@ function renderPoliciesSubpanel() {
               <span style="color:var(--muted);">Orphan upload grace policy</span>
               <strong style="color:var(--ink); font-family:var(--font-mono);">${orphanGraceDisplay}</strong>
             </div>
-            ${cachedOrphanReconciliation ? `
+            ${isPrimary && cachedOrphanReconciliation ? `
               <div style="display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px;">
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanScanned}</strong><div style="font-size:10px;color:var(--muted);">Scanned</div></div>
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanLinkedProtected}</strong><div style="font-size:10px;color:var(--muted);">Linked Protected</div></div>
