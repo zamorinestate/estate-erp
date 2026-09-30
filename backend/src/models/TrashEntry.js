@@ -393,6 +393,13 @@ const trashEntrySchema = new mongoose.Schema(
       uppercase: true,
     },
 
+    dispositionExecutionAuthorizationAuditEventId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
     dispositionStorageStatus: {
       type: String,
       enum: ['NOT_REQUIRED', 'PENDING', 'VERIFIED_DELETED', 'FAILED'],
