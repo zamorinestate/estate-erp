@@ -36,6 +36,8 @@ let rosterPublishedMap = {};
 
 let cafeRosterSchedules = {};
 let cachedCafes = [];
+let cachedEmployees = [];
+let rosterLoadPromise = null;
 
 function toIstTimeInput(value) {
   if (!value) return "";
@@ -1737,6 +1739,208 @@ export function wireAttendance(root, subroute) {
       }
     });
   }
+}
+
+function getActiveRosterCafeId() {
+  const role = state.role || state.user?.role || ROLES.MASTER;
+  if (role === ROLES.CAFE_ADMIN) {
+    return state.user?.assignedCafeIds?.[0] || state.user?.primaryCafeId || state.currentCafeId || "";
+  }
+  return selectedRosterCafe || state.currentCafeId || state.user?.primaryCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "";
+}
+
+function getRosterWeekStartDate(offset = selectedRosterWeekOffset) {
+  const today = new Date(`${getCurrentIstDateKey()}T12:00:00+05:30`);
+  const day = today.getDay();
+  const mondayDelta = day === 0 ? -6 : 1 - day;
+  today.setDate(today.getDate() + mondayDelta + (Number(offset) || 0) * 7);
+  return today.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+function getRosterDateKeys(weekStartDate) {
+  const base = new Date(`${weekStartDate}T12:00:00+05:30`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const d = new Date(base);
+    d.setDate(base.getDate() + index);
+    return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  });
+}
+
+async function loadEmployeeDirectory() {
+  try {
+    const res = await apiGet("/employees?limit=200");
+    const employees = res?.data?.employees || res?.data || res?.employees || (Array.isArray(res) ? res : []);
+    cachedEmployees = Array.isArray(employees) ? employees : [];
+  } catch (err) {
+    cachedEmployees = [];
+  }
+  return cachedEmployees;
+}
+
+function normaliseRosterRows(roster, employees = cachedEmployees) {
+  const employeeMap = new Map();
+  for (const employee of employees || []) {
+    const id = employee?.userId || employee?.employeeId || employee?.id || employee?._id;
+    if (!id) continue;
+    employeeMap.set(String(id).toUpperCase(), employee);
+  }
+
+  const weekStartDate = roster?.weekStartDate || getRosterWeekStartDate();
+  const dates = getRosterDateKeys(weekStartDate);
+  const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const rows = new Map();
+
+  for (const assignment of roster?.assignments || []) {
+    const userId = String(assignment?.userId || "").trim().toUpperCase();
+    const dayIndex = dates.indexOf(String(assignment?.date || ""));
+    if (!userId || dayIndex < 0) continue;
+
+    const employee = employeeMap.get(userId);
+    if (!rows.has(userId)) {
+      rows.set(userId, {
+        id: userId,
+        name: employee?.name || employee?.fullName || employee?.displayName || userId,
+        role: assignment?.assignedRole || employee?.designation || employee?.role || "",
+        mon: "OFF", tue: "OFF", wed: "OFF", thu: "OFF", fri: "OFF", sat: "OFF", sun: "OFF",
+      });
+    }
+
+    const row = rows.get(userId);
+    row[dayKeys[dayIndex]] = `${assignment.startTime} - ${assignment.endTime}`;
+    if (!row.role && assignment?.assignedRole) row.role = assignment.assignedRole;
+  }
+
+  return [...rows.values()];
+}
+
+function serializeRosterRows(cafeId, weekStartDate) {
+  const rows = cafeRosterSchedules[cafeId] || [];
+  const dates = getRosterDateKeys(weekStartDate);
+  const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const assignments = [];
+
+  for (const row of rows) {
+    for (let index = 0; index < dayKeys.length; index += 1) {
+      const value = String(row?.[dayKeys[index]] || "").trim().toUpperCase();
+      if (!value || value === "OFF" || value === "LEAVE") continue;
+
+      const match = value.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/);
+      if (!match) {
+        throw new Error(`Invalid shift time for ${row.id} on ${dates[index]}. Use HH:MM - HH:MM.`);
+      }
+
+      assignments.push({
+        userId: row.id,
+        date: dates[index],
+        startTime: match[1],
+        endTime: match[2],
+        assignedRole: row.role || null,
+      });
+    }
+  }
+
+  return assignments;
+}
+
+async function loadRosterData({ cafeId = getActiveRosterCafeId(), weekStartDate = getRosterWeekStartDate() } = {}) {
+  if (!cafeId) {
+    cachedRoster = null;
+    return null;
+  }
+
+  if (rosterLoadPromise) return rosterLoadPromise;
+
+  rosterLoadPromise = (async () => {
+    const [rosterRes] = await Promise.all([
+      apiGet(`/attendance/roster?cafeId=${encodeURIComponent(cafeId)}&weekStartDate=${encodeURIComponent(weekStartDate)}`),
+      cachedEmployees.length ? Promise.resolve(cachedEmployees) : loadEmployeeDirectory(),
+    ]);
+
+    const roster = rosterRes?.data?.roster || null;
+    cachedRoster = roster;
+    cafeRosterSchedules[cafeId] = normaliseRosterRows(roster || { cafeId, weekStartDate, assignments: [] });
+    rosterPublishedMap[cafeId] = roster?.status === "PUBLISHED";
+    return roster;
+  })();
+
+  try {
+    return await rosterLoadPromise;
+  } finally {
+    rosterLoadPromise = null;
+  }
+}
+
+async function saveCurrentRosterDraft() {
+  const cafeId = getActiveRosterCafeId();
+  const weekStartDate = getRosterWeekStartDate();
+
+  if (!cafeId) {
+    throw new Error("Select an authorised café before saving a roster.");
+  }
+  if (cachedRoster?.status === "PUBLISHED") {
+    throw new Error("Published rosters are immutable. Create or select a draft week before editing.");
+  }
+
+  const assignments = serializeRosterRows(cafeId, weekStartDate);
+  const res = await apiPost("/attendance/roster", { cafeId, weekStartDate, assignments });
+  const roster = res?.data?.roster;
+  if (!roster) {
+    throw new Error("Roster save did not return an authoritative roster.");
+  }
+
+  cachedRoster = roster;
+  cafeRosterSchedules[cafeId] = normaliseRosterRows(roster);
+  rosterPublishedMap[cafeId] = roster.status === "PUBLISHED";
+  return roster;
+}
+
+async function loadLiveAttendanceData() {
+  try {
+    await loadCafesList();
+
+    const role = state.role || state.user?.role || ROLES.MASTER;
+    const isCafeAdmin = role === ROLES.CAFE_ADMIN;
+    const scopedCafeId = state.user?.assignedCafeIds?.[0] || state.user?.primaryCafeId || state.currentCafeId || "";
+    const cafeQuery = isCafeAdmin && scopedCafeId ? `?cafeId=${encodeURIComponent(scopedCafeId)}` : "";
+
+    const [ovRes, liveRes, timeRes, shiftsRes, otRes, excRes] = await Promise.all([
+      apiGet(`/attendance/overview${cafeQuery}`).catch(() => null),
+      apiGet(`/attendance/live${cafeQuery}`).catch(() => null),
+      apiGet("/attendance/server-time").catch(() => null),
+      apiGet(`/shifts${cafeQuery}`).catch(() => null),
+      apiGet(`/attendance/overtime${cafeQuery}`).catch(() => null),
+      apiGet(`/attendance/exceptions${cafeQuery}`).catch(() => null),
+    ]);
+
+    if (ovRes?.data) cachedOverview = ovRes.data;
+    if (liveRes?.data?.attendance) cachedLiveAttendance = liveRes.data.attendance;
+    if (timeRes?.data) cachedServerTime = timeRes.data;
+    if (shiftsRes?.data?.shifts) cachedShifts = shiftsRes.data.shifts;
+    else if (Array.isArray(shiftsRes?.data)) cachedShifts = shiftsRes.data;
+    if (otRes?.data?.records) cachedOvertime = otRes.data.records;
+    if (excRes?.data?.exceptions) cachedExceptions = excRes.data.exceptions;
+  } catch (err) {
+    console.warn("Attendance data load notice:", err);
+  }
+}
+
+async function loadCalendar360Data() {
+  if (!selectedUserId || !selectedCalendarMonth) {
+    cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
+    return;
+  }
+
+  const [year, month] = selectedCalendarMonth.split("-").map(Number);
+  const res = await apiGet(
+    `/attendance/calendar-360/${encodeURIComponent(selectedUserId)}?year=${year}&month=${month}`
+  );
+
+  cachedCalendar360 = {
+    userId: selectedUserId,
+    month: selectedCalendarMonth,
+    records: res?.data?.records || [],
+    summary: res?.data?.summary || null,
+  };
 }
 
 function rerender(root) {
