@@ -13,6 +13,8 @@ const { PaymentRun } = require('../src/models/PaymentRun');
 const { StoreDayAudit } = require('../src/models/StoreDayAudit');
 const { MarketplaceSettlement } = require('../src/models/MarketplaceSettlement');
 const { BankAccount } = require('../src/models/BankAccount');
+const { PassbookTransaction } = require('../src/models/PassbookTransaction');
+const { DepartmentOrder } = require('../src/models/DepartmentOrder');
 const { User } = require('../src/models/User');
 const { RolePermission } = require('../src/models/RolePermission');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
@@ -200,6 +202,11 @@ test('Screen 010: Finance & Accounts Integration Test Suite', async (t) => {
       outstandingPaisa: 1450000,
       cafeId: 'ZC-0001',
       paymentStatus: 'UNPAID',
+      approvalStatus: 'PENDING',
+      paymentHistory: [],
+      amountPaidPaisa: 0,
+      outstandingPayableAmountPaisa: 1450000,
+      outstandingBalancePaisa: 1450000,
       save: async function () { return this; },
     },
   ];
@@ -247,6 +254,40 @@ test('Screen 010: Finance & Accounts Integration Test Suite', async (t) => {
       netSettlementPaisa: 6800000,
       status: 'RECEIVED',
       save: async function () { return this; },
+    },
+  ];
+
+  const inMemoryPaymentRuns = [];
+
+  const inMemoryPassbookTransactions = [
+    {
+      transactionId: 'TXN-BANK-HDFC-9912',
+      organisationId: 'ORG-ZAMORIN',
+      accountId: 'BANK-HDFC-01',
+      direction: 'CREDIT',
+      amountPaisa: 6800000,
+      externalReference: 'ZOMATO-BANK-CREDIT-9912',
+      paymentMode: 'MARKETPLACE_SETTLEMENT',
+      economicCafeId: 'ZC-0001',
+      status: 'CLEARED',
+    },
+  ];
+
+  const inMemoryDepartmentOrders = [
+    {
+      _id: 'DO-MONGO-1',
+      orderId: 'DO-2026-0001',
+      organisationId: 'ORG-ZAMORIN',
+      cafeId: 'ZC-0001',
+      institutionName: 'Zamorin Training Centre',
+      orderDate: '2026-08-10',
+      fulfilmentDate: '2026-08-18',
+      totalPaisa: 500000,
+      settledPaisa: 0,
+      creditStatus: 'CREDIT_OPEN',
+      orderStatus: 'FULFILLED',
+      invoiceNumber: 'INST-2026-001',
+      settlements: [],
     },
   ];
 
@@ -312,7 +353,13 @@ test('Screen 010: Finance & Accounts Integration Test Suite', async (t) => {
   t.mock.method(StoreDayAudit, 'find', () => createQueryWrapper(inMemoryStoreDays));
   t.mock.method(StoreDayAudit, 'findOne', async (query) => inMemoryStoreDays.find((s) => s.storeDayId === query.storeDayId) || null);
 
-  t.mock.method(APInvoice, 'find', () => createQueryWrapper(inMemoryInvoices));
+  t.mock.method(APInvoice, 'find', (query = {}) => {
+    let rows = [...inMemoryInvoices];
+    if (query?.invoiceId?.$in) {
+      rows = rows.filter((invoice) => query.invoiceId.$in.includes(invoice.invoiceId));
+    }
+    return createQueryWrapper(rows);
+  });
   t.mock.method(APInvoice, 'findOne', async (query) => {
     if (query?.invoiceId) return inMemoryInvoices.find((i) => i.invoiceId === query.invoiceId) || null;
     if (query?.supplierInvoiceNumber === 'DUPLICATE-INV') return inMemoryInvoices[0];
@@ -324,18 +371,87 @@ test('Screen 010: Finance & Accounts Integration Test Suite', async (t) => {
     inMemoryInvoices.push(item);
     return item;
   });
-  t.mock.method(APInvoice, 'updateMany', async () => ({ modifiedCount: 1 }));
+  t.mock.method(APInvoice, 'updateMany', async (filter, update) => {
+    const ids = filter?.invoiceId?.$in || [];
+    let matchedCount = 0;
+    let modifiedCount = 0;
+    for (const invoice of inMemoryInvoices) {
+      if (!ids.includes(invoice.invoiceId)) continue;
+      if (filter?.paymentStatus?.$in && !filter.paymentStatus.$in.includes(invoice.paymentStatus)) continue;
+      if (filter?.outstandingPaisa?.$gt !== undefined && !(invoice.outstandingPaisa > filter.outstandingPaisa.$gt)) continue;
+      matchedCount += 1;
+      Object.assign(invoice, update?.$set || {});
+      modifiedCount += 1;
+    }
+    return { acknowledged: true, matchedCount, modifiedCount };
+  });
 
   t.mock.method(FinancialPeriod, 'find', () => createQueryWrapper(inMemoryPeriods));
   t.mock.method(FinancialPeriod, 'findOne', async (query) => inMemoryPeriods.find((p) => p.periodId === query.periodId || p.status === query.status) || inMemoryPeriods[0]);
 
   t.mock.method(BankAccount, 'find', () => createQueryWrapper(inMemoryBankAccounts));
+  t.mock.method(BankAccount, 'findOne', (query) => createQueryWrapper(
+    inMemoryBankAccounts.find((account) =>
+      account.bankAccountId === query.bankAccountId &&
+      (!query.status || account.status === query.status)
+    ) || null
+  ));
+
   t.mock.method(MarketplaceSettlement, 'find', () => createQueryWrapper(inMemorySettlements));
   t.mock.method(MarketplaceSettlement, 'findOne', async (query) => inMemorySettlements.find((m) => m.settlementId === query.settlementId) || null);
 
-  t.mock.method(PaymentRun, 'find', () => createQueryWrapper([]));
-  t.mock.method(PaymentRun, 'countDocuments', async () => 1);
-  t.mock.method(PaymentRun, 'create', async (data) => ({ ...data, save: async function () { return this; } }));
+  t.mock.method(PassbookTransaction, 'findOne', (query) => {
+    const refValues = (query?.$or || []).map((clause) => clause.transactionId || clause.externalReference).filter(Boolean);
+    const row = inMemoryPassbookTransactions.find((txn) =>
+      txn.organisationId === query.organisationId &&
+      (refValues.includes(txn.transactionId) || refValues.includes(txn.externalReference))
+    ) || null;
+    return createQueryWrapper(row);
+  });
+
+  t.mock.method(DepartmentOrder, 'find', (query = {}) => {
+    let rows = [...inMemoryDepartmentOrders];
+    if (query.organisationId) rows = rows.filter((order) => order.organisationId === query.organisationId);
+    if (query.cafeId) rows = rows.filter((order) => order.cafeId === query.cafeId);
+    return createQueryWrapper(rows);
+  });
+  t.mock.method(DepartmentOrder, 'findOne', (query = {}) => createQueryWrapper(
+    inMemoryDepartmentOrders.find((order) =>
+      order.organisationId === query.organisationId &&
+      order.orderId === query.orderId
+    ) || null
+  ));
+  t.mock.method(DepartmentOrder, 'findOneAndUpdate', (filter, update) => {
+    const order = inMemoryDepartmentOrders.find((entry) =>
+      entry._id === filter._id &&
+      entry.organisationId === filter.organisationId &&
+      entry.orderId === filter.orderId &&
+      entry.settledPaisa === filter.settledPaisa &&
+      entry.creditStatus !== 'SETTLED'
+    );
+    if (!order) return createQueryWrapper(null);
+    order.settledPaisa += Number(update?.$inc?.settledPaisa || 0);
+    Object.assign(order, update?.$set || {});
+    if (update?.$push?.settlements) order.settlements.push(update.$push.settlements);
+    return createQueryWrapper(order);
+  });
+
+  t.mock.method(PaymentRun, 'find', () => createQueryWrapper(inMemoryPaymentRuns));
+  t.mock.method(PaymentRun, 'findOne', async (query) =>
+    inMemoryPaymentRuns.find((run) =>
+      run.organisationId === query.organisationId &&
+      run.paymentRunId === query.paymentRunId
+    ) || null
+  );
+  t.mock.method(PaymentRun, 'countDocuments', async () => inMemoryPaymentRuns.length);
+  t.mock.method(PaymentRun, 'create', async (data) => {
+    const item = {
+      ...data,
+      save: async function () { return this; },
+    };
+    inMemoryPaymentRuns.push(item);
+    return item;
+  });
 
   await t.test('1. GET /api/v1/finance/overview returns KPIs and control strip', async () => {
     const res = await makeRequest({
