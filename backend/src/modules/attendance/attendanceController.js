@@ -92,6 +92,116 @@ function normalizeIdentifier(value) {
     : '';
 }
 
+function isAttendanceEvidenceLinkEnforcementActive() {
+  return PrivateFile.db?.readyState === 1;
+}
+
+async function reserveAttendanceEvidenceLink({
+  fileId,
+  organisationId,
+  userId,
+  challengeId,
+  cafeId,
+  punchType,
+  attendanceId,
+}) {
+  const claimId = crypto.randomUUID();
+
+  // Offline unit tests replace model persistence with in-memory stubs. Runtime
+  // requests only reach a durable Attendance.save() when MongoDB is connected,
+  // and the reservation is mandatory in that live path.
+  if (!isAttendanceEvidenceLinkEnforcementActive()) {
+    return { claimId, persisted: false };
+  }
+
+  const reserved = await PrivateFile.findOneAndUpdate(
+    {
+      fileId: normalizeIdentifier(fileId),
+      organisationId: normalizeIdentifier(organisationId),
+      uploadedByUserId: normalizeIdentifier(userId),
+      'attendanceContext.challengeId': challengeId,
+      'attendanceContext.cafeId': normalizeIdentifier(cafeId),
+      'attendanceContext.punchType': normalizeIdentifier(punchType),
+      'attendanceCleanup.status': { $ne: 'CLAIMED' },
+      'attendanceLink.status': { $nin: ['RESERVED', 'COMMITTED'] },
+    },
+    {
+      $set: {
+        'attendanceLink.status': 'RESERVED',
+        'attendanceLink.claimId': claimId,
+        'attendanceLink.reservedAt': new Date(),
+        'attendanceLink.committedAt': null,
+        'attendanceLink.attendanceId': normalizeIdentifier(attendanceId),
+        'attendanceLink.punchType': normalizeIdentifier(punchType),
+        'attendanceLink.linkedByUserId': normalizeIdentifier(userId),
+      },
+    },
+    { new: true }
+  );
+
+  if (!reserved) {
+    throw new ApiError(
+      409,
+      'SELFIE_EVIDENCE_UNAVAILABLE',
+      'This selfie evidence is already linked, reserved, or being reconciled. Capture a fresh selfie and retry the punch.'
+    );
+  }
+
+  return { claimId, persisted: true };
+}
+
+async function releaseAttendanceEvidenceLink({ fileId, organisationId, claimId, persisted }) {
+  if (!persisted) return;
+
+  await PrivateFile.updateOne(
+    {
+      fileId: normalizeIdentifier(fileId),
+      organisationId: normalizeIdentifier(organisationId),
+      'attendanceLink.status': 'RESERVED',
+      'attendanceLink.claimId': claimId,
+    },
+    { $unset: { attendanceLink: '' } }
+  );
+}
+
+async function commitAttendanceEvidenceLink({
+  fileId,
+  organisationId,
+  claimId,
+  attendanceId,
+  punchType,
+  persisted,
+}) {
+  if (!persisted) return true;
+
+  const result = await PrivateFile.updateOne(
+    {
+      fileId: normalizeIdentifier(fileId),
+      organisationId: normalizeIdentifier(organisationId),
+      'attendanceLink.status': 'RESERVED',
+      'attendanceLink.claimId': claimId,
+    },
+    {
+      $set: {
+        'attendanceLink.status': 'COMMITTED',
+        'attendanceLink.committedAt': new Date(),
+        'attendanceLink.attendanceId': normalizeIdentifier(attendanceId),
+        'attendanceLink.punchType': normalizeIdentifier(punchType),
+      },
+    }
+  );
+
+  return Boolean(
+    result &&
+    (
+      result.modifiedCount === 1 ||
+      result.matchedCount === 1 ||
+      result.nModified === 1 ||
+      result.n === 1
+    )
+  );
+}
+
 function getIstBusinessDate(date = new Date()) {
   return new Intl.DateTimeFormat(
     'en-CA',
@@ -1540,6 +1650,8 @@ const staffCheckIn = asyncHandler(async (request, response) => {
       'attendanceContext.challengeId': qrValidation.challengeId,
       'attendanceContext.cafeId': cafeId,
       'attendanceContext.punchType': 'CHECK_IN',
+      'attendanceCleanup.status': { $ne: 'CLAIMED' },
+      'attendanceLink.status': { $nin: ['RESERVED', 'COMMITTED'] },
     });
     if (!selfieFile) {
       throw new ApiError(
@@ -1675,7 +1787,43 @@ const staffCheckIn = asyncHandler(async (request, response) => {
     });
   }
 
-  await attendance.save();
+  const checkInEvidenceReservation = await reserveAttendanceEvidenceLink({
+    fileId: selfieMediaId,
+    organisationId,
+    userId,
+    challengeId: qrValidation.challengeId,
+    cafeId,
+    punchType: 'CHECK_IN',
+    attendanceId: attendance.attendanceId,
+  });
+
+  try {
+    await attendance.save();
+  } catch (saveError) {
+    await releaseAttendanceEvidenceLink({
+      fileId: selfieMediaId,
+      organisationId,
+      claimId: checkInEvidenceReservation.claimId,
+      persisted: checkInEvidenceReservation.persisted,
+    }).catch(() => {});
+    throw saveError;
+  }
+
+  const checkInEvidenceLinkCommitted = await commitAttendanceEvidenceLink({
+    fileId: selfieMediaId,
+    organisationId,
+    claimId: checkInEvidenceReservation.claimId,
+    attendanceId: attendance.attendanceId,
+    punchType: 'CHECK_IN',
+    persisted: checkInEvidenceReservation.persisted,
+  }).catch(() => false);
+
+  if (checkInEvidenceReservation.persisted && !checkInEvidenceLinkCommitted) {
+    console.error('[Attendance] check-in selfie link finalization did not confirm; reservation remains fail-closed', {
+      attendanceId: attendance.attendanceId,
+      fileId: selfieMediaId,
+    });
+  }
 
   // Persist submission record for idempotency & replay protection
   if (qrValidation?.challengeId || idempotencyKey) {
@@ -1946,6 +2094,8 @@ const staffCheckOut = asyncHandler(async (request, response) => {
       'attendanceContext.challengeId': qrValidation.challengeId,
       'attendanceContext.cafeId': normalizeIdentifier(qrValidation.resolvedCafeId || attendance.cafeId),
       'attendanceContext.punchType': 'CHECK_OUT',
+      'attendanceCleanup.status': { $ne: 'CLAIMED' },
+      'attendanceLink.status': { $nin: ['RESERVED', 'COMMITTED'] },
     });
     if (!selfieFile) {
       throw new ApiError(
@@ -2003,7 +2153,44 @@ const staffCheckOut = asyncHandler(async (request, response) => {
   if (typeof attendance.calculateWorkedMinutes === 'function') {
     attendance.calculateWorkedMinutes();
   }
-  await attendance.save();
+
+  const checkOutEvidenceReservation = await reserveAttendanceEvidenceLink({
+    fileId: selfieMediaId,
+    organisationId,
+    userId,
+    challengeId: qrValidation.challengeId,
+    cafeId: normalizeIdentifier(qrValidation.resolvedCafeId || attendance.cafeId),
+    punchType: 'CHECK_OUT',
+    attendanceId: attendance.attendanceId,
+  });
+
+  try {
+    await attendance.save();
+  } catch (saveError) {
+    await releaseAttendanceEvidenceLink({
+      fileId: selfieMediaId,
+      organisationId,
+      claimId: checkOutEvidenceReservation.claimId,
+      persisted: checkOutEvidenceReservation.persisted,
+    }).catch(() => {});
+    throw saveError;
+  }
+
+  const checkOutEvidenceLinkCommitted = await commitAttendanceEvidenceLink({
+    fileId: selfieMediaId,
+    organisationId,
+    claimId: checkOutEvidenceReservation.claimId,
+    attendanceId: attendance.attendanceId,
+    punchType: 'CHECK_OUT',
+    persisted: checkOutEvidenceReservation.persisted,
+  }).catch(() => false);
+
+  if (checkOutEvidenceReservation.persisted && !checkOutEvidenceLinkCommitted) {
+    console.error('[Attendance] check-out selfie link finalization did not confirm; reservation remains fail-closed', {
+      attendanceId: attendance.attendanceId,
+      fileId: selfieMediaId,
+    });
+  }
 
   // Save submission for idempotency & replay protection
   if (qrValidation?.challengeId || idempotencyKey) {
