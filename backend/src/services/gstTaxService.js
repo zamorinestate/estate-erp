@@ -445,13 +445,41 @@ function resolveCompactCafeCode(cafeId, explicitCafeCode = null, gstin = '32AAAC
   }
 
   const str = String(cafeId).trim().toUpperCase();
-  const m = str.match(/^(?:CAFE|ZC)[-_]?0*(\d+)$/);
+  const numericMatch = str.match(/^(?:CAFE|ZC)[-_]?0*(\d+)$/);
   let candidate = null;
-  if (m) {
-    const num = parseInt(m[1], 10);
-    candidate = `C${String(num).padStart(2, '0')}`;
-  } else {
-    candidate = str.replace(/[^A-Z0-9-]/g, '').slice(0, 4) || 'C01';
+
+  if (numericMatch) {
+    const num = parseInt(numericMatch[1], 10);
+    if (num >= 0 && num <= 99) {
+      candidate = `C${String(num).padStart(2, '0')}`;
+    }
+  }
+
+  if (!candidate) {
+    // Preserve a compact 3-character branch code so POS series retain at
+    // least five serial digits inside the statutory 16-character limit.
+    // Human-readable alpha+numeric IDs such as CAFE-A-0001 become A01.
+    const semanticMatch = str.match(
+      /^(?:CAFE|ZC)[-_]?([A-Z])(?:[-_]?0*(\d{1,2}))$/
+    );
+    if (semanticMatch) {
+      candidate = `${semanticMatch[1]}${String(
+        parseInt(semanticMatch[2], 10)
+      ).padStart(2, '0')}`;
+    }
+  }
+
+  if (!candidate) {
+    // Deterministic base-36 fallback for arbitrary café IDs. Collision
+    // detection below remains authoritative and requires an explicit
+    // statutory code if two IDs ever hash to the same compact code.
+    let hash = 2166136261;
+    for (const char of str) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    const bucket = hash % (36 * 36);
+    candidate = `C${bucket.toString(36).toUpperCase().padStart(2, '0')}`;
   }
 
   // Check if candidate collides with another cafe under same GSTIN
