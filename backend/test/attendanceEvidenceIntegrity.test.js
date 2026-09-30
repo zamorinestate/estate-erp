@@ -52,6 +52,14 @@ function createAttendance(overrides = {}) {
   };
 }
 
+function jpegBytes(label) {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff]),
+    Buffer.from(String(label), 'utf8'),
+    Buffer.from([0xff, 0xd9]),
+  ]);
+}
+
 function createPrivateFile(buffer, overrides = {}) {
   return {
     _id: 'PF-3001',
@@ -59,6 +67,7 @@ function createPrivateFile(buffer, overrides = {}) {
     organisationId: 'ORG-ZAMORIN',
     uploadedByUserId: 'EMP-001',
     storagePath: 'ORG-ZAMORIN/CAFE-KNR-01/attendance_evidence/FILE-3001.jpg',
+    mimeType: 'image/jpeg',
     sizeBytes: buffer.length,
     sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
     attendanceContext: {
@@ -89,7 +98,7 @@ test('EVI-001: exact attendance/private-file/storage chain passes forensic verif
     findOne: PrivateFile.findOne,
     read: attendanceEvidenceStorageService.readObjectBuffer,
   };
-  const bytes = Buffer.from('forensic-selfie-bytes-001');
+  const bytes = jpegBytes('forensic-selfie-bytes-001');
 
   PrivateFile.findOne = async () => createPrivateFile(bytes);
   attendanceEvidenceStorageService.readObjectBuffer = async () => bytes;
@@ -119,8 +128,8 @@ test('EVI-002: tampered storage bytes fail SHA-256 and size integrity checks', a
     findOne: PrivateFile.findOne,
     read: attendanceEvidenceStorageService.readObjectBuffer,
   };
-  const originalBytes = Buffer.from('original-evidence');
-  const tamperedBytes = Buffer.from('tampered-evidence-with-different-length');
+  const originalBytes = jpegBytes('original-evidence');
+  const tamperedBytes = jpegBytes('tampered-evidence-with-different-length');
 
   PrivateFile.findOne = async () => createPrivateFile(originalBytes);
   attendanceEvidenceStorageService.readObjectBuffer = async () => tamperedBytes;
@@ -146,7 +155,7 @@ test('EVI-003: mismatched employee/cafe/challenge/link identity fails closed', a
     findOne: PrivateFile.findOne,
     read: attendanceEvidenceStorageService.readObjectBuffer,
   };
-  const bytes = Buffer.from('identity-evidence');
+  const bytes = jpegBytes('identity-evidence');
 
   PrivateFile.findOne = async () => createPrivateFile(bytes, {
     uploadedByUserId: 'EMP-OTHER',
@@ -194,7 +203,7 @@ test('EVI-003A: durable QR proof snapshot fails on device, purpose, or temporal 
     findOne: PrivateFile.findOne,
     read: attendanceEvidenceStorageService.readObjectBuffer,
   };
-  const bytes = Buffer.from('proof-snapshot-evidence');
+  const bytes = jpegBytes('proof-snapshot-evidence');
 
   PrivateFile.findOne = async () => createPrivateFile(bytes, {
     attendanceContext: {
@@ -239,7 +248,7 @@ test('EVI-003B: legacy evidence can still be streamed without new proof snapshot
     findOne: PrivateFile.findOne,
     read: attendanceEvidenceStorageService.readObjectBuffer,
   };
-  const bytes = Buffer.from('legacy-evidence');
+  const bytes = jpegBytes('legacy-evidence');
 
   const legacyFile = createPrivateFile(bytes);
   delete legacyFile.attendanceContext.proofSnapshotVersion;
@@ -277,7 +286,7 @@ test('EVI-003C: geofence snapshot detects distance or radius tampering independe
     findOne: PrivateFile.findOne,
     read: attendanceEvidenceStorageService.readObjectBuffer,
   };
-  const bytes = Buffer.from('geofence-forensic-evidence');
+  const bytes = jpegBytes('geofence-forensic-evidence');
 
   PrivateFile.findOne = async () => createPrivateFile(bytes);
   attendanceEvidenceStorageService.readObjectBuffer = async () => bytes;
@@ -303,6 +312,35 @@ test('EVI-003C: geofence snapshot detects distance or radius tampering independe
   }
 });
 
+
+
+test('EVI-003D: forensic audit detects MIME metadata that disagrees with image bytes', async () => {
+  const originals = {
+    findOne: PrivateFile.findOne,
+    read: attendanceEvidenceStorageService.readObjectBuffer,
+  };
+  const bytes = jpegBytes('mime-integrity-evidence');
+
+  PrivateFile.findOne = async () => createPrivateFile(bytes, {
+    mimeType: 'image/png',
+  });
+  attendanceEvidenceStorageService.readObjectBuffer = async () => bytes;
+
+  try {
+    const result = await verifyAttendanceEvidenceSlot({
+      organisationId: 'ORG-ZAMORIN',
+      attendance: createAttendance(),
+      punchType: 'CHECK_IN',
+    });
+
+    assert.equal(result.status, 'FAIL');
+    assert.ok(result.failedChecks.includes('storage_mime_matches_signature'));
+  } finally {
+    PrivateFile.findOne = originals.findOne;
+    attendanceEvidenceStorageService.readObjectBuffer = originals.read;
+  }
+});
+
 test('EVI-004: audit filter is organisation scoped and optionally attendance/cafe scoped', () => {
   const filter = buildAuditAttendanceFilter({
     organisationId: 'org-zamorin',
@@ -322,7 +360,7 @@ test('EVI-005: batch audit reports pass/fail without returning image bytes', asy
     privateFindOne: PrivateFile.findOne,
     read: attendanceEvidenceStorageService.readObjectBuffer,
   };
-  const bytes = Buffer.from('batch-evidence');
+  const bytes = jpegBytes('batch-evidence');
 
   Attendance.find = () => ({
     sort() { return this; },
