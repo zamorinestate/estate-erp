@@ -176,15 +176,71 @@ class OwnerMenuPricingService {
     }).lean();
     const evaluatedItems = [];
 
+    let popularitySourceAvailable = false;
+    const unitsSoldByMenuItemId = new Map();
+
+    if (
+      (mongoose.connection?.readyState === 1 || Bill.aggregate?.mock) &&
+      typeof Bill.aggregate === 'function'
+    ) {
+      const fromDate = new Date(Date.now() - (30 * 24 * 60 * 60 * 1000));
+      const fromBusinessDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(fromDate);
+
+      const match = {
+        organisationId,
+        businessDate: { $gte: fromBusinessDate },
+        status: { $in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
+        isTraining: { $ne: true },
+      };
+      if (cafeId) match.cafeId = String(cafeId).trim().toUpperCase();
+
+      const salesRows = await Bill.aggregate([
+        { $match: match },
+        { $unwind: '$lineItems' },
+        {
+          $group: {
+            _id: '$lineItems.menuItemId',
+            unitsSold: { $sum: '$lineItems.quantity' },
+          },
+        },
+      ]);
+
+      for (const row of salesRows || []) {
+        const key = String(row?._id || '').trim().toUpperCase();
+        if (key) unitsSoldByMenuItemId.set(key, Number(row.unitsSold || 0));
+      }
+      popularitySourceAvailable = true;
+    }
+
     let totalUnitsSoldAllItems = 0;
+    let popularityItemCount = 0;
     let totalContributionAllItems = 0;
     let validItemsWithCostCount = 0;
 
     for (const item of menuItems) {
       const econ = await this.getItemEconomics(organisationId, item._id, cafeId);
-      // Mock or aggregated units sold from bill history
-      const unitsSold = item.unitsSoldLast30Days || Math.floor(Math.random() * 100) + 10;
-      totalUnitsSoldAllItems += unitsSold;
+      const popularityKey = String(
+        item.menuItemId ||
+        item.itemId ||
+        item.pluCode ||
+        item.plu ||
+        item._id ||
+        ''
+      ).trim().toUpperCase();
+
+      const unitsSold = popularitySourceAvailable
+        ? Number(unitsSoldByMenuItemId.get(popularityKey) || 0)
+        : null;
+
+      if (unitsSold !== null) {
+        totalUnitsSoldAllItems += unitsSold;
+        popularityItemCount++;
+      }
 
       if (econ.isCostAvailable && econ.contributionAmount !== null) {
         totalContributionAllItems += econ.contributionAmount;
@@ -193,20 +249,35 @@ class OwnerMenuPricingService {
 
       evaluatedItems.push({
         ...econ,
-        unitsSold
+        unitsSold,
+        popularityDataSource: popularitySourceAvailable
+          ? 'POS_BILL_LINE_ITEMS_LAST_30_DAYS'
+          : 'UNAVAILABLE',
       });
     }
 
-    const avgPopularity = menuItems.length > 0 ? (totalUnitsSoldAllItems / menuItems.length) : 0;
-    const avgContribution = validItemsWithCostCount > 0 ? (totalContributionAllItems / validItemsWithCostCount) : 0;
+    const avgPopularity = popularityItemCount > 0
+      ? (totalUnitsSoldAllItems / popularityItemCount)
+      : null;
+    const avgContribution = validItemsWithCostCount > 0
+      ? (totalContributionAllItems / validItemsWithCostCount)
+      : null;
 
-    // Categorization
+    // Categorization requires both authoritative popularity and verified cost.
     const classifiedItems = evaluatedItems.map(item => {
-      if (!item.isCostAvailable) {
+      if (item.unitsSold === null || avgPopularity === null) {
+        return {
+          ...item,
+          quadrant: 'UNCLASSIFIED_POPULARITY_UNAVAILABLE',
+          quadrantRationale: 'Cannot classify popularity because authoritative POS bill history is unavailable.'
+        };
+      }
+
+      if (!item.isCostAvailable || avgContribution === null) {
         return {
           ...item,
           quadrant: 'UNCLASSIFIED_INCOMPLETE_DATA',
-          quadrantRationale: 'Cannot classify item without verified recipe and ingredient costs.'
+          quadrantRationale: 'Cannot classify contribution because verified recipe and ingredient cost is unavailable.'
         };
       }
 
@@ -227,8 +298,12 @@ class OwnerMenuPricingService {
 
     return {
       totalItems: menuItems.length,
-      averageUnitsSoldThreshold: Number(avgPopularity.toFixed(1)),
-      averageContributionThreshold: Number(avgContribution.toFixed(2)),
+      popularityStatus: popularitySourceAvailable ? 'AVAILABLE' : 'UNAVAILABLE',
+      popularityDataSource: popularitySourceAvailable
+        ? 'POS_BILL_LINE_ITEMS_LAST_30_DAYS'
+        : 'UNAVAILABLE',
+      averageUnitsSoldThreshold: avgPopularity === null ? null : Number(avgPopularity.toFixed(1)),
+      averageContributionThreshold: avgContribution === null ? null : Number(avgContribution.toFixed(2)),
       items: classifiedItems
     };
   }
