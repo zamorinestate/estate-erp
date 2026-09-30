@@ -1362,6 +1362,8 @@ function renderPoliciesSubpanel() {
   const integrityQuarantined = Number(cachedEvidenceIntegrityAudit?.incidentResponse?.quarantined || 0);
   const integrityAuditEvents = Number(cachedEvidenceIntegrityAudit?.incidentResponse?.auditEventsRecorded || 0);
   const integrityAlertsQueued = Number(cachedEvidenceIntegrityAudit?.incidentResponse?.alertsQueued || 0);
+  const integrityLegacyProof = Number(cachedEvidenceIntegrityAudit?.legacyProofSnapshots || 0);
+  const integrityLegacyGeo = Number(cachedEvidenceIntegrityAudit?.legacyGeofenceSnapshots || 0);
   const integrityStatus = cachedEvidenceIntegrityAudit
     ? (cachedEvidenceIntegrityAudit.integrityOk === true ? "PASS" : "ATTENTION REQUIRED")
     : "NOT RUN";
@@ -1553,6 +1555,11 @@ function renderPoliciesSubpanel() {
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityAuditEvents}</strong><div style="font-size:10px;color:var(--muted);">Audit Events</div></div>
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityAlertsQueued}</strong><div style="font-size:10px;color:var(--muted);">Security Alerts</div></div>
               </div>
+              ${integrityLegacyProof || integrityLegacyGeo ? `
+                <div style="font-size:10.5px; color:var(--muted);">
+                  Legacy coverage: ${integrityLegacyProof} evidence slot(s) predate QR-proof snapshots; ${integrityLegacyGeo} predate geofence snapshots. These are reported separately and are not quarantined solely for age.
+                </div>
+              ` : ""}
             ` : ""}
             ${isPrimary ? `
               <button class="btn btn-secondary" id="run-evidence-integrity-audit-btn" type="button" style="font-size:11.5px; align-self:flex-start; margin-top:2px;">
@@ -2210,11 +2217,15 @@ function wireAttendanceSubpanelActions(root) {
       const failed = Number(res?.data?.failed || 0);
       const quarantined = Number(res?.data?.incidentResponse?.quarantined || 0);
       const alertsQueued = Number(res?.data?.incidentResponse?.alertsQueued || 0);
+      const legacyProof = Number(res?.data?.legacyProofSnapshots || 0);
+      const legacyGeo = Number(res?.data?.legacyGeofenceSnapshots || 0);
       showToast(
         failed
           ? `Evidence integrity audit found ${failed} failed slot(s); ${quarantined} quarantined and ${alertsQueued} Primary Master security alert(s) queued.`
-          : `Evidence integrity audit passed ${Number(res?.data?.passed || 0)} evidence slot(s).`,
-        failed ? "error" : "success"
+          : (legacyProof || legacyGeo)
+            ? `Evidence integrity audit passed with legacy coverage noted: ${legacyProof} proof snapshot gap(s), ${legacyGeo} geofence snapshot gap(s); none quarantined solely for age.`
+            : `Evidence integrity audit passed ${Number(res?.data?.passed || 0)} evidence slot(s).`,
+        failed ? "error" : (legacyProof || legacyGeo ? "info" : "success")
       );
       rerender(root);
     } catch (err) {
