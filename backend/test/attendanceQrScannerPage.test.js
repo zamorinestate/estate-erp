@@ -210,7 +210,6 @@ test('AUTH-02: non-primary MASTER is rejected by the QR service boundary', async
       organisationId: 'ORG-ZAMORIN',
       cafeId: 'ZC-0002',
       requestedByRole: 'MASTER',
-    isPrimaryMaster: true,
       requestedByUserId: 'MALFORMED-MASTER-02',
       isPrimaryMaster: false,
     }),
@@ -497,6 +496,7 @@ test('DIAG-01: Diagnostic scan verifies challenge validity without creating Atte
     employeeOrgId: 'ORG-ZAMORIN',
     employeeAssignedCafes: ['ZC-0001'],
     employeeRole: 'MASTER',
+    isPrimaryMaster: true,
   });
 
   const countAfter = await Attendance.countDocuments();
