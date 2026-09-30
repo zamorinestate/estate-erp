@@ -434,7 +434,19 @@ test('REC-16: GST Rounding, Component Calculation, Totals & Accounting Policy', 
       status: 'COMPLETED',
     });
 
-    const printArtifacts = await PosOrderService.generatePrintArtifacts(historicalBill, { isReprint: true });
+    const printArtifacts = await PosOrderService.generatePrintArtifacts(historicalBill, {
+      isReprint: true,
+      cafeInfo: {
+      brandName: 'Zamorin Test Cafe',
+      legalName: 'Zamorin Test Foods Private Limited',
+      gstin: '32AABCT1332L1ZV',
+      gstRegistered: true,
+      fssai: '12345678901234',
+      fssaiApplicable: true,
+      address: '1 Test Road, Kozhikode, Kerala, 673001',
+      phone: '+91 99999 99999',
+    },
+    });
     assert.ok(printArtifacts.rawBuffer);
     assert.ok(printArtifacts.htmlPreview.includes('-₹0.06'));
 
