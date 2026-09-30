@@ -442,3 +442,22 @@ test('P0-WF-031: attendance roster UI is server-authoritative and contains no sy
   assert.ok(attendanceShiftsPage.includes('Weekly roster published. Staff notification delivery has been queued.'));
   assert.ok(attendanceShiftsPage.includes('apiGet("/employees?limit=200")'));
 });
+
+
+test('P0-WF-032: attendance roster publication rechecks Primary Master and café scope at execution time', () => {
+  assert.ok(attendanceController.includes("request.auth.role === 'MASTER'"));
+  assert.ok(attendanceController.includes("request.auth.isPrimaryMaster !== true"));
+  assert.ok(attendanceController.includes("'PRIMARY_MASTER_AUTHORITY_REQUIRED'"));
+
+  const publishStart = attendanceController.indexOf('const publishRoster = asyncHandler');
+  const publishEnd = attendanceController.indexOf('// 5c. GET /api/v1/attendance/roster/shifts', publishStart);
+  const publishBlock = attendanceController.slice(publishStart, publishEnd);
+
+  assert.ok(publishBlock.includes('ensureCafeOperationsAllowed(request);'));
+  assert.ok(publishBlock.includes('ensureCafeAccess(request, roster.cafeId);'));
+  assert.equal(
+    publishBlock.includes("if (request.auth.role === 'CAFE_ADMIN')"),
+    false,
+    'Roster publication café scope must not be limited only to Café Admin.'
+  );
+});
