@@ -143,6 +143,39 @@ async function verifyAttendanceEvidenceSlot({
   pushCheck(checks, 'link_punch_type', normalizeId(link.punchType) === type);
   pushCheck(checks, 'cleanup_not_claimed', normalizeId(cleanup.status) !== 'CLAIMED');
 
+  const boundAt = context.boundAt ? new Date(context.boundAt) : null;
+  const grantIssuedAt = context.grantIssuedAt ? new Date(context.grantIssuedAt) : null;
+  const grantExpiresAt = context.grantExpiresAt ? new Date(context.grantExpiresAt) : null;
+  const serverTimestamp = slot?.serverTimestamp ? new Date(slot.serverTimestamp) : null;
+  const proofDatesValid = [boundAt, grantIssuedAt, grantExpiresAt]
+    .every((value) => value instanceof Date && !Number.isNaN(value.getTime()));
+
+  pushCheck(checks, 'proof_purpose', context.proofPurpose === 'ATTENDANCE_PUNCH');
+  pushCheck(
+    checks,
+    'device_binding',
+    Boolean(String(context.deviceId || '').trim()) &&
+      String(context.deviceId || '').trim() === String(slot?.deviceId || '').trim()
+  );
+  pushCheck(checks, 'grant_timing_present', proofDatesValid);
+  pushCheck(
+    checks,
+    'grant_temporal_order',
+    proofDatesValid &&
+      grantIssuedAt.getTime() <= boundAt.getTime() &&
+      boundAt.getTime() <= grantExpiresAt.getTime()
+  );
+  pushCheck(
+    checks,
+    'punch_after_evidence_binding',
+    !serverTimestamp ||
+      Number.isNaN(serverTimestamp.getTime()) ||
+      !boundAt ||
+      Number.isNaN(boundAt.getTime())
+      ? false
+      : serverTimestamp.getTime() >= boundAt.getTime()
+  );
+
   const storagePath = String(privateFile.storagePath || privateFile.fileKey || '').trim();
   const storedSha256 = String(privateFile.sha256 || '').trim().toLowerCase();
   const expectedSize = Number(privateFile.sizeBytes);
