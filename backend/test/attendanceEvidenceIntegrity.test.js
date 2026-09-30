@@ -977,4 +977,84 @@ test('EVI-024: controlled release is Primary-Master-only and explicitly confirme
   assert.match(viewerSource, /Re-verify &amp; Release Quarantine/);
   assert.match(viewerSource, /confirmation:\s*'RELEASE_QUARANTINED_ATTENDANCE_EVIDENCE'/);
 });
+test('EVI-025: quarantine release rejects stale verification after a concurrent integrity failure refresh', async () => {
+  const originals = {
+    findOne: Attendance.findOne,
+    updateOne: Attendance.updateOne,
+  };
 
+  const oldCheckedAt = new Date('2026-09-30T08:00:00Z');
+  const attendance = createAttendance({
+    _id: 'ATT-DOC-RELEASE-RACE',
+    attendanceId: 'AT-20260930-RACE-1',
+    attendanceEvidence: {
+      checkIn: {
+        selfieMediaId: 'FILE-RACE-1',
+        photoFileId: 'FILE-RACE-1',
+        verificationStatus: 'FLAGGED',
+        integrityState: 'QUARANTINED',
+        integrityLastCheckedAt: oldCheckedAt,
+        integrityAuditEventId: 'AUD-RACE-FAILURE-1',
+      },
+      checkOut: null,
+    },
+    selfieFileId: 'FILE-RACE-1',
+  });
+
+  Attendance.findOne = () => ({
+    lean: async () => attendance,
+  });
+
+  let releaseFilter = null;
+  Attendance.updateOne = async (filter) => {
+    releaseFilter = filter;
+    return { matchedCount: 0, modifiedCount: 0 };
+  };
+
+  try {
+    await assert.rejects(
+      async () => releaseQuarantinedAttendanceEvidence({
+        request: {
+          auth: {
+            organisationId: 'ORG-ZAMORIN',
+            userId: 'MU-PRIMARY-01',
+            role: 'MASTER',
+            isPrimaryMaster: true,
+          },
+        },
+        attendanceId: 'AT-20260930-RACE-1',
+        punchType: 'CHECK_IN',
+        reason: 'Fresh verification passed before a concurrent failure was detected.',
+        verifyEvidence: async () => ({
+          status: 'PASS',
+          fileId: 'FILE-RACE-1',
+          failedChecks: [],
+        }),
+        recordAudit: async () => ({
+          auditEventId: 'AUD-RELEASE-RACE-1',
+        }),
+      }),
+      { statusCode: 409, code: 'ATTENDANCE_EVIDENCE_RELEASE_STATE_CONFLICT' }
+    );
+
+    assert.equal(
+      new Date(releaseFilter['attendanceEvidence.checkIn.integrityLastCheckedAt']).toISOString(),
+      oldCheckedAt.toISOString()
+    );
+  } finally {
+    Attendance.findOne = originals.findOne;
+    Attendance.updateOne = originals.updateOne;
+  }
+});
+
+test('EVI-026: repeated failures refresh the quarantine compare-and-swap token', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/services/attendanceEvidenceIncidentService.js'),
+    'utf8'
+  );
+
+  assert.ok(source.includes('integrityLastCheckedAt`]: now'));
+  assert.ok(source.includes('integrityLastCheckedAt`]: slot.integrityLastCheckedAt || null'));
+  assert.ok(source.includes('wasAlreadyQuarantined'));
+  assert.ok(source.includes('summary.alreadyQuarantined += 1'));
+});
