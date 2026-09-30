@@ -190,9 +190,9 @@ test('PM-06-R1: Reconciliation Gate Verification Suite', async (t) => {
   });
 
   // ── 3. MULTER VERSION AND SECURE OBJECT STORAGE ───────────────────────────
-  await t.test('R1-003: Multer 2.3.0 safe parsing and storage adapter validation', async () => {
+  await t.test('R1-003: Multer 2.4.0 safe parsing and storage adapter validation', async () => {
     const multerPkg = require('multer/package.json');
-    assert.equal(multerPkg.version, '2.3.0', 'Multer must be exactly 2.3.0 patched version');
+    assert.equal(multerPkg.version, '2.4.0', 'Multer must be exactly 2.4.0 patched version');
 
     // Storage adapter validation under local driver
     const uploadRes = await defaultStorageService.uploadObject({
