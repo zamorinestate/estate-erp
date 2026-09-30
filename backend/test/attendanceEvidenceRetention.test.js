@@ -12,6 +12,8 @@ const {
   DEFAULT_ORPHAN_GRACE_MINUTES,
   buildAttendanceEvidenceReferenceQuery,
   buildReservationAttendanceReferenceQuery,
+  setCommittedAttendanceEvidenceHold,
+  buildCommittedEvidenceRetentionCandidateFilter,
   reconcileExpiredOrphanAttendanceEvidence,
 } = require('../src/services/attendanceEvidenceRetentionService');
 
@@ -592,5 +594,156 @@ test('RET-008: stale reservation proof is bound to exact attendance ID and punch
     }),
     null
   );
+});
+
+test('RET-009: future committed-evidence candidate filter requires policy, eligibility date, and no active hold', () => {
+  const now = new Date('2026-09-30T09:00:00Z');
+  const filter = buildCommittedEvidenceRetentionCandidateFilter({
+    organisationId: 'ORG-ZAMORIN',
+    now,
+  });
+
+  assert.equal(filter.organisationId, 'ORG-ZAMORIN');
+  assert.equal(filter['attendanceLink.status'], 'COMMITTED');
+  assert.deepEqual(filter['attendanceRetention.policyVersion'], { $nin: [null, ''] });
+  assert.deepEqual(
+    filter['attendanceRetention.purgeEligibleAfter'],
+    { $ne: null, $lte: now }
+  );
+  assert.deepEqual(
+    filter['attendanceRetention.holdStatus'],
+    { $ne: 'HELD' }
+  );
+});
+
+test('RET-010: Primary Master hold service binds HOLD to exact committed attendance evidence', async () => {
+  const original = PrivateFile.findOneAndUpdate;
+  const attendance = {
+    attendanceId: 'AT-20260930-HOLD-1',
+    selfieFileId: 'FILE-9101',
+    attendanceEvidence: {
+      checkIn: {
+        selfieMediaId: 'FILE-9101',
+        photoFileId: 'FILE-9101',
+      },
+    },
+  };
+
+  let captured = null;
+  PrivateFile.findOneAndUpdate = async (filter, update) => {
+    captured = { filter, update };
+    return {
+      fileId: 'FILE-9101',
+      attendanceRetention: { holdStatus: 'HELD' },
+    };
+  };
+
+  try {
+    const result = await setCommittedAttendanceEvidenceHold({
+      organisationId: 'ORG-ZAMORIN',
+      attendance,
+      punchType: 'CHECK_IN',
+      actorUserId: 'MU-PRIMARY-01',
+      reason: 'Preserve evidence for an active employment investigation.',
+      action: 'HOLD',
+      now: new Date('2026-09-30T09:05:00Z'),
+    });
+
+    assert.equal(result.holdStatus, 'HELD');
+    assert.equal(captured.filter.fileId, 'FILE-9101');
+    assert.equal(captured.filter['attendanceLink.status'], 'COMMITTED');
+    assert.equal(captured.filter['attendanceLink.attendanceId'], 'AT-20260930-HOLD-1');
+    assert.equal(captured.filter['attendanceLink.punchType'], 'CHECK_IN');
+    assert.deepEqual(captured.filter['attendanceRetention.holdStatus'], { $ne: 'HELD' });
+    assert.equal(captured.update.$set['attendanceRetention.holdStatus'], 'HELD');
+    assert.equal(
+      captured.update.$set['attendanceRetention.holdPlacedByUserId'],
+      'MU-PRIMARY-01'
+    );
+  } finally {
+    PrivateFile.findOneAndUpdate = original;
+  }
+});
+
+test('RET-011: hold release requires an active hold and never assigns purge eligibility', async () => {
+  const original = PrivateFile.findOneAndUpdate;
+  const attendance = {
+    attendanceId: 'AT-20260930-HOLD-2',
+    attendanceEvidence: {
+      checkOut: {
+        selfieMediaId: 'FILE-9102',
+        photoFileId: 'FILE-9102',
+      },
+    },
+  };
+
+  let captured = null;
+  PrivateFile.findOneAndUpdate = async (filter, update) => {
+    captured = { filter, update };
+    return {
+      fileId: 'FILE-9102',
+      attendanceRetention: { holdStatus: 'NONE' },
+    };
+  };
+
+  try {
+    const result = await setCommittedAttendanceEvidenceHold({
+      organisationId: 'ORG-ZAMORIN',
+      attendance,
+      punchType: 'CHECK_OUT',
+      actorUserId: 'MU-PRIMARY-01',
+      reason: 'Investigation closed and hold release has been approved.',
+      action: 'RELEASE',
+      now: new Date('2026-09-30T09:10:00Z'),
+    });
+
+    assert.equal(result.holdStatus, 'NONE');
+    assert.equal(captured.filter['attendanceRetention.holdStatus'], 'HELD');
+    assert.equal(captured.update.$set['attendanceRetention.holdStatus'], 'NONE');
+    assert.equal(
+      captured.update.$set['attendanceRetention.holdReleasedByUserId'],
+      'MU-PRIMARY-01'
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        captured.update.$set,
+        'attendanceRetention.purgeEligibleAfter'
+      ),
+      false
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        captured.update.$set,
+        'attendanceRetention.policyVersion'
+      ),
+      false
+    );
+  } finally {
+    PrivateFile.findOneAndUpdate = original;
+  }
+});
+
+test('RET-012: committed-evidence purge stays disabled while Primary Master hold governance is routed', () => {
+  const controller = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceController.js'),
+    'utf8'
+  );
+  const routes = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceRoutes.js'),
+    'utf8'
+  );
+  const viewer = fs.readFileSync(
+    path.join(__dirname, '../../frontend/src/js/modules/attendance/attendanceEvidenceViewer.js'),
+    'utf8'
+  );
+
+  assert.match(controller, /EVIDENCE_PURGE_NOT_CONFIGURED/);
+  assert.match(controller, /Committed attendance selfie purge remains disabled/);
+  assert.match(controller, /PLACE_ATTENDANCE_EVIDENCE_HOLD/);
+  assert.match(controller, /RELEASE_ATTENDANCE_EVIDENCE_HOLD/);
+  assert.match(routes, /router\.post\('\/evidence\/retention\/hold', manageAttendanceEvidenceHold\)/);
+  assert.match(viewer, /Place Retention Hold/);
+  assert.match(viewer, /Release Retention Hold/);
+  assert.match(viewer, /committed purge is still disabled/);
 });
 
