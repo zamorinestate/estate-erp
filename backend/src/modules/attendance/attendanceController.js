@@ -4135,15 +4135,22 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
   );
   const canManageRetentionHold = role === 'MASTER' && request.auth.isPrimaryMaster === true;
 
+  const checkInPrivateFileQuery = canManageRetentionHold && checkInFileId
+    ? PrivateFile.findOne({ organisationId, fileId: checkInFileId })
+    : null;
+  const checkOutPrivateFileQuery = canManageRetentionHold && checkOutFileId
+    ? PrivateFile.findOne({ organisationId, fileId: checkOutFileId })
+    : null;
+
   const [userDoc, cafeDoc, checkInPrivateFile, checkOutPrivateFile] = await Promise.all([
     User.findOne({ userId: attendance.userId, organisationId }).lean(),
     Cafe.findOne({ cafeId: attendance.cafeId, organisationId }).lean(),
-    canManageRetentionHold && checkInFileId
-      ? PrivateFile.findOne({ organisationId, fileId: checkInFileId }).lean()
-      : Promise.resolve(null),
-    canManageRetentionHold && checkOutFileId
-      ? PrivateFile.findOne({ organisationId, fileId: checkOutFileId }).lean()
-      : Promise.resolve(null),
+    checkInPrivateFileQuery && typeof checkInPrivateFileQuery.lean === 'function'
+      ? checkInPrivateFileQuery.lean()
+      : checkInPrivateFileQuery,
+    checkOutPrivateFileQuery && typeof checkOutPrivateFileQuery.lean === 'function'
+      ? checkOutPrivateFileQuery.lean()
+      : checkOutPrivateFileQuery,
   ]);
 
   // Management roles see detailed distance & accuracy
