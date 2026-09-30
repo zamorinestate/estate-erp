@@ -587,3 +587,39 @@ test('P0-WF-037: attendance correction lists, exception resolution, QR display, 
   assert.ok(evidenceBlock.includes("'CROSS_CAFE_RESOURCE_DENIED'"));
   assert.ok(evidenceBlock.includes("'FORBIDDEN_EVIDENCE_ACCESS'"));
 });
+
+
+test('P0-WF-038: attendance selfie evidence uses canonical durable storage, never legacy simulated private storage', () => {
+  assert.ok(attendanceController.includes("require('../../services/attendanceEvidenceStorageService')"));
+  assert.equal(
+    attendanceController.includes("require('../../services/storageAdapterService')"),
+    false
+  );
+  assert.ok(attendanceEvidenceStorageSource.includes("require('./documentStorageAdapter')"));
+  assert.ok(attendanceEvidenceStorageSource.includes('documentStorageAdapter.put({'));
+  assert.ok(attendanceEvidenceStorageSource.includes('documentStorageAdapter.exists({ storageKey })'));
+  assert.ok(attendanceEvidenceStorageSource.includes('documentStorageAdapter.getStream({ storageKey })'));
+  assert.ok(attendanceEvidenceStorageSource.includes('documentStorageAdapter.delete({ storageKey })'));
+  assert.ok(documentStorageAdapterSource.includes("'image/webp': 'webp'"));
+});
+
+test('P0-WF-039: attendance evidence persists and verifies SHA-256 content integrity', () => {
+  assert.ok(privateFileModel.includes('sha256: {'));
+  assert.ok(attendanceController.includes("sha256: uploadResult.sha256 || crypto.createHash('sha256')"));
+  assert.ok(attendanceController.includes("'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE'"));
+  assert.ok(attendanceController.includes("crypto.createHash('sha256').update(buffer).digest('hex')"));
+});
+
+test('P0-WF-040: evidence-view audit occurs only after durable read and checksum verification', () => {
+  const mediaStart = attendanceController.indexOf('const getEvidenceMedia = asyncHandler');
+  const recordStart = attendanceController.indexOf('const getAttendanceEvidenceRecord = asyncHandler', mediaStart);
+  const mediaBlock = attendanceController.slice(mediaStart, recordStart);
+
+  const readIndex = mediaBlock.indexOf('attendanceEvidenceStorageService.readObjectBuffer');
+  const integrityIndex = mediaBlock.indexOf("'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE'");
+  const auditIndex = mediaBlock.indexOf("action: 'ATTENDANCE_EVIDENCE_VIEWED'");
+
+  assert.ok(readIndex >= 0);
+  assert.ok(integrityIndex > readIndex);
+  assert.ok(auditIndex > integrityIndex);
+});
