@@ -25,7 +25,8 @@ const { Session } = require('../models/Session');
 const { PasskeyCredential } = require('../models/PasskeyCredential');
 const { UserPreference, SUPPORTED_LOCALES, THEMES, FONT_SIZES, DENSITIES, NOTIFICATION_CATEGORIES, NOTIFICATION_CHANNELS, POLICY_REQUIRED_NOTIFICATIONS } = require('../models/UserPreference');
 const { ProfileChangeRequest } = require('../models/ProfileChangeRequest');
-const { AccessRequest } = require('../models/AccessRequest');
+const { AccessRequest, ACCESS_REQUEST_TYPES } = require('../models/AccessRequest');
+const { TemporaryAccessGrant } = require('../models/TemporaryAccessGrant');
 const { PrivacyRequest } = require('../models/PrivacyRequest');
 const { RolePermission } = require('../models/RolePermission');
 const { Delegation } = require('../models/Delegation');
@@ -446,11 +447,24 @@ async function getMyAccess(req, res) {
       scope: r.scope,
     }));
 
-  // Fetch pending access requests
-  const pendingAccessRequests = await AccessRequest.find({
-    requestedByUserId: userId,
-    status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
-  }).lean();
+  // Fetch pending access requests and currently effective temporary grants.
+  const now = new Date();
+  const [pendingAccessRequests, temporaryGrants] = await Promise.all([
+    AccessRequest.find({
+      organisationId,
+      requestedByUserId: userId,
+      status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
+    }).lean(),
+    TemporaryAccessGrant.find({
+      organisationId,
+      userId,
+      status: 'ACTIVE',
+      effectiveFrom: { $lte: now },
+      effectiveTo: { $gt: now },
+    })
+      .sort({ effectiveTo: 1 })
+      .lean(),
+  ]);
 
   res.json({
     success: true,
@@ -462,7 +476,17 @@ async function getMyAccess(req, res) {
         state: 'ACTIVE',
       })),
       moduleAccess,
-      temporaryAccess: [], // P2 â€” placeholder for TemporaryAccessGrant model
+      temporaryAccess: temporaryGrants.map((grant) => ({
+        grantId: grant.grantId,
+        permissionCode: grant.permissionCode,
+        moduleCode: grant.moduleCode || null,
+        cafeId: grant.cafeId || null,
+        reportDomain: grant.reportDomain || null,
+        effectiveFrom: grant.effectiveFrom,
+        effectiveTo: grant.effectiveTo,
+        sourceRequestId: grant.sourceRequestId,
+        state: 'ACTIVE',
+      }))
       pendingRequests: pendingAccessRequests.map((r) => ({
         requestId: r.requestId,
         requestType: r.requestType,
@@ -487,9 +511,62 @@ async function submitAccessRequest(req, res) {
     throw new ApiError(400, 'MISSING_FIELDS', 'requestType, reason and requestedScope are required.');
   }
 
-  // Idempotency guard â€” prevent double-click duplicate
+  const normalizedRequestType = safeStr(requestType).toUpperCase();
+  if (!ACCESS_REQUEST_TYPES.includes(normalizedRequestType)) {
+    throw new ApiError(400, 'INVALID_ACCESS_REQUEST_TYPE', 'The requested access-request type is invalid.');
+  }
+
+  const normalizedDurationType = safeStr(durationType || 'PERMANENT').toUpperCase();
+  if (!['PERMANENT', 'TEMPORARY'].includes(normalizedDurationType)) {
+    throw new ApiError(400, 'INVALID_ACCESS_DURATION', 'durationType must be PERMANENT or TEMPORARY.');
+  }
+
+  const normalizedScope = {
+    cafeId: safeStr(requestedScope?.cafeId).toUpperCase() || null,
+    moduleCode: safeStr(requestedScope?.moduleCode).toUpperCase() || null,
+    permissionCode: safeStr(requestedScope?.permissionCode).toUpperCase() || null,
+    reportDomain: safeStr(requestedScope?.reportDomain).toUpperCase() || null,
+    description: safeStr(requestedScope?.description).slice(0, 500),
+  };
+
+  if (
+    normalizedScope.permissionCode &&
+    !/^[A-Z0-9_:.]+$/.test(normalizedScope.permissionCode)
+  ) {
+    throw new ApiError(400, 'INVALID_PERMISSION_CODE', 'requestedScope.permissionCode has an invalid format.');
+  }
+
+  let normalizedTemporaryEndAt = null;
+  if (normalizedDurationType === 'TEMPORARY') {
+    if (!normalizedScope.permissionCode) {
+      throw new ApiError(
+        400,
+        'TEMPORARY_PERMISSION_CODE_REQUIRED',
+        'Temporary access requires an exact requestedScope.permissionCode.'
+      );
+    }
+
+    normalizedTemporaryEndAt = new Date(temporaryAccessEndAt);
+    if (
+      !temporaryAccessEndAt ||
+      Number.isNaN(normalizedTemporaryEndAt.getTime()) ||
+      normalizedTemporaryEndAt <= new Date()
+    ) {
+      throw new ApiError(
+        400,
+        'TEMPORARY_ACCESS_EXPIRY_REQUIRED',
+        'Temporary access requires a valid future temporaryAccessEndAt.'
+      );
+    }
+  }
+
+  // Idempotency guard â€” scoped to the authenticated organisation and requester.
   if (idempotencyKey) {
-    const existing = await AccessRequest.findOne({ idempotencyKey });
+    const existing = await AccessRequest.findOne({
+      organisationId,
+      requestedByUserId: userId,
+      idempotencyKey,
+    });
     if (existing) {
       return res.json({
         success: true,
@@ -499,17 +576,24 @@ async function submitAccessRequest(req, res) {
     }
   }
 
-  const requestId = await SequenceCounter.generateId({ prefix: 'AREQ', sequenceKey: 'access_request', organisationId });
+  const yearMonth = new Date().toISOString().slice(0, 7).replace('-', '');
+  const requestId = await SequenceCounter.generateId({
+    prefix: `AREQ-${yearMonth}`,
+    sequenceKey: `ACCESS_REQUEST_${yearMonth}`,
+    organisationId,
+    minimumDigits: 5,
+  });
 
   const ar = await AccessRequest.create({
     requestId,
     organisationId,
     requestedByUserId: userId,
-    requestType,
+    requestType: normalizedRequestType,
     status: 'SUBMITTED',
-    requestedScope,
-    durationType: durationType || 'PERMANENT',
-    temporaryAccessEndAt: temporaryAccessEndAt || null,
+    requestedScope: normalizedScope,
+    durationType: normalizedDurationType,
+    temporaryAccessStartAt: normalizedDurationType === 'TEMPORARY' ? new Date() : null,
+    temporaryAccessEndAt: normalizedTemporaryEndAt,
     reason: safeStr(reason).slice(0, 1000),
     businessJustification: safeStr(businessJustification || '').slice(0, 2000),
     idempotencyKey: idempotencyKey || null,
@@ -521,7 +605,11 @@ async function submitAccessRequest(req, res) {
     }],
   });
 
-  await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: role, module: 'SETTINGS', action: 'ACCESS_REQUEST_SUBMITTED', entityType: 'ACCESS_REQUEST', entityId: ar.requestId, metadata: { requestType } });
+  await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: role, module: 'SETTINGS', action: 'ACCESS_REQUEST_SUBMITTED', entityType: 'ACCESS_REQUEST', entityId: ar.requestId, metadata: {
+    requestType: normalizedRequestType,
+    durationType: normalizedDurationType,
+    requestedScope: normalizedScope,
+  } });
 
   res.status(201).json({
     success: true,
@@ -534,8 +622,8 @@ async function submitAccessRequest(req, res) {
  * GET /api/v1/settings/access/requests
  */
 async function listMyAccessRequests(req, res) {
-  const { userId } = req.user;
-  const requests = await AccessRequest.find({ requestedByUserId: userId })
+  const { userId, organisationId } = req.user;
+  const requests = await AccessRequest.find({ organisationId, requestedByUserId: userId })
     .sort({ createdAt: -1 })
     .limit(50)
     .lean();
@@ -551,6 +639,295 @@ async function listMyAccessRequests(req, res) {
         submittedAt: r.createdAt,
         reviewedAt: r.reviewedAt || null,
       })),
+    },
+  });
+}
+
+
+function assertPrimaryMasterAccessReviewer(req) {
+  if (req.user?.role !== 'MASTER' || req.user?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Temporary access review requires Primary Master authority.'
+    );
+  }
+}
+
+async function listAccessRequestsForReview(req, res) {
+  assertPrimaryMasterAccessReviewer(req);
+
+  const { organisationId } = req.user;
+  const status = safeStr(req.query?.status || 'SUBMITTED').toUpperCase();
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query?.limit, 10) || 50));
+
+  const filter = { organisationId };
+  if (status !== 'ALL') {
+    filter.status = status;
+  }
+
+  const requests = await AccessRequest.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+
+  res.json({
+    success: true,
+    data: { requests },
+  });
+}
+
+async function reviewAccessRequest(req, res) {
+  assertPrimaryMasterAccessReviewer(req);
+
+  const { organisationId, userId } = req.user;
+  const requestId = safeStr(req.params?.requestId).toUpperCase();
+  const decision = safeStr(req.body?.decision).toUpperCase();
+  const reviewNote = safeStr(req.body?.reviewNote);
+
+  if (!['APPROVE_TEMPORARY', 'DENY'].includes(decision)) {
+    throw new ApiError(
+      400,
+      'INVALID_ACCESS_REVIEW_DECISION',
+      'decision must be APPROVE_TEMPORARY or DENY.'
+    );
+  }
+  if (reviewNote.length < 10) {
+    throw new ApiError(
+      400,
+      'ACCESS_REVIEW_NOTE_REQUIRED',
+      'A specific review note of at least 10 characters is required.'
+    );
+  }
+
+  let reviewedRequest = null;
+  let grant = null;
+
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      reviewedRequest = await AccessRequest.findOne(
+        {
+          organisationId,
+          requestId,
+          status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
+        },
+        null,
+        { session }
+      );
+
+      if (!reviewedRequest) {
+        throw new ApiError(
+          404,
+          'ACCESS_REQUEST_NOT_REVIEWABLE',
+          'The access request was not found or is no longer reviewable.'
+        );
+      }
+
+      if (String(reviewedRequest.requestedByUserId).toUpperCase() === String(userId).toUpperCase()) {
+        throw new ApiError(
+          409,
+          'ACCESS_REQUEST_MAKER_CHECKER_REQUIRED',
+          'The requester cannot approve or deny their own access request.'
+        );
+      }
+
+      const now = new Date();
+
+      if (decision === 'APPROVE_TEMPORARY') {
+        if (reviewedRequest.durationType !== 'TEMPORARY') {
+          throw new ApiError(
+            409,
+            'PERMANENT_ACCESS_GRANT_NOT_AUTO_APPLIED',
+            'Permanent access requests require a separate governed RolePermission workflow and are not auto-applied here.'
+          );
+        }
+
+        const permissionCode = safeStr(reviewedRequest.requestedScope?.permissionCode).toUpperCase();
+        const effectiveTo = reviewedRequest.temporaryAccessEndAt
+          ? new Date(reviewedRequest.temporaryAccessEndAt)
+          : null;
+
+        if (
+          !permissionCode ||
+          !effectiveTo ||
+          Number.isNaN(effectiveTo.getTime()) ||
+          effectiveTo <= now
+        ) {
+          throw new ApiError(
+            409,
+            'TEMPORARY_ACCESS_SCOPE_INVALID',
+            'The temporary request lacks an exact permission code or valid future expiry.'
+          );
+        }
+
+        const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
+        const grantId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: `TEMP_ACCESS_GRANT_${yearMonth}`,
+          prefix: `TAG-${yearMonth}`,
+          minimumDigits: 5,
+          session,
+        });
+
+        grant = new TemporaryAccessGrant({
+          grantId,
+          organisationId,
+          userId: reviewedRequest.requestedByUserId,
+          sourceRequestId: reviewedRequest.requestId,
+          permissionCode,
+          moduleCode: reviewedRequest.requestedScope?.moduleCode || null,
+          cafeId: reviewedRequest.requestedScope?.cafeId || null,
+          reportDomain: reviewedRequest.requestedScope?.reportDomain || null,
+          description: reviewedRequest.requestedScope?.description || '',
+          effectiveFrom: now,
+          effectiveTo,
+          status: 'ACTIVE',
+          approvedByUserId: userId,
+          approvedAt: now,
+          approvalReason: reviewNote,
+        });
+        await grant.save({ session });
+
+        reviewedRequest.status = 'APPROVED';
+      } else {
+        reviewedRequest.status = 'DENIED';
+      }
+
+      reviewedRequest.reviewedByUserId = userId;
+      reviewedRequest.reviewedAt = now;
+      reviewedRequest.reviewNote = reviewNote;
+      reviewedRequest.auditHistory.push({
+        action: decision,
+        performedByUserId: userId,
+        note: reviewNote,
+        timestamp: now,
+      });
+      await reviewedRequest.save({ session });
+
+      await auditService.recordAuditEvent({
+        organisationId,
+        actorUserId: userId,
+        actorRole: req.user.role,
+        module: 'SETTINGS',
+        action: decision === 'APPROVE_TEMPORARY'
+          ? 'TEMPORARY_ACCESS_GRANTED'
+          : 'ACCESS_REQUEST_DENIED',
+        entityType: decision === 'APPROVE_TEMPORARY'
+          ? 'TEMPORARY_ACCESS_GRANT'
+          : 'ACCESS_REQUEST',
+        entityId: grant?.grantId || reviewedRequest.requestId,
+        reason: reviewNote,
+        riskClassification: 'HIGH',
+        metadata: {
+          requestId: reviewedRequest.requestId,
+          requestedByUserId: reviewedRequest.requestedByUserId,
+          permissionCode: reviewedRequest.requestedScope?.permissionCode || null,
+          cafeId: reviewedRequest.requestedScope?.cafeId || null,
+          effectiveTo: grant?.effectiveTo || null,
+        },
+        session,
+      });
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  res.json({
+    success: true,
+    message: decision === 'APPROVE_TEMPORARY'
+      ? 'Temporary access grant approved and activated.'
+      : 'Access request denied.',
+    data: {
+      requestId: reviewedRequest.requestId,
+      requestStatus: reviewedRequest.status,
+      grant: grant
+        ? {
+            grantId: grant.grantId,
+            permissionCode: grant.permissionCode,
+            cafeId: grant.cafeId || null,
+            effectiveFrom: grant.effectiveFrom,
+            effectiveTo: grant.effectiveTo,
+            status: grant.status,
+          }
+        : null,
+    },
+  });
+}
+
+async function revokeTemporaryAccessGrant(req, res) {
+  assertPrimaryMasterAccessReviewer(req);
+
+  const { organisationId, userId } = req.user;
+  const grantId = safeStr(req.params?.grantId).toUpperCase();
+  const reason = safeStr(req.body?.reason);
+
+  if (reason.length < 10) {
+    throw new ApiError(
+      400,
+      'TEMPORARY_ACCESS_REVOCATION_REASON_REQUIRED',
+      'A specific revocation reason of at least 10 characters is required.'
+    );
+  }
+
+  let grant = null;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      grant = await TemporaryAccessGrant.findOne(
+        {
+          organisationId,
+          grantId,
+          status: 'ACTIVE',
+        },
+        null,
+        { session }
+      );
+
+      if (!grant) {
+        throw new ApiError(
+          404,
+          'TEMPORARY_ACCESS_GRANT_NOT_ACTIVE',
+          'The temporary grant was not found or is no longer active.'
+        );
+      }
+
+      const now = new Date();
+      grant.status = 'REVOKED';
+      grant.revokedByUserId = userId;
+      grant.revokedAt = now;
+      grant.revocationReason = reason;
+      await grant.save({ session });
+
+      await auditService.recordAuditEvent({
+        organisationId,
+        actorUserId: userId,
+        actorRole: req.user.role,
+        module: 'SETTINGS',
+        action: 'TEMPORARY_ACCESS_REVOKED',
+        entityType: 'TEMPORARY_ACCESS_GRANT',
+        entityId: grant.grantId,
+        reason,
+        riskClassification: 'HIGH',
+        metadata: {
+          userId: grant.userId,
+          permissionCode: grant.permissionCode,
+          cafeId: grant.cafeId || null,
+        },
+        session,
+      });
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  res.json({
+    success: true,
+    message: 'Temporary access grant revoked.',
+    data: {
+      grantId: grant.grantId,
+      status: grant.status,
+      revokedAt: grant.revokedAt,
     },
   });
 }
@@ -1922,6 +2299,9 @@ module.exports = {
   getMyAccess,
   submitAccessRequest,
   listMyAccessRequests,
+  listAccessRequestsForReview,
+  reviewAccessRequest,
+  revokeTemporaryAccessGrant,
   getMyPreferences,
   updateAppearancePreferences,
   updateLanguagePreference,
