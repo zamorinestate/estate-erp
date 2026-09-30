@@ -35,6 +35,14 @@ function createAttendance(overrides = {}) {
         qrChallengeId: 'CH-3001',
         qrVerified: true,
         geofenceVerified: true,
+        latitude: 11.8745,
+        longitude: 75.3704,
+        accuracyMeters: 8,
+        distanceMeters: 0,
+        geofencePolicyVersion: 1,
+        cafeLatitude: 11.8745,
+        cafeLongitude: 75.3704,
+        allowedRadiusMeters: 100,
         deviceId: 'OPS-CONSOLE-01',
         serverTimestamp: new Date('2026-09-30T03:31:00Z'),
       },
@@ -256,6 +264,37 @@ test('EVI-003B: legacy evidence can still be streamed without new proof snapshot
       result.checks.some((check) => check.name === 'proof_snapshot_version'),
       false
     );
+  } finally {
+    PrivateFile.findOne = originals.findOne;
+    attendanceEvidenceStorageService.readObjectBuffer = originals.read;
+  }
+});
+
+
+
+test('EVI-003C: geofence snapshot detects distance or radius tampering independently', async () => {
+  const originals = {
+    findOne: PrivateFile.findOne,
+    read: attendanceEvidenceStorageService.readObjectBuffer,
+  };
+  const bytes = Buffer.from('geofence-forensic-evidence');
+
+  PrivateFile.findOne = async () => createPrivateFile(bytes);
+  attendanceEvidenceStorageService.readObjectBuffer = async () => bytes;
+
+  const attendance = createAttendance();
+  attendance.attendanceEvidence.checkIn.distanceMeters = 999;
+  attendance.attendanceEvidence.checkIn.allowedRadiusMeters = 10;
+
+  try {
+    const result = await verifyAttendanceEvidenceSlot({
+      organisationId: 'ORG-ZAMORIN',
+      attendance,
+      punchType: 'CHECK_IN',
+    });
+
+    assert.equal(result.status, 'FAIL');
+    assert.ok(result.failedChecks.includes('geofence_distance_recomputed'));
   } finally {
     PrivateFile.findOne = originals.findOne;
     attendanceEvidenceStorageService.readObjectBuffer = originals.read;
