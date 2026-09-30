@@ -89,6 +89,21 @@ function getIstBusinessDate(date = new Date()) {
   }).format(date);
 }
 
+function resolveIndianFinancialYear(businessDate) {
+  const [yearText, monthText] = String(businessDate || '').split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    throw new ApiError(500, 'INVALID_BUSINESS_DATE', 'Cannot derive financial year from business date.');
+  }
+  const startYear = month >= 4 ? year : year - 1;
+  const endYear = startYear + 1;
+  return {
+    short: `${startYear}-${String(endYear).slice(-2)}`,
+    full: `${startYear}-${endYear}`,
+  };
+}
+
 function parsePositiveInteger(value, fallback, maximum) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
@@ -541,6 +556,33 @@ const createBill = asyncHandler(async (request, response) => {
     }
   }
 
+  const cafeQuery = Cafe.findOne({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    status: { $nin: ['CLOSED', 'ARCHIVED'] },
+  });
+  const cafe = cafeQuery && typeof cafeQuery.lean === 'function'
+    ? await cafeQuery.lean()
+    : await cafeQuery;
+
+  if (!cafe) {
+    throw new ApiError(
+      404,
+      'CAFE_NOT_FOUND',
+      'The authoritative café master record was not found or is not operational.'
+    );
+  }
+
+  const cafeGstDetails = cafe.registrations?.gstDetails || {};
+  const cafeGstin = String(
+    cafeGstDetails.gstin ||
+    cafe.registrations?.gstin ||
+    ''
+  ).trim().toUpperCase();
+  const cafeGstRegistered =
+    cafeGstDetails.isRegistered === true ||
+    Boolean(cafeGstin);
+
   // Payment Idempotency Check (§83, §157, §158)
   const effectiveIdempotencyKey = idempotencyKey || request.headers?.['x-idempotency-key'] || null;
   if (effectiveIdempotencyKey) {
@@ -596,7 +638,14 @@ const createBill = asyncHandler(async (request, response) => {
     const modifierPrice = Number(li.modifiers?.modifierPricePaisa) || 0;
     const effectiveUnitPrice = unitPrice + modifierPrice;
     const lineSubtotal = qty * effectiveUnitPrice;
-    const taxRate = mItem.taxRatePercent || 5;
+    const taxRate = Number(mItem.taxRatePercent);
+    if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+      throw new ApiError(
+        409,
+        'MENU_ITEM_TAX_CONFIGURATION_REQUIRED',
+        `Menu item ${mId} does not have a valid authoritative tax rate.`
+      );
+    }
     const halfRate = taxRate / 2;
     const lineCgst = roundToPaisa((lineSubtotal * halfRate) / 100);
     const lineSgst = roundToPaisa((lineSubtotal * halfRate) / 100);
@@ -615,7 +664,9 @@ const createBill = asyncHandler(async (request, response) => {
       modifiers: li.modifiers || { size: 'Regular', milk: 'Standard', temperature: 'Hot', sweetness: 'Regular', addOns: [], modifierPricePaisa: 0 },
       itemNotes: typeof li.itemNotes === 'string' ? li.itemNotes.trim() : '',
       taxRatePercent: taxRate,
-      taxClassification: taxRate === 5 ? 'GST_5' : taxRate === 12 ? 'GST_12' : taxRate === 18 ? 'GST_18' : 'EXEMPT',
+      taxClassification:
+        String(mItem.taxCategoryRef || '').trim().toUpperCase() ||
+        (taxRate === 0 ? 'EXEMPT' : `GST_${taxRate}`),
       discountPaisa: 0,
       lineSubtotalPaisa: lineSubtotal,
       cgstPaisa: lineCgst,
@@ -640,22 +691,28 @@ const createBill = asyncHandler(async (request, response) => {
     minimumDigits: 4,
   });
 
-  let invoiceNumber = null;
-  try {
-    const { allocateInvoiceNumber } = require('../services/gstTaxService');
-    const invoiceAlloc = await allocateInvoiceNumber({
-      organisationId: request.auth.organisationId,
-      cafeId,
-      financialYear: typeof financialYear === 'string' && financialYear.trim() ? financialYear.trim() : '2026-27',
-      statutorySeriesCode: 'P',
-      seriesPrefix: 'P',
-    });
-    invoiceNumber = invoiceAlloc.invoiceNumber;
-  } catch {
-    const compactBranch = cafeId.replace(/[^A-Za-z0-9]/g, '').slice(-4).padStart(2, '0');
-    const seqTail = seqId.split('-').pop();
-    invoiceNumber = `P/${compactBranch}/2627/${seqTail}`.slice(0, 16);
+  if (taxPaisa > 0) {
+    if (!cafeGstRegistered || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(cafeGstin)) {
+      throw new ApiError(
+        409,
+        'CAFE_GST_REGISTRATION_REQUIRED',
+        'Taxable billing is blocked until a valid authoritative café GSTIN is configured.'
+      );
+    }
   }
+
+  const financialYearResolved = resolveIndianFinancialYear(businessDate);
+  const { allocateInvoiceNumber } = require('../services/gstTaxService');
+  const invoiceAlloc = await allocateInvoiceNumber({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    gstin: cafeGstin,
+    financialYear: financialYearResolved.short,
+    statutorySeriesCode: 'P',
+    seriesPrefix: 'P',
+  });
+  const invoiceNumber = invoiceAlloc.invoiceNumber;
+
   const shouldComplete = isImmediateCompletion !== false;
   const payMethod = PAYMENT_METHODS.includes(normalizeId(paymentMethod))
     ? normalizeId(paymentMethod)
@@ -727,13 +784,16 @@ const createBill = asyncHandler(async (request, response) => {
     tableToken: typeof tableToken === 'string' ? tableToken.trim() : '',
     registerId: cleanRegisterId,
     registerSessionId: cleanRegisterSessionId,
-    financialYear: typeof financialYear === 'string' ? financialYear.trim() : '2026-2027',
+    financialYear:
+      typeof financialYear === 'string' && financialYear.trim()
+        ? financialYear.trim()
+        : financialYearResolved.full,
     tableNumber: typeof tableNumber === 'string' ? tableNumber.trim() : '',
     customerName: typeof customerName === 'string' ? customerName.trim() : '',
     customerPhone: typeof customerPhone === 'string' ? customerPhone.trim() : '',
     b2bCustomerGstin: typeof b2bCustomerGstin === 'string' ? b2bCustomerGstin.trim().toUpperCase() : '',
     b2bCustomerLegalName: typeof b2bCustomerLegalName === 'string' ? b2bCustomerLegalName.trim() : '',
-    gstRegistrationNumber: '29AABCT1332L1ZV',
+    gstRegistrationNumber: cafeGstRegistered ? cafeGstin : '',
     taxConfigVersion: 'GST-V1',
     lineItems: processedLineItems,
     subtotalPaisa,
