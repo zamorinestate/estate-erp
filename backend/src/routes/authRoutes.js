@@ -167,6 +167,10 @@ function sendDistributedLimiterUnavailable(req, res) {
   });
 }
 
+function isSuccessfulAuthenticationAttempt(req, res) {
+  return req.authCredentialVerified === true || (res.statusCode >= 200 && res.statusCode < 400);
+}
+
 function createDistributedAuthRateLimiter({
   scope,
   ipLimit,
@@ -174,6 +178,7 @@ function createDistributedAuthRateLimiter({
   accountKeyFn = normalizeAccountKey,
   windowMs = 15 * 60 * 1000,
   message = LOGIN_RATE_LIMIT_MESSAGE,
+  releaseSuccessfulRequests = false,
 }) {
   return async function distributedAuthRateLimiter(req, res, next) {
     const adapter = redisClientFactory.adapterService;
@@ -189,10 +194,34 @@ function createDistributedAuthRateLimiter({
     const accountIdentifier = accountKeyFn(req);
 
     try {
+      const ipScope = `${scope}:IP`;
+      const accountScope = `${scope}:ACCOUNT`;
       const [ipResult, accountResult] = await Promise.all([
-        adapter.checkRateLimit(`${scope}:IP`, ipIdentifier, ipLimit, windowMs),
-        adapter.checkRateLimit(`${scope}:ACCOUNT`, accountIdentifier, accountLimit, windowMs),
+        adapter.checkRateLimit(ipScope, ipIdentifier, ipLimit, windowMs),
+        adapter.checkRateLimit(accountScope, accountIdentifier, accountLimit, windowMs),
       ]);
+
+      const reservations = [
+        ipResult.allowed && ipResult.reservationId
+          ? { scope: ipScope, identifier: ipIdentifier, reservationId: ipResult.reservationId }
+          : null,
+        accountResult.allowed && accountResult.reservationId
+          ? { scope: accountScope, identifier: accountIdentifier, reservationId: accountResult.reservationId }
+          : null,
+      ].filter(Boolean);
+
+      const releaseReservations = async () => {
+        if (typeof adapter.releaseRateLimitReservation !== 'function') return;
+        await Promise.allSettled(
+          reservations.map((reservation) =>
+            adapter.releaseRateLimitReservation(
+              reservation.scope,
+              reservation.identifier,
+              reservation.reservationId
+            )
+          )
+        );
+      };
 
       const deniedResult = !ipResult.allowed
         ? { result: ipResult, limiter: `${scope}_IP` }
@@ -201,6 +230,7 @@ function createDistributedAuthRateLimiter({
           : null);
 
       if (deniedResult) {
+        await releaseReservations();
         try {
           logSecurityEvent({
             correlationId: req.correlationId || null,
@@ -224,6 +254,15 @@ function createDistributedAuthRateLimiter({
         return res.status(429).json(message);
       }
 
+      if (releaseSuccessfulRequests && reservations.length > 0) {
+        let released = false;
+        res.once('finish', () => {
+          if (released || !isSuccessfulAuthenticationAttempt(req, res)) return;
+          released = true;
+          releaseReservations().catch(() => {});
+        });
+      }
+
       return next();
     } catch (error) {
       if (isProductionLikeAuthEnvironment()) {
@@ -242,6 +281,8 @@ function createLoginIpRateLimiter(overrides = {}) {
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => ipKeyGenerator(getTrustedClientIp(req)),
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: isSuccessfulAuthenticationAttempt,
     handler: createRateLimitHandler('AUTH_LOGIN_IP', LOGIN_RATE_LIMIT_MESSAGE),
     message: LOGIN_RATE_LIMIT_MESSAGE,
     ...overrides,
@@ -255,6 +296,8 @@ function createLoginAccountRateLimiter(overrides = {}) {
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => normalizeAccountKey(req, 'email'),
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: isSuccessfulAuthenticationAttempt,
     handler: createRateLimitHandler('AUTH_LOGIN_ACCOUNT', LOGIN_RATE_LIMIT_MESSAGE),
     message: LOGIN_RATE_LIMIT_MESSAGE,
     ...overrides,
@@ -293,11 +336,13 @@ const passwordResetIpRateLimiter = createPasswordResetIpRateLimiter();
 const passwordResetAccountRateLimiter = createPasswordResetAccountRateLimiter();
 
 const distributedLoginRateLimiter = createDistributedAuthRateLimiter({
-  scope: 'AUTH_LOGIN',
+  // Rotate away from stale buckets created by the old success-counting limiter.
+  scope: 'AUTH_LOGIN_FAILURES_V2',
   ipLimit: process.env.AUTH_RATE_LIMIT_IP_MAX ? Number(process.env.AUTH_RATE_LIMIT_IP_MAX) : 50,
   accountLimit: process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX ? Number(process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX) : 10,
   accountKeyFn: (req) => normalizeAccountKey(req, 'email'),
   message: LOGIN_RATE_LIMIT_MESSAGE,
+  releaseSuccessfulRequests: true,
 });
 
 const distributedPasswordResetRateLimiter = createDistributedAuthRateLimiter({
@@ -480,6 +525,7 @@ router.createLoginAccountRateLimiter = createLoginAccountRateLimiter;
 router.createPasswordResetIpRateLimiter = createPasswordResetIpRateLimiter;
 router.createPasswordResetAccountRateLimiter = createPasswordResetAccountRateLimiter;
 router.createDistributedAuthRateLimiter = createDistributedAuthRateLimiter;
+router.isSuccessfulAuthenticationAttempt = isSuccessfulAuthenticationAttempt;
 router.isProductionLikeAuthEnvironment = isProductionLikeAuthEnvironment;
 
 module.exports = router;
