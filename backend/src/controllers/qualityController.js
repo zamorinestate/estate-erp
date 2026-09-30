@@ -488,44 +488,20 @@ const recordTemperature = asyncHandler(async (request, response) => {
   const min = minimumAllowedCelsius !== undefined ? Number(minimumAllowedCelsius) : Number(expectedMinCelsius);
   const max = maximumAllowedCelsius !== undefined ? Number(maximumAllowedCelsius) : Number(expectedMaxCelsius);
 
-  let logRecord;
-  try {
-    logRecord = await FoodSafetyService.recordTemperature({
-      organisationId: request.auth.organisationId,
-      cafeId,
-      monitoringPoint: monitoringPoint || 'REFRIGERATOR',
-      monitoringPointName: monitoringPointName || location || 'Kitchen Unit',
-      equipmentId: equipmentId || 'AST-CHILL-GEN',
-      equipmentName: equipmentName || 'Refrigeration Unit',
-      readingCelsius: Number(readingCelsius),
-      minimumAllowedCelsius: min,
-      maximumAllowedCelsius: max,
-      recordedByUserId: request.auth.userId,
-      operatorSessionId,
-      remarks: remarks || notes,
-    });
-  } catch (err) {
-    // In-memory fallback
-    const isExcursion = Number(readingCelsius) < min || Number(readingCelsius) > max;
-    const logId = `TEMP-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
-    logRecord = {
-      logId,
-      organisationId: request.auth.organisationId,
-      cafeId,
-      assetId: equipmentId || 'AST-CHILL-GEN',
-      assetName: equipmentName || 'Refrigeration Unit',
-      location: location || 'Kitchen',
-      readingCelsius: Number(readingCelsius),
-      expectedMinCelsius: min,
-      expectedMaxCelsius: max,
-      isExcursion,
-      notes: remarks || notes,
-      status: isExcursion ? 'OUT_OF_RANGE' : 'WITHIN_RANGE',
-      recordedBy: request.auth.userId,
-      recordedAt: new Date().toISOString(),
-    };
-    inMemoryTemperatures.unshift(logRecord);
-  }
+  const logRecord = await FoodSafetyService.recordTemperature({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    monitoringPoint: monitoringPoint || 'REFRIGERATOR',
+    monitoringPointName: monitoringPointName || location || 'Kitchen Unit',
+    equipmentId: equipmentId || 'AST-CHILL-GEN',
+    equipmentName: equipmentName || 'Refrigeration Unit',
+    readingCelsius: Number(readingCelsius),
+    minimumAllowedCelsius: min,
+    maximumAllowedCelsius: max,
+    recordedByUserId: request.auth.userId,
+    operatorSessionId,
+    remarks: remarks || notes,
+  });
 
   return response.status(201).json({
     success: true,
