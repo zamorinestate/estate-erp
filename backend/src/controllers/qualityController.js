@@ -1138,6 +1138,7 @@ const createQualityHold = asyncHandler(async (request, response) => {
   });
 
   const holdPayload = typeof hold?.toObject === 'function' ? hold.toObject() : hold;
+  const durableHoldPayload = { ...holdPayload, durableSource: 'QUALITY_HOLD' };
 
   await recordRequestAudit({
     request,
@@ -1146,14 +1147,14 @@ const createQualityHold = asyncHandler(async (request, response) => {
     entityType: 'QUALITY_HOLD',
     entityId: holdId,
     cafeId,
-    after: holdPayload,
+    after: durableHoldPayload,
     result: 'SUCCESS',
     riskClassification: 'HIGH',
   });
 
   return response.status(201).json({
     success: true,
-    data: { hold: holdPayload },
+    data: { hold: durableHoldPayload },
     correlationId: request.correlationId || null,
   });
 });
@@ -1281,6 +1282,7 @@ const releaseQualityHold = asyncHandler(async (request, response) => {
   });
 
   const holdPayload = typeof hold?.toObject === 'function' ? hold.toObject() : hold;
+  const durableHoldPayload = { ...holdPayload, durableSource: 'QUALITY_HOLD' };
 
   await recordRequestAudit({
     request,
@@ -1301,7 +1303,7 @@ const releaseQualityHold = asyncHandler(async (request, response) => {
 
   return response.status(200).json({
     success: true,
-    data: { hold: holdPayload },
+    data: { hold: durableHoldPayload },
     correlationId: request.correlationId || null,
   });
 });
@@ -1389,6 +1391,7 @@ const createNcr = asyncHandler(async (request, response) => {
 
   await ncr.save();
   const ncrPayload = typeof ncr.toObject === 'function' ? ncr.toObject() : ncr;
+  const durableNcrPayload = { ...ncrPayload, durableSource: 'QUALITY_NCR' };
 
   await recordRequestAudit({
     request,
@@ -1397,14 +1400,14 @@ const createNcr = asyncHandler(async (request, response) => {
     entityType: 'NCR',
     entityId: ncrId,
     cafeId,
-    after: ncrPayload,
+    after: durableNcrPayload,
     result: 'SUCCESS',
     riskClassification: normalizedSeverity === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
   });
 
   return response.status(201).json({
     success: true,
-    data: { ncr: ncrPayload },
+    data: { ncr: durableNcrPayload },
     correlationId: request.correlationId || null,
   });
 });
@@ -1538,6 +1541,7 @@ const createCapa = asyncHandler(async (request, response) => {
   });
 
   const capaPayload = typeof capa.toObject === 'function' ? capa.toObject() : capa;
+  const durableCapaPayload = { ...capaPayload, durableSource: 'CAPA_RECORD' };
 
   await recordRequestAudit({
     request,
@@ -1546,14 +1550,14 @@ const createCapa = asyncHandler(async (request, response) => {
     entityType: 'CAPA',
     entityId: capaId,
     cafeId,
-    after: capaPayload,
+    after: durableCapaPayload,
     result: 'SUCCESS',
     riskClassification: 'HIGH',
   });
 
   return response.status(201).json({
     success: true,
-    data: { capa: capaPayload },
+    data: { capa: durableCapaPayload },
     correlationId: request.correlationId || null,
   });
 });
@@ -1611,6 +1615,7 @@ const verifyCapa = asyncHandler(async (request, response) => {
   await capa.save();
 
   const capaPayload = typeof capa.toObject === 'function' ? capa.toObject() : capa;
+  const durableCapaPayload = { ...capaPayload, durableSource: 'CAPA_RECORD' };
 
   await recordRequestAudit({
     request,
@@ -1630,7 +1635,7 @@ const verifyCapa = asyncHandler(async (request, response) => {
 
   return response.status(200).json({
     success: true,
-    data: { capa: capaPayload },
+    data: { capa: durableCapaPayload },
     correlationId: request.correlationId || null,
   });
 });
