@@ -92,6 +92,7 @@ async function reconcileExpiredOrphanAttendanceEvidence({
     organisationId: normalizedOrganisationId,
     'attendanceContext.challengeId': { $ne: null },
     'attendanceContext.grantExpiresAt': { $ne: null, $lte: cutoff },
+    'attendanceLink.status': { $nin: ['RESERVED', 'COMMITTED'] },
     $or: [
       { 'attendanceCleanup.status': { $ne: 'CLAIMED' } },
       { 'attendanceCleanup.claimedAt': { $lte: staleClaimCutoff } },
@@ -141,6 +142,7 @@ async function reconcileExpiredOrphanAttendanceEvidence({
         _id: candidate._id,
         organisationId: normalizedOrganisationId,
         'attendanceContext.grantExpiresAt': { $ne: null, $lte: cutoff },
+        'attendanceLink.status': { $nin: ['RESERVED', 'COMMITTED'] },
         $or: [
           { 'attendanceCleanup.status': { $ne: 'CLAIMED' } },
           { 'attendanceCleanup.claimedAt': { $lte: staleClaimCutoff } },
@@ -167,9 +169,9 @@ async function reconcileExpiredOrphanAttendanceEvidence({
       continue;
     }
 
-    // Recheck after acquiring the metadata claim. The signed punch grant has
-    // already expired beyond the grace window, so canonical check-in/out can no
-    // longer create a new valid link after this point.
+    // Recheck after acquiring the metadata claim. The same PrivateFile row is
+    // also protected by attendanceLink RESERVED/COMMITTED states, so a punch
+    // that wins the linkage reservation cannot be claimed by this cleanup flow.
     if (await isEvidenceLinked(normalizedOrganisationId, fileId)) {
       summary.linkedProtected += 1;
       await PrivateFile.updateOne(
