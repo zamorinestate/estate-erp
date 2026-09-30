@@ -409,3 +409,36 @@ test('P0-WF-030: attendance selfie IDs use the canonical PrivateFile sequence pr
   assert.equal(uploadBlock.includes("prefix: 'FILE-'"), false);
   assert.ok(privateFileModel.includes("match: /^FILE-\\d{4,}$/"));
 });
+
+
+test('P0-WF-031: attendance roster UI is server-authoritative and contains no synthetic staff or fake publish state', () => {
+  for (const forbidden of [
+    'EMP-013',
+    'EMP-014',
+    'EMP-015',
+    'EMP-016',
+    'Meera Nambiar',
+    'Pooja Hegde',
+    'new Date(2026, 7, 17)',
+    "Previous week's shift roster schedule copied",
+    'Balanced opening/closing shift coverage auto-generated',
+    'Backend publish roster notice',
+    'PUBLISHED & BROADCAST',
+    'Revert to Draft',
+    'Draft weekly shift roster created successfully',
+    'rosterPublishedMap[activeCafeId] ?? true',
+  ]) {
+    assert.equal(
+      attendanceShiftsPage.includes(forbidden),
+      false,
+      `Attendance roster must not contain synthetic or fake-success state: ${forbidden}`
+    );
+  }
+
+  assert.ok(attendanceShiftsPage.includes('async function loadLiveAttendanceData()'));
+  assert.ok(attendanceShiftsPage.includes('async function loadRosterData('));
+  assert.ok(attendanceShiftsPage.includes('/attendance/roster?cafeId='));
+  assert.ok(attendanceShiftsPage.includes('apiPost("/attendance/roster", { cafeId, weekStartDate, assignments })'));
+  assert.ok(attendanceShiftsPage.includes('Weekly roster published. Staff notification delivery has been queued.'));
+  assert.ok(attendanceShiftsPage.includes('apiGet("/employees?limit=200")'));
+});
