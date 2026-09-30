@@ -914,27 +914,21 @@ function mapCapaRecordForQuality(record) {
 }
 
 const listQualityHolds = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds = [] } = request.auth;
-  const filter = {
-    organisationId,
-    status: { $in: ['QUARANTINE', 'RECALL_HOLD'] },
-  };
-
-  if (role !== 'MASTER') {
-    filter.cafeId = { $in: assignedCafeIds.map(normalizeId) };
+  if (!qualitySourceConnected(QualityHold.find)) {
+    return response.status(200).json({
+      success: true,
+      data: { holds: [], sourceStatus: 'UNAVAILABLE' },
+      correlationId: request.correlationId || null,
+    });
   }
 
-  const lotsQuery = InventoryLot.find(filter).sort({ quarantineDate: -1, updatedAt: -1 }).limit(500);
-  const lots = lotsQuery && typeof lotsQuery.lean === 'function'
-    ? await lotsQuery.lean()
-    : await lotsQuery;
+  const filter = buildQualityScopeFilter(request);
+  const query = QualityHold.find(filter).sort({ placedAt: -1 }).limit(250);
+  const holds = query && typeof query.lean === 'function' ? await query.lean() : await query;
 
   return response.status(200).json({
     success: true,
-    data: {
-      holds: (lots || []).map(mapInventoryLotToQualityHold),
-      sourceStatus: 'DURABLE_INVENTORY_LOT',
-    },
+    data: { holds: Array.isArray(holds) ? holds : [], sourceStatus: 'DURABLE' },
     correlationId: request.correlationId || null,
   });
 });
@@ -943,22 +937,48 @@ const createQualityHold = asyncHandler(async (request, response) => {
   const {
     cafeId: rawCafeId,
     lotNumber,
-    reason = 'INSPECTION_PENDING',
-    description = '',
+    itemSku,
+    itemName,
+    quantityHeld,
+    unit,
+    reason,
+    description,
   } = request.body || {};
 
   const cafeId = normalizeId(rawCafeId);
-  const normalizedLot = normalizeId(lotNumber);
+  const normalizedLotNumber = normalizeId(lotNumber);
+  const holdQuantity = Number(quantityHeld);
+
   if (!cafeId) throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
-  if (!normalizedLot) throw new ApiError(400, 'LOT_NUMBER_REQUIRED', 'lotNumber is required for Quality Hold.');
   assertCafeAccess(request, cafeId);
+
+  if (!normalizedLotNumber) {
+    throw new ApiError(400, 'LOT_NUMBER_REQUIRED', 'lotNumber is required for a Quality Hold.');
+  }
+  if (!Number.isFinite(holdQuantity) || holdQuantity <= 0) {
+    throw new ApiError(400, 'INVALID_HOLD_QUANTITY', 'quantityHeld must be greater than zero.');
+  }
+  if (!String(reason || '').trim()) {
+    throw new ApiError(400, 'HOLD_REASON_REQUIRED', 'A quality hold reason is required.');
+  }
+
+  if (
+    !qualitySourceConnected(InventoryLot.findOne) ||
+    !qualitySourceConnected(QualityHold.findOne)
+  ) {
+    throw new ApiError(
+      503,
+      'QUALITY_HOLD_SOURCE_UNAVAILABLE',
+      'The durable inventory/quality-hold source is unavailable.'
+    );
+  }
 
   const lotQuery = InventoryLot.findOne({
     organisationId: request.auth.organisationId,
     cafeId,
     $or: [
-      { lotId: normalizedLot },
-      { supplierLot: normalizedLot },
+      { lotId: normalizedLotNumber },
+      { supplierLot: normalizedLotNumber },
     ],
   });
   const lot = lotQuery && typeof lotQuery.lean === 'function'
@@ -969,240 +989,277 @@ const createQualityHold = asyncHandler(async (request, response) => {
     throw new ApiError(
       404,
       'INVENTORY_LOT_NOT_FOUND',
-      'Quality Hold requires an existing authoritative inventory lot.'
+      'The requested inventory lot does not exist in this café.'
     );
   }
 
-  if (['QUARANTINE', 'RECALL_HOLD'].includes(lot.status)) {
+  if (['QUARANTINE', 'RECALL_HOLD', 'DISPOSED', 'RETURNED', 'EXPIRED'].includes(String(lot.status || '').toUpperCase())) {
     throw new ApiError(
       409,
-      'LOT_ALREADY_HELD',
-      'This inventory lot is already under a quality or recall hold.'
+      'INVENTORY_LOT_NOT_HOLDABLE',
+      `Inventory lot ${lot.lotId} is already in restricted status ${lot.status}.`
     );
   }
 
-  if (!['AVAILABLE', 'NEAR_EXPIRY'].includes(lot.status)) {
+  const availableQuantity = Number(lot.remainingQuantity ?? lot.quantityBase ?? lot.initialQuantity ?? 0);
+  if (!Number.isFinite(availableQuantity) || availableQuantity <= 0) {
+    throw new ApiError(409, 'INVENTORY_LOT_EMPTY', 'The requested inventory lot has no remaining quantity to hold.');
+  }
+  if (holdQuantity > availableQuantity) {
     throw new ApiError(
       409,
-      'LOT_NOT_HOLD_ELIGIBLE',
-      `Inventory lot in ${lot.status} state cannot enter a new Quality Hold.`
+      'HOLD_QUANTITY_EXCEEDS_AVAILABLE',
+      'quantityHeld cannot exceed the lot remaining quantity.',
+      { requestedQuantity: holdQuantity, availableQuantity }
     );
   }
 
-  const quarantineReason = [
-    String(reason || '').trim(),
-    String(description || '').trim(),
-  ].filter(Boolean).join(' — ').slice(0, 1000);
+  const duplicateQuery = QualityHold.findOne({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    inventoryLotId: lot.lotId,
+    status: 'ON_HOLD',
+  });
+  const duplicate = duplicateQuery && typeof duplicateQuery.lean === 'function'
+    ? await duplicateQuery.lean()
+    : await duplicateQuery;
+  if (duplicate) {
+    throw new ApiError(409, 'QUALITY_HOLD_ALREADY_ACTIVE', 'This inventory lot already has an active Quality Hold.');
+  }
 
-  const heldLot = await InventoryLot.findOneAndUpdate(
-    {
-      _id: lot._id,
+  const holdId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: 'QUALITY_HOLD',
+    prefix: 'QHOLD',
+    minimumDigits: 4,
+  });
+
+  const now = new Date();
+  const hold = await runQualityAtomic(async (session) => {
+    const inventoryUpdate = await InventoryLot.findOneAndUpdate(
+      {
+        organisationId: request.auth.organisationId,
+        cafeId,
+        lotId: lot.lotId,
+        status: lot.status,
+      },
+      {
+        $set: {
+          status: 'QUARANTINE',
+          quarantineReason: String(reason).trim(),
+          quarantineDate: now,
+          quarantinedByUserId: request.auth.userId,
+        },
+      },
+      {
+        new: true,
+        ...(session ? { session } : {}),
+      }
+    );
+
+    if (!inventoryUpdate) {
+      throw new ApiError(
+        409,
+        'INVENTORY_LOT_STATE_CHANGED',
+        'The inventory lot state changed before the Quality Hold could be applied.'
+      );
+    }
+
+    const record = new QualityHold({
+      holdId,
       organisationId: request.auth.organisationId,
       cafeId,
-      status: lot.status,
-    },
-    {
-      $set: {
-        status: 'QUARANTINE',
-        quarantineReason,
-        quarantineDate: new Date(),
-        quarantinedByUserId: request.auth.userId,
-        releaseReason: '',
-        releaseDate: null,
-        releasedByUserId: null,
-        dispositionStatus: 'NONE',
-        dispositionReason: '',
-        dispositionDate: null,
-        dispositionByUserId: null,
-      },
-    },
-    { new: true }
-  );
-
-  if (!heldLot) {
-    throw new ApiError(
-      409,
-      'QUALITY_HOLD_STATE_CONFLICT',
-      'Inventory lot state changed while the Quality Hold was being applied.'
-    );
-  }
-
-  let auditEventId = null;
-  let auditWarning = null;
-  try {
-    const audit = await recordRequestAudit({
-      request,
-      module: 'QUALITY',
-      action: 'CREATE_QUALITY_HOLD',
-      entityType: 'INVENTORY_LOT',
-      entityId: heldLot.lotId,
-      cafeId,
-      after: {
-        lotId: heldLot.lotId,
-        status: heldLot.status,
-        quarantineReason: heldLot.quarantineReason,
-      },
-      result: 'SUCCESS',
-      riskClassification: 'HIGH',
+      inventoryLotId: lot.lotId,
+      supplierLot: lot.supplierLot || '',
+      itemId: lot.itemId || itemSku || '',
+      itemName: String(itemName || lot.itemId || 'Inventory lot').trim(),
+      quantityHeld: holdQuantity,
+      unit: String(unit || lot.unit || 'units').trim(),
+      reason: String(reason).trim(),
+      description: String(description || '').trim(),
+      status: 'ON_HOLD',
+      previousInventoryLotStatus: lot.status,
+      placedByUserId: request.auth.userId,
+      placedAt: now,
+      auditHistory: [
+        {
+          action: 'PLACED_ON_HOLD',
+          performedByUserId: request.auth.userId,
+          performedAt: now,
+          notes: String(description || '').trim(),
+        },
+      ],
     });
-    auditEventId = audit?.auditEventId || null;
-  } catch (_) {
-    // Fail closed: the protective quarantine remains active even if the
-    // post-write audit transport is temporarily unavailable.
-    auditWarning = 'Quality Hold is active, but its post-write audit event could not be confirmed.';
-  }
+
+    await record.save(session ? { session } : undefined);
+    return record;
+  });
+
+  const holdPayload = typeof hold?.toObject === 'function' ? hold.toObject() : hold;
+
+  await recordRequestAudit({
+    request,
+    module: 'QUALITY',
+    action: 'CREATE_QUALITY_HOLD',
+    entityType: 'QUALITY_HOLD',
+    entityId: holdId,
+    cafeId,
+    after: holdPayload,
+    result: 'SUCCESS',
+    riskClassification: 'HIGH',
+  });
 
   return response.status(201).json({
     success: true,
-    data: {
-      hold: mapInventoryLotToQualityHold(
-        typeof heldLot.toObject === 'function' ? heldLot.toObject() : heldLot
-      ),
-      auditEventId,
-      auditWarning,
-    },
+    data: { hold: holdPayload },
     correlationId: request.correlationId || null,
   });
 });
 
 const releaseQualityHold = asyncHandler(async (request, response) => {
-  const { id } = request.params;
-  const {
-    disposition = 'RELEASE',
-    dispositionNotes = '',
-  } = request.body || {};
+  const holdId = normalizeId(request.params.id);
+  const disposition = normalizeId(request.body?.disposition || 'RELEASE');
+  const dispositionNotes = String(request.body?.dispositionNotes || '').trim();
 
-  const lotId = qualityHoldLotId(id);
-  const normalizedDisposition = normalizeId(disposition);
-  const notes = String(dispositionNotes || '').trim();
-
-  const dispositionMap = {
-    RELEASE: { lotStatus: 'AVAILABLE', dispositionStatus: 'RELEASE' },
-    DESTROY: { lotStatus: 'DISPOSED', dispositionStatus: 'DESTROY' },
-    RETURN_TO_VENDOR: { lotStatus: 'RETURNED', dispositionStatus: 'RETURN_TO_VENDOR' },
-  };
-  const target = dispositionMap[normalizedDisposition];
-
-  if (!target) {
+  if (!QUALITY_HOLD_DISPOSITIONS.includes(disposition)) {
     throw new ApiError(
       400,
-      'QUALITY_HOLD_DISPOSITION_INVALID',
-      'disposition must be RELEASE, DESTROY, or RETURN_TO_VENDOR.'
-    );
-  }
-  if (notes.length < 10) {
-    throw new ApiError(
-      400,
-      'QUALITY_HOLD_DISPOSITION_REASON_REQUIRED',
-      'A specific disposition reason of at least 10 characters is required.'
+      'INVALID_HOLD_DISPOSITION',
+      `disposition must be one of: ${QUALITY_HOLD_DISPOSITIONS.join(', ')}.`
     );
   }
 
-  const lotQuery = InventoryLot.findOne({
+  if (!qualitySourceConnected(QualityHold.findOne)) {
+    throw new ApiError(503, 'QUALITY_HOLD_SOURCE_UNAVAILABLE', 'The durable Quality Hold source is unavailable.');
+  }
+
+  const holdQuery = QualityHold.findOne({
     organisationId: request.auth.organisationId,
-    lotId,
+    holdId,
   });
-  const lot = lotQuery && typeof lotQuery.lean === 'function'
-    ? await lotQuery.lean()
-    : await lotQuery;
+  const hold = await holdQuery;
 
-  if (!lot) {
-    throw new ApiError(404, 'HOLD_NOT_FOUND', 'Quality Hold inventory lot was not found.');
+  if (!hold) {
+    throw new ApiError(404, 'HOLD_NOT_FOUND', 'Quality hold record not found.');
   }
-  assertCafeAccess(request, lot.cafeId);
+  assertCafeAccess(request, hold.cafeId);
 
-  if (lot.status === 'RECALL_HOLD') {
-    throw new ApiError(
-      409,
-      'RECALL_HOLD_REQUIRES_RECALL_WORKFLOW',
-      'Recall-held inventory must be released through the governed recall workflow.'
+  if (hold.status !== 'ON_HOLD') {
+    throw new ApiError(409, 'QUALITY_HOLD_ALREADY_RESOLVED', 'Only an active Quality Hold may be released or disposed.');
+  }
+
+  const now = new Date();
+
+  await runQualityAtomic(async (session) => {
+    const lotQuery = InventoryLot.findOne({
+      organisationId: request.auth.organisationId,
+      cafeId: hold.cafeId,
+      lotId: hold.inventoryLotId,
+    });
+    const inventoryLot = lotQuery && typeof lotQuery.lean === 'function'
+      ? await lotQuery.lean()
+      : await lotQuery;
+
+    if (!inventoryLot) {
+      throw new ApiError(
+        409,
+        'HELD_INVENTORY_LOT_MISSING',
+        'The Quality Hold exists but its inventory lot cannot be located. Resolution is blocked.'
+      );
+    }
+
+    const remainingQuantity = Number(inventoryLot.remainingQuantity ?? 0);
+    let nextLotStatus;
+    let dispositionStatus = inventoryLot.dispositionStatus || 'NONE';
+
+    if (disposition === 'DISPOSE') {
+      nextLotStatus = 'DISPOSED';
+      dispositionStatus = 'DESTROY';
+    } else if (disposition === 'RETURN_TO_VENDOR') {
+      nextLotStatus = 'RETURNED';
+      dispositionStatus = 'RETURN_TO_VENDOR';
+    } else {
+      nextLotStatus =
+        remainingQuantity <= 0
+          ? 'DEPLETED'
+          : (['AVAILABLE', 'NEAR_EXPIRY'].includes(hold.previousInventoryLotStatus)
+              ? hold.previousInventoryLotStatus
+              : 'AVAILABLE');
+      dispositionStatus = 'RELEASE';
+    }
+
+    const inventoryUpdate = await InventoryLot.findOneAndUpdate(
+      {
+        organisationId: request.auth.organisationId,
+        cafeId: hold.cafeId,
+        lotId: hold.inventoryLotId,
+        status: { $in: ['QUARANTINE', 'RECALL_HOLD'] },
+      },
+      {
+        $set: {
+          status: nextLotStatus,
+          dispositionStatus,
+          dispositionReason: dispositionNotes,
+          dispositionDate: disposition === 'RELEASE' ? null : now,
+          dispositionByUserId: disposition === 'RELEASE' ? null : request.auth.userId,
+          releaseReason: disposition === 'RELEASE' ? dispositionNotes : '',
+          releaseDate: disposition === 'RELEASE' ? now : null,
+          releasedByUserId: disposition === 'RELEASE' ? request.auth.userId : null,
+        },
+      },
+      {
+        new: true,
+        ...(session ? { session } : {}),
+      }
     );
-  }
-  if (lot.status !== 'QUARANTINE') {
-    throw new ApiError(
-      409,
-      'QUALITY_HOLD_NOT_ACTIVE',
-      'The inventory lot is not currently under an active Quality Hold.'
-    );
-  }
 
-  // Releasing or disposing a held lot relaxes/changes a protective inventory
-  // state, so immutable authorization must exist before the mutation.
-  const authorizationAudit = await recordRequestAudit({
+    if (!inventoryUpdate) {
+      throw new ApiError(
+        409,
+        'INVENTORY_LOT_NOT_QUARANTINED',
+        'The linked inventory lot is no longer in the expected quarantined state.'
+      );
+    }
+
+    hold.status =
+      disposition === 'RELEASE'
+        ? 'RELEASED'
+        : (disposition === 'RETURN_TO_VENDOR' ? 'RETURNED_TO_VENDOR' : 'DISPOSED');
+    hold.disposition = disposition;
+    hold.dispositionNotes = dispositionNotes;
+    hold.releasedByUserId = request.auth.userId;
+    hold.releasedAt = now;
+    hold.auditHistory.push({
+      action: 'HOLD_RESOLVED',
+      performedByUserId: request.auth.userId,
+      performedAt: now,
+      notes: `${disposition}: ${dispositionNotes}`,
+    });
+    await hold.save(session ? { session } : undefined);
+  });
+
+  const holdPayload = typeof hold?.toObject === 'function' ? hold.toObject() : hold;
+
+  await recordRequestAudit({
     request,
     module: 'QUALITY',
-    action: 'QUALITY_HOLD_DISPOSITION_AUTHORIZED',
-    entityType: 'INVENTORY_LOT',
-    entityId: lot.lotId,
-    cafeId: lot.cafeId,
-    reason: notes,
+    action: 'RELEASE_QUALITY_HOLD',
+    entityType: 'QUALITY_HOLD',
+    entityId: hold.holdId,
+    cafeId: hold.cafeId,
+    after: {
+      holdId: hold.holdId,
+      status: hold.status,
+      disposition,
+      inventoryLotId: hold.inventoryLotId,
+    },
     result: 'SUCCESS',
-    riskClassification: 'HIGH',
-    metadata: {
-      currentStatus: lot.status,
-      disposition: normalizedDisposition,
-    },
+    riskClassification: 'MEDIUM',
   });
-
-  if (!authorizationAudit?.auditEventId) {
-    throw new ApiError(
-      503,
-      'QUALITY_HOLD_DISPOSITION_AUDIT_NOT_CONFIRMED',
-      'Quality Hold was not released because immutable authorization audit could not be confirmed.'
-    );
-  }
-
-  const finalLotStatus =
-    normalizedDisposition === 'RELEASE' && Number(lot.remainingQuantity || 0) <= 0
-      ? 'DEPLETED'
-      : target.lotStatus;
-  const changedAt = new Date();
-
-  const changed = await InventoryLot.findOneAndUpdate(
-    {
-      _id: lot._id,
-      organisationId: request.auth.organisationId,
-      lotId: lot.lotId,
-      status: 'QUARANTINE',
-      quarantineDate: lot.quarantineDate || null,
-    },
-    {
-      $set: {
-        status: finalLotStatus,
-        releaseReason: normalizedDisposition === 'RELEASE' ? notes : '',
-        releaseDate: normalizedDisposition === 'RELEASE' ? changedAt : null,
-        releasedByUserId: normalizedDisposition === 'RELEASE' ? request.auth.userId : null,
-        dispositionStatus: target.dispositionStatus,
-        dispositionReason: notes,
-        dispositionDate: changedAt,
-        dispositionByUserId: request.auth.userId,
-      },
-    },
-    { new: true }
-  );
-
-  if (!changed) {
-    throw new ApiError(
-      409,
-      'QUALITY_HOLD_STATE_CONFLICT',
-      'Quality Hold changed concurrently; no release or disposition was applied.'
-    );
-  }
-
-  const hold = mapInventoryLotToQualityHold(
-    typeof changed.toObject === 'function' ? changed.toObject() : changed
-  );
-  hold.status =
-    normalizedDisposition === 'RELEASE'
-      ? 'RELEASED'
-      : (normalizedDisposition === 'DESTROY' ? 'DISPOSED' : 'RETURNED');
 
   return response.status(200).json({
     success: true,
-    data: {
-      hold,
-      authorizationAuditEventId: authorizationAudit.auditEventId,
-    },
+    data: { hold: holdPayload },
     correlationId: request.correlationId || null,
   });
 });
@@ -1211,45 +1268,85 @@ const releaseQualityHold = asyncHandler(async (request, response) => {
  * 7. NCRs & CAPAs
  */
 const listNcrs = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds } = request.auth;
-
-  let ncrs = inMemoryNcrs.filter((n) => n.organisationId === organisationId);
-  if (role !== 'MASTER' && role !== 'OWNER') {
-    ncrs = ncrs.filter((n) => assignedCafeIds.includes(n.cafeId));
+  if (!qualitySourceConnected(QualityNonConformance.find)) {
+    return response.status(200).json({
+      success: true,
+      data: { ncrs: [], sourceStatus: 'UNAVAILABLE' },
+      correlationId: request.correlationId || null,
+    });
   }
+
+  const filter = buildQualityScopeFilter(request);
+  const query = QualityNonConformance.find(filter).sort({ reportedAt: -1 }).limit(250);
+  const ncrs = query && typeof query.lean === 'function' ? await query.lean() : await query;
 
   return response.status(200).json({
     success: true,
-    data: { ncrs },
+    data: { ncrs: Array.isArray(ncrs) ? ncrs : [], sourceStatus: 'DURABLE' },
     correlationId: request.correlationId || null,
   });
 });
 
 const createNcr = asyncHandler(async (request, response) => {
-  const { cafeId: rawCafeId, title, source = 'MANUAL_OBSERVATION', severity = 'MAJOR', description, immediateAction } = request.body || {};
+  const {
+    cafeId: rawCafeId,
+    title,
+    source = 'MANUAL_OBSERVATION',
+    severity = 'MAJOR',
+    description,
+    immediateAction,
+  } = request.body || {};
 
   const cafeId = normalizeId(rawCafeId);
+  const normalizedSource = normalizeId(source);
+  const normalizedSeverity = normalizeId(severity);
+  const titleText = String(title || '').trim();
+
   if (!cafeId) throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
   assertCafeAccess(request, cafeId);
+  if (!titleText) throw new ApiError(400, 'VALIDATION_ERROR', 'NCR title is required.');
+  if (!NCR_SOURCES.includes(normalizedSource)) {
+    throw new ApiError(400, 'INVALID_NCR_SOURCE', `source must be one of: ${NCR_SOURCES.join(', ')}.`);
+  }
+  if (!NCR_SEVERITIES.includes(normalizedSeverity)) {
+    throw new ApiError(400, 'INVALID_NCR_SEVERITY', `severity must be one of: ${NCR_SEVERITIES.join(', ')}.`);
+  }
+  if (!qualitySourceConnected(QualityNonConformance.findOne)) {
+    throw new ApiError(503, 'NCR_SOURCE_UNAVAILABLE', 'The durable NCR source is unavailable.');
+  }
 
-  if (!title) throw new ApiError(400, 'VALIDATION_ERROR', 'NCR title is required.');
+  const ncrId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: 'QUALITY_NCR',
+    prefix: 'NCR',
+    minimumDigits: 4,
+  });
 
-  const ncrId = `NCR-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
-  const ncrEntry = {
+  const now = new Date();
+  const ncr = new QualityNonConformance({
     ncrId,
     organisationId: request.auth.organisationId,
     cafeId,
-    source,
-    severity,
-    title: String(title).trim(),
-    description: description || '',
-    immediateAction: immediateAction || 'Immediate containment enacted.',
+    source: normalizedSource,
+    severity: normalizedSeverity,
+    title: titleText,
+    description: String(description || '').trim(),
+    immediateAction: String(immediateAction || '').trim(),
     status: 'OPEN',
-    reportedBy: request.auth.userId,
-    reportedAt: new Date().toISOString(),
-  };
+    reportedByUserId: request.auth.userId,
+    reportedAt: now,
+    auditHistory: [
+      {
+        action: 'NCR_CREATED',
+        performedByUserId: request.auth.userId,
+        performedAt: now,
+        notes: String(immediateAction || '').trim(),
+      },
+    ],
+  });
 
-  inMemoryNcrs.unshift(ncrEntry);
+  await ncr.save();
+  const ncrPayload = typeof ncr.toObject === 'function' ? ncr.toObject() : ncr;
 
   await recordRequestAudit({
     request,
@@ -1257,36 +1354,35 @@ const createNcr = asyncHandler(async (request, response) => {
     action: 'CREATE_NCR',
     entityType: 'NCR',
     entityId: ncrId,
-    after: ncrEntry,
+    cafeId,
+    after: ncrPayload,
     result: 'SUCCESS',
-    riskClassification: severity === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
+    riskClassification: normalizedSeverity === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
   });
 
   return response.status(201).json({
     success: true,
-    data: { ncr: ncrEntry },
+    data: { ncr: ncrPayload },
     correlationId: request.correlationId || null,
   });
 });
 
 const listCapas = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds = [] } = request.auth;
-  const filter = { organisationId };
-  if (role !== 'MASTER') {
-    filter.cafeId = { $in: assignedCafeIds.map(normalizeId) };
+  if (!qualitySourceConnected(CapaRecord.find)) {
+    return response.status(200).json({
+      success: true,
+      data: { capas: [], sourceStatus: 'UNAVAILABLE' },
+      correlationId: request.correlationId || null,
+    });
   }
 
-  const query = CapaRecord.find(filter).sort({ createdAt: -1 }).limit(500);
-  const capas = query && typeof query.lean === 'function'
-    ? await query.lean()
-    : await query;
+  const filter = buildQualityScopeFilter(request);
+  const query = CapaRecord.find(filter).sort({ createdAt: -1 }).limit(250);
+  const capas = query && typeof query.lean === 'function' ? await query.lean() : await query;
 
   return response.status(200).json({
     success: true,
-    data: {
-      capas: (capas || []).map(mapCapaRecordForQuality),
-      sourceStatus: 'DURABLE_CAPA_RECORD',
-    },
+    data: { capas: Array.isArray(capas) ? capas : [], sourceStatus: 'DURABLE' },
     correlationId: request.correlationId || null,
   });
 });
@@ -1294,8 +1390,9 @@ const listCapas = asyncHandler(async (request, response) => {
 const createCapa = asyncHandler(async (request, response) => {
   const {
     cafeId: rawCafeId,
-    ncrId,
+    ncrId: rawNcrId,
     title,
+    rootCauseMethod = '5_WHY',
     rootCauseAnalysis,
     actionPlan,
     preventiveActionPlan,
@@ -1303,205 +1400,195 @@ const createCapa = asyncHandler(async (request, response) => {
   } = request.body || {};
 
   const cafeId = normalizeId(rawCafeId);
-  if (!cafeId) throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
-  assertCafeAccess(request, cafeId);
-
+  const ncrId = normalizeId(rawNcrId || '');
   const titleText = String(title || '').trim();
   const rootCauseText = String(rootCauseAnalysis || '').trim();
   const correctiveText = String(actionPlan || '').trim();
-  const preventiveText = String(preventiveActionPlan || '').trim();
 
+  if (!cafeId) throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
+  assertCafeAccess(request, cafeId);
   if (!titleText) throw new ApiError(400, 'VALIDATION_ERROR', 'CAPA title is required.');
-  if (rootCauseText.length < 10) {
-    throw new ApiError(400, 'CAPA_ROOT_CAUSE_REQUIRED', 'A specific root-cause analysis of at least 10 characters is required.');
+  if (!rootCauseText) {
+    throw new ApiError(400, 'ROOT_CAUSE_REQUIRED', 'A human-confirmed rootCauseAnalysis is required.');
   }
-  if (correctiveText.length < 10) {
-    throw new ApiError(400, 'CAPA_CORRECTIVE_ACTION_REQUIRED', 'A specific corrective action plan of at least 10 characters is required.');
+  if (!correctiveText) {
+    throw new ApiError(400, 'ACTION_PLAN_REQUIRED', 'A corrective actionPlan is required.');
   }
-  if (preventiveText.length < 10) {
-    throw new ApiError(400, 'CAPA_PREVENTIVE_ACTION_REQUIRED', 'A specific preventive action plan of at least 10 characters is required.');
+  if (!qualitySourceConnected(CapaRecord.findOne)) {
+    throw new ApiError(503, 'CAPA_SOURCE_UNAVAILABLE', 'The durable CAPA source is unavailable.');
   }
 
-  const dueDate = targetDate ? new Date(targetDate) : null;
-  if (!dueDate || Number.isNaN(dueDate.getTime())) {
-    throw new ApiError(400, 'CAPA_TARGET_DATE_REQUIRED', 'A valid CAPA targetDate is required.');
+  let ncr = null;
+  if (ncrId) {
+    const ncrQuery = QualityNonConformance.findOne({
+      organisationId: request.auth.organisationId,
+      cafeId,
+      ncrId,
+    });
+    ncr = await ncrQuery;
+    if (!ncr) {
+      throw new ApiError(404, 'NCR_NOT_FOUND', 'The referenced NCR does not exist in this café.');
+    }
   }
 
   const capaId = await SequenceCounter.generateId({
     organisationId: request.auth.organisationId,
     sequenceKey: 'QUALITY_CAPA',
     prefix: 'CAPA',
-    minimumDigits: 5,
+    minimumDigits: 4,
   });
 
-  const sourceReferenceId = normalizeId(ncrId) || capaId;
+  const dueDate = targetDate
+    ? new Date(targetDate)
+    : new Date(Date.now() + (14 * 24 * 60 * 60 * 1000));
 
-  const capa = await CapaRecord.create({
-    capaId,
-    organisationId: request.auth.organisationId,
-    cafeId,
-    source: 'OPERATIONAL_ANOMALY',
-    sourceReferenceId,
-    title: titleText,
-    findingDescription: normalizeId(ncrId)
-      ? `Corrective/preventive action initiated from NCR ${normalizeId(ncrId)}.`
-      : titleText,
-    rootCauseCategory: 'OTHER',
-    rootCauseAnalysis: rootCauseText,
-    rootCauseConfirmedByHuman: true,
-    correctiveActionPlan: correctiveText,
-    preventiveActionPlan: preventiveText,
-    assignedOwnerUserId: request.auth.userId,
-    dueDate,
-    status: 'OPEN',
-    auditHistory: [{
-      action: 'CREATED',
-      performedBy: request.auth.userId,
-      newStatus: 'OPEN',
-      notes: 'CAPA created through Quality & Compliance.',
-    }],
+  if (Number.isNaN(dueDate.getTime())) {
+    throw new ApiError(400, 'INVALID_TARGET_DATE', 'targetDate must be a valid date.');
+  }
+
+  const now = new Date();
+  const capa = await runQualityAtomic(async (session) => {
+    const record = new CapaRecord({
+      capaId,
+      organisationId: request.auth.organisationId,
+      cafeId,
+      source: capaSourceFromNcr(ncr),
+      sourceReferenceId: ncr?.ncrId || `MANUAL-${capaId}`,
+      title: titleText,
+      findingDescription: String(ncr?.description || titleText).trim(),
+      rootCauseCategory: 'OTHER',
+      rootCauseMethod: normalizeId(rootCauseMethod) || '5_WHY',
+      rootCauseAnalysis: rootCauseText,
+      rootCauseConfirmedByHuman: true,
+      correctiveActionPlan: correctiveText,
+      preventiveActionPlan: String(preventiveActionPlan || correctiveText).trim(),
+      assignedOwnerUserId: request.auth.userId,
+      dueDate,
+      status: 'INVESTIGATING',
+      effectivenessStatus: 'PENDING_VERIFICATION',
+      auditHistory: [
+        {
+          action: 'CAPA_CREATED',
+          performedBy: request.auth.userId,
+          performedAt: now,
+          previousStatus: null,
+          newStatus: 'INVESTIGATING',
+          notes: rootCauseText,
+        },
+      ],
+    });
+
+    await record.save(session ? { session } : undefined);
+
+    if (ncr) {
+      ncr.status = 'CAPA_REQUIRED';
+      ncr.linkedCapaIds = Array.from(new Set([...(ncr.linkedCapaIds || []), capaId]));
+      ncr.auditHistory.push({
+        action: 'CAPA_LINKED',
+        performedByUserId: request.auth.userId,
+        performedAt: now,
+        notes: capaId,
+      });
+      await ncr.save(session ? { session } : undefined);
+    }
+
+    return record;
   });
 
-  const audit = await recordRequestAudit({
+  const capaPayload = typeof capa.toObject === 'function' ? capa.toObject() : capa;
+
+  await recordRequestAudit({
     request,
     module: 'QUALITY',
     action: 'CREATE_CAPA',
     entityType: 'CAPA',
     entityId: capaId,
     cafeId,
-    after: {
-      capaId,
-      sourceReferenceId,
-      status: capa.status,
-      dueDate: capa.dueDate,
-    },
+    after: capaPayload,
     result: 'SUCCESS',
     riskClassification: 'HIGH',
   });
 
   return response.status(201).json({
     success: true,
-    data: {
-      capa: mapCapaRecordForQuality(
-        typeof capa.toObject === 'function' ? capa.toObject() : capa
-      ),
-      auditEventId: audit?.auditEventId || null,
-    },
+    data: { capa: capaPayload },
     correlationId: request.correlationId || null,
   });
 });
 
 const verifyCapa = asyncHandler(async (request, response) => {
-  const { id } = request.params;
+  const capaId = normalizeId(request.params.id);
   const effectiveness = normalizeId(request.body?.effectiveness || '');
   const notes = String(request.body?.notes || '').trim();
 
-  if (!['EFFECTIVE', 'NOT_EFFECTIVE'].includes(effectiveness)) {
+  if (!['EFFECTIVE', 'INEFFECTIVE'].includes(effectiveness)) {
     throw new ApiError(
       400,
-      'CAPA_EFFECTIVENESS_INVALID',
-      'effectiveness must be EFFECTIVE or NOT_EFFECTIVE.'
+      'INVALID_CAPA_EFFECTIVENESS',
+      'effectiveness must be EFFECTIVE or INEFFECTIVE.'
     );
   }
-  if (notes.length < 10) {
-    throw new ApiError(
-      400,
-      'CAPA_VERIFICATION_NOTES_REQUIRED',
-      'Specific CAPA verification notes of at least 10 characters are required.'
-    );
+  if (!notes) {
+    throw new ApiError(400, 'CAPA_VERIFICATION_NOTES_REQUIRED', 'Verification notes are required.');
+  }
+  if (!qualitySourceConnected(CapaRecord.findOne)) {
+    throw new ApiError(503, 'CAPA_SOURCE_UNAVAILABLE', 'The durable CAPA source is unavailable.');
   }
 
-  const query = CapaRecord.findOne({
+  const capaQuery = CapaRecord.findOne({
     organisationId: request.auth.organisationId,
-    capaId: normalizeId(id),
+    capaId,
   });
-  const capa = query && typeof query.lean === 'function'
-    ? await query.lean()
-    : await query;
+  const capa = await capaQuery;
 
   if (!capa) {
     throw new ApiError(404, 'CAPA_NOT_FOUND', 'CAPA record not found.');
   }
   assertCafeAccess(request, capa.cafeId);
 
-  const targetStatus = effectiveness === 'EFFECTIVE' ? 'CLOSED' : 'REMEDIATION';
+  if (capa.status === 'CLOSED') {
+    throw new ApiError(409, 'CAPA_ALREADY_CLOSED', 'The CAPA is already closed.');
+  }
 
-  // Closing a CAPA is a governance relaxation/completion claim. Record the
-  // human authorization before changing durable state.
-  const authorizationAudit = await recordRequestAudit({
+  const previousStatus = capa.status;
+  const now = new Date();
+  capa.effectivenessStatus = effectiveness;
+  capa.status = effectiveness === 'EFFECTIVE' ? 'CLOSED' : 'REMEDIATION';
+  capa.verificationNotes = notes;
+  capa.verifiedByUserId = request.auth.userId;
+  capa.verifiedAt = now;
+  capa.closedAt = effectiveness === 'EFFECTIVE' ? now : null;
+  capa.auditHistory.push({
+    action: 'CAPA_EFFECTIVENESS_VERIFIED',
+    performedBy: request.auth.userId,
+    performedAt: now,
+    previousStatus,
+    newStatus: capa.status,
+    notes: `${effectiveness}: ${notes}`,
+  });
+  await capa.save();
+
+  const capaPayload = typeof capa.toObject === 'function' ? capa.toObject() : capa;
+
+  await recordRequestAudit({
     request,
     module: 'QUALITY',
-    action: 'VERIFY_CAPA_EFFECTIVENESS_AUTHORIZED',
+    action: 'VERIFY_CAPA_EFFECTIVENESS',
     entityType: 'CAPA',
     entityId: capa.capaId,
     cafeId: capa.cafeId,
-    reason: notes,
-    result: 'SUCCESS',
-    riskClassification: effectiveness === 'EFFECTIVE' ? 'HIGH' : 'MEDIUM',
-    metadata: {
-      previousStatus: capa.status,
-      effectiveness,
-      targetStatus,
-    },
-  });
-
-  if (!authorizationAudit?.auditEventId) {
-    throw new ApiError(
-      503,
-      'CAPA_VERIFICATION_AUDIT_NOT_CONFIRMED',
-      'CAPA verification was not applied because immutable authorization audit could not be confirmed.'
-    );
-  }
-
-  const changedAt = new Date();
-  const changed = await CapaRecord.findOneAndUpdate(
-    {
-      _id: capa._id,
-      organisationId: request.auth.organisationId,
+    after: {
       capaId: capa.capaId,
       status: capa.status,
+      effectivenessStatus: effectiveness,
     },
-    {
-      $set: {
-        status: targetStatus,
-        verifiedByUserId: request.auth.userId,
-        verifiedAt: changedAt,
-        verificationNotes: notes,
-        ...(targetStatus === 'CLOSED' ? { closedAt: changedAt } : { closedAt: null }),
-      },
-      $push: {
-        auditHistory: {
-          action: effectiveness === 'EFFECTIVE' ? 'EFFECTIVENESS_VERIFIED' : 'EFFECTIVENESS_FAILED',
-          performedBy: request.auth.userId,
-          performedAt: changedAt,
-          previousStatus: capa.status,
-          newStatus: targetStatus,
-          notes,
-        },
-      },
-    },
-    { new: true }
-  );
-
-  if (!changed) {
-    throw new ApiError(
-      409,
-      'CAPA_STATE_CONFLICT',
-      'CAPA state changed concurrently; verification was not applied.'
-    );
-  }
-
-  const mapped = mapCapaRecordForQuality(
-    typeof changed.toObject === 'function' ? changed.toObject() : changed
-  );
-  mapped.effectivenessStatus = effectiveness;
+    result: 'SUCCESS',
+    riskClassification: effectiveness === 'EFFECTIVE' ? 'LOW' : 'HIGH',
+  });
 
   return response.status(200).json({
     success: true,
-    data: {
-      capa: mapped,
-      authorizationAuditEventId: authorizationAudit.auditEventId,
-    },
+    data: { capa: capaPayload },
     correlationId: request.correlationId || null,
   });
 });
@@ -1510,16 +1597,30 @@ const verifyCapa = asyncHandler(async (request, response) => {
  * 8. Audits & Compliance
  */
 const listAudits = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds } = request.auth;
-
-  let audits = inMemoryAudits.filter((a) => a.organisationId === organisationId);
-  if (role !== 'MASTER' && role !== 'OWNER') {
-    audits = audits.filter((a) => assignedCafeIds.includes(a.cafeId));
+  if (!qualitySourceConnected(AuditEvent.find)) {
+    return response.status(200).json({
+      success: true,
+      data: {
+        audits: [],
+        sourceStatus: 'UNAVAILABLE',
+        message: 'The durable quality audit-event source is unavailable.',
+      },
+      correlationId: request.correlationId || null,
+    });
   }
+
+  const filter = buildQualityScopeFilter(request, { module: 'QUALITY' });
+  const query = AuditEvent.find(filter)
+    .sort({ serverTimestamp: -1 })
+    .limit(250);
+  const audits = query && typeof query.lean === 'function' ? await query.lean() : await query;
 
   return response.status(200).json({
     success: true,
-    data: { audits },
+    data: {
+      audits: Array.isArray(audits) ? audits : [],
+      sourceStatus: 'DURABLE_AUDIT_EVENTS',
+    },
     correlationId: request.correlationId || null,
   });
 });
