@@ -252,3 +252,14 @@ test('EVI-007: Primary Master UI and router expose the read-only forensic audit 
   assert.match(routes, /router\.post\('\/evidence\/integrity\/audit', auditAttendanceEvidence\)/);
 });
 
+test('EVI-008: evidence viewer surfaces server integrity failures instead of generic broken-image errors', () => {
+  const root = path.join(__dirname, '../..');
+  const viewer = fs.readFileSync(
+    path.join(root, 'frontend/src/js/modules/attendance/attendanceEvidenceViewer.js'),
+    'utf8'
+  );
+
+  assert.match(viewer, /code\.startsWith\('ATTENDANCE_EVIDENCE_'\)/);
+  assert.match(viewer, /failed its integrity verification and cannot be displayed/i);
+});
+
