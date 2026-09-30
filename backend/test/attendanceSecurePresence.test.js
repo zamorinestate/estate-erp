@@ -512,6 +512,7 @@ test('GEO-005: verifyGeofence throws 422 GEOFENCE_NOT_CONFIGURED if Cafe has no 
         cafeId: 'CAFE-UNCONFIGURED',
         latitude: 11.8745,
         longitude: 75.3704,
+        accuracyMeters: 10,
       });
     },
     { statusCode: 422, code: 'GEOFENCE_NOT_CONFIGURED' }
@@ -547,6 +548,18 @@ test('GEO-006A: verifyGeofence rejects NaN, infinity, and impossible coordinates
       accuracyMeters: Number.NaN,
     }),
     { statusCode: 400, code: 'GPS_ACCURACY_INVALID' }
+  );
+});
+
+test('GEO-006B: verifyGeofence rejects missing GPS accuracy', async () => {
+  await assert.rejects(
+    async () => attendanceQrService.verifyGeofence({
+      organisationId: 'ORG-ZAMORIN',
+      cafeId: 'CAFE-KNR-01',
+      latitude: 11.8745,
+      longitude: 75.3704,
+    }),
+    { statusCode: 400, code: 'GPS_ACCURACY_REQUIRED' }
   );
 });
 
