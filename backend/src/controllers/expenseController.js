@@ -1087,8 +1087,18 @@ const createExpenseRequest = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, cafeId);
 
-  const reqCount = await ExpenseRequest.countDocuments({ organisationId });
-  const requestId = `REQ-2026-${String(reqCount + 1).padStart(4, '0')}`;
+  const estimatedAmountPaisa = Math.round(Number(estimatedAmount) * 100);
+  if (!Number.isSafeInteger(estimatedAmountPaisa) || estimatedAmountPaisa <= 0) {
+    throw new ApiError(400, 'INVALID_ESTIMATED_AMOUNT', 'estimatedAmount must be a positive monetary value.');
+  }
+
+  const requestYear = new Date().getFullYear();
+  const requestId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EXPENSE_REQUEST_${requestYear}`,
+    prefix: `REQ-${requestYear}`,
+    minimumDigits: 4,
+  });
 
   const expRequest = await ExpenseRequest.create({
     requestId,
@@ -1099,7 +1109,7 @@ const createExpenseRequest = asyncHandler(async (request, response) => {
     category: category.toUpperCase(),
     purpose,
     justification,
-    estimatedAmountPaisa: Math.round(Number(estimatedAmount) * 100),
+    estimatedAmountPaisa,
     validUntil,
     status: 'SUBMITTED',
   });
@@ -1121,16 +1131,34 @@ const createExpensePolicy = asyncHandler(async (request, response) => {
   }
 
   const { policyName, version, receiptThresholdPaisa = 50000, poRequiredThresholdPaisa = 5000000, categoryRules = [], effectiveFrom } = request.body;
-  const count = await ExpensePolicy.countDocuments({ organisationId });
-  const policyId = `POL-EXP-2026-${String(count + 1).padStart(2, '0')}`;
+
+  if (!String(policyName || '').trim()) {
+    throw new ApiError(400, 'POLICY_NAME_REQUIRED', 'policyName is required.');
+  }
+  if (
+    !Number.isSafeInteger(Number(receiptThresholdPaisa)) ||
+    Number(receiptThresholdPaisa) < 0 ||
+    !Number.isSafeInteger(Number(poRequiredThresholdPaisa)) ||
+    Number(poRequiredThresholdPaisa) < 0
+  ) {
+    throw new ApiError(400, 'INVALID_POLICY_THRESHOLD', 'Expense policy thresholds must be non-negative integer paise values.');
+  }
+
+  const policyYear = new Date().getFullYear();
+  const policyId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EXPENSE_POLICY_${policyYear}`,
+    prefix: `POL-EXP-${policyYear}`,
+    minimumDigits: 2,
+  });
 
   const policy = await ExpensePolicy.create({
     policyId,
     version: version || 'V1.0',
-    policyName,
+    policyName: String(policyName).trim(),
     organisationId,
-    receiptThresholdPaisa,
-    poRequiredThresholdPaisa,
+    receiptThresholdPaisa: Number(receiptThresholdPaisa),
+    poRequiredThresholdPaisa: Number(poRequiredThresholdPaisa),
     categoryRules,
     effectiveFrom: effectiveFrom || getIstBusinessDate(),
     publishedBy: userId,
@@ -1165,16 +1193,32 @@ const createOperationalAdvance = asyncHandler(async (request, response) => {
   }
 
   const { recipientUserId, cafeId, purpose, amount, returnDueDate } = request.body;
-  const count = await OperationalAdvance.countDocuments({ organisationId });
-  const advanceId = `ADV-OP-2026-${String(count + 1).padStart(3, '0')}`;
+  const cleanCafeId = normalizeIdentifier(cafeId);
+  ensureCafeAccess(request, cleanCafeId);
+
+  const amountPaisa = Math.round(Number(amount) * 100);
+  if (!normalizeIdentifier(recipientUserId) || !cleanCafeId || !String(purpose || '').trim() || !/^\d{4}-\d{2}-\d{2}$/.test(String(returnDueDate || ''))) {
+    throw new ApiError(400, 'INVALID_ADVANCE_PAYLOAD', 'recipientUserId, cafeId, purpose and returnDueDate are required.');
+  }
+  if (!Number.isSafeInteger(amountPaisa) || amountPaisa <= 0) {
+    throw new ApiError(400, 'INVALID_ADVANCE_AMOUNT', 'amount must be a positive monetary value.');
+  }
+
+  const advanceYear = new Date().getFullYear();
+  const advanceId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `OPERATIONAL_ADVANCE_${advanceYear}`,
+    prefix: `ADV-OP-${advanceYear}`,
+    minimumDigits: 4,
+  });
 
   const advance = await OperationalAdvance.create({
     advanceId,
     organisationId,
-    recipientUserId,
-    cafeId,
-    purpose,
-    amountPaisa: Math.round(Number(amount) * 100),
+    recipientUserId: normalizeIdentifier(recipientUserId),
+    cafeId: cleanCafeId,
+    purpose: String(purpose).trim(),
+    amountPaisa,
     returnDueDate,
     status: 'DISBURSED',
   });
