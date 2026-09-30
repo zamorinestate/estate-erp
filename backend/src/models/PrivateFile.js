@@ -75,6 +75,11 @@ const privateFileSchema = new mongoose.Schema(
     // previously uploaded file ID cannot be replayed for another QR challenge
     // or reused across CHECK_IN / CHECK_OUT transitions.
     attendanceContext: {
+      proofSnapshotVersion: {
+        type: Number,
+        enum: [1, null],
+        default: null,
+      },
       challengeId: {
         type: String,
         default: null,
