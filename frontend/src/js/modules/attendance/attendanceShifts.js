@@ -1352,6 +1352,9 @@ function renderPoliciesSubpanel() {
   const orphanDeleted = Number(cachedOrphanReconciliation?.deleted || 0);
   const orphanLinkedProtected = Number(cachedOrphanReconciliation?.linkedProtected || 0);
   const orphanScanned = Number(cachedOrphanReconciliation?.scanned || 0);
+  const staleReservationsLinked = Number(cachedOrphanReconciliation?.staleReservationsLinked || 0);
+  const staleReservationsCommitted = Number(cachedOrphanReconciliation?.staleReservationsCommitted || 0);
+  const staleReservationsQuarantined = Number(cachedOrphanReconciliation?.staleReservationsQuarantined || 0);
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
@@ -1463,6 +1466,11 @@ function renderPoliciesSubpanel() {
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanEligible}</strong><div style="font-size:10px;color:var(--muted);">Eligible Orphans</div></div>
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanDeleted}</strong><div style="font-size:10px;color:var(--muted);">Deleted</div></div>
               </div>
+              <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px;">
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${staleReservationsLinked}</strong><div style="font-size:10px;color:var(--muted);">Stale Reserved + Linked</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${staleReservationsCommitted}</strong><div style="font-size:10px;color:var(--muted);">Reservations Repaired</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${staleReservationsQuarantined}</strong><div style="font-size:10px;color:var(--muted);">Reserved Quarantine</div></div>
+              </div>
             ` : ""}
             ${isPrimary ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -1481,7 +1489,7 @@ function renderPoliciesSubpanel() {
               </div>
             `}
             <div style="font-size:10.8px; color:var(--muted); line-height:1.45;">
-              This workflow only targets expired uploads that are unlinked from every attendance record. Committed attendance evidence purge remains disabled pending a formal retention policy.
+              This workflow only deletes expired uploads that are unlinked and not punch-reserved. Stale reservations already referenced by Attendance are repaired to COMMITTED; stale reservations without a committed Attendance reference remain quarantined and are never auto-deleted. Committed attendance evidence purge remains disabled pending a formal retention policy.
             </div>
           </div>
         </div>
@@ -2163,7 +2171,7 @@ function wireAttendanceSubpanelActions(root) {
       const res = await apiPost("/attendance/evidence/orphans/reconcile", { execute: false });
       cachedOrphanReconciliation = res?.data || null;
       showToast(
-        `Preview complete: ${Number(res?.data?.eligibleOrphans || 0)} expired unlinked upload(s) eligible.`,
+        `Preview complete: ${Number(res?.data?.eligibleOrphans || 0)} expired unlinked upload(s) eligible; ${Number(res?.data?.staleReservationsQuarantined || 0)} stale reservation(s) quarantined.`,
         "info"
       );
       rerender(root);
