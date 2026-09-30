@@ -121,6 +121,25 @@ const punchEvidenceSchema = new mongoose.Schema(
       enum: ['VERIFIED', 'PENDING', 'FLAGGED', 'REJECTED'],
       default: 'VERIFIED',
     },
+    integrityState: {
+      type: String,
+      enum: ['UNVERIFIED', 'PASS', 'QUARANTINED'],
+      default: 'UNVERIFIED',
+    },
+    integrityLastCheckedAt: {
+      type: Date,
+      default: null,
+    },
+    integrityFailedChecks: {
+      type: [String],
+      default: [],
+    },
+    integrityAuditEventId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
     qrChallengeId: {
       type: String,
       trim: true,
