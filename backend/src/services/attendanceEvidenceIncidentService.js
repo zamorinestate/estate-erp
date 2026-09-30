@@ -17,6 +17,9 @@ const CRITICAL_FAILURE_CHECKS = new Set([
   'link_attendance_id',
   'link_punch_type',
   'storage_object_present',
+  'storage_size_matches_metadata',
+  'sha256_metadata_present',
+  'size_metadata_valid',
   'storage_sha256_matches_metadata',
   'storage_mime_matches_signature',
 ]);
