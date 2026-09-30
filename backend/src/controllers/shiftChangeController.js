@@ -119,6 +119,20 @@ const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
         status: 'PENDING',
       });
       await approval.save({ session });
+
+      await recordRequestAudit(
+        {
+          request,
+          module: 'ATTENDANCE',
+          action: 'SHIFT_CHANGE_REQUEST_CREATE',
+          entityType: 'SHIFT_CHANGE_REQUEST',
+          entityId: shiftRequest.requestId,
+          metadata: { requestedDate, requestedShift, reason },
+          result: 'SUCCESS',
+          riskClassification: 'MEDIUM',
+        },
+        { session }
+      );
     });
   } finally {
     await session.endSession();
@@ -167,18 +181,6 @@ const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
   } catch (err) {
     console.warn(`[SHIFT_CHANGE_NOTIFICATION_WARN] ${err.message}`);
   }
-
-  try {
-    await recordRequestAudit({
-      request,
-      module: 'ATTENDANCE',
-      action: 'SHIFT_CHANGE_REQUEST_CREATE',
-      entityType: 'SHIFT_CHANGE_REQUEST',
-      entityId: shiftRequest.requestId,
-      metadata: { requestedDate, requestedShift, reason },
-      result: 'SUCCESS',
-    });
-  } catch (e) {}
 
   return response.status(201).json({
     success: true,
@@ -303,32 +305,77 @@ const reviewShiftChangeRequest = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_STATUS', `Status must be one of: ${SHIFT_CHANGE_STATUSES.join(', ')}`);
   }
 
-  const shiftRequest = await ShiftChangeRequest.findOne({ requestId, organisationId });
-  if (!shiftRequest) {
-    throw new ApiError(404, 'NOT_FOUND', 'Shift change request not found.');
-  }
-
-  shiftRequest.status = status;
-  shiftRequest.reviewNotes = String(reviewNotes || '').trim();
-  shiftRequest.reviewedByUserId = userId;
-  shiftRequest.reviewedAt = new Date();
-  await shiftRequest.save();
-
-  // Sync Approval record
+  let shiftRequest;
+  const reviewSession = await mongoose.startSession();
   try {
-    const approvalStatus = status === 'APPROVED' ? 'APPROVED' : (status === 'REJECTED' ? 'REJECTED' : 'PENDING');
-    await Approval.updateOne(
-      { organisationId, entityId: requestId, status: 'PENDING' },
-      {
-        $set: {
-          status: approvalStatus,
-          decidedByUserId: userId,
-          decisionReason: String(reviewNotes || '').trim(),
-          decidedAt: new Date(),
-        },
+    await reviewSession.withTransaction(async () => {
+      shiftRequest = await ShiftChangeRequest.findOne(
+        { requestId, organisationId },
+        null,
+        { session: reviewSession }
+      );
+      if (!shiftRequest) {
+        throw new ApiError(404, 'NOT_FOUND', 'Shift change request not found.');
       }
-    );
-  } catch (_) {}
+
+      const approvalStatus =
+        status === 'APPROVED'
+          ? 'APPROVED'
+          : (status === 'REJECTED' ? 'REJECTED' : 'PENDING');
+
+      shiftRequest.status = status;
+      shiftRequest.reviewNotes = String(reviewNotes || '').trim();
+      shiftRequest.reviewedByUserId = userId;
+      shiftRequest.reviewedAt = new Date();
+      await shiftRequest.save({ session: reviewSession });
+
+      const approvalUpdate = await Approval.updateOne(
+        {
+          organisationId,
+          entityType: 'SHIFT_CHANGE',
+          entityId: requestId,
+          status: 'PENDING',
+        },
+        {
+          $set: {
+            status: approvalStatus,
+            decidedByUserId: ['APPROVED', 'REJECTED'].includes(approvalStatus) ? userId : null,
+            decisionReason: String(reviewNotes || '').trim(),
+            decidedAt: ['APPROVED', 'REJECTED'].includes(approvalStatus) ? new Date() : null,
+          },
+        },
+        { session: reviewSession }
+      );
+
+      if (!approvalUpdate || approvalUpdate.matchedCount !== 1) {
+        throw new ApiError(
+          409,
+          'SHIFT_CHANGE_APPROVAL_STATE_CONFLICT',
+          'Shift-change approval state is missing or changed concurrently; no review decision was committed.'
+        );
+      }
+
+      await recordRequestAudit(
+        {
+          request,
+          module: 'ATTENDANCE',
+          action: 'SHIFT_CHANGE_REQUEST_REVIEW',
+          entityType: 'SHIFT_CHANGE_REQUEST',
+          entityId: requestId,
+          metadata: {
+            newStatus: status,
+            reviewerUserId: userId,
+            approvalStatus,
+          },
+          result: 'SUCCESS',
+          riskClassification: 'MEDIUM',
+        },
+        { session: reviewSession }
+      );
+    });
+  } finally {
+    await reviewSession.endSession();
+  }
 
   // Create canonical notification to employee
   try {
@@ -363,18 +410,6 @@ const reviewShiftChangeRequest = asyncHandler(async (request, response) => {
   } catch (e) {
     console.warn(`[SHIFT_CHANGE_NOTIF_WARN] ${e.message}`);
   }
-
-  try {
-    await recordRequestAudit({
-      request,
-      module: 'ATTENDANCE',
-      action: 'SHIFT_CHANGE_REQUEST_REVIEW',
-      entityType: 'SHIFT_CHANGE_REQUEST',
-      entityId: requestId,
-      metadata: { newStatus: status, reviewerUserId: userId },
-      result: 'SUCCESS',
-    });
-  } catch (e) {}
 
   return response.status(200).json({
     success: true,
