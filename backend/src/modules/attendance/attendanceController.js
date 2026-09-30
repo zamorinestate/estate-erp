@@ -100,6 +100,38 @@ function normalizeIdentifier(value) {
     : '';
 }
 
+async function quarantineEvidenceReadFailure({
+  request,
+  attendance,
+  punchType,
+  fileId,
+  failedChecks,
+}) {
+  try {
+    return await quarantineAttendanceEvidenceFailures({
+      request,
+      failures: [{
+        attendanceId: attendance?.attendanceId || '',
+        punchType,
+        fileId,
+        failedChecks,
+      }],
+    });
+  } catch (error) {
+    // Evidence access still fails closed even if incident escalation itself
+    // encounters an infrastructure error. Do not mask the original integrity
+    // failure or accidentally stream suspect bytes.
+    console.error('[Attendance] evidence integrity escalation failed', {
+      attendanceId: attendance?.attendanceId || null,
+      punchType,
+      fileId,
+      failedChecks,
+      error: error?.message || 'UNKNOWN_INTEGRITY_ESCALATION_ERROR',
+    });
+    return null;
+  }
+}
+
 function isAttendanceEvidenceLinkEnforcementActive() {
   return PrivateFile.db?.readyState === 1;
 }
@@ -3719,6 +3751,10 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     );
   }
 
+  if (!request.auth.userId) {
+    request.auth.userId = role === 'CAFE_OPS' ? 'DEVICE-OPS-TERMINAL' : 'SYSTEM_ACTOR';
+  }
+
   if (privateFile.attendanceContext?.challengeId) {
     const metadataIntegrity = await verifyAttendanceEvidenceSlot({
       organisationId,
@@ -3729,6 +3765,13 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     });
 
     if (metadataIntegrity.status !== 'PASS') {
+      await quarantineEvidenceReadFailure({
+        request,
+        attendance,
+        punchType: evidenceType,
+        fileId: privateFile.fileId,
+        failedChecks: metadataIntegrity.failedChecks || ['attendance_evidence_binding'],
+      });
       throw new ApiError(
         409,
         'ATTENDANCE_EVIDENCE_BINDING_INTEGRITY_FAILURE',
@@ -3737,13 +3780,16 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     }
   }
 
-  if (!request.auth.userId) {
-    request.auth.userId = role === 'CAFE_OPS' ? 'DEVICE-OPS-TERMINAL' : 'SYSTEM_ACTOR';
-  }
-
   // Fetch image bytes
   const buffer = await attendanceEvidenceStorageService.readObjectBuffer({ fileKey: privateFile.fileKey || privateFile.storagePath });
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+    await quarantineEvidenceReadFailure({
+      request,
+      attendance,
+      punchType: evidenceType,
+      fileId: privateFile.fileId,
+      failedChecks: ['storage_object_present'],
+    });
     throw new ApiError(
       404,
       'ATTENDANCE_EVIDENCE_BYTES_NOT_FOUND',
@@ -3757,6 +3803,13 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     expectedSizeBytes > 0 &&
     buffer.length !== expectedSizeBytes
   ) {
+    await quarantineEvidenceReadFailure({
+      request,
+      attendance,
+      punchType: evidenceType,
+      fileId: privateFile.fileId,
+      failedChecks: ['storage_size_matches_metadata'],
+    });
     throw new ApiError(
       409,
       'ATTENDANCE_EVIDENCE_SIZE_MISMATCH',
@@ -3766,6 +3819,13 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
 
   const storedSha256 = String(privateFile.sha256 || '').trim().toLowerCase();
   if (privateFile.attendanceContext?.challengeId && !/^[a-f0-9]{64}$/.test(storedSha256)) {
+    await quarantineEvidenceReadFailure({
+      request,
+      attendance,
+      punchType: evidenceType,
+      fileId: privateFile.fileId,
+      failedChecks: ['sha256_metadata_present'],
+    });
     throw new ApiError(
       409,
       'ATTENDANCE_EVIDENCE_HASH_MISSING',
@@ -3776,6 +3836,13 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
   if (storedSha256) {
     const computedSha256 = crypto.createHash('sha256').update(buffer).digest('hex');
     if (computedSha256 !== storedSha256) {
+      await quarantineEvidenceReadFailure({
+        request,
+        attendance,
+        punchType: evidenceType,
+        fileId: privateFile.fileId,
+        failedChecks: ['storage_sha256_matches_metadata'],
+      });
       throw new ApiError(
         409,
         'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE',
@@ -3789,6 +3856,13 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     ? 'image/jpeg'
     : String(privateFile.mimeType || '').trim().toLowerCase();
   if (!detectedMime || detectedMime !== metadataMime) {
+    await quarantineEvidenceReadFailure({
+      request,
+      attendance,
+      punchType: evidenceType,
+      fileId: privateFile.fileId,
+      failedChecks: ['storage_mime_matches_signature'],
+    });
     throw new ApiError(
       409,
       'ATTENDANCE_EVIDENCE_MIME_INTEGRITY_FAILURE',
