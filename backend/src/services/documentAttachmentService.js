@@ -1600,13 +1600,22 @@ class DocumentAttachmentService {
   /**
    * Permanent deletion of a business document enforcing statutory retention & legal hold.
    */
-  static async permanentDeleteDocument({ documentId, organisationId, reason, auth }) {
-    if (!reason || reason.trim().length < 5) {
-      throw new ApiError(400, 'REASON_REQUIRED', 'A detailed reason (min 5 chars) is mandatory for permanent deletion.');
+  static async permanentDeleteDocument({
+    documentId,
+    organisationId,
+    reason,
+    confirmation = '',
+    auth,
+  }) {
+    const normalizedDocumentId = String(documentId || '').trim().toUpperCase();
+    const dispositionReason = String(reason || '').trim();
+
+    if (!normalizedDocumentId) {
+      throw new ApiError(400, 'DOCUMENT_ID_REQUIRED', 'documentId is required.');
     }
 
     const doc = await BusinessDocument.findOne({
-      documentId: documentId.trim().toUpperCase(),
+      documentId: normalizedDocumentId,
       organisationId,
     });
 
@@ -1614,72 +1623,303 @@ class DocumentAttachmentService {
       throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'Business document not found.');
     }
 
-    // Authorize role and verify statutory retention / legal hold policies
+    // Authorization, tenant/café scope, legal holds, proceeding holds,
+    // investigation holds and statutory retention are rechecked immediately
+    // before any irreversible storage mutation.
     this.assertDocumentAuthorization(doc, auth, 'PERMANENT_DELETE');
 
-    // Physical cleanup from storage provider
-    const key = doc.storageObjectKey || doc.storageKey;
-    if (key) {
-      await documentStorageAdapter.delete({ storageKey: key }).catch(() => {});
-    }
-    if (doc.storagePath && fs.existsSync(doc.storagePath)) {
-      await fs.promises.unlink(doc.storagePath).catch(() => {});
-    }
-    if (Array.isArray(doc.versions)) {
-      for (const v of doc.versions) {
-        const vKey = v.storageObjectKey || v.storageKey;
-        if (vKey) {
-          await documentStorageAdapter.delete({ storageKey: vKey }).catch(() => {});
-        }
-      }
+    if (String(confirmation || '').trim() !== 'PERMANENTLY_DISPOSE_DOCUMENT') {
+      throw new ApiError(
+        400,
+        'DOCUMENT_DISPOSITION_CONFIRMATION_REQUIRED',
+        'Permanent document disposition requires confirmation PERMANENTLY_DISPOSE_DOCUMENT.'
+      );
     }
 
-    // Immutable audit tombstone recording (zero secret content retained)
-    await auditService.recordAuditEvent({
+    if (dispositionReason.length < 10) {
+      throw new ApiError(
+        400,
+        'REASON_REQUIRED',
+        'A detailed reason of at least 10 characters is mandatory for permanent deletion.'
+      );
+    }
+
+    if (
+      doc.dispositionState === 'COMPLETED' &&
+      (doc.documentStatus === 'DISPOSED' || doc.status === 'DISPOSED')
+    ) {
+      return {
+        success: true,
+        message: 'Document was already permanently disposed.',
+        documentId: doc.documentId,
+        disposedAt: doc.disposedAt,
+        idempotent: true,
+      };
+    }
+
+    const authorizationAudit = await auditService.recordAuditEvent({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
       actorRole: auth.role,
       module: 'DOCUMENT_ATTACHMENT',
-      action: 'DOCUMENT_PERMANENTLY_DISPOSED',
+      action: 'DOCUMENT_PERMANENT_DISPOSITION_AUTHORIZED',
       entityType: 'BUSINESS_DOCUMENT',
       entityId: doc.documentId,
-      reason: reason.trim(),
+      reason: dispositionReason,
       result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
       metadata: {
         documentId: doc.documentId,
         classification: doc.classification,
         documentType: doc.documentType,
-        sha256: doc.sha256,
-        checksum: doc.checksum || doc.sha256,
-        originalFilename: doc.originalFilename,
-        sizeBytes: doc.sizeBytes,
+        storageProvider: doc.storageProvider || doc.storageDriver || null,
+        currentVersion: doc.currentVersion || null,
+      },
+    });
+
+    if (!authorizationAudit?.auditEventId) {
+      throw new ApiError(
+        503,
+        'DOCUMENT_DISPOSITION_AUDIT_NOT_CONFIRMED',
+        'Permanent deletion was not started because immutable authorization audit could not be confirmed.'
+      );
+    }
+
+    const now = new Date();
+    const currentState = String(doc.dispositionState || 'NONE').trim().toUpperCase();
+    const claimFilter = {
+      _id: doc._id,
+      organisationId,
+      documentId: doc.documentId,
+      documentStatus: { $ne: 'DISPOSED' },
+    };
+
+    if (currentState === 'NONE') {
+      claimFilter.dispositionState = { $in: ['NONE', null] };
+    } else {
+      claimFilter.dispositionState = currentState;
+    }
+
+    if (doc.dispositionStartedAt) {
+      claimFilter.dispositionStartedAt = doc.dispositionStartedAt;
+    }
+
+    const claimed = await BusinessDocument.findOneAndUpdate(
+      claimFilter,
+      {
+        $set: {
+          dispositionState: 'STORAGE_DELETING',
+          dispositionAuthorizationAuditEventId: authorizationAudit.auditEventId,
+          dispositionStartedAt: now,
+          dispositionStartedByUserId: String(auth.userId || '').trim().toUpperCase(),
+          dispositionLastAttemptAt: now,
+          dispositionLastError: '',
+          dispositionReason,
+        },
+      },
+      { new: true }
+    );
+
+    if (!claimed) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_STATE_CONFLICT',
+        'Document disposition state changed before execution; no new deletion attempt was started.'
+      );
+    }
+
+    const objectKeys = new Set();
+    const localPaths = new Set();
+
+    for (const key of [
+      claimed.storageObjectKey,
+      claimed.storageKey,
+      claimed.quarantineObjectKey,
+    ]) {
+      if (key) objectKeys.add(String(key));
+    }
+    if (claimed.storagePath) localPaths.add(String(claimed.storagePath));
+
+    for (const version of claimed.versions || []) {
+      const key = version?.storageObjectKey || version?.storageKey;
+      if (key) objectKeys.add(String(key));
+      if (version?.quarantineObjectKey) objectKeys.add(String(version.quarantineObjectKey));
+      if (version?.storagePath) localPaths.add(String(version.storagePath));
+    }
+
+    const storageSummary = {
+      objectKeysChecked: objectKeys.size,
+      objectsDeleted: 0,
+      objectsAlreadyMissing: 0,
+      localPathsChecked: localPaths.size,
+      localPathsDeleted: 0,
+      localPathsAlreadyMissing: 0,
+    };
+
+    try {
+      for (const storageKey of objectKeys) {
+        const existedBefore = await documentStorageAdapter.exists({ storageKey });
+        if (existedBefore) {
+          await documentStorageAdapter.delete({ storageKey });
+          storageSummary.objectsDeleted += 1;
+        } else {
+          storageSummary.objectsAlreadyMissing += 1;
+        }
+
+        const existsAfter = await documentStorageAdapter.exists({ storageKey });
+        if (existsAfter) {
+          throw new ApiError(
+            503,
+            'DOCUMENT_STORAGE_DELETE_UNVERIFIED',
+            `Storage object ${storageKey} still exists after permanent-deletion attempt.`
+          );
+        }
+      }
+
+      for (const storagePath of localPaths) {
+        if (fs.existsSync(storagePath)) {
+          await fs.promises.unlink(storagePath);
+          storageSummary.localPathsDeleted += 1;
+        } else {
+          storageSummary.localPathsAlreadyMissing += 1;
+        }
+
+        if (fs.existsSync(storagePath)) {
+          throw new ApiError(
+            503,
+            'DOCUMENT_LOCAL_DELETE_UNVERIFIED',
+            'A local document path still exists after permanent-deletion attempt.'
+          );
+        }
+      }
+    } catch (error) {
+      await BusinessDocument.updateOne(
+        {
+          _id: claimed._id,
+          organisationId,
+          dispositionState: 'STORAGE_DELETING',
+          dispositionStartedAt: now,
+        },
+        {
+          $set: {
+            dispositionState: 'FAILED',
+            dispositionLastAttemptAt: new Date(),
+            dispositionLastError: String(error?.code || error?.message || 'DOCUMENT_STORAGE_DELETE_FAILED').slice(0, 1000),
+          },
+        }
+      ).catch(() => {});
+      throw error;
+    }
+
+    const pendingMetadata = await BusinessDocument.findOneAndUpdate(
+      {
+        _id: claimed._id,
+        organisationId,
+        dispositionState: 'STORAGE_DELETING',
+        dispositionStartedAt: now,
+      },
+      {
+        $set: {
+          dispositionState: 'STORAGE_DELETED_PENDING_METADATA',
+          dispositionLastAttemptAt: new Date(),
+          dispositionLastError: '',
+        },
+      },
+      { new: true }
+    );
+
+    if (!pendingMetadata) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_METADATA_STATE_CONFLICT',
+        'Storage objects were deleted, but the metadata state changed before finalization. The document remains blocked for reconciliation.'
+      );
+    }
+
+    const completionAudit = await auditService.recordAuditEvent({
+      organisationId,
+      cafeId: pendingMetadata.cafeId || 'GLOBAL',
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      module: 'DOCUMENT_ATTACHMENT',
+      action: 'DOCUMENT_PERMANENTLY_DISPOSED',
+      entityType: 'BUSINESS_DOCUMENT',
+      entityId: pendingMetadata.documentId,
+      reason: dispositionReason,
+      result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
+      metadata: {
+        authorizationAuditEventId: authorizationAudit.auditEventId,
+        documentId: pendingMetadata.documentId,
+        classification: pendingMetadata.classification,
+        documentType: pendingMetadata.documentType,
+        sha256: pendingMetadata.sha256,
+        checksum: pendingMetadata.checksum || pendingMetadata.sha256,
+        originalFilename: pendingMetadata.originalFilename,
+        sizeBytes: pendingMetadata.sizeBytes,
+        storageSummary,
         disposedAt: new Date().toISOString(),
         disposedBy: auth.userId,
-        dispositionReason: reason.trim(),
       },
-    }).catch(() => {});
+    });
 
-    // Update BusinessDocument to permanent DISPOSED tombstone state
-    doc.documentStatus = 'DISPOSED';
-    doc.status = 'DISPOSED';
-    doc.isDeleted = true;
-    doc.fileBuffer = null;
-    doc.fileData = null;
-    doc.storageKey = null;
-    doc.storageObjectKey = null;
-    doc.storagePath = null;
-    doc.versions = [];
-    doc.disposedAt = new Date();
-    doc.disposedBy = auth.name || auth.userId || 'Master';
-    doc.dispositionReason = reason.trim();
-    await doc.save();
+    if (!completionAudit?.auditEventId) {
+      throw new ApiError(
+        503,
+        'DOCUMENT_DISPOSITION_COMPLETION_AUDIT_FAILED',
+        'Storage deletion was verified, but metadata was not marked disposed because the immutable completion audit could not be confirmed.'
+      );
+    }
+
+    const disposedAt = new Date();
+    const finalized = await BusinessDocument.findOneAndUpdate(
+      {
+        _id: pendingMetadata._id,
+        organisationId,
+        dispositionState: 'STORAGE_DELETED_PENDING_METADATA',
+        dispositionStartedAt: now,
+      },
+      {
+        $set: {
+          documentStatus: 'DISPOSED',
+          status: 'DISPOSED',
+          isDeleted: true,
+          fileBuffer: null,
+          fileData: null,
+          storageKey: null,
+          storageObjectKey: null,
+          quarantineObjectKey: null,
+          gridFsFileId: null,
+          storagePath: null,
+          versions: [],
+          disposedAt,
+          disposedBy: auth.name || auth.userId || 'Master',
+          dispositionReason,
+          dispositionState: 'COMPLETED',
+          dispositionLastAttemptAt: disposedAt,
+          dispositionLastError: '',
+        },
+      },
+      { new: true }
+    );
+
+    if (!finalized) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_FINALIZE_CONFLICT',
+        'Storage deletion and audit completed, but document metadata changed before finalization. Reconciliation is required.'
+      );
+    }
 
     return {
       success: true,
-      message: 'Document permanently disposed and scrubbed under retention policy.',
-      documentId: doc.documentId,
-      disposedAt: doc.disposedAt,
+      message: 'Document permanently disposed after verified storage deletion and immutable auditing.',
+      documentId: finalized.documentId,
+      disposedAt: finalized.disposedAt,
+      storageSummary,
+      authorizationAuditEventId: authorizationAudit.auditEventId,
+      completionAuditEventId: completionAudit.auditEventId,
     };
   }
 
