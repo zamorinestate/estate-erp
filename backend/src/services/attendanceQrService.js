@@ -647,6 +647,9 @@ class AttendanceQrService {
       accuracyMeters: Math.round(accuracyMeters),
       cafeId,
       cafeName: cafeDoc.name,
+      cafeLatitude: cafeDoc.address.latitude,
+      cafeLongitude: cafeDoc.address.longitude,
+      geofencePolicyVersion: 1,
     };
   }
 
