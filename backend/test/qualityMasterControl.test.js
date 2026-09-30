@@ -13,6 +13,8 @@ const { SequenceCounter } = require('../src/models/SequenceCounter');
 const authService = require('../src/services/authService');
 const auditService = require('../src/services/auditService');
 const { FoodSafetyService } = require('../src/services/foodSafetyService');
+const { InventoryLot } = require('../src/models/InventoryLot');
+const { CapaRecord } = require('../src/models/CapaRecord');
 
 function makeRequest({ port, method, path, headers = {}, body = null }) {
   return new Promise((resolve, reject) => {
@@ -192,8 +194,13 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     },
   ]);
 
-  t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
-  t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
+  let qualityAuditCounter = 0;
+  t.mock.method(auditService, 'recordRequestAudit', async () => ({
+    auditEventId: `AUD-QUALITY-TEST-${++qualityAuditCounter}`,
+  }));
+  t.mock.method(auditService, 'recordAuditEvent', async () => ({
+    auditEventId: `AUD-QUALITY-EVENT-${++qualityAuditCounter}`,
+  }));
   t.mock.method(AuditEvent, 'create', async (data) => data);
   AuditEvent.prototype.save = async function () { return this; };
 
@@ -257,6 +264,109 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     return this;
   };
 
+  const mockLots = [{
+    _id: 'LOT-MONGO-1',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    lotId: 'LOT-20260820-CREAM',
+    supplierLot: 'SUP-CREAM-20260820',
+    itemId: 'SKU-CREAM',
+    unit: 'L',
+    initialQuantity: 12,
+    quantityBase: 12,
+    remainingQuantity: 12,
+    status: 'AVAILABLE',
+    quarantineReason: '',
+    quarantineDate: null,
+    quarantinedByUserId: null,
+    releaseReason: '',
+    releaseDate: null,
+    releasedByUserId: null,
+    dispositionStatus: 'NONE',
+    dispositionReason: '',
+    dispositionDate: null,
+    dispositionByUserId: null,
+  }];
+
+  const matchesLot = (lot, query = {}) => {
+    if (query.organisationId && lot.organisationId !== query.organisationId) return false;
+    if (query.cafeId && typeof query.cafeId === 'string' && lot.cafeId !== query.cafeId) return false;
+    if (query.lotId && lot.lotId !== query.lotId) return false;
+    if (query.status && typeof query.status === 'string' && lot.status !== query.status) return false;
+    if (query.status?.$in && !query.status.$in.includes(lot.status)) return false;
+    if (query.$or) {
+      const matched = query.$or.some((clause) =>
+        (clause.lotId && lot.lotId === clause.lotId) ||
+        (clause.supplierLot && lot.supplierLot === clause.supplierLot)
+      );
+      if (!matched) return false;
+    }
+    return true;
+  };
+
+  t.mock.method(InventoryLot, 'findOne', (query) => ({
+    lean: async () => mockLots.find((lot) => matchesLot(lot, query)) || null,
+  }));
+  t.mock.method(InventoryLot, 'find', (query) => ({
+    sort() { return this; },
+    limit() { return this; },
+    lean: async () => mockLots.filter((lot) => matchesLot(lot, query)),
+  }));
+  t.mock.method(InventoryLot, 'findOneAndUpdate', async (filter, update) => {
+    const lot = mockLots.find((entry) => matchesLot(entry, filter));
+    if (!lot) return null;
+    Object.assign(lot, update?.$set || {});
+    return { ...lot };
+  });
+  t.mock.method(InventoryLot, 'countDocuments', async (query) =>
+    mockLots.filter((lot) => matchesLot(lot, query)).length
+  );
+
+  const mockCapas = [];
+  const matchesCapa = (capa, query = {}) => {
+    if (query.organisationId && capa.organisationId !== query.organisationId) return false;
+    if (query.cafeId && typeof query.cafeId === 'string' && capa.cafeId !== query.cafeId) return false;
+    if (query.capaId && capa.capaId !== query.capaId) return false;
+    if (query.status && typeof query.status === 'string' && capa.status !== query.status) return false;
+    if (query.status?.$ne && capa.status === query.status.$ne) return false;
+    return true;
+  };
+
+  t.mock.method(CapaRecord, 'create', async (payload) => {
+    const record = {
+      _id: `CAPA-MONGO-${mockCapas.length + 1}`,
+      ...payload,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    mockCapas.push(record);
+    return {
+      ...record,
+      toObject: () => ({ ...record }),
+    };
+  });
+  t.mock.method(CapaRecord, 'find', (query) => ({
+    sort() { return this; },
+    limit() { return this; },
+    lean: async () => mockCapas.filter((capa) => matchesCapa(capa, query)),
+  }));
+  t.mock.method(CapaRecord, 'findOne', (query) => ({
+    lean: async () => mockCapas.find((capa) => matchesCapa(capa, query)) || null,
+  }));
+  t.mock.method(CapaRecord, 'findOneAndUpdate', async (filter, update) => {
+    const capa = mockCapas.find((entry) => matchesCapa(entry, filter));
+    if (!capa) return null;
+    Object.assign(capa, update?.$set || {});
+    if (update?.$push?.auditHistory) {
+      capa.auditHistory = [...(capa.auditHistory || []), update.$push.auditHistory];
+    }
+    capa.updatedAt = new Date();
+    return { ...capa };
+  });
+  t.mock.method(CapaRecord, 'countDocuments', async (query) =>
+    mockCapas.filter((capa) => matchesCapa(capa, query)).length
+  );
+
   const masterHeaders = {
     Authorization: 'Bearer token_master',
     'x-device-id': 'DEV-MASTER-01',
@@ -289,7 +399,8 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     );
     assert.ok(Array.isArray(res.data.data.actionCentreItems));
     assert.equal(res.data.data.prpStatus.cleaningSanitation, 'NOT_ASSESSED');
-    assert.equal(res.data.data.sourceStatus.qualityHolds, 'VOLATILE_RUNTIME_ONLY');
+    assert.equal(res.data.data.sourceStatus.qualityHolds, 'DURABLE_INVENTORY_LOT');
+    assert.equal(res.data.data.sourceStatus.capas, 'DURABLE_CAPA_RECORD');
   });
 
   await t.test('2. GET /api/v1/quality/overview is accessible to OWNER', async () => {
@@ -452,9 +563,10 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
       body: {
         cafeId: 'ZC-0001',
         title: 'Carrier Inbound Packaging Reinforcement',
-        rootCauseMethod: '5_WHY',
         rootCauseAnalysis: 'Carrier stacking boxes above limit; lack of edge protectors.',
-        actionPlan: 'Enforce heavy-duty strapping and maximum 4-box stack height with logistics vendor.',
+        actionPlan: 'Reject damaged delivery units and enforce reinforced packing on the current vendor lane.',
+        preventiveActionPlan: 'Add carrier stacking limits and edge-protector requirements to the approved receiving SOP.',
+        targetDate: '2026-10-15',
       },
     });
 
@@ -477,6 +589,7 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(verifyRes.status, 200);
     assert.equal(verifyRes.data.data.capa.status, 'CLOSED');
     assert.equal(verifyRes.data.data.capa.effectivenessStatus, 'EFFECTIVE');
+    assert.equal(verifyRes.data.data.capa.durableSource, 'CAPA_RECORD');
   });
 
   await t.test('10. GET /api/v1/quality/traceability never fabricates trace or recall readiness when source is unavailable', async () => {
