@@ -3313,15 +3313,12 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
 
   // Fetch image bytes
   const buffer = await defaultStorageService.readObjectBuffer({ fileKey: privateFile.fileKey || privateFile.storagePath });
-  if (!buffer) {
-    // Fallback: 1x1 png image buffer for in-memory unit tests
-    const fallbackBuffer = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-      'base64'
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new ApiError(
+      404,
+      'ATTENDANCE_EVIDENCE_BYTES_NOT_FOUND',
+      'Attendance photograph metadata exists but the stored image bytes are unavailable.'
     );
-    response.setHeader('Content-Type', privateFile.mimeType || 'image/png');
-    response.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
-    return response.status(200).send(fallbackBuffer);
   }
 
   response.setHeader('Content-Type', privateFile.mimeType || 'image/jpeg');
