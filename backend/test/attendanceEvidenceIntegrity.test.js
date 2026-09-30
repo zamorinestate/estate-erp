@@ -704,3 +704,57 @@ test('EVI-016: quarantine incident payload never includes evidence image bytes o
   assert.match(source, /includePrimaryMaster:\s*true/);
 });
 
+test('EVI-017: historical evidence without new snapshots is reported as legacy, not corrupted', async () => {
+  const originals = {
+    attendanceFind: Attendance.find,
+    privateFindOne: PrivateFile.findOne,
+  };
+  const bytes = jpegBytes('legacy-audit-evidence');
+  const attendance = createAttendance();
+  delete attendance.attendanceEvidence.checkIn.geofencePolicyVersion;
+  delete attendance.attendanceEvidence.checkIn.cafeLatitude;
+  delete attendance.attendanceEvidence.checkIn.cafeLongitude;
+  delete attendance.attendanceEvidence.checkIn.allowedRadiusMeters;
+
+  const legacyFile = createPrivateFile(bytes);
+  delete legacyFile.attendanceContext.proofSnapshotVersion;
+  delete legacyFile.attendanceContext.grantIssuedAt;
+  delete legacyFile.attendanceContext.deviceId;
+  delete legacyFile.attendanceContext.proofPurpose;
+
+  Attendance.find = () => ({
+    sort() { return this; },
+    limit() { return this; },
+    lean: async () => [attendance],
+  });
+  PrivateFile.findOne = async () => legacyFile;
+
+  try {
+    const result = await auditAttendanceEvidenceIntegrity({
+      organisationId: 'ORG-ZAMORIN',
+      verifyStorageBytes: false,
+    });
+
+    assert.equal(result.failed, 0);
+    assert.equal(result.passed, 1);
+    assert.equal(result.integrityOk, true);
+    assert.equal(result.legacyProofSnapshots, 1);
+    assert.equal(result.legacyGeofenceSnapshots, 1);
+  } finally {
+    Attendance.find = originals.attendanceFind;
+    PrivateFile.findOne = originals.privateFindOne;
+  }
+});
+
+test('EVI-018: Primary Master UI states that legacy evidence is not quarantined solely for age', () => {
+  const frontend = fs.readFileSync(
+    path.join(__dirname, '../../frontend/src/js/modules/attendance/attendanceShifts.js'),
+    'utf8'
+  );
+
+  assert.match(frontend, /Legacy coverage:/);
+  assert.match(frontend, /not quarantined solely for age/);
+  assert.match(frontend, /legacyProofSnapshots/);
+  assert.match(frontend, /legacyGeofenceSnapshots/);
+});
+
