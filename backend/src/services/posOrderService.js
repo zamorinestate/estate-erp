@@ -950,15 +950,11 @@ class PosOrderService {
         minimumDigits: 4,
       });
     } catch (sequenceError) {
-      if (process.env.NODE_ENV === 'production') {
-        throw new ApiError(
-          503,
-          'POS_SEQUENCE_UNAVAILABLE',
-          'Unable to allocate a canonical POS bill number. The sale was not committed.'
-        );
-      }
-      const randSuffix = Math.floor(1000 + Math.random() * 9000);
-      billId = `BILL-${datePart}-${randSuffix}`;
+      throw new ApiError(
+        503,
+        'POS_SEQUENCE_UNAVAILABLE',
+        'Unable to allocate a canonical POS bill number. The sale was not committed.'
+      );
     }
 
     try {
@@ -971,16 +967,11 @@ class PosOrderService {
       });
       invoiceNumber = invoiceAlloc.invoiceNumber;
     } catch (invoiceError) {
-      if (process.env.NODE_ENV === 'production') {
-        throw new ApiError(
-          503,
-          'POS_INVOICE_SEQUENCE_UNAVAILABLE',
-          'Unable to allocate the canonical tax invoice number. The sale was not committed.'
-        );
-      }
-      const compactBranch = cafeId.replace(/[^A-Za-z0-9]/g, '').slice(-4).padStart(2, '0');
-      const seqTail = billId.split('-').pop();
-      invoiceNumber = `P/${compactBranch}/2627/${seqTail}`.slice(0, 16);
+      throw new ApiError(
+        503,
+        'POS_INVOICE_SEQUENCE_UNAVAILABLE',
+        'Unable to allocate the canonical tax invoice number. The sale was not committed.'
+      );
     }
 
     // 5. Canonical settlement: every financial side effect derives from the same
