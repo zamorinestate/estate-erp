@@ -65,6 +65,92 @@ async function queryCandidates(filter, batchSize) {
   return typeof query.lean === 'function' ? query.lean() : query;
 }
 
+async function reconcileStaleAttendanceEvidenceReservations({
+  organisationId,
+  nowDate,
+  cutoff,
+  staleClaimCutoff,
+  batchSize,
+  dryRun,
+}) {
+  const query = PrivateFile.find({
+    organisationId,
+    'attendanceContext.challengeId': { $ne: null },
+    'attendanceContext.grantExpiresAt': { $ne: null, $lte: cutoff },
+    'attendanceLink.status': 'RESERVED',
+    'attendanceLink.reservedAt': { $ne: null, $lte: staleClaimCutoff },
+  })
+    .sort({ 'attendanceLink.reservedAt': 1, createdAt: 1 })
+    .limit(batchSize);
+
+  const rows = typeof query.lean === 'function' ? await query.lean() : await query;
+  const reservations = (rows || []).filter(
+    (row) => row?.attendanceLink?.status === 'RESERVED'
+  );
+
+  const result = {
+    scanned: reservations.length,
+    linked: 0,
+    committed: 0,
+    quarantinedUnlinked: 0,
+    conflicts: 0,
+    invalid: 0,
+  };
+
+  for (const reservation of reservations) {
+    const fileId = String(reservation.fileId || '').trim().toUpperCase();
+    if (!fileId) {
+      result.invalid += 1;
+      continue;
+    }
+
+    const linked = await isEvidenceLinked(organisationId, fileId);
+    if (!linked) {
+      // Fail closed: a delayed request that already owns this reservation could
+      // still resume. Never release or delete it automatically merely because
+      // no Attendance reference is visible at this instant.
+      result.quarantinedUnlinked += 1;
+      continue;
+    }
+
+    result.linked += 1;
+    if (dryRun) continue;
+
+    const update = await PrivateFile.updateOne(
+      {
+        _id: reservation._id,
+        organisationId,
+        'attendanceLink.status': 'RESERVED',
+        'attendanceLink.claimId': reservation.attendanceLink?.claimId || null,
+      },
+      {
+        $set: {
+          'attendanceLink.status': 'COMMITTED',
+          'attendanceLink.committedAt': nowDate,
+        },
+      }
+    );
+
+    const changed = Boolean(
+      update &&
+      (
+        update.modifiedCount === 1 ||
+        update.matchedCount === 1 ||
+        update.nModified === 1 ||
+        update.n === 1
+      )
+    );
+
+    if (changed) {
+      result.committed += 1;
+    } else {
+      result.conflicts += 1;
+    }
+  }
+
+  return result;
+}
+
 async function reconcileExpiredOrphanAttendanceEvidence({
   organisationId,
   actorUserId = 'SYSTEM',
@@ -88,6 +174,15 @@ async function reconcileExpiredOrphanAttendanceEvidence({
   const cutoff = new Date(nowDate.getTime() - resolvedGraceMinutes * 60 * 1000);
   const staleClaimCutoff = new Date(nowDate.getTime() - CLAIM_STALE_MINUTES * 60 * 1000);
 
+  const reservationRepair = await reconcileStaleAttendanceEvidenceReservations({
+    organisationId: normalizedOrganisationId,
+    nowDate,
+    cutoff,
+    staleClaimCutoff,
+    batchSize: resolvedBatchSize,
+    dryRun: Boolean(dryRun),
+  });
+
   const candidateFilter = {
     organisationId: normalizedOrganisationId,
     'attendanceContext.challengeId': { $ne: null },
@@ -109,6 +204,12 @@ async function reconcileExpiredOrphanAttendanceEvidence({
       batchSize: resolvedBatchSize,
     },
     scanned: Array.isArray(candidates) ? candidates.length : 0,
+    staleReservationsScanned: reservationRepair.scanned,
+    staleReservationsLinked: reservationRepair.linked,
+    staleReservationsCommitted: reservationRepair.committed,
+    staleReservationsQuarantined: reservationRepair.quarantinedUnlinked,
+    staleReservationConflicts: reservationRepair.conflicts,
+    staleReservationInvalid: reservationRepair.invalid,
     linkedProtected: 0,
     eligibleOrphans: 0,
     deleted: 0,
@@ -266,5 +367,6 @@ module.exports = {
   CLAIM_STALE_MINUTES,
   resolveOrphanGraceMinutes,
   buildAttendanceEvidenceReferenceQuery,
+  reconcileStaleAttendanceEvidenceReservations,
   reconcileExpiredOrphanAttendanceEvidence,
 };
