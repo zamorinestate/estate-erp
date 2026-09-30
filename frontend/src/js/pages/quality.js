@@ -1520,24 +1520,30 @@ function openReportNcrModal(root) {
 
 function openCreateCapaModal(root) {
   const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:520px;">
-      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Create Corrective Action (CAPA)</h2>
-
+    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:560px;">
+      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Create Corrective & Preventive Action (CAPA)</h2>
       <div style="display:grid;grid-template-columns:1fr;gap:10px;font-size:12px;">
         <div>
           <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Action Title *</label>
-          <input type="text" id="modal-capa-title" class="glass-input" placeholder="e.g. Calibrate probe thermometers & revise supplier SOP" style="width:100%;" />
+          <input type="text" id="modal-capa-title" class="glass-input" placeholder="Describe the corrective/preventive action" style="width:100%;" />
         </div>
         <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Root Cause 5-Why Investigation *</label>
-          <textarea id="modal-capa-root" class="glass-input" rows="3" placeholder="1. Why did it happen?... 5. Root Cause..." style="width:100%;"></textarea>
+          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Root Cause Analysis *</label>
+          <textarea id="modal-capa-root" class="glass-input" rows="3" placeholder="Document the human-confirmed root cause analysis..." style="width:100%;"></textarea>
         </div>
         <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Systemic Action Plan *</label>
-          <textarea id="modal-capa-plan" class="glass-input" rows="2" placeholder="Implementation steps to prevent recurrence..." style="width:100%;"></textarea>
+          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Corrective Action Plan *</label>
+          <textarea id="modal-capa-plan" class="glass-input" rows="2" placeholder="Actions that correct the current issue..." style="width:100%;"></textarea>
+        </div>
+        <div>
+          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Preventive Action Plan *</label>
+          <textarea id="modal-capa-preventive" class="glass-input" rows="2" placeholder="Controls that reduce recurrence risk..." style="width:100%;"></textarea>
+        </div>
+        <div>
+          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Target Completion Date *</label>
+          <input type="date" id="modal-capa-target" class="glass-input" style="width:100%;" />
         </div>
       </div>
-
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
         <button class="btn btn-ghost" id="modal-capa-cancel" style="font-size:12px;" type="button">Cancel</button>
         <button class="btn btn-primary" id="modal-capa-save" style="font-size:12px;font-weight:700;" type="button">Create CAPA</button>
@@ -1548,19 +1554,42 @@ function openCreateCapaModal(root) {
   openModal(modalHtml);
   document.getElementById('modal-capa-cancel')?.addEventListener('click', closeModal);
   document.getElementById('modal-capa-save')?.addEventListener('click', async () => {
-    const title = document.getElementById('modal-capa-title')?.value;
-    const rootCauseAnalysis = document.getElementById('modal-capa-root')?.value;
-    const actionPlan = document.getElementById('modal-capa-plan')?.value;
+    const cafeId =
+      selectedCafe !== 'ALL'
+        ? selectedCafe
+        : (state.currentCafeId || state.auth?.user?.primaryCafeId || '');
+    const title = String(document.getElementById('modal-capa-title')?.value || '').trim();
+    const rootCauseAnalysis = String(document.getElementById('modal-capa-root')?.value || '').trim();
+    const actionPlan = String(document.getElementById('modal-capa-plan')?.value || '').trim();
+    const preventiveActionPlan = String(document.getElementById('modal-capa-preventive')?.value || '').trim();
+    const targetDate = String(document.getElementById('modal-capa-target')?.value || '').trim();
+
+    if (!cafeId) {
+      showToast('Select a café before creating a CAPA.', 'warning');
+      return;
+    }
+    if (
+      !title ||
+      rootCauseAnalysis.length < 10 ||
+      actionPlan.length < 10 ||
+      preventiveActionPlan.length < 10 ||
+      !targetDate
+    ) {
+      showToast('Complete the title, root cause, corrective plan, preventive plan and target date.', 'warning');
+      return;
+    }
 
     try {
       const res = await apiPost('/quality/capas', {
-        cafeId: state.auth?.user?.primaryCafeId || 'CAFE-001',
+        cafeId,
         title,
         rootCauseAnalysis,
         actionPlan,
+        preventiveActionPlan,
+        targetDate,
       });
       if (res?.success) {
-        showToast('CAPA created and assigned!', 'success');
+        showToast('CAPA saved to the durable quality register.', 'success');
         closeModal();
         renderActiveTab(root);
       }
@@ -1580,7 +1609,7 @@ function openVerifyCapaModal(root, capa) {
         <div>
           <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Effectiveness Assessment *</label>
           <select id="modal-ver-eff" class="glass-input" style="width:100%;">
-            <option value="EFFECTIVE">EFFECTIVE — Actions verified; zero recurrence in 14 days</option>
+            <option value="EFFECTIVE">EFFECTIVE — Evidence reviewed and effectiveness confirmed</option>
             <option value="NOT_EFFECTIVE">NOT_EFFECTIVE — Reopen investigation</option>
           </select>
         </div>
@@ -1619,221 +1648,119 @@ function openVerifyCapaModal(root, capa) {
   });
 }
 
-function openHealthModal(root) {
-  const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:540px;">
-      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Food Safety &amp; Quality Subsystem Health</h2>
-      <p style="font-size:12px;color:var(--muted);margin:-8px 0 0 0;">Real-time FSMS, HACCP &amp; Statutory Compliance Invariant Audit</p>
-
-      <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;">
-        ${[
-          { label: 'PRP Verification Status (ISO 22002-2)', count: '6 of 6 Verified', status: 'PASS' },
-          { label: 'Cold-Chain Telemetry Range (1°C–4°C)', count: 'Normal', status: 'PASS' },
-          { label: 'Active Quality Holds in Quarantine', count: '1 Batch Isolated', status: 'PASS' },
-          { label: 'Open Non-Conformance Investigations', count: '1 Contained', status: 'PASS' },
-          { label: 'CAPA Effectiveness Verification', count: '100% Tracked', status: 'PASS' },
-          { label: 'Batch Traceability Completeness', count: '100% Gapless', status: 'PASS' },
-          { label: 'FSSAI Statutory Licence Validity', count: 'Active (223d left)', status: 'PASS' },
-          { label: 'Potable Water Microbial Test Certificate', count: 'NABL Certified', status: 'PASS' },
-          { label: 'FoSTaC Supervisor Coverage', count: 'Active', status: 'PASS' },
-        ].map((h) => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--surface-sunken);border-radius:4px;">
-            <span>${h.label}</span>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <span style="font-weight:700;color:var(--ink);">${h.count}</span>
-              <span class="badge success" style="font-size:9px;">${h.status}</span>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-
+async function openHealthModal(root) {
+  openModal(`
+    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:620px;">
+      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Food Safety &amp; Quality Verification Coverage</h2>
+      <p style="font-size:12px;color:var(--muted);margin:-8px 0 0 0;">Only checks backed by an authoritative runtime probe can show PASS or FAIL.</p>
+      <div id="quality-health-content">${skeleton('220px')}</div>
       <div style="display:flex;justify-content:flex-end;margin-top:10px;">
         <button class="btn btn-ghost" id="modal-health-close" style="font-size:12px;" type="button">Close</button>
       </div>
     </div>
-  `;
-
-  openModal(modalHtml);
+  `);
   document.getElementById('modal-health-close')?.addEventListener('click', closeModal);
+
+  try {
+    const res = await apiGet('/quality/integrity');
+    const data = res?.data || {};
+    const checks = Array.isArray(data.checks) ? data.checks : [];
+    const health = document.getElementById('quality-health-content');
+    if (!health) return;
+    health.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;">
+        <div class="card" style="padding:10px;text-align:center;"><strong>${data.integrityScore ?? '—'}</strong><div style="font-size:10px;color:var(--muted);">Verified-score %</div></div>
+        <div class="card" style="padding:10px;text-align:center;"><strong>${data.coveragePercent ?? 0}%</strong><div style="font-size:10px;color:var(--muted);">Verification coverage</div></div>
+        <div class="card" style="padding:10px;text-align:center;"><strong>${data.verifiedChecks ?? 0}/${data.totalChecks ?? checks.length}</strong><div style="font-size:10px;color:var(--muted);">Checks verified</div></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;">
+        ${checks.map((check) => `
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 10px;background:var(--surface-sunken);border-radius:4px;">
+            <div><strong>${check.rule || check.name || 'Check'}</strong><div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${check.description || check.detail || ''}</div></div>
+            <span class="pill ${check.status === 'PASS' ? 'pill-mint' : check.status === 'FAIL' ? 'pill-coral' : 'pill-dark'}" style="height:max-content;">${check.status || 'NOT_VERIFIED'}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (err) {
+    const health = document.getElementById('quality-health-content');
+    if (health) health.innerHTML = `<div class="empty-state">Unable to load verification coverage: ${err?.message || 'Unknown error'}</div>`;
+  }
 }
 
 function openQualityHealthModal(root) {
-  openHealthModal(root);
+  return openHealthModal(root);
 }
 
-function openAddLicenseModal(root) {
-  const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:500px;">
-      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Register Statutory License / Certificate</h2>
-
-      <div style="display:grid;grid-template-columns:1fr;gap:10px;font-size:12px;">
-        <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Requirement / Title *</label>
-          <input type="text" id="modal-lic-title" class="glass-input" placeholder="e.g. FSSAI Central License Renewal" style="width:100%;" required />
-        </div>
-        <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Statutory Authority *</label>
-          <input type="text" id="modal-lic-auth" class="glass-input" placeholder="e.g. Food Safety and Standards Authority of India" style="width:100%;" required />
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <div>
-            <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Category *</label>
-            <select id="modal-lic-cat" class="glass-input" style="width:100%;">
-              <option value="STATUTORY_LICENSE">Statutory License</option>
-              <option value="ENVIRONMENTAL_TEST">Environmental Test</option>
-              <option value="WORKFORCE_COMPLIANCE">Workforce Compliance</option>
-              <option value="CALIBRATION">Equipment Calibration</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">License / Cert Number *</label>
-            <input type="text" id="modal-lic-num" class="glass-input" placeholder="e.g. 10022041000189" style="width:100%;" required />
-          </div>
-        </div>
-        <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Valid Until *</label>
-          <input type="date" id="modal-lic-valid" class="glass-input" value="${new Date(Date.now() + 180 * 86400000).toISOString().slice(0, 10)}" style="width:100%;" required />
-        </div>
-      </div>
-
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
-        <button class="btn btn-ghost" id="modal-lic-cancel" style="font-size:12px;" type="button">Cancel</button>
-        <button class="btn btn-primary" id="modal-lic-save" style="font-size:12px;font-weight:700;" type="button">Save License</button>
+function openAddLicenseModal() {
+  openModal(`
+    <div style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:500px;">
+      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Compliance Registration Source</h2>
+      <p style="font-size:12px;color:var(--muted);line-height:1.6;margin:0;">
+        This Quality view is read-only for statutory master data. Update café registrations through Administration → Cafés and upload the supporting certificate here. Browser-only license records are not treated as authoritative.
+      </p>
+      <div style="display:flex;justify-content:flex-end;">
+        <button class="btn btn-ghost" id="modal-lic-cancel" type="button">Close</button>
       </div>
     </div>
-  `;
-
-  openModal(modalHtml);
+  `);
   document.getElementById('modal-lic-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('modal-lic-save')?.addEventListener('click', () => {
-    const title = document.getElementById('modal-lic-title')?.value?.trim();
-    const auth = document.getElementById('modal-lic-auth')?.value?.trim();
-    const cat = document.getElementById('modal-lic-cat')?.value;
-    const num = document.getElementById('modal-lic-num')?.value?.trim();
-    const valid = document.getElementById('modal-lic-valid')?.value;
-
-    if (!title || !auth || !num || !valid) {
-      showToast('Please fill in all mandatory license fields', 'warning');
-      return;
-    }
-
-    cachedCompliance.unshift({
-      requirement: title,
-      authority: auth,
-      category: cat,
-      licenceNumber: num,
-      validUntil: valid,
-      daysRemaining: Math.ceil((new Date(valid) - new Date()) / (1000 * 60 * 60 * 24)),
-      status: 'CURRENT',
-    });
-
-    showToast(`Compliance item ${num} registered successfully!`, 'success');
-    closeModal();
-    renderActiveTab(root);
-  });
 }
 
 function openMockRecallModal(root) {
   const modalHtml = `
     <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:520px;">
-      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Simulate Rapid Mock Recall Drill</h2>
-      <p style="font-size:12px;color:var(--muted);margin:-8px 0 0 0;">FSSAI Schedule 4 traceability verification drill</p>
-
-      <div style="display:flex;flex-direction:column;gap:10px;font-size:12px;">
-        <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Target Lot for Mock Recall Drill *</label>
-          <input type="text" id="modal-recall-lot" class="glass-input" value="LOT-20260815-MILK" style="width:100%;font-weight:700;" />
-        </div>
-        <div style="padding:10px;background:var(--surface-sunken);border-radius:6px;border:1px solid var(--line);">
-          <strong style="color:var(--ink);">Recall Benchmark Standards:</strong>
-          <ul style="margin:6px 0 0 16px;padding:0;color:var(--muted);font-size:11.5px;line-height:1.5;">
-            <li>100% Reconciliation within &lt; 2 hours</li>
-            <li>Zero downstream distribution of quarantined lots</li>
-            <li>Automatic notification to Store Managers &amp; Commissary</li>
-          </ul>
-        </div>
+      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Trace Inventory Lot Evidence</h2>
+      <p style="font-size:12px;color:var(--muted);margin:-8px 0 0 0;">This performs an evidence lookup only. It does not claim that a timed recall drill was executed.</p>
+      <div>
+        <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Lot / Supplier Lot *</label>
+        <input type="text" id="modal-recall-lot" class="glass-input" placeholder="Enter actual lot identifier" style="width:100%;font-weight:700;" />
       </div>
-
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
         <button class="btn btn-ghost" id="modal-recall-cancel" style="font-size:12px;" type="button">Cancel</button>
-        <button class="btn btn-primary" id="modal-recall-start" style="font-size:12px;font-weight:700;" type="button">Initiate Recall Drill</button>
+        <button class="btn btn-primary" id="modal-recall-start" style="font-size:12px;font-weight:700;" type="button">Trace Evidence</button>
       </div>
     </div>
   `;
 
   openModal(modalHtml);
   document.getElementById('modal-recall-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('modal-recall-start')?.addEventListener('click', () => {
-    closeModal();
-    showToast('Mock recall drill completed in 14s — 100% of batch accounted for!', 'success');
-  });
-}
-
-function openRecordAuditModal(root) {
-  const modalHtml = `
-    <div style="display:flex;flex-direction:column;gap:14px;width:100%;max-width:500px;">
-      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Record Quality &amp; Hygiene Audit</h2>
-
-      <div style="display:grid;grid-template-columns:1fr;gap:10px;font-size:12px;">
-        <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Audit Title *</label>
-          <input type="text" id="modal-audit-title" class="glass-input" placeholder="e.g. Monthly Internal GMP & Hygiene Scoring" style="width:100%;" required />
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <div>
-            <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Standard *</label>
-            <select id="modal-audit-std" class="glass-input" style="width:100%;">
-              <option value="FSSAI Schedule 4">FSSAI Schedule 4</option>
-              <option value="ISO 22000 FSMS">ISO 22000 FSMS</option>
-              <option value="Internal Zamorin SOP">Internal Zamorin SOP</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Score Achieved (%) *</label>
-            <input type="number" id="modal-audit-score" class="glass-input" value="98.5" min="0" max="100" step="0.5" style="width:100%;" required />
-          </div>
-        </div>
-        <div>
-          <label style="font-weight:600;color:var(--muted);display:block;margin-bottom:4px;">Lead Auditor *</label>
-          <input type="text" id="modal-audit-auditor" class="glass-input" placeholder="e.g. Quality Assurance Manager" style="width:100%;" required />
-        </div>
-      </div>
-
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
-        <button class="btn btn-ghost" id="modal-audit-cancel" style="font-size:12px;" type="button">Cancel</button>
-        <button class="btn btn-primary" id="modal-audit-save" style="font-size:12px;font-weight:700;" type="button">Save Audit Record</button>
-      </div>
-    </div>
-  `;
-
-  openModal(modalHtml);
-  document.getElementById('modal-audit-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('modal-audit-save')?.addEventListener('click', () => {
-    const title = document.getElementById('modal-audit-title')?.value?.trim();
-    const std = document.getElementById('modal-audit-std')?.value;
-    const score = Number(document.getElementById('modal-audit-score')?.value || 98);
-    const auditor = document.getElementById('modal-audit-auditor')?.value?.trim();
-
-    if (!title || !auditor) {
-      showToast('Please provide audit title and lead auditor name', 'warning');
+  document.getElementById('modal-recall-start')?.addEventListener('click', async () => {
+    const lot = String(document.getElementById('modal-recall-lot')?.value || '').trim();
+    if (!lot) {
+      showToast('Enter an actual lot identifier.', 'warning');
       return;
     }
 
-    cachedAudits.unshift({
-      auditId: `AUD-2026-IN-${cachedAudits.length + 1}`,
-      standard: std,
-      title: title,
-      leadAuditor: auditor,
-      auditDate: new Date().toISOString().slice(0, 10),
-      scorePercentage: score,
-      findingsCount: score >= 95 ? 0 : 1,
-      status: score >= 80 ? 'PASS' : 'FAIL',
-    });
-
-    showToast('Quality audit record saved!', 'success');
-    closeModal();
-    renderActiveTab(root);
+    try {
+      const res = await apiGet(`/quality/traceability?lotNumber=${encodeURIComponent(lot)}`);
+      cachedTrace = res?.data?.trace || null;
+      closeModal();
+      if (cachedTrace?.sourceStatus === 'AUTHORITATIVE') {
+        showToast('Trace evidence loaded. Recall-drill timing remains unassessed unless a durable drill result exists.', 'success');
+      } else {
+        showToast('Authoritative trace source is unavailable for this lookup.', 'warning');
+      }
+      await renderActiveTab(root);
+    } catch (err) {
+      showToast(err?.message || 'Trace lookup failed.', 'error');
+    }
   });
+}
+
+function openRecordAuditModal() {
+  openModal(`
+    <div style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:500px;">
+      <h2 style="font-size:16px;font-weight:800;color:var(--ink);margin:0;">Durable Audit Register Required</h2>
+      <p style="font-size:12px;color:var(--muted);line-height:1.6;margin:0;">
+        Browser-only audit scoring has been disabled. Upload audit evidence now; structured audit scoring will be enabled only through a durable audited backend register.
+      </p>
+      <div style="display:flex;justify-content:flex-end;">
+        <button class="btn btn-ghost" id="modal-audit-cancel" type="button">Close</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('modal-audit-cancel')?.addEventListener('click', closeModal);
 }
 
 function exportQualityCsv() {
