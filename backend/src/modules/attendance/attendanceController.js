@@ -79,7 +79,7 @@ const {
 
 const crypto = require('node:crypto');
 const attendanceQrService = require('../../services/attendanceQrService');
-const { defaultStorageService } = require('../../services/storageAdapterService');
+const { attendanceEvidenceStorageService } = require('../../services/attendanceEvidenceStorageService');
 const { PrivateFile } = require('../../models/PrivateFile');
 const { AttendanceSubmission } = require('../../models/AttendanceSubmission');
 
@@ -3160,10 +3160,11 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
   };
   const fileExtension = extensionByMime[extractedMime];
 
-  const uploadResult = await defaultStorageService.uploadObject({
+  const uploadResult = await attendanceEvidenceStorageService.storeSelfie({
     organisationId,
-    fileType: 'ATTENDANCE_SELFIE',
-    fileName: `${fileId}.${fileExtension}`,
+    cafeId: evidenceProof.resolvedCafeId,
+    fileId,
+    punchType,
     mimeType: extractedMime,
     buffer,
   });
@@ -3174,7 +3175,7 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     originalName: `selfie_${punchType.toLowerCase()}_${Date.now()}.${fileExtension}`,
     mimeType: extractedMime,
     sizeBytes: buffer.length,
-    storagePath: uploadResult.fileKey || uploadResult.url,
+    storagePath: uploadResult.fileKey,
     uploadedByUserId: userId,
     attendanceContext: {
       challengeId: evidenceProof.challengeId,
@@ -3312,7 +3313,7 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
   });
 
   // Fetch image bytes
-  const buffer = await defaultStorageService.readObjectBuffer({ fileKey: privateFile.fileKey || privateFile.storagePath });
+  const buffer = await attendanceEvidenceStorageService.readObjectBuffer({ fileKey: privateFile.fileKey || privateFile.storagePath });
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new ApiError(
       404,
