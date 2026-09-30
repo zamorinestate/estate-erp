@@ -1942,14 +1942,56 @@ const getBillPdf = asyncHandler(async (request, response) => {
 
   let cafe = null;
   if (bill.cafeId) {
-    cafe = await Cafe.findOne({ organisationId, cafeId: bill.cafeId }).lean();
+    const cafeQuery = Cafe.findOne({
+      organisationId,
+      cafeId: bill.cafeId,
+    });
+    cafe = cafeQuery && typeof cafeQuery.lean === 'function'
+      ? await cafeQuery.lean()
+      : await cafeQuery;
   }
+
+  if (!cafe) {
+    throw new ApiError(
+      409,
+      'BILL_CAFE_IDENTITY_UNAVAILABLE',
+      'Tax-invoice PDF generation is blocked because the authoritative café master is unavailable.'
+    );
+  }
+
+  const gstDetails = cafe.registrations?.gstDetails || {};
+  const cafeAddress = String(gstDetails.principalPlace || '').trim() || [
+    cafe.address?.building,
+    cafe.address?.unit,
+    cafe.address?.floor,
+    cafe.address?.street,
+    cafe.address?.area,
+    cafe.address?.city,
+    cafe.address?.district,
+    cafe.address?.state,
+    cafe.address?.pinCode,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+
+  const legalName = String(
+    gstDetails.legalName ||
+    cafe.legalName ||
+    ''
+  ).trim();
+  const gstin = String(
+    gstDetails.gstin ||
+    cafe.registrations?.gstin ||
+    bill.gstRegistrationNumber ||
+    ''
+  ).trim().toUpperCase();
 
   const { generateTaxInvoicePdf } = require('../utils/exportGenerators');
   const result = generateTaxInvoicePdf(bill, {
-    legalName: cafe?.legalName || cafe?.name || 'Zamorin Café',
-    gstin: cafe?.gstin || bill.sellerGstin || '32AABCT1332L1ZV',
-    address: cafe?.address?.line1 ? `${cafe.address.line1}, ${cafe.address.city || ''} - ${cafe.address.pincode || ''}` : 'Koramangala, Bengaluru, Karnataka — 560095',
+    legalName,
+    gstin,
+    address: cafeAddress,
   });
 
   response.setHeader('Content-Type', 'application/pdf');
