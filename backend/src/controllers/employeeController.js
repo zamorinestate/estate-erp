@@ -30,6 +30,7 @@ const { resolveEmployeeShiftForDate, getWeekStartDate } = require('../services/s
 const employeeService = require('../services/employeeService');
 const { hashPassword } = require('../services/authService');
 const operatorSessionService = require('../services/operatorSessionService');
+const { generateTemporaryEmployeePassword } = require('../utils/secureRandom');
 
 // ─── 1. OVERVIEW & WORKFORCE KPIS ─────────────────────────────────────────────
 const getWorkforceOverview = asyncHandler(async (req, res) => {
@@ -402,15 +403,6 @@ const getEmployee360 = asyncHandler(async (req, res) => {
   });
 });
 
-function generateTemporaryPassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-  let rand = '';
-  for (let i = 0; i < 6; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `Zamorin@${rand}!`;
-}
-
 // ─── 4. ONBOARD NEW EMPLOYEE ──────────────────────────────────────────────────
 const onboardEmployee = asyncHandler(async (req, res) => {
   const { organisationId, userId: actorId } = req.auth;
@@ -546,7 +538,7 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   let rawPassword = (password || initialPassword || '').trim();
   let effectivePassword = rawPassword;
   if (!effectivePassword) {
-    effectivePassword = generateTemporaryPassword();
+    effectivePassword = generateTemporaryEmployeePassword();
   } else if (effectivePassword.length < 8) {
     throw new ApiError(400, 'INVALID_PASSWORD', 'Password must be at least 8 characters long.');
   }
@@ -601,9 +593,26 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     createdBy: actorId,
   });
 
-  // Seed default onboarding training & documents checklist
+  // Seed default onboarding training & documents checklist using
+  // authoritative sequence IDs. ID allocation failure blocks onboarding.
+  const onboardingYear = new Date().getFullYear();
+  const [onboardingTrainingId, onboardingDocumentId] = await Promise.all([
+    SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `EMPLOYEE_TRAINING_${onboardingYear}`,
+      prefix: `TRN-${onboardingYear}`,
+      minimumDigits: 4,
+    }),
+    SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `EMPLOYEE_DOCUMENT_${onboardingYear}`,
+      prefix: `DOC-${onboardingYear}`,
+      minimumDigits: 4,
+    }),
+  ]);
+
   await EmployeeTraining.create({
-    trainingId: `TRN-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
+    trainingId: onboardingTrainingId,
     organisationId,
     userId: newUserId,
     trainingTitle: 'Food Safety & Hygiene Induction (FoSTaC)',
@@ -612,7 +621,7 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   });
 
   await EmployeeDocument.create({
-    documentId: `DOC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
+    documentId: onboardingDocumentId,
     organisationId,
     userId: newUserId,
     category: 'POLICY_ACKNOWLEDGEMENT',
@@ -701,7 +710,7 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
     user.failedLoginAttempts = 0;
     user.accountLockUntil = null;
   } else if (generatePassword) {
-    effectivePassword = generateTemporaryPassword();
+    effectivePassword = generateTemporaryEmployeePassword();
     user.passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
     user.mustChangePassword = true;
     user.failedLoginAttempts = 0;
@@ -900,7 +909,13 @@ const createEmployeeMovement = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
-  const movementId = `MVT-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const movementYear = new Date().getFullYear();
+  const movementId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_MOVEMENT_${movementYear}`,
+    prefix: `MVT-${movementYear}`,
+    minimumDigits: 4,
+  });
 
   const movement = await EmployeeMovement.create({
     movementId,
@@ -981,7 +996,13 @@ const submitProbationReview = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
-  const reviewId = `PRB-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const reviewYear = new Date().getFullYear();
+  const reviewId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `PROBATION_REVIEW_${reviewYear}`,
+    prefix: `PRB-${reviewYear}`,
+    minimumDigits: 4,
+  });
 
   const review = await ProbationReview.create({
     reviewId,
@@ -1091,7 +1112,13 @@ const assignEmployeeTraining = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'trainingTitle and dueDate are required.');
   }
 
-  const trainingId = `TRN-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const trainingYear = new Date().getFullYear();
+  const trainingId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_TRAINING_${trainingYear}`,
+    prefix: `TRN-${trainingYear}`,
+    minimumDigits: 4,
+  });
 
   const training = await EmployeeTraining.create({
     trainingId,
@@ -1164,7 +1191,13 @@ const generateEmployeeLetter = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
-  const documentId = `DOC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const documentYear = new Date().getFullYear();
+  const documentId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_DOCUMENT_${documentYear}`,
+    prefix: `DOC-${documentYear}`,
+    minimumDigits: 4,
+  });
 
   const generatedPayload = {
     employeeName: user.name,
@@ -1581,7 +1614,14 @@ const createPosition = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'positionTitle, department, and cafeId are required.');
   }
 
-  const positionId = `POS-${cafeId.replace('ZC-', '')}-${String(Math.floor(Math.random() * 900) + 100)}`;
+  const cleanCafeId = String(cafeId).trim().toUpperCase();
+  const positionCafeKey = cleanCafeId.replace('ZC-', '') || 'GLOBAL';
+  const positionId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `POSITION_${cleanCafeId}`,
+    prefix: `POS-${positionCafeKey}`,
+    minimumDigits: 3,
+  });
 
   const position = await Position.create({
     positionId,
@@ -1612,7 +1652,13 @@ const createStaffingRequest = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'cafeId, department, positionTitle, and desiredDate are required.');
   }
 
-  const requestId = `SR-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const staffingYear = new Date().getFullYear();
+  const requestId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `STAFFING_REQUEST_${staffingYear}`,
+    prefix: `SR-${staffingYear}`,
+    minimumDigits: 4,
+  });
 
   const request = await StaffingRequest.create({
     requestId,
@@ -2648,8 +2694,13 @@ const uploadSelfDocument = asyncHandler(async (req, res) => {
     uploadedByUserId: userId,
   });
 
-  const docSeq = Math.floor(1000 + Math.random() * 9000);
-  const documentId = `DOC-${new Date().getFullYear()}-${docSeq}`;
+  const uploadDocumentYear = new Date().getFullYear();
+  const documentId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_DOCUMENT_${uploadDocumentYear}`,
+    prefix: `DOC-${uploadDocumentYear}`,
+    minimumDigits: 4,
+  });
 
   const doc = await EmployeeDocument.create({
     documentId,
