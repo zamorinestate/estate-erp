@@ -25,6 +25,7 @@ const cafeController = read('backend/src/controllers/cafeController.js');
 const cafeCreateModal = read('frontend/src/js/pages/cafeCreateModal.js');
 const administrationPage = read('frontend/src/js/pages/administration.js');
 const staffAttendancePage = read('frontend/src/js/modules/attendance/staffAttendance.js');
+const attendanceShiftsPage = read('frontend/src/js/modules/attendance/attendanceShifts.js');
 const staffHomePage = read('frontend/src/js/pages/staffHome.js');
 const attendanceRoutes = read('backend/src/modules/attendance/attendanceRoutes.js');
 const correctionModel = read('backend/src/models/AttendanceCorrectionRequest.js');
@@ -204,6 +205,7 @@ test('P0-WF-017: staff attendance UI contains no synthetic attendance/timecard f
     'In Radius (8m)',
     'ALL SIGNALS READY',
     'retained for 90 days',
+    'valid for 90 days',
     'Morning Shift (09:00 – 17:00)',
   ]) {
     assert.equal(
@@ -328,4 +330,27 @@ test('P0-WF-025: attendance media streaming cannot expose unlinked private files
   const recordBlock = attendanceController.slice(recordStart);
   assert.ok(recordBlock.includes("role === 'MASTER' && request.auth.isPrimaryMaster !== true"));
   assert.ok(recordBlock.includes("'PRIMARY_MASTER_AUTHORITY_REQUIRED'"));
+});
+
+
+test('P0-WF-026: attendance policy UI does not manufacture geofence, retention, or compliance metrics', () => {
+  for (const forbidden of [
+    '50 Meters',
+    '14.2 MB',
+    '148 Photos',
+    '100% Compliant',
+    '0 Open Disputes',
+    'Retention purge executed: 148 expired selfies deleted',
+  ]) {
+    assert.equal(
+      attendanceShiftsPage.includes(forbidden),
+      false,
+      `Attendance governance UI must not fabricate: ${forbidden}`
+    );
+  }
+
+  assert.ok(attendanceShiftsPage.includes('const geofenceDisplay = geofenceConfigured'));
+  assert.ok(attendanceShiftsPage.includes('scopedCafe?.address?.geofenceRadiusMetres'));
+  assert.ok(attendanceShiftsPage.includes('No legal pass/fail percentage is manufactured'));
+  assert.ok(attendanceShiftsPage.includes('Distinct Check-In / Check-Out selfies'));
 });
