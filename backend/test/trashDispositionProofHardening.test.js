@@ -33,12 +33,12 @@ test('TRASH-DISP-001: disposition certificate defaults every unproved stage to N
   assert.equal(cert.propagationStages.analyticsReadModel, 'NOT_APPLICABLE');
 });
 
-test('TRASH-DISP-002: execution requires approved state, expiry, exact policy, hold clearance and durable approval proof', () => {
+test('TRASH-DISP-002: execution requires approved/resumable state, expiry, exact policy, hold clearance and durable approval proof', () => {
   const source = read(controllerPath);
   const start = source.indexOf('const executeDispositionPurge = asyncHandler');
   const end = source.indexOf('// ═════════════════════════════════════════════════════════════════════════════\n// 8. DISPOSITION CERTIFICATES', start);
   const block = source.slice(start, end);
-  assert.ok(block.includes("item.lifecycleStatus !== 'DISPOSITION_APPROVED'"));
+  assert.ok(block.includes("['DISPOSITION_APPROVED', 'DISPOSITION_PROCESSING'].includes(item.lifecycleStatus)"));
   assert.ok(block.includes('assertDispositionRetentionComplete(item)'));
   assert.ok(block.includes('assertNoActiveDispositionHold(item)'));
   assert.ok(block.includes('loadExactRetentionPolicy(item, orgId)'));
@@ -47,24 +47,28 @@ test('TRASH-DISP-002: execution requires approved state, expiry, exact policy, h
   assert.ok(block.includes('DISPOSITION_EXECUTION_AUDIT_NOT_CONFIRMED'));
 });
 
-test('TRASH-DISP-003: unverified attachment deletion blocks permanent disposition', () => {
+test('TRASH-DISP-003: legacy ambiguous attachments remain blocked while canonical locators are required', () => {
   const source = read(controllerPath);
-  assert.ok(source.includes('DISPOSITION_ATTACHMENT_PURGE_UNVERIFIED'));
-  assert.ok(source.includes('attached file deletion is not yet backed by a verified provider deletion workflow'));
+  assert.ok(source.includes('DISPOSITION_ATTACHMENT_LOCATOR_REQUIRED'));
+  assert.ok(source.includes('storageKey'));
+  assert.ok(source.includes('gridFsFileId'));
+  assert.ok(source.includes('Legacy storageUrl/fileId values are not deletion authority.'));
+  assert.equal(source.includes('DISPOSITION_ATTACHMENT_PURGE_UNVERIFIED'), false);
 });
 
-test('TRASH-DISP-004: successful proof scope certifies MongoDB only and leaves unsupported stages NOT_APPLICABLE', () => {
+test('TRASH-DISP-004: fileStorage is certified COMPLETED only when attachment deletion has verified proof', () => {
   const source = read(controllerPath);
   const start = source.indexOf('const executeDispositionPurge = asyncHandler');
   const end = source.indexOf('// ═════════════════════════════════════════════════════════════════════════════\n// 8. DISPOSITION CERTIFICATES', start);
   const block = source.slice(start, end);
   assert.ok(block.includes("primaryDatabase: 'COMPLETED'"));
   assert.ok(block.includes("searchIndex: 'NOT_APPLICABLE'"));
-  assert.ok(block.includes("fileStorage: 'NOT_APPLICABLE'"));
+  assert.ok(block.includes("fileStorage: hasAttachments ? 'COMPLETED' : 'NOT_APPLICABLE'"));
   assert.ok(block.includes("cacheLayer: 'NOT_APPLICABLE'"));
   assert.ok(block.includes("analyticsReadModel: 'NOT_APPLICABLE'"));
+  assert.ok(block.includes("item.dispositionStorageStatus !== 'VERIFIED_DELETED'"));
+  assert.ok(block.includes('DISPOSITION_STORAGE_PROOF_INCONSISTENT'));
   assert.equal(block.includes("searchIndex: 'COMPLETED'"), false);
-  assert.equal(block.includes("fileStorage: item.attachments?.length > 0 ? 'COMPLETED'"), false);
 });
 
 test('TRASH-DISP-005: irreversible disposition explicitly requires transaction support', () => {
@@ -75,17 +79,23 @@ test('TRASH-DISP-005: irreversible disposition explicitly requires transaction s
   assert.ok(transaction.includes('if (requireTransactions)'));
 });
 
-test('TRASH-DISP-006: disposition execution uses expected-state compare-and-swap before payload erasure', () => {
+test('TRASH-DISP-006: external deletion is staged after atomic PROCESSING claim and before transactional payload erasure', () => {
   const source = read(controllerPath);
   const start = source.indexOf('const executeDispositionPurge = asyncHandler');
   const end = source.indexOf('// ═════════════════════════════════════════════════════════════════════════════\n// 8. DISPOSITION CERTIFICATES', start);
   const block = source.slice(start, end);
   const claim = block.indexOf('const claimed = await TrashEntry.findOneAndUpdate');
   const processing = block.indexOf("lifecycleStatus: 'DISPOSITION_PROCESSING'", claim);
-  const erase = block.indexOf('claimed.payload = null', claim);
+  const deleteCall = block.indexOf('deleteAndVerifyTrashAttachments(item)', processing);
+  const storageProof = block.indexOf("dispositionStorageStatus: 'VERIFIED_DELETED'", deleteCall);
+  const transaction = block.indexOf('await executeTransactionWithRetry', storageProof);
+  const erase = block.indexOf('claimed.payload = null', transaction);
   assert.ok(claim >= 0);
   assert.ok(processing > claim);
-  assert.ok(erase > processing);
+  assert.ok(deleteCall > processing);
+  assert.ok(storageProof > deleteCall);
+  assert.ok(transaction > storageProof);
+  assert.ok(erase > transaction);
   assert.ok(block.includes("lifecycleStatus: 'DISPOSITION_APPROVED'"));
   assert.ok(block.includes('dispositionApprovedAt: item.dispositionApprovedAt'));
 });
@@ -118,3 +128,43 @@ test('TRASH-DISP-009: UI no longer promises blanket multi-store deletion and car
   assert.ok(source.includes('APPROVE_PERMANENT_DISPOSITION'));
   assert.ok(source.includes('Execute Disposition'));
 });
+
+test('TRASH-DISP-010: attachment deletion verifies provider absence after every delete attempt', () => {
+  const source = read(controllerPath);
+  const start = source.indexOf('async function deleteAndVerifyTrashAttachments');
+  const end = source.indexOf('const submitDispositionRequest', start);
+  const block = source.slice(start, end);
+  assert.ok(block.includes('documentStorageAdapter.exists(storageArgs)'));
+  assert.ok(block.includes('documentStorageAdapter.delete(storageArgs)'));
+  assert.ok(block.includes('DISPOSITION_ATTACHMENT_DELETE_UNVERIFIED'));
+  const firstExists = block.indexOf('documentStorageAdapter.exists(storageArgs)');
+  const deleteCall = block.indexOf('documentStorageAdapter.delete(storageArgs)');
+  const secondExists = block.indexOf('documentStorageAdapter.exists(storageArgs)', firstExists + 1);
+  assert.ok(firstExists >= 0 && deleteCall > firstExists && secondExists > deleteCall);
+});
+
+test('TRASH-DISP-011: provider failure leaves disposition resumable and never erases payload', () => {
+  const source = read(controllerPath);
+  const start = source.indexOf('const executeDispositionPurge = asyncHandler');
+  const end = source.indexOf('// ═════════════════════════════════════════════════════════════════════════════\n// 8. DISPOSITION CERTIFICATES', start);
+  const block = source.slice(start, end);
+  const deleteCall = block.indexOf('deleteAndVerifyTrashAttachments(item)');
+  const failedState = block.indexOf("dispositionStorageStatus: 'FAILED'", deleteCall);
+  const throwError = block.indexOf('throw error;', failedState);
+  const transaction = block.indexOf('await executeTransactionWithRetry', throwError);
+  assert.ok(deleteCall >= 0);
+  assert.ok(failedState > deleteCall);
+  assert.ok(throwError > failedState);
+  assert.ok(transaction > throwError);
+  assert.ok(block.includes('DISPOSITION_ALREADY_PROCESSING'));
+});
+
+test('TRASH-DISP-012: TrashEntry stores canonical attachment locators and durable storage proof state', () => {
+  const modelSource = read(path.join(__dirname, '../src/models/TrashEntry.js'));
+  assert.ok(modelSource.includes('storageKey:'));
+  assert.ok(modelSource.includes('gridFsFileId:'));
+  assert.ok(modelSource.includes("enum: ['NOT_REQUIRED', 'PENDING', 'VERIFIED_DELETED', 'FAILED']"));
+  assert.ok(modelSource.includes('dispositionStorageVerifiedAt'));
+  assert.ok(modelSource.includes('dispositionStorageSummary'));
+});
+
