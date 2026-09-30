@@ -97,10 +97,24 @@ const privateFileSchema = new mongoose.Schema(
         type: Date,
         default: null,
       },
+      grantIssuedAt: {
+        type: Date,
+        default: null,
+      },
       grantExpiresAt: {
         type: Date,
         default: null,
         index: true,
+      },
+      deviceId: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      proofPurpose: {
+        type: String,
+        enum: ['ATTENDANCE_PUNCH', null],
+        default: null,
       },
     },
 
