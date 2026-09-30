@@ -31,7 +31,23 @@ async function fetchEvidencePhotoBlob(mediaId) {
     headers,
   });
   if (!res.ok) {
-    throw new Error(`Failed to load evidence photograph (${res.status})`);
+    let code = '';
+    let message = '';
+    try {
+      const payload = await res.json();
+      code = String(payload?.code || payload?.error?.code || '').trim();
+      message = String(payload?.message || payload?.error?.message || '').trim();
+    } catch (_) {}
+
+    if (res.status === 409 && code.startsWith('ATTENDANCE_EVIDENCE_')) {
+      throw new Error(
+        message || 'Attendance evidence failed its integrity verification and cannot be displayed.'
+      );
+    }
+
+    throw new Error(
+      message || `Failed to load evidence photograph (${res.status})`
+    );
   }
   return await res.blob();
 }
