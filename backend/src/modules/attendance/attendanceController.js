@@ -85,6 +85,7 @@ const {
 } = require('../../services/attendanceEvidenceRetentionService');
 const {
   auditAttendanceEvidenceIntegrity,
+  verifyAttendanceEvidenceSlot,
 } = require('../../services/attendanceEvidenceIntegrityService');
 const { PrivateFile } = require('../../models/PrivateFile');
 const { AttendanceSubmission } = require('../../models/AttendanceSubmission');
@@ -3618,8 +3619,28 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
   }
 
   // Determine punch type for audit
-  const isCheckIn = attendance?.attendanceEvidence?.checkIn?.selfieMediaId === privateFile.fileId || attendance?.selfieFileId === privateFile.fileId;
+  const isCheckIn =
+    attendance?.attendanceEvidence?.checkIn?.selfieMediaId === privateFile.fileId ||
+    attendance?.attendanceEvidence?.checkIn?.photoFileId === privateFile.fileId ||
+    attendance?.selfieFileId === privateFile.fileId;
   const evidenceType = isCheckIn ? 'CHECK_IN' : 'CHECK_OUT';
+
+  if (privateFile.attendanceContext?.challengeId) {
+    const metadataIntegrity = await verifyAttendanceEvidenceSlot({
+      organisationId,
+      attendance,
+      punchType: evidenceType,
+      verifyStorageBytes: false,
+    });
+
+    if (metadataIntegrity.status !== 'PASS') {
+      throw new ApiError(
+        409,
+        'ATTENDANCE_EVIDENCE_BINDING_INTEGRITY_FAILURE',
+        'Attendance photograph metadata does not match its committed attendance evidence binding.'
+      );
+    }
+  }
 
   if (!request.auth.userId) {
     request.auth.userId = role === 'CAFE_OPS' ? 'DEVICE-OPS-TERMINAL' : 'SYSTEM_ACTOR';
