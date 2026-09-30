@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { PrivateFile } = require('../src/models/PrivateFile');
 const { Attendance } = require('../src/modules/attendance/Attendance');
@@ -233,3 +235,20 @@ test('EVI-006: forensic audit controller is Primary-Master only', async () => {
     { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
   );
 });
+
+test('EVI-007: Primary Master UI and router expose the read-only forensic audit path', () => {
+  const root = path.join(__dirname, '../..');
+  const frontend = fs.readFileSync(
+    path.join(root, 'frontend/src/js/modules/attendance/attendanceShifts.js'),
+    'utf8'
+  );
+  const routes = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceRoutes.js'),
+    'utf8'
+  );
+
+  assert.match(frontend, /run-evidence-integrity-audit-btn/);
+  assert.match(frontend, /\/attendance\/evidence\/integrity\/audit/);
+  assert.match(routes, /router\.post\('\/evidence\/integrity\/audit', auditAttendanceEvidence\)/);
+});
+
