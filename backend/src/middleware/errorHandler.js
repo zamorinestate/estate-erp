@@ -20,6 +20,16 @@ function errorHandler(error, req, res, next) {
     statusCode = 400;
     code = 'INVALID_FORMAT';
     message = `Invalid value for field '${error.path}'.`;
+  } else if (error.name === 'MulterError') {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      statusCode = 413;
+      code = 'UPLOAD_FILE_TOO_LARGE';
+      message = 'The uploaded file exceeds the allowed size limit.';
+    } else {
+      statusCode = 400;
+      code = 'MULTIPART_UPLOAD_INVALID';
+      message = 'The multipart upload is invalid or exceeds the allowed file/field limits.';
+    }
   } else if (error.type === 'entity.too.large' || error.status === 413) {
     statusCode = 413;
     code = 'PAYLOAD_TOO_LARGE';
