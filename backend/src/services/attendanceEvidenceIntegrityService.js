@@ -50,6 +50,19 @@ function pushCheck(checks, name, ok, details = {}) {
   });
 }
 
+function calculateDistanceMetres(lat1, lon1, lat2, lon2) {
+  const toRad = (degrees) => (degrees * Math.PI) / 180;
+  const earthRadiusMetres = 6371000;
+  const deltaLat = toRad(lat2 - lat1);
+  const deltaLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(deltaLon / 2) ** 2;
+  return earthRadiusMetres * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 async function loadPrivateFile(query) {
   const result = PrivateFile.findOne(query);
   return result && typeof result.lean === 'function'
@@ -181,6 +194,67 @@ async function verifyAttendanceEvidenceSlot({
         ? false
         : serverTimestamp.getTime() >= boundAt.getTime()
     );
+  }
+
+  const geofenceSnapshotVersion = Number(slot?.geofencePolicyVersion || 0);
+  const shouldVerifyGeofenceSnapshot = requireProofSnapshot || geofenceSnapshotVersion >= 1;
+  if (shouldVerifyGeofenceSnapshot) {
+    const employeeLatitude = Number(slot?.latitude);
+    const employeeLongitude = Number(slot?.longitude);
+    const cafeLatitude = Number(slot?.cafeLatitude);
+    const cafeLongitude = Number(slot?.cafeLongitude);
+    const allowedRadiusMeters = Number(slot?.allowedRadiusMeters);
+    const storedDistanceMeters = Number(slot?.distanceMeters);
+
+    const coordinatesValid =
+      Number.isFinite(employeeLatitude) &&
+      employeeLatitude >= -90 &&
+      employeeLatitude <= 90 &&
+      Number.isFinite(employeeLongitude) &&
+      employeeLongitude >= -180 &&
+      employeeLongitude <= 180 &&
+      Number.isFinite(cafeLatitude) &&
+      cafeLatitude >= -90 &&
+      cafeLatitude <= 90 &&
+      Number.isFinite(cafeLongitude) &&
+      cafeLongitude >= -180 &&
+      cafeLongitude <= 180;
+
+    const policyValid =
+      geofenceSnapshotVersion >= 1 &&
+      coordinatesValid &&
+      Number.isFinite(allowedRadiusMeters) &&
+      allowedRadiusMeters > 0 &&
+      Number.isFinite(storedDistanceMeters) &&
+      storedDistanceMeters >= 0;
+
+    pushCheck(checks, 'geofence_snapshot_version', geofenceSnapshotVersion >= 1);
+    pushCheck(checks, 'geofence_snapshot_coordinates_valid', coordinatesValid);
+    pushCheck(checks, 'geofence_snapshot_radius_valid', Number.isFinite(allowedRadiusMeters) && allowedRadiusMeters > 0);
+
+    if (policyValid) {
+      const recomputedDistance = Math.round(
+        calculateDistanceMetres(
+          employeeLatitude,
+          employeeLongitude,
+          cafeLatitude,
+          cafeLongitude
+        )
+      );
+
+      pushCheck(
+        checks,
+        'geofence_distance_recomputed',
+        recomputedDistance === Math.round(storedDistanceMeters),
+        { expected: Math.round(storedDistanceMeters), actual: recomputedDistance }
+      );
+      pushCheck(
+        checks,
+        'geofence_within_snapshot_radius',
+        recomputedDistance <= allowedRadiusMeters
+      );
+      pushCheck(checks, 'geofence_verified_flag', slot?.geofenceVerified === true);
+    }
   }
 
   const storagePath = String(privateFile.storagePath || privateFile.fileKey || '').trim();
