@@ -166,6 +166,60 @@ const privateFileSchema = new mongoose.Schema(
       },
     },
 
+    // Explicit legal/administrative hold for committed attendance evidence.
+    // A hold never authorises deletion; it only makes future retention cleanup
+    // fail closed until the hold is explicitly released by the Primary Master.
+    attendanceRetention: {
+      policyVersion: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      purgeEligibleAfter: {
+        type: Date,
+        default: null,
+        index: true,
+      },
+      holdStatus: {
+        type: String,
+        enum: ['NONE', 'HELD'],
+        default: 'NONE',
+        index: true,
+      },
+      holdReason: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: 1000,
+      },
+      holdPlacedAt: {
+        type: Date,
+        default: null,
+      },
+      holdPlacedByUserId: {
+        type: String,
+        default: null,
+        trim: true,
+        uppercase: true,
+      },
+      holdReleasedAt: {
+        type: Date,
+        default: null,
+      },
+      holdReleasedByUserId: {
+        type: String,
+        default: null,
+        trim: true,
+        uppercase: true,
+      },
+      holdReleaseReason: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: 1000,
+      },
+    },
+
     // State used only for expired, unlinked attendance-selfie reconciliation.
     // Linked evidence is never eligible for this cleanup flow.
     attendanceCleanup: {
@@ -238,6 +292,18 @@ privateFileSchema.index(
   },
   {
     name: 'attendance_stale_reservation_reconciliation_scan',
+  }
+);
+
+privateFileSchema.index(
+  {
+    organisationId: 1,
+    'attendanceLink.status': 1,
+    'attendanceRetention.holdStatus': 1,
+    'attendanceRetention.purgeEligibleAfter': 1,
+  },
+  {
+    name: 'attendance_committed_retention_scan',
   }
 );
 
