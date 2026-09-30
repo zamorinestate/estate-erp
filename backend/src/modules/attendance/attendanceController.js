@@ -4122,13 +4122,29 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
     throw new ApiError(403, 'FORBIDDEN_EVIDENCE_ACCESS', 'Unauthorised to view attendance evidence.');
   }
 
-  const [userDoc, cafeDoc] = await Promise.all([
-    User.findOne({ userId: attendance.userId, organisationId }).lean(),
-    Cafe.findOne({ cafeId: attendance.cafeId, organisationId }).lean(),
-  ]);
-
   const checkInEvidence = attendance.attendanceEvidence?.checkIn;
   const checkOutEvidence = attendance.attendanceEvidence?.checkOut;
+  const checkInFileId = normalizeIdentifier(
+    checkInEvidence?.selfieMediaId ||
+    checkInEvidence?.photoFileId ||
+    attendance.selfieFileId
+  );
+  const checkOutFileId = normalizeIdentifier(
+    checkOutEvidence?.selfieMediaId ||
+    checkOutEvidence?.photoFileId
+  );
+  const canManageRetentionHold = role === 'MASTER' && request.auth.isPrimaryMaster === true;
+
+  const [userDoc, cafeDoc, checkInPrivateFile, checkOutPrivateFile] = await Promise.all([
+    User.findOne({ userId: attendance.userId, organisationId }).lean(),
+    Cafe.findOne({ cafeId: attendance.cafeId, organisationId }).lean(),
+    canManageRetentionHold && checkInFileId
+      ? PrivateFile.findOne({ organisationId, fileId: checkInFileId }).lean()
+      : Promise.resolve(null),
+    canManageRetentionHold && checkOutFileId
+      ? PrivateFile.findOne({ organisationId, fileId: checkOutFileId }).lean()
+      : Promise.resolve(null),
+  ]);
 
   // Management roles see detailed distance & accuracy
   const isManagement = ['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role);
@@ -4146,6 +4162,8 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
       shiftName: attendance.shiftName || 'Standard Shift',
       status: attendance.status,
       canReleaseQuarantine: role === 'MASTER' && request.auth.isPrimaryMaster === true,
+      canManageRetentionHold,
+      committedEvidencePurgeEnabled: false,
       checkIn: {
         time: attendance.checkInAt,
         selfieMediaId: checkInEvidence?.selfieMediaId || attendance.selfieFileId,
@@ -4158,6 +4176,13 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
         integrityReleasedAt: isManagement ? checkInEvidence?.integrityReleasedAt || null : null,
         integrityReleasedByUserId: isManagement ? checkInEvidence?.integrityReleasedByUserId || null : null,
         integrityReleaseReason: isManagement ? checkInEvidence?.integrityReleaseReason || '' : '',
+        retentionHoldStatus: canManageRetentionHold ? checkInPrivateFile?.attendanceRetention?.holdStatus || 'NONE' : null,
+        retentionHoldReason: canManageRetentionHold ? checkInPrivateFile?.attendanceRetention?.holdReason || '' : '',
+        retentionHoldPlacedAt: canManageRetentionHold ? checkInPrivateFile?.attendanceRetention?.holdPlacedAt || null : null,
+        retentionHoldPlacedByUserId: canManageRetentionHold ? checkInPrivateFile?.attendanceRetention?.holdPlacedByUserId || null : null,
+        retentionHoldReleasedAt: canManageRetentionHold ? checkInPrivateFile?.attendanceRetention?.holdReleasedAt || null : null,
+        retentionHoldReleasedByUserId: canManageRetentionHold ? checkInPrivateFile?.attendanceRetention?.holdReleasedByUserId || null : null,
+        retentionHoldReleaseReason: canManageRetentionHold ? checkInPrivateFile?.attendanceRetention?.holdReleaseReason || '' : '',
         qrVerified: checkInEvidence?.qrVerified ?? false,
         geofenceVerified: checkInEvidence?.geofenceVerified ?? false,
         distanceMeters: isManagement ? checkInEvidence?.distanceMeters ?? null : null,
@@ -4176,6 +4201,13 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
         integrityReleasedAt: isManagement ? checkOutEvidence?.integrityReleasedAt || null : null,
         integrityReleasedByUserId: isManagement ? checkOutEvidence?.integrityReleasedByUserId || null : null,
         integrityReleaseReason: isManagement ? checkOutEvidence?.integrityReleaseReason || '' : '',
+        retentionHoldStatus: canManageRetentionHold ? checkOutPrivateFile?.attendanceRetention?.holdStatus || 'NONE' : null,
+        retentionHoldReason: canManageRetentionHold ? checkOutPrivateFile?.attendanceRetention?.holdReason || '' : '',
+        retentionHoldPlacedAt: canManageRetentionHold ? checkOutPrivateFile?.attendanceRetention?.holdPlacedAt || null : null,
+        retentionHoldPlacedByUserId: canManageRetentionHold ? checkOutPrivateFile?.attendanceRetention?.holdPlacedByUserId || null : null,
+        retentionHoldReleasedAt: canManageRetentionHold ? checkOutPrivateFile?.attendanceRetention?.holdReleasedAt || null : null,
+        retentionHoldReleasedByUserId: canManageRetentionHold ? checkOutPrivateFile?.attendanceRetention?.holdReleasedByUserId || null : null,
+        retentionHoldReleaseReason: canManageRetentionHold ? checkOutPrivateFile?.attendanceRetention?.holdReleaseReason || '' : '',
         qrVerified: checkOutEvidence?.qrVerified ?? false,
         geofenceVerified: checkOutEvidence?.geofenceVerified ?? false,
         distanceMeters: isManagement ? checkOutEvidence?.distanceMeters ?? null : null,
