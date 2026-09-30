@@ -39,7 +39,7 @@ async function fetchEvidencePhotoBlob(mediaId) {
       message = String(payload?.message || payload?.error?.message || '').trim();
     } catch (_) {}
 
-    if (res.status === 409 && code.startsWith('ATTENDANCE_EVIDENCE_')) {
+    if ([409, 423].includes(res.status) && code.startsWith('ATTENDANCE_EVIDENCE_')) {
       throw new Error(
         message || 'Attendance evidence failed its integrity verification and cannot be displayed.'
       );
@@ -173,6 +173,27 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
               </div>
             </div>
 
+            ${ 
+              evidence?.integrityState === 'QUARANTINED' || evidence?.verificationStatus === 'FLAGGED'
+                ? `
+              <div style="background:rgba(239,68,68,0.12);border:1px solid #ef4444;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#fca5a5;">
+                <strong>🔒 Evidence Quarantined:</strong>
+                <span>This attendance photograph failed one or more integrity checks and cannot be displayed until investigated.</span>
+                ${ 
+                  Array.isArray(evidence?.integrityFailedChecks) && evidence.integrityFailedChecks.length
+                    ? `<div style="margin-top:6px;color:var(--muted);">Failed checks: ${evidence.integrityFailedChecks.map(escHtml).join(', ')}</div>`
+                    : ''
+                }
+                ${ 
+                  evidence?.integrityAuditEventId
+                    ? `<div style="margin-top:4px;color:var(--muted);">Audit event: ${escHtml(evidence.integrityAuditEventId)}</div>`
+                    : ''
+                }
+              </div>
+            `
+                : ''
+            }
+
             <!-- Management Correction Warning -->
             ${
               data.isCorrection
@@ -225,7 +246,19 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
 
       // Load authenticated selfie image
       const photoContainer = modalMount.querySelector('#evidence-photo-container');
-      if (evidence?.selfieMediaId) {
+      const evidenceQuarantined =
+        evidence?.integrityState === 'QUARANTINED' ||
+        evidence?.verificationStatus === 'FLAGGED';
+
+      if (evidenceQuarantined) {
+        if (photoContainer) {
+          photoContainer.innerHTML = `
+            <div style="color:var(--coral-400, #f87171);font-size:13px;padding:32px;max-width:460px;">
+              🔒 Photograph blocked by attendance evidence quarantine. Review the integrity failure details and immutable audit event before taking further action.
+            </div>
+          `;
+        }
+      } else if (evidence?.selfieMediaId) {
         fetchEvidencePhotoBlob(evidence.selfieMediaId)
           .then((blob) => {
             if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
