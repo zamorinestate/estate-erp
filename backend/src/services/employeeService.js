@@ -2,7 +2,7 @@
 
 const mongoose = require('mongoose');
 const { User } = require('../models/User');
-const SequenceCounter = require('../models/SequenceCounter');
+const { SequenceCounter } = require('../models/SequenceCounter');
 const { UniversalQrService } = require('./universalQrService');
 const { ApiError } = require('../utils/ApiError');
 const { hashPassword } = require('./authService');
