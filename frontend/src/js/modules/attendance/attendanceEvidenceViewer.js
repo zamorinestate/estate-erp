@@ -4,7 +4,7 @@
 
 'use strict';
 
-import { apiGet, getAccessToken, getOrCreateDeviceId, API_BASE_URL } from '../../apiClient.js';
+import { apiGet, apiPost, getAccessToken, getOrCreateDeviceId, API_BASE_URL } from '../../apiClient.js';
 import { showToast } from '../../components.js';
 import { CANONICAL_ZAMORIN_COMPANY_LOGO_SVG } from '../../utils/qrCodeGen.js';
 
@@ -186,9 +186,14 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
                 }
                 ${ 
                   evidence?.integrityAuditEventId
-                    ? `<div style="margin-top:4px;color:var(--muted);">Audit event: ${escHtml(evidence.integrityAuditEventId)}</div>`
+                    ? `<div style="margin-top:4px;color:var(--muted);">Failure audit event: ${escHtml(evidence.integrityAuditEventId)}</div>`
                     : ''
                 }
+                ${data.canReleaseQuarantine ? `
+                  <button class="btn btn-sm btn-danger" id="release-evidence-quarantine-btn" type="button" style="margin-top:10px;">
+                    Re-verify &amp; Release Quarantine
+                  </button>
+                ` : ''}
               </div>
             `
                 : ''
@@ -229,6 +234,39 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
       // Event handlers
       modalMount.querySelector('#evidence-close-x')?.addEventListener('click', cleanup);
       modalMount.querySelector('#evidence-close-btn')?.addEventListener('click', cleanup);
+
+      modalMount.querySelector('#release-evidence-quarantine-btn')?.addEventListener('click', async () => {
+        const reason = String(
+          window.prompt(
+            'Enter the investigation reason for releasing this quarantine (minimum 10 characters):',
+            ''
+          ) || ''
+        ).trim();
+
+        if (reason.length < 10) {
+          showToast('A specific release reason of at least 10 characters is required.', 'warning');
+          return;
+        }
+
+        if (!window.confirm('Run a fresh full forensic verification and release this evidence only if every applicable integrity check passes?')) {
+          return;
+        }
+
+        try {
+          await apiPost('/attendance/evidence/integrity/release', {
+            attendanceId,
+            punchType: currentPunch,
+            reason,
+            confirmation: 'RELEASE_QUARANTINED_ATTENDANCE_EVIDENCE',
+          });
+          showToast('Evidence quarantine released after a fresh forensic integrity pass.', 'success');
+          const reopenType = currentPunch;
+          cleanup();
+          await openAttendanceEvidenceViewer({ attendanceId, initialType: reopenType });
+        } catch (err) {
+          showToast(err?.message || 'Evidence remains quarantined because release verification did not pass.', 'error');
+        }
+      });
 
       modalMount.querySelector('#btn-select-checkin')?.addEventListener('click', () => {
         if (currentPunch !== 'CHECK_IN') {
