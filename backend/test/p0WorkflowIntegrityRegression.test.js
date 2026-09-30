@@ -29,6 +29,7 @@ const attendanceShiftsPage = read('frontend/src/js/modules/attendance/attendance
 const staffHomePage = read('frontend/src/js/pages/staffHome.js');
 const attendanceRoutes = read('backend/src/modules/attendance/attendanceRoutes.js');
 const correctionModel = read('backend/src/models/AttendanceCorrectionRequest.js');
+const errorHandlerSource = read('backend/src/middleware/errorHandler.js');
 const attendanceQrService = read('backend/src/services/attendanceQrService.js');
 const mainFrontend = read('frontend/src/js/main.js');
 const cafeOpsApi = read('frontend/cafe-operations/js/api/cafeOpsApi.js');
@@ -357,4 +358,13 @@ test('P0-WF-026: attendance policy UI does not manufacture geofence, retention, 
   assert.ok(attendanceShiftsPage.includes('scopedCafe?.address?.geofenceRadiusMetres'));
   assert.ok(attendanceShiftsPage.includes('No legal pass/fail percentage is manufactured'));
   assert.ok(attendanceShiftsPage.includes('Distinct Check-In / Check-Out selfies'));
+});
+
+
+test('P0-WF-027: multipart limit failures are translated to controlled client errors', () => {
+  assert.ok(errorHandlerSource.includes("error.name === 'MulterError'"));
+  assert.ok(errorHandlerSource.includes("error.code === 'LIMIT_FILE_SIZE'"));
+  assert.ok(errorHandlerSource.includes("code = 'UPLOAD_FILE_TOO_LARGE'"));
+  assert.ok(errorHandlerSource.includes("statusCode = 413"));
+  assert.ok(errorHandlerSource.includes("code = 'MULTIPART_UPLOAD_INVALID'"));
 });
