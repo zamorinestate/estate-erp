@@ -17,6 +17,7 @@ const { PersonalLedger } = require('../models/PersonalLedger');
 const { DashboardTarget } = require('../models/DashboardTarget');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { TaxInvoice } = require('../models/TaxInvoice');
+const { PassbookTransaction } = require('../models/PassbookTransaction');
 const gstTaxService = require('../services/gstTaxService');
 const zReportService = require('../services/zReportService');
 const { ApiError } = require('../utils/ApiError');
@@ -713,17 +714,12 @@ const createJournal = asyncHandler(async (request, response) => {
   }
 
   const dateCompact = journalDate.replace(/-/g, '');
-  let journalId;
-  try {
-    journalId = await SequenceCounter.generateId({
-      organisationId,
-      sequenceKey: `JOURNAL:${dateCompact}`,
-      prefix: `JRN-${dateCompact}`,
-      minimumDigits: 4,
-    });
-  } catch (err) {
-    journalId = `JRN-${dateCompact}-${Math.floor(1000 + Math.random() * 9000)}`;
-  }
+  const journalId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `JOURNAL:${dateCompact}`,
+    prefix: `JRN-${dateCompact}`,
+    minimumDigits: 4,
+  });
 
   const journal = await Journal.create({
     organisationId,
@@ -793,7 +789,12 @@ const reverseJournal = asyncHandler(async (request, response) => {
 
   const dateStr = getIstBusinessDate();
   const dateCompact = dateStr.replace(/-/g, '');
-  const revJournalId = `JRN-REV-${dateCompact}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const revJournalId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `JOURNAL_REVERSAL:${dateCompact}`,
+    prefix: `JRN-REV-${dateCompact}`,
+    minimumDigits: 4,
+  });
 
   // Invert debits and credits
   const reversedLines = originalJournal.lines.map((l, index) => ({
@@ -884,8 +885,13 @@ const createAPInvoice = asyncHandler(async (request, response) => {
   const taxPaisa = Math.round(Number(tax) * 100);
   const totalPaisa = amountPaisa + taxPaisa;
 
-  const count = await APInvoice.countDocuments({ organisationId });
-  const invoiceId = `AP-2026-${String(count + 1).padStart(5, '0')}`;
+  const apYear = new Date().getFullYear();
+  const invoiceId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `AP_INVOICE:${apYear}`,
+    prefix: `AP-${apYear}`,
+    minimumDigits: 5,
+  });
 
   const invoice = await APInvoice.create({
     organisationId,
@@ -931,8 +937,13 @@ const createPaymentRun = asyncHandler(async (request, response) => {
   const invoices = await APInvoice.find({ organisationId, invoiceId: { $in: selectedInvoiceIds } });
   const totalAmountPaisa = invoices.reduce((sum, inv) => sum + inv.outstandingPaisa, 0);
 
-  const count = await PaymentRun.countDocuments({ organisationId });
-  const paymentRunId = `PAY-RUN-2026-${String(count + 1).padStart(4, '0')}`;
+  const paymentRunYear = new Date().getFullYear();
+  const paymentRunId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `PAYMENT_RUN:${paymentRunYear}`,
+    prefix: `PAY-RUN-${paymentRunYear}`,
+    minimumDigits: 4,
+  });
 
   const paymentRun = await PaymentRun.create({
     organisationId,
@@ -988,40 +999,163 @@ const listReceivables = asyncHandler(async (request, response) => {
 
   if (cafeId) ensureCafeAccess(request, cafeId);
 
-  // Return departmental orders with credit outstanding
-  const filter = { organisationId, status: { $in: ['FULFILLED', 'IN_FULFILMENT', 'CONFIRMED'] } };
+  const filter = {
+    organisationId,
+    orderStatus: { $in: ['FULFILLED', 'IN_FULFILMENT', 'CONFIRMED'] },
+    creditStatus: { $in: ['CREDIT_OPEN', 'PARTIALLY_SETTLED', 'OVERDUE', 'DISPUTED'] },
+  };
   if (cafeId) filter.cafeId = cafeId.trim().toUpperCase();
 
   const orders = await DepartmentOrder.find(filter).lean();
-  const receivables = orders.map((o) => ({
-    receivableId: `AR-${o.orderId}`,
-    customerName: o.accountName,
-    invoiceDate: o.businessDate,
-    amountPaisa: o.totalAmountPaisa,
-    status: o.creditSettlementStatus || 'PENDING',
-    cafeId: o.cafeId,
-  }));
+  const receivables = orders.map((order) => {
+    const totalPaisa = Number(order.totalPaisa || 0);
+    const settledPaisa = Number(order.settledPaisa || 0);
+    return {
+      receivableId: `AR-${order.orderId}`,
+      orderId: order.orderId,
+      customerName: order.institutionName,
+      invoiceNumber: order.invoiceNumber || null,
+      invoiceDate: order.orderDate,
+      fulfilmentDate: order.fulfilmentDate,
+      amountPaisa: totalPaisa,
+      settledPaisa,
+      outstandingPaisa: Math.max(0, totalPaisa - settledPaisa),
+      status: order.creditStatus,
+      cafeId: order.cafeId,
+    };
+  });
 
   return response.status(200).json({ receivables });
 });
 
 const recordCustomerReceipt = asyncHandler(async (request, response) => {
-  const { organisationId } = request.auth;
-  const { receivableId, amount, paymentMethod = 'BANK_TRANSFER', referenceNumber } = request.body;
+  const { organisationId, userId } = request.auth;
+  const {
+    receivableId,
+    amount,
+    amountPaisa: rawAmountPaisa,
+    paymentMethod = 'BANK_TRANSFER',
+    referenceNumber,
+    notes = '',
+  } = request.body || {};
 
-  if (!receivableId || !amount) {
-    throw new ApiError(400, 'VALIDATION_FAILED', 'Receivable ID and amount are required.');
+  const cleanReceivableId = String(receivableId || '').trim().toUpperCase();
+  if (!cleanReceivableId) {
+    throw new ApiError(400, 'VALIDATION_FAILED', 'Receivable ID is required.');
+  }
+
+  const amountPaisa = rawAmountPaisa !== undefined
+    ? Number(rawAmountPaisa)
+    : Math.round(Number(amount) * 100);
+
+  if (!Number.isSafeInteger(amountPaisa) || amountPaisa <= 0) {
+    throw new ApiError(400, 'INVALID_RECEIPT_AMOUNT', 'Receipt amount must be a positive integer paise value.');
+  }
+
+  const normalizedMethod = String(paymentMethod || 'BANK_TRANSFER').trim().toUpperCase();
+  const allowedMethods = ['BANK_TRANSFER', 'UPI', 'CHEQUE', 'CREDIT_NOTE', 'CASH'];
+  if (!allowedMethods.includes(normalizedMethod)) {
+    throw new ApiError(400, 'INVALID_PAYMENT_METHOD', `paymentMethod must be one of: ${allowedMethods.join(', ')}.`);
+  }
+
+  const cleanReference = String(referenceNumber || '').trim();
+  if (normalizedMethod !== 'CASH' && !cleanReference) {
+    throw new ApiError(400, 'PAYMENT_REFERENCE_REQUIRED', 'A real payment reference is required for non-cash receipts.');
+  }
+
+  const orderId = cleanReceivableId.startsWith('AR-')
+    ? cleanReceivableId.slice(3)
+    : cleanReceivableId;
+
+  const order = await DepartmentOrder.findOne({
+    organisationId,
+    orderId,
+  }).lean();
+
+  if (!order) {
+    throw new ApiError(404, 'RECEIVABLE_NOT_FOUND', 'The requested institutional receivable was not found.');
+  }
+
+  ensureCafeAccess(request, order.cafeId);
+
+  const totalPaisa = Number(order.totalPaisa || 0);
+  const currentSettledPaisa = Number(order.settledPaisa || 0);
+  const outstandingPaisa = Math.max(0, totalPaisa - currentSettledPaisa);
+
+  if (outstandingPaisa <= 0 || order.creditStatus === 'SETTLED') {
+    throw new ApiError(409, 'RECEIVABLE_ALREADY_SETTLED', 'This receivable is already fully settled.');
+  }
+  if (amountPaisa > outstandingPaisa) {
+    throw new ApiError(
+      409,
+      'RECEIPT_EXCEEDS_OUTSTANDING',
+      'Receipt amount cannot exceed the outstanding receivable balance.',
+      { amountPaisa, outstandingPaisa }
+    );
+  }
+
+  const receiptDate = getIstBusinessDate();
+  const settlementId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `AR_SETTLEMENT:${receiptDate.replace(/-/g, '')}`,
+    prefix: `AR-REC-${receiptDate.replace(/-/g, '')}`,
+    minimumDigits: 4,
+  });
+
+  const nextSettledPaisa = currentSettledPaisa + amountPaisa;
+  const nextCreditStatus = nextSettledPaisa >= totalPaisa
+    ? 'SETTLED'
+    : 'PARTIALLY_SETTLED';
+
+  const updatedOrder = await DepartmentOrder.findOneAndUpdate(
+    {
+      _id: order._id,
+      organisationId,
+      orderId,
+      settledPaisa: currentSettledPaisa,
+      creditStatus: { $ne: 'SETTLED' },
+    },
+    {
+      $inc: { settledPaisa: amountPaisa },
+      $set: { creditStatus: nextCreditStatus },
+      $push: {
+        settlements: {
+          settlementId,
+          amountPaisa,
+          paymentMethod: normalizedMethod,
+          paymentReference: cleanReference,
+          settledAt: new Date(),
+          recordedByUserId: userId,
+          notes: String(notes || '').trim(),
+        },
+      },
+    },
+    { new: true, runValidators: true }
+  ).lean();
+
+  if (!updatedOrder) {
+    throw new ApiError(
+      409,
+      'RECEIVABLE_STATE_CONFLICT',
+      'The receivable balance changed concurrently. Reload it before recording the receipt.'
+    );
   }
 
   return response.status(200).json({
-    message: 'Customer collection receipt applied to receivable.',
+    success: true,
+    message: 'Customer collection receipt recorded against the institutional receivable.',
     receipt: {
-      receiptId: `REC-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      receivableId,
-      amountPaisa: Math.round(Number(amount) * 100),
-      paymentMethod,
-      referenceNumber,
-      appliedAt: new Date(),
+      receiptId: settlementId,
+      receivableId: `AR-${updatedOrder.orderId}`,
+      amountPaisa,
+      paymentMethod: normalizedMethod,
+      referenceNumber: cleanReference || null,
+      appliedAt: updatedOrder.settlements?.find((entry) => entry.settlementId === settlementId)?.settledAt || new Date(),
+      outstandingPaisa: Math.max(
+        0,
+        Number(updatedOrder.totalPaisa || 0) - Number(updatedOrder.settledPaisa || 0)
+      ),
+      creditStatus: updatedOrder.creditStatus,
     },
   });
 });
@@ -1036,18 +1170,82 @@ const listMarketplaceSettlements = asyncHandler(async (request, response) => {
 const reconcileMarketplaceSettlement = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
   const { settlementId } = request.params;
-  const { bankMatchReference } = request.body;
+  const bankMatchReference = String(request.body?.bankMatchReference || '').trim().toUpperCase();
+
+  if (!bankMatchReference) {
+    throw new ApiError(
+      400,
+      'BANK_MATCH_REFERENCE_REQUIRED',
+      'A real passbook transaction ID or external bank reference is required.'
+    );
+  }
 
   const settlement = await MarketplaceSettlement.findOne({ organisationId, settlementId });
   if (!settlement) {
     throw new ApiError(404, 'SETTLEMENT_NOT_FOUND', 'Marketplace settlement record not found.');
   }
 
+  const bankTransaction = await PassbookTransaction.findOne({
+    organisationId,
+    $or: [
+      { transactionId: bankMatchReference },
+      { externalReference: bankMatchReference },
+    ],
+  }).lean();
+
+  if (!bankTransaction) {
+    throw new ApiError(
+      404,
+      'BANK_TRANSACTION_NOT_FOUND',
+      'The supplied bank reference does not resolve to an authoritative passbook transaction.'
+    );
+  }
+
+  if (
+    bankTransaction.direction !== 'CREDIT' ||
+    !['POSTED', 'CLEARED'].includes(bankTransaction.status)
+  ) {
+    throw new ApiError(
+      409,
+      'BANK_TRANSACTION_NOT_ELIGIBLE',
+      'Marketplace settlement reconciliation requires a posted/cleared bank credit.'
+    );
+  }
+
+  if (
+    bankTransaction.economicCafeId &&
+    bankTransaction.economicCafeId !== 'ALL' &&
+    bankTransaction.economicCafeId !== settlement.cafeId
+  ) {
+    throw new ApiError(
+      409,
+      'BANK_TRANSACTION_CAFE_MISMATCH',
+      'The bank transaction belongs to a different café economic scope.'
+    );
+  }
+
+  const expectedPaisa = Number(settlement.netSettlementPaisa || 0);
+  const receivedPaisa = Number(bankTransaction.amountPaisa || 0);
+  if (receivedPaisa !== expectedPaisa) {
+    throw new ApiError(
+      409,
+      'MARKETPLACE_SETTLEMENT_AMOUNT_MISMATCH',
+      'The bank credit does not equal the expected marketplace net settlement.',
+      { expectedPaisa, receivedPaisa }
+    );
+  }
+
   settlement.status = 'RECONCILED';
-  settlement.bankMatchReference = bankMatchReference || `MATCH-BANK-${Date.now()}`;
+  settlement.bankMatchReference = bankTransaction.transactionId;
+  settlement.bankReceivedPaisa = receivedPaisa;
+  settlement.variancePaisa = 0;
   await settlement.save();
 
-  return response.status(200).json({ message: 'Marketplace settlement reconciled with bank statement credit.', settlement });
+  return response.status(200).json({
+    success: true,
+    message: 'Marketplace settlement reconciled to an authoritative passbook credit.',
+    settlement,
+  });
 });
 
 // 9. Cash & Bank Accounts
