@@ -998,12 +998,32 @@ const getStaffPolicy = asyncHandler(async (request, response) => {
   }
   ensureCafeAccess(request, cafeId);
 
+  const cafe = await Cafe.findOne({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    status: { $ne: 'ARCHIVED' },
+  }).lean();
+
+  if (!cafe) {
+    throw new ApiError(404, 'CAFE_NOT_FOUND', 'The assigned café was not found.');
+  }
+
+  const rawRadius = cafe.address?.geofenceRadiusMetres ?? cafe.geofenceRadiusMeters;
+  const geofenceRadiusMetres = Number(rawRadius);
+  const geofenceConfigured =
+    Number.isFinite(Number(cafe.address?.latitude)) &&
+    Number.isFinite(Number(cafe.address?.longitude)) &&
+    Number.isFinite(geofenceRadiusMetres) &&
+    geofenceRadiusMetres >= 10 &&
+    geofenceRadiusMetres <= 1000;
+
   return response.status(200).json({
     success: true,
     data: {
       cafeId,
       verificationMode: 'SECURE',
-      geofenceEnabled: true,
+      geofenceEnabled: geofenceConfigured,
+      geofenceRadiusMetres: geofenceConfigured ? geofenceRadiusMetres : null,
       liveSelfieRequired: true,
       rotatingQrRequired: true,
       qrRotationSeconds: 45,
