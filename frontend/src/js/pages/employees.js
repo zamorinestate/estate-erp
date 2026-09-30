@@ -27,6 +27,44 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[m]);
 }
 
+function secureRandomInt(maxExclusive) {
+  const max = Number(maxExclusive);
+  const cryptoApi = globalThis.crypto;
+  if (!Number.isInteger(max) || max <= 0 || max > 0x100000000) {
+    throw new TypeError("maxExclusive must be a positive 32-bit integer.");
+  }
+  if (!cryptoApi?.getRandomValues) {
+    throw new Error("SECURE_RANDOM_UNAVAILABLE");
+  }
+
+  const limit = Math.floor(0x100000000 / max) * max;
+  const sample = new Uint32Array(1);
+  do {
+    cryptoApi.getRandomValues(sample);
+  } while (sample[0] >= limit);
+  return sample[0] % max;
+}
+
+function generateSecureEmployeePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  let value = "";
+  for (let i = 0; i < 10; i += 1) {
+    value += chars.charAt(secureRandomInt(chars.length));
+  }
+  return "Zamorin@" + value + "!";
+}
+
+function generateSecureSixDigitPin() {
+  return String(100000 + secureRandomInt(900000));
+}
+
+function handleSecureCredentialGenerationError(error, credentialName) {
+  console.error("Secure " + credentialName + " generation unavailable:", error);
+  showToast(
+    "Secure " + credentialName + " generation is unavailable in this browser. Leave the field blank to let the server generate it securely.",
+    "coral"
+  );
+}
 export function getActiveViewer() {
   let u = state.auth?.user || state.user;
   if (!u || (!u.userId && !u.email)) {
@@ -1464,10 +1502,13 @@ function openOnboardingWizard() {
     updateObRoleBadge();
 
     modalRoot.querySelector("#ob-gen-pwd-btn")?.addEventListener("click", () => {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-      let rand = "";
-      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-      const pwd = `Zamorin@${rand}!`;
+      let pwd;
+      try {
+        pwd = generateSecureEmployeePassword();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "password");
+        return;
+      }
       const pwdInput = modalRoot.querySelector("#ob-password");
       if (pwdInput) {
         pwdInput.value = pwd;
@@ -1481,7 +1522,13 @@ function openOnboardingWizard() {
     });
 
     modalRoot.querySelector("#ob-gen-pin-btn")?.addEventListener("click", () => {
-      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      let randomPin;
+      try {
+        randomPin = generateSecureSixDigitPin();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "PIN");
+        return;
+      }
       const pinInput = modalRoot.querySelector("#ob-pin");
       if (pinInput) {
         pinInput.value = randomPin;
@@ -2448,10 +2495,13 @@ export function openOnboardEmployeeModal() {
     wireVisibilityToggles(modalRoot);
 
     modalRoot.querySelector("#oe-gen-pwd-btn")?.addEventListener("click", () => {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-      let rand = "";
-      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-      const pwd = `Zamorin@${rand}!`;
+      let pwd;
+      try {
+        pwd = generateSecureEmployeePassword();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "password");
+        return;
+      }
       const pwdInput = modalRoot.querySelector("#oe-password");
       if (pwdInput) {
         pwdInput.value = pwd;
@@ -2465,7 +2515,13 @@ export function openOnboardEmployeeModal() {
     });
 
     modalRoot.querySelector("#oe-gen-pin-btn")?.addEventListener("click", () => {
-      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      let randomPin;
+      try {
+        randomPin = generateSecureSixDigitPin();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "PIN");
+        return;
+      }
       const pinInput = modalRoot.querySelector("#oe-pin");
       if (pinInput) {
         pinInput.value = randomPin;
@@ -2784,10 +2840,13 @@ export function openManageCredentialsModal(userId, empName, empEmail) {
   wireVisibilityToggles(modalRoot);
 
   modalRoot.querySelector("#btn-gen-manage-pwd")?.addEventListener("click", () => {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-    let rand = "";
-    for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-    const pwd = `Zamorin@${rand}!`;
+    let pwd;
+    try {
+      pwd = generateSecureEmployeePassword();
+    } catch (error) {
+      handleSecureCredentialGenerationError(error, "password");
+      return;
+    }
     const pwdInput = modalRoot.querySelector("#mcred-password");
     if (pwdInput) {
       pwdInput.value = pwd;
@@ -2801,7 +2860,13 @@ export function openManageCredentialsModal(userId, empName, empEmail) {
   });
 
   modalRoot.querySelector("#btn-gen-manage-pin")?.addEventListener("click", () => {
-    const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+    let randomPin;
+    try {
+      randomPin = generateSecureSixDigitPin();
+    } catch (error) {
+      handleSecureCredentialGenerationError(error, "PIN");
+      return;
+    }
     const pinInput = modalRoot.querySelector("#mcred-pin");
     if (pinInput) {
       pinInput.value = randomPin;
