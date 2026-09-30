@@ -21,6 +21,9 @@ const {
   getMyAccess,
   submitAccessRequest,
   listMyAccessRequests,
+  listAccessRequestsForReview,
+  reviewAccessRequest,
+  revokeTemporaryAccessGrant,
   getMyPreferences,
   updateAppearancePreferences,
   updateLanguagePreference,
@@ -69,6 +72,9 @@ router.get('/profile/change-requests', listMyProfileChangeRequests);
 router.get('/access', getMyAccess);
 router.post('/access/request', submitAccessRequest);
 router.get('/access/requests', listMyAccessRequests);
+router.get('/access/manage/requests', listAccessRequestsForReview);
+router.post('/access/manage/requests/:requestId/review', reviewAccessRequest);
+router.post('/access/manage/grants/:grantId/revoke', revokeTemporaryAccessGrant);
 
 // ── Preferences (Appearance, Language, Accessibility, Workspace, Notifications)
 router.get('/preferences', getMyPreferences);
