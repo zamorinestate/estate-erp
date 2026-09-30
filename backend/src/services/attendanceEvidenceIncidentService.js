@@ -274,8 +274,19 @@ async function quarantineAttendanceEvidenceFailures({
           mandatory: true,
         });
 
-        if ((notification?.recipientCount || 0) > 0) {
+        const stagedAlertCount =
+          Number(notification?.inAppDelivered || 0) +
+          Number(notification?.outboxQueued || 0);
+
+        if ((notification?.recipientCount || 0) > 0 && stagedAlertCount > 0) {
           summary.alertsQueued += 1;
+        } else {
+          summary.processingFailures.push({
+            attendanceId,
+            punchType,
+            fileId: fileId || null,
+            code: 'PRIMARY_MASTER_SECURITY_ALERT_NOT_STAGED',
+          });
         }
       } catch (notificationError) {
         summary.processingFailures.push({
