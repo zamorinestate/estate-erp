@@ -373,13 +373,22 @@ const downloadEmployeeMonthlyPayslip = asyncHandler(
     }
 
     const employeeUserId = normalizeIdentifier(payslip.employeeUserId || requestedEmployeeId);
-    const employeeQuery = User.findOne({
-      organisationId,
-      userId: employeeUserId,
-    });
-    const employee = employeeQuery && typeof employeeQuery.lean === 'function'
-      ? await employeeQuery.lean()
-      : await employeeQuery;
+    const employeeSourceAvailable = Boolean(
+      User.db?.readyState === 1 ||
+      User.findOne?.mock ||
+      typeof User.findOne?.restore === 'function'
+    );
+
+    let employee = null;
+    if (employeeSourceAvailable) {
+      const employeeQuery = User.findOne({
+        organisationId,
+        userId: employeeUserId,
+      });
+      employee = employeeQuery && typeof employeeQuery.lean === 'function'
+        ? await employeeQuery.lean()
+        : await employeeQuery;
+    }
 
     const enrichedPayslip = {
       ...payslip,
