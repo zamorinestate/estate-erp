@@ -927,40 +927,22 @@ const reopenPeriod = asyncHandler(async (request, response) => {
 
 // 8. Selfie Evidence Purge (Primary Master Only)
 const purgeSelfieEvidence = asyncHandler(async (request, response) => {
-  if (request.auth.role !== 'MASTER' || !request.auth.isPrimaryMaster) {
-    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Only Primary Master holds authority to execute selfie evidence retention purge.');
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master holds authority to execute selfie evidence retention purge.'
+    );
   }
 
-  const result = await Attendance.updateMany(
-    {
-      organisationId: request.auth.organisationId,
-      isEvidenceHold: false,
-      isSelfiePurged: false,
-      selfieFileId: { $ne: null },
-    },
-    {
-      $set: {
-        isSelfiePurged: true,
-        selfiePurgedAt: new Date(),
-        selfieFileId: null,
-      },
-    }
+  // Fail closed until retention is backed by an explicit cutoff policy and the
+  // active private-storage provider exposes a verified physical-delete path.
+  // Clearing MongoDB references alone would not constitute an evidence purge.
+  throw new ApiError(
+    503,
+    'EVIDENCE_PURGE_NOT_CONFIGURED',
+    'Attendance selfie purge is disabled until a retention cutoff policy and verified storage deletion are configured.'
   );
-
-  await recordRequestAudit({
-    request,
-    module: 'ATTENDANCE',
-    action: 'SELFIE_EVIDENCE_PURGED',
-    entityType: 'Attendance',
-    entityId: 'ALL_ELIGIBLE',
-    metadata: { purgedCount: result.modifiedCount || 0 },
-  });
-
-  return response.status(200).json({
-    success: true,
-    message: `Purged selfie evidence for ${result.modifiedCount || 0} eligible records. Attendance audit history preserved.`,
-    correlationId: request.correlationId || null,
-  });
 });
 
 // 9. GET /api/v1/attendance/server-time
