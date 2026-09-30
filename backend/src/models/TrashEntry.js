@@ -321,6 +321,56 @@ const trashEntrySchema = new mongoose.Schema(
       default: null,
     },
 
+    dispositionRequestedByUserId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
+    dispositionRequestedAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionJustification: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
+    dispositionApprovedByUserId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
+    dispositionApprovedAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionApprovalReason: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
+    dispositionProcessingStartedAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionProcessingStartedByUserId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
     dispositionCertificateId: {
       type: String,
       default: null,
