@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 /**
  * QUALITY & COMPLIANCE CONTROLLER — SCR-021
  * Food Safety Management System (FSMS), HACCP, PRP, Inspections,
@@ -19,6 +21,13 @@ const {
 
 const { FoodSafetyService } = require('../services/foodSafetyService');
 const { FoodSafetyIncident } = require('../models/FoodSafetyIncident');
+const { InventoryLot } = require('../models/InventoryLot');
+const { PurchaseOrder } = require('../models/PurchaseOrder');
+const { Vendor } = require('../models/Vendor');
+const { Cafe } = require('../models/Cafe');
+const { CalibrationRecord } = require('../models/CalibrationRecord');
+const { EmployeeTraining } = require('../models/EmployeeTraining');
+const { Bill } = require('../models/Bill');
 
 const {
   asyncHandler,
@@ -1162,68 +1171,174 @@ const listAudits = asyncHandler(async (request, response) => {
   });
 });
 
+function qualitySourceConnected(modelMethod = null) {
+  return Boolean(
+    mongoose.connection?.readyState === 1 ||
+    modelMethod?.mock ||
+    typeof modelMethod?.restore === 'function'
+  );
+}
+
+function calculateDaysRemaining(dateValue, now = new Date()) {
+  if (!dateValue) return null;
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.ceil((date.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function complianceStatusFromDate({ validUntil = null, isPerpetual = false, sourceStatus = null } = {}) {
+  if (sourceStatus && !['ACTIVE', 'VALID', 'COMPLETED'].includes(String(sourceStatus).toUpperCase())) {
+    return String(sourceStatus).toUpperCase();
+  }
+  if (isPerpetual) return 'CURRENT';
+  const days = calculateDaysRemaining(validUntil);
+  if (days === null) return 'VALIDITY_NOT_RECORDED';
+  if (days < 0) return 'EXPIRED';
+  if (days <= 30) return 'DUE_SOON';
+  return 'CURRENT';
+}
+
 const getComplianceRegister = asyncHandler(async (request, response) => {
-  const compliance = [
-    {
-      id: 'COMP-01',
-      requirement: 'FSSAI Food Business Operator (FBO) Licence',
-      authority: 'Food Safety and Standards Authority of India',
-      category: 'STATUTORY_LICENCE',
-      licenceNumber: '11226334000189',
-      validUntil: '2027-03-31',
-      daysRemaining: 223,
-      status: 'CURRENT',
-      responsibleOfficer: 'Primary Master & Cafe Manager',
-    },
-    {
-      id: 'COMP-02',
-      requirement: 'Annual Potable Water Chemical & Microbial Test',
-      authority: 'NABL Accredited Testing Lab',
-      category: 'PRP_VERIFICATION',
-      licenceNumber: 'LAB-WAT-2026-88',
-      validUntil: '2026-11-15',
-      daysRemaining: 87,
-      status: 'CURRENT',
-      responsibleOfficer: 'Quality Lead',
-    },
-    {
-      id: 'COMP-03',
-      requirement: 'Monthly Pest Management & GHP Fumigation Audit',
-      authority: 'EcoSafe Pest Services (P) Ltd',
-      category: 'PRP_MONITORING',
-      licenceNumber: 'PEST-SVC-2026-AUG',
-      validUntil: '2026-09-01',
-      daysRemaining: 12,
-      status: 'DUE_SOON',
-      responsibleOfficer: 'Store Admin',
-    },
-    {
-      id: 'COMP-04',
-      requirement: 'FoSTaC Food Safety Supervisor Certifications',
-      authority: 'FSSAI Training Division',
-      category: 'TRAINING_COMPETENCY',
-      licenceNumber: 'FOSTAC-2026-CERT-04',
-      validUntil: '2028-01-15',
-      daysRemaining: 513,
-      status: 'CURRENT',
-      responsibleOfficer: 'HR & Training Officer',
-    },
-    {
-      id: 'COMP-05',
-      requirement: 'Annual Digital Thermometer & Weigh Scale Calibration',
-      authority: 'Metrology Lab Bangalore',
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+  const requestedCafeId = normalizeId(request.query?.cafeId || '');
+
+  if (requestedCafeId) assertCafeAccess(request, requestedCafeId);
+
+  if (!qualitySourceConnected(Cafe.find)) {
+    return response.status(200).json({
+      success: true,
+      data: {
+        compliance: [],
+        sourceStatus: 'UNAVAILABLE',
+        message: 'Authoritative compliance sources are unavailable in the current runtime.',
+      },
+      correlationId: request.correlationId || null,
+    });
+  }
+
+  const cafeFilter = { organisationId };
+  if (requestedCafeId) {
+    cafeFilter.cafeId = requestedCafeId;
+  } else if (role !== 'MASTER' && Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0) {
+    cafeFilter.cafeId = { $in: assignedCafeIds.map(normalizeId) };
+  }
+
+  const cafes = await Cafe.find(cafeFilter)
+    .select('cafeId name displayName registrations status')
+    .lean();
+
+  const cafeIds = (cafes || []).map((cafe) => cafe.cafeId).filter(Boolean);
+  const scopedCafeFilter = cafeIds.length > 0 ? { cafeId: { $in: cafeIds } } : {};
+
+  const [calibrations, fostacTrainings] = await Promise.all([
+    qualitySourceConnected(CalibrationRecord.find)
+      ? CalibrationRecord.find({ organisationId, ...scopedCafeFilter })
+          .sort({ nextDueDate: 1 })
+          .limit(200)
+          .lean()
+      : [],
+    qualitySourceConnected(EmployeeTraining.find)
+      ? EmployeeTraining.find({
+          organisationId,
+          ...scopedCafeFilter,
+          trainingType: 'FOSTAC',
+          status: 'COMPLETED',
+        })
+          .sort({ certificateExpiryDate: 1, completedAt: -1 })
+          .limit(200)
+          .lean()
+      : [],
+  ]);
+
+  const compliance = [];
+  const now = new Date();
+
+  for (const cafe of cafes || []) {
+    const fssai = cafe?.registrations?.fssai;
+    if (fssai?.isApplicable !== false) {
+      compliance.push({
+        id: `FSSAI-${cafe.cafeId}`,
+        requirement: 'FSSAI Food Business Operator Licence',
+        authority: fssai?.issuingAuthority || 'FSSAI',
+        category: 'STATUTORY_LICENCE',
+        cafeId: cafe.cafeId,
+        cafeName: cafe.displayName || cafe.name || cafe.cafeId,
+        licenceNumber: fssai?.number || null,
+        validFrom: fssai?.validFrom || null,
+        validUntil: fssai?.validTill || null,
+        isPerpetual: Boolean(fssai?.isPerpetual),
+        daysRemaining: fssai?.isPerpetual ? null : calculateDaysRemaining(fssai?.validTill, now),
+        status: fssai?.number
+          ? complianceStatusFromDate({
+              validUntil: fssai?.validTill,
+              isPerpetual: Boolean(fssai?.isPerpetual),
+              sourceStatus: fssai?.status,
+            })
+          : 'NOT_CONFIGURED',
+        verificationStatus: fssai?.certificateAttachmentId
+          ? 'DOCUMENT_RECORDED'
+          : 'DOCUMENT_NOT_RECORDED',
+        source: 'CAFE_REGISTRATION_MASTER',
+      });
+    }
+  }
+
+  for (const calibration of calibrations || []) {
+    compliance.push({
+      id: calibration.calibrationId,
+      requirement: `Equipment Calibration — ${calibration.assetName}`,
+      authority: calibration.performedBy || null,
       category: 'EQUIPMENT_CALIBRATION',
-      licenceNumber: 'CALIB-2026-9021',
-      validUntil: '2026-09-20',
-      daysRemaining: 31,
-      status: 'DUE_SOON',
-      responsibleOfficer: 'Assets Maintenance Lead',
-    },
-  ];
+      cafeId: calibration.cafeId,
+      assetId: calibration.assetId,
+      licenceNumber: calibration.certificateNumber || null,
+      validUntil: calibration.nextDueDate || null,
+      daysRemaining: calculateDaysRemaining(calibration.nextDueDate, now),
+      status: complianceStatusFromDate({
+        validUntil: calibration.nextDueDate,
+        sourceStatus: calibration.status,
+      }),
+      result: calibration.result,
+      source: 'CALIBRATION_RECORD',
+    });
+  }
+
+  for (const training of fostacTrainings || []) {
+    compliance.push({
+      id: training.trainingId,
+      requirement: 'FoSTaC Food Safety Supervisor Certification',
+      authority: training.provider || null,
+      category: 'TRAINING_COMPETENCY',
+      cafeId: training.cafeId || null,
+      userId: training.userId,
+      licenceNumber: training.fostacCertificateNumber || training.certificateRef || null,
+      validUntil: training.certificateExpiryDate || training.validUntil || null,
+      daysRemaining: calculateDaysRemaining(training.certificateExpiryDate || training.validUntil, now),
+      status: complianceStatusFromDate({
+        validUntil: training.certificateExpiryDate || training.validUntil,
+        isPerpetual: training.certificateValidityStatus === 'PERPETUAL',
+        sourceStatus:
+          ['INVALID', 'EXPIRED'].includes(training.fostacVerificationStatus)
+            ? training.fostacVerificationStatus
+            : 'COMPLETED',
+      }),
+      verificationStatus: training.fostacVerificationStatus || 'RECORDED',
+      isFoodSafetySupervisor: Boolean(training.isFoodSafetySupervisor),
+      source: 'EMPLOYEE_TRAINING',
+    });
+  }
 
   return response.status(200).json({
     success: true,
-    data: { compliance },
+    data: {
+      compliance,
+      sourceStatus: 'AUTHORITATIVE',
+      sourceSummary: {
+        cafes: (cafes || []).length,
+        calibrationRecords: (calibrations || []).length,
+        fostacRecords: (fostacTrainings || []).length,
+      },
+    },
     correlationId: request.correlationId || null,
   });
 });
@@ -1232,38 +1347,172 @@ const getComplianceRegister = asyncHandler(async (request, response) => {
  * 9. GET /api/v1/quality/traceability
  */
 const getTraceability = asyncHandler(async (request, response) => {
-  const { lotNumber = 'LOT-20260815-MILK' } = request.query;
+  const lotNumber = normalizeId(request.query?.lotNumber || '');
+  if (!lotNumber) {
+    throw new ApiError(400, 'LOT_NUMBER_REQUIRED', 'lotNumber is required for traceability lookup.');
+  }
+
+  if (!qualitySourceConnected(InventoryLot.findOne)) {
+    return response.status(200).json({
+      success: true,
+      data: {
+        trace: {
+          searchedLot: lotNumber,
+          sourceStatus: 'UNAVAILABLE',
+          backwardTrace: null,
+          forwardTrace: null,
+          traceGapCheck: {
+            status: 'NOT_VERIFIED',
+            reason: 'Authoritative inventory/procurement data source is unavailable in the current runtime.',
+          },
+          recallReadiness: {
+            status: 'NOT_ASSESSED',
+            drillElapsedSeconds: null,
+            affectedStockReconciled: null,
+            reason: 'No durable recall-drill result is available.',
+          },
+        },
+      },
+      correlationId: request.correlationId || null,
+    });
+  }
+
+  const organisationId = request.auth.organisationId;
+  const lotQuery = InventoryLot.findOne({
+    organisationId,
+    $or: [
+      { lotId: lotNumber },
+      { supplierLot: lotNumber },
+    ],
+  });
+  const lot = lotQuery && typeof lotQuery.lean === 'function'
+    ? await lotQuery.lean()
+    : await lotQuery;
+
+  if (!lot) {
+    throw new ApiError(404, 'LOT_NOT_FOUND', 'The requested inventory lot was not found.');
+  }
+
+  assertCafeAccess(request, lot.cafeId);
+
+  let purchaseOrder = null;
+  if (lot.procurementReference && qualitySourceConnected(PurchaseOrder.findOne)) {
+    const poQuery = PurchaseOrder.findOne({
+      organisationId,
+      purchaseOrderId: normalizeId(lot.procurementReference),
+      cafeId: lot.cafeId,
+      ...(lot.vendorId ? { vendorId: lot.vendorId } : {}),
+    });
+    purchaseOrder = poQuery && typeof poQuery.lean === 'function'
+      ? await poQuery.lean()
+      : await poQuery;
+  }
+
+  let vendor = null;
+  if (lot.vendorId && qualitySourceConnected(Vendor.findOne)) {
+    const vendorQuery = Vendor.findOne({
+      organisationId,
+      vendorId: lot.vendorId,
+    });
+    vendor = vendorQuery && typeof vendorQuery.lean === 'function'
+      ? await vendorQuery.lean()
+      : await vendorQuery;
+  }
+
+  const supplierLot = String(lot.supplierLot || '').trim().toUpperCase();
+  let matchingGrn = null;
+  let matchingGrnItem = null;
+  for (const grn of purchaseOrder?.grnReceipts || []) {
+    const item = (grn.items || []).find((candidate) => {
+      const candidateLot = String(candidate?.lotNumber || '').trim().toUpperCase();
+      return (
+        String(candidate?.itemId || '').trim().toUpperCase() === String(lot.itemId || '').trim().toUpperCase() &&
+        (!supplierLot || candidateLot === supplierLot)
+      );
+    });
+    if (item) {
+      matchingGrn = grn;
+      matchingGrnItem = item;
+      break;
+    }
+  }
+
+  let impactedBills = [];
+  if (qualitySourceConnected(Bill.find)) {
+    const billsQuery = Bill.find({
+      organisationId,
+      cafeId: lot.cafeId,
+      'lineItems.consumedLots.lotId': lot.lotId,
+      status: { $in: ['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
+      isTraining: { $ne: true },
+    }).select('billId businessDate status lineItems');
+    impactedBills = billsQuery && typeof billsQuery.lean === 'function'
+      ? await billsQuery.lean()
+      : await billsQuery;
+    if (!Array.isArray(impactedBills)) impactedBills = [];
+  }
+
+  const initialQuantity = Number(lot.initialQuantity ?? lot.quantityBase ?? 0);
+  const remainingQuantity = Number(lot.remainingQuantity ?? 0);
+  const consumedQuantity = Math.max(0, initialQuantity - remainingQuantity);
+  const supplierLinked = Boolean(lot.vendorId);
+  const poLinked = Boolean(purchaseOrder);
+  const grnLinked = Boolean(matchingGrn && matchingGrnItem);
 
   const traceChain = {
     searchedLot: lotNumber,
+    resolvedLotId: lot.lotId,
+    sourceStatus: 'AUTHORITATIVE',
     backwardTrace: {
-      supplier: 'Nilgiri Dairy Co-operative (VEND-0002)',
-      gstin: '33AABCT9981M1ZR',
-      purchaseOrder: 'PO-20260820-0001',
-      goodsReceipt: 'GRN-2026-0001',
-      receiptDate: '2026-08-15',
-      batchQuantityReceived: '50 L',
-      arrivalTemperature: '7.8°C (Flagged Excursion)',
+      supplierId: lot.vendorId || null,
+      supplierName: purchaseOrder?.vendorNameSnapshot || vendor?.name || null,
+      supplierGstin: vendor?.gstNumber || null,
+      purchaseOrder: purchaseOrder?.purchaseOrderId || null,
+      goodsReceipt: matchingGrn?.grnId || null,
+      receiptDate: matchingGrn?.receivedAt || lot.receivedAt || null,
+      itemId: lot.itemId,
+      supplierLot: lot.supplierLot || null,
+      batchQuantityReceived: matchingGrnItem?.acceptedQty ?? initialQuantity,
+      unit: lot.unit || null,
+      receivingInspectionId: lot.receivingInspectionId || null,
+      arrivalTemperature: null,
+      arrivalTemperatureStatus: 'UNAVAILABLE_NO_CANONICAL_LOT_TEMPERATURE_LINK',
     },
     forwardTrace: {
-      inventoryStatus: 'QUARANTINE_ON_HOLD',
-      currentLocation: 'Cold Storage - Zone B',
-      heldQuantity: '50 L',
-      usedInProduction: '0 L (Prevented by Quality Hold QHOLD-2026-001)',
-      soldToCustomers: '0 units (Zero Consumer Exposure)',
+      inventoryStatus: lot.status,
+      currentLocation: lot.storageLocation || null,
+      initialQuantity,
+      remainingQuantity,
+      consumedQuantity,
+      unit: lot.unit || null,
+      impactedBillCount: impactedBills.length,
+      impactedBillIds: impactedBills.slice(0, 100).map((bill) => bill.billId),
+      customerExposureAssessment:
+        impactedBills.length > 0
+          ? 'CONFIRMED_BILL_LINEAGE'
+          : 'NO_CONFIRMED_BILL_LINEAGE',
     },
     traceGapCheck: {
-      supplierLinked: true,
-      poLinked: true,
-      grnLinked: true,
-      inventoryHeld: true,
-      downstreamExposure: false,
-      traceabilityCompleteness: '100% (GAPLESS)',
+      supplierLinked,
+      poLinked,
+      grnLinked,
+      inventoryLotLinked: true,
+      downstreamBillLineageQueryable: qualitySourceConnected(Bill.find),
+      status:
+        supplierLinked && poLinked && grnLinked
+          ? 'BACKWARD_TRACE_COMPLETE'
+          : 'BACKWARD_TRACE_GAPS_PRESENT',
+      missingLinks: [
+        ...(!supplierLinked ? ['SUPPLIER'] : []),
+        ...(!poLinked ? ['PURCHASE_ORDER'] : []),
+        ...(!grnLinked ? ['GOODS_RECEIPT'] : []),
+      ],
     },
     recallReadiness: {
-      mockRecallDrillElapsedSeconds: 14,
-      affectedStockReconciled: '50 of 50 L Accounted (100%)',
-      status: 'RECALL_READY',
+      status: 'NOT_ASSESSED',
+      drillElapsedSeconds: null,
+      affectedStockReconciled: null,
+      reason: 'No durable recall-drill execution/result model is linked to this lot.',
     },
   };
 
@@ -1276,38 +1525,178 @@ const getTraceability = asyncHandler(async (request, response) => {
 
 /**
  * 10. GET /api/v1/quality/integrity
- * 16-point Invariant Audit
+ * Evidence-based integrity coverage report. A check is PASS only when the
+ * current source can actually prove it; unimplemented probes remain explicit.
  */
 const getQualityIntegrity = asyncHandler(async (request, response) => {
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+
+  if (!qualitySourceConnected(QualityChecklist.countDocuments)) {
+    const checks = [
+      'Checklist Version Retention',
+      'Non-Negative Excursion Counts',
+      'Quality Hold Inventory Lock',
+      'FSSAI Statutory Dates',
+      'Zero Unauthenticated Sign-Off',
+      'CAPA Effectiveness Verification',
+      'Audit Finding Lineage',
+      'Cold Chain Anomaly Alerting',
+      'Cross-Café Isolation',
+      'Traceability Chain Completeness',
+      'Allergen Matrix Integrity',
+      'PRP Verification Schedule',
+      'Zero Hard Deletion',
+      'Evidence Immutability',
+      'FoSTaC Supervisor Coverage',
+      'Management Review Snapshotting',
+    ].map((rule) => ({
+      rule,
+      status: 'NOT_VERIFIED',
+      description: 'Authoritative verification source is unavailable in the current runtime.',
+    }));
+
+    return response.status(200).json({
+      success: true,
+      data: {
+        integrityScore: null,
+        coveragePercent: 0,
+        verifiedChecks: 0,
+        totalChecks: checks.length,
+        allPassed: false,
+        checks,
+        auditedAt: new Date().toISOString(),
+        sourceStatus: 'UNAVAILABLE',
+      },
+      correlationId: request.correlationId || null,
+    });
+  }
+
+  const cafeFilter = { organisationId };
+  if (role !== 'MASTER' && Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0) {
+    cafeFilter.cafeId = { $in: assignedCafeIds.map(normalizeId) };
+  }
+
+  const [
+    checklistCount,
+    checklistMissingVersionCount,
+    cafes,
+    calibrationCount,
+    overdueCalibrationCount,
+    fostacSupervisorCount,
+    lotCount,
+    lotMissingProcurementLinkCount,
+  ] = await Promise.all([
+    QualityChecklist.countDocuments({ organisationId }),
+    QualityChecklist.countDocuments({
+      organisationId,
+      $or: [
+        { templateId: { $in: [null, ''] } },
+        { templateVersion: { $in: [null, ''] } },
+      ],
+    }),
+    Cafe.find(cafeFilter).select('cafeId registrations.fssai').lean(),
+    CalibrationRecord.countDocuments({ organisationId, ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}) }),
+    CalibrationRecord.countDocuments({
+      organisationId,
+      ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+      $or: [
+        { status: { $in: ['OVERDUE', 'FAILED'] } },
+        { nextDueDate: { $lt: new Date() } },
+      ],
+    }),
+    EmployeeTraining.countDocuments({
+      organisationId,
+      ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+      trainingType: 'FOSTAC',
+      status: 'COMPLETED',
+      isFoodSafetySupervisor: true,
+      fostacVerificationStatus: {
+        $in: ['MANUALLY_VERIFIED', 'OFFICIAL_VERIFICATION_CONFIRMED'],
+      },
+    }),
+    InventoryLot.countDocuments({ organisationId, ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}) }),
+    InventoryLot.countDocuments({
+      organisationId,
+      ...(cafeFilter.cafeId ? { cafeId: cafeFilter.cafeId } : {}),
+      $or: [
+        { vendorId: { $in: [null, ''] } },
+        { procurementReference: { $in: [null, ''] } },
+      ],
+    }),
+  ]);
+
+  const fssaiApplicable = (cafes || []).filter((cafe) => cafe?.registrations?.fssai?.isApplicable !== false);
+  const fssaiFailures = fssaiApplicable.filter((cafe) => {
+    const fssai = cafe?.registrations?.fssai;
+    if (!fssai?.number || fssai.status !== 'ACTIVE') return true;
+    if (fssai.isPerpetual) return false;
+    return !fssai.validTill || new Date(fssai.validTill) < new Date();
+  });
+
   const checks = [
-    { rule: 'Checklist Version Retention', description: 'All historic checklists retain immutable template versions without dynamic mutation.', status: 'PASS' },
-    { rule: 'Non-Negative Excursion Counts', description: 'Temperature excursions evaluate server-side against calibrated sensor limits.', status: 'PASS' },
-    { rule: 'Quality Hold Inventory Lock', description: 'Held stock items are blocked from POS recipe depletion and operational transfers.', status: 'PASS' },
-    { rule: 'FSSAI Statutory Dates', description: 'Licence validity and statutory registration dates are non-expired with reminders active.', status: 'PASS' },
-    { rule: 'Zero Unauthenticated Sign-Off', description: 'Checklist inspector and manager sign-off user IDs are strictly server-resolved.', status: 'PASS' },
-    { rule: 'CAPA Effectiveness Verification', description: 'CAPA closure mandates authenticated managerial sign-off and post-action evidence.', status: 'PASS' },
-    { rule: 'Audit Finding Lineage', description: 'Critical and Major audit findings automatically propagate to NCR work queues.', status: 'PASS' },
-    { rule: 'Cold Chain Anomaly Alerting', description: 'Out-of-range chiller/freezer telemetry triggers real-time deviation alerts.', status: 'PASS' },
-    { rule: 'Cross-Café Isolation', description: 'Store-level inspections are strictly isolated by assignedCafeIds for CAFE_ADMIN.', status: 'PASS' },
-    { rule: 'Traceability Chain Completeness', description: '100% backward traceability linkage across Supplier -> PO -> GRN -> Lot -> Inventory.', status: 'PASS' },
-    { rule: 'Allergen Matrix Integrity', description: 'Recipe allergen changes mandate quality review before publishing to POS.', status: 'PASS' },
-    { rule: 'PRP Verification Schedule', description: 'Sanitation, pest control, and water test plans maintain active verification windows.', status: 'PASS' },
-    { rule: 'Zero Hard Deletion', description: 'Audit events, submitted checklists, and NCR logs are strictly append-only.', status: 'PASS' },
-    { rule: 'Evidence Immutability', description: 'Inspection attachments and calibration certificates maintain SHA-256 integrity.', status: 'PASS' },
-    { rule: 'FoSTaC Supervisor Coverage', description: 'Active café operations are linked to certified Food Safety Supervisors.', status: 'PASS' },
-    { rule: 'Management Review Snapshotting', description: 'Q3 Quality Review preserves point-in-time metrics without historical rewrite.', status: 'PASS' },
+    {
+      rule: 'Checklist Version Retention',
+      status: checklistCount === 0 ? 'NOT_CONFIGURED' : (checklistMissingVersionCount === 0 ? 'PASS' : 'FAIL'),
+      description: `${checklistCount} checklist(s) inspected; ${checklistMissingVersionCount} missing template/version lineage.`,
+    },
+    {
+      rule: 'FSSAI Statutory Dates',
+      status: fssaiApplicable.length === 0 ? 'NOT_CONFIGURED' : (fssaiFailures.length === 0 ? 'PASS' : 'FAIL'),
+      description: `${fssaiApplicable.length} applicable café registration(s) inspected; ${fssaiFailures.length} incomplete/inactive/expired.`,
+    },
+    {
+      rule: 'Calibration Validity',
+      status: calibrationCount === 0 ? 'NOT_CONFIGURED' : (overdueCalibrationCount === 0 ? 'PASS' : 'FAIL'),
+      description: `${calibrationCount} calibration record(s) inspected; ${overdueCalibrationCount} overdue/failed.`,
+    },
+    {
+      rule: 'FoSTaC Supervisor Coverage',
+      status: fostacSupervisorCount > 0 ? 'PASS' : 'NOT_CONFIGURED',
+      description: `${fostacSupervisorCount} verified completed FoSTaC food-safety supervisor record(s) found in scope.`,
+    },
+    {
+      rule: 'Traceability Procurement Linkage',
+      status: lotCount === 0 ? 'NOT_CONFIGURED' : (lotMissingProcurementLinkCount === 0 ? 'PASS' : 'FAIL'),
+      description: `${lotCount} inventory lot(s) inspected; ${lotMissingProcurementLinkCount} missing vendor/procurement linkage.`,
+    },
+    ...[
+      'Non-Negative Excursion Counts',
+      'Quality Hold Inventory Lock',
+      'Zero Unauthenticated Sign-Off',
+      'CAPA Effectiveness Verification',
+      'Audit Finding Lineage',
+      'Cold Chain Anomaly Alerting',
+      'Cross-Café Isolation',
+      'Allergen Matrix Integrity',
+      'PRP Verification Schedule',
+      'Zero Hard Deletion',
+      'Evidence Immutability',
+      'Management Review Snapshotting',
+    ].map((rule) => ({
+      rule,
+      status: 'NOT_VERIFIED',
+      description: 'No canonical runtime probe is implemented for this invariant; no PASS claim is made.',
+    })),
   ];
 
-  const allPassed = checks.every((c) => c.status === 'PASS');
+  const verified = checks.filter((check) => ['PASS', 'FAIL'].includes(check.status));
+  const passed = verified.filter((check) => check.status === 'PASS');
+  const integrityScore = verified.length > 0
+    ? Number(((passed.length / verified.length) * 100).toFixed(1))
+    : null;
+  const coveragePercent = Number(((verified.length / checks.length) * 100).toFixed(1));
 
   return response.status(200).json({
     success: true,
     data: {
-      integrityScore: 100,
+      integrityScore,
+      coveragePercent,
+      verifiedChecks: verified.length,
       totalChecks: checks.length,
-      allPassed,
+      allPassed: verified.length === checks.length && passed.length === checks.length,
       checks,
       auditedAt: new Date().toISOString(),
+      sourceStatus: 'AUTHORITATIVE_PARTIAL_COVERAGE',
     },
     correlationId: request.correlationId || null,
   });
