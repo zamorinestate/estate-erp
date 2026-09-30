@@ -1092,21 +1092,21 @@ const getDispositionCertificatePdf = asyncHandler(async (request, response) => {
     kpiCards: [
       { label: 'RECORD REFERENCE', value: cert.recordReference, trend: cert.entityType, tone: 'neutral' },
       { label: 'RETENTION POLICY', value: cert.policyId, trend: `v${cert.policyVersion}`, tone: 'neutral' },
-      { label: 'STATUS', value: 'IRREVERSIBLY DISPOSED', trend: 'Verified Multi-Store Purge', tone: 'positive' },
+      { label: 'STATUS', value: 'DISPOSITION RECORDED', trend: 'Verified stages only', tone: 'positive' },
     ],
     columns: [
       { key: 'propStage', label: 'Technical Storage Location' },
-      { key: 'status', label: 'Purge Status' },
-      { key: 'timestamp', label: 'Execution Timestamp' },
+      { key: 'status', label: 'Verified Disposition Status' },
+      { key: 'timestamp', label: 'Certificate Timestamp' },
     ],
     rows: [
-      { propStage: 'Primary MongoDB Cluster', status: 'PURGED & UNINDEXED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Search Index Projections', status: 'REMOVED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Encrypted Object / File Storage', status: 'DELETED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Application Cache Layer', status: 'INVALIDATED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Reporting Read Model Projections', status: 'SYNCHRONIZED', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Primary MongoDB Payload Snapshot', status: cert.propagationStages?.primaryDatabase || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Search Index Projections', status: cert.propagationStages?.searchIndex || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Encrypted Object / File Storage', status: cert.propagationStages?.fileStorage || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Application Cache Layer', status: cert.propagationStages?.cacheLayer || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Reporting Read Model Projections', status: cert.propagationStages?.analyticsReadModel || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
     ],
-    notes: 'This certificate serves as definitive proof under Zamorin Information Security and DPDP Data Governance standards that the business payload has been purged across all designated application data stores. Minimal metadata is retained solely for audit verification.',
+    notes: 'This certificate records only disposition stages actually verified by the server. NOT_APPLICABLE means no verified deletion adapter was required or executed for that stage. The certificate must not be interpreted as proof of deletion from an external store unless that stage is explicitly marked COMPLETED.',
   });
 
   return response.status(200).json({
