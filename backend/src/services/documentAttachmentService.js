@@ -1973,23 +1973,85 @@ class DocumentAttachmentService {
     if (!hasPrimaryMasterAuthority(auth)) {
       throw new ApiError(403, 'UNAUTHORIZED_RETENTION_CHANGE', 'Only Primary Master can update statutory retention policies or legal holds.');
     }
-    if (!reason || reason.trim().length < 5) {
-      throw new ApiError(400, 'REASON_REQUIRED', 'A detailed audit reason (min 5 chars) is mandatory to modify retention policy.');
+
+    const auditReason = String(reason || '').trim();
+    if (auditReason.length < 10) {
+      throw new ApiError(
+        400,
+        'REASON_REQUIRED',
+        'A detailed audit reason of at least 10 characters is mandatory to modify retention policy.'
+      );
     }
 
     const doc = await BusinessDocument.findOne({
-      documentId: documentId.trim().toUpperCase(),
+      documentId: String(documentId || '').trim().toUpperCase(),
       organisationId,
     });
     if (!doc) {
       throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'Business document not found.');
     }
 
+    let newDate = null;
     if (newRetentionUntil) {
-      const newDate = new Date(newRetentionUntil);
-      if (doc.statutoryRecord && doc.retentionUntil && newDate < new Date(doc.retentionUntil)) {
-        throw new ApiError(400, 'CANNOT_SHORTEN_STATUTORY_RETENTION', 'Changing document metadata cannot fraudulently shorten an already-established statutory retention period without privileged audited policy change.');
+      newDate = new Date(newRetentionUntil);
+      if (Number.isNaN(newDate.getTime())) {
+        throw new ApiError(400, 'INVALID_RETENTION_DATE', 'newRetentionUntil must be a valid date.');
       }
+      if (doc.statutoryRecord && doc.retentionUntil && newDate < new Date(doc.retentionUntil)) {
+        throw new ApiError(
+          400,
+          'CANNOT_SHORTEN_STATUTORY_RETENTION',
+          'Statutory retention cannot be shortened through document metadata.'
+        );
+      }
+    }
+
+    const currentEffectiveRetention =
+      doc.effectiveRetentionUntil ||
+      doc.retentionUntil ||
+      doc.dispositionEligibleAt ||
+      null;
+    const shortensRetention = Boolean(
+      newDate &&
+      currentEffectiveRetention &&
+      newDate.getTime() < new Date(currentEffectiveRetention).getTime()
+    );
+    const releasesActiveHold = legalHold === false && doc.legalHold === true;
+    const relaxesProtection = shortensRetention || releasesActiveHold;
+
+    let authorizationAudit = null;
+    if (relaxesProtection) {
+      authorizationAudit = await auditService.recordAuditEvent({
+        organisationId,
+        cafeId: doc.cafeId || 'GLOBAL',
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        module: 'DOCUMENT_ATTACHMENT',
+        action: 'RETENTION_PROTECTION_RELAXATION_AUTHORIZED',
+        entityType: 'BUSINESS_DOCUMENT',
+        entityId: doc.documentId,
+        reason: auditReason,
+        result: 'SUCCESS',
+        riskClassification: 'CRITICAL',
+        metadata: {
+          releasesActiveHold,
+          shortensRetention,
+          previousRetentionUntil: currentEffectiveRetention,
+          proposedRetentionUntil: newDate,
+          previousLegalHold: Boolean(doc.legalHold),
+        },
+      });
+
+      if (!authorizationAudit?.auditEventId) {
+        throw new ApiError(
+          503,
+          'RETENTION_RELAXATION_AUDIT_NOT_CONFIRMED',
+          'Retention protection was not relaxed because immutable authorization audit could not be confirmed.'
+        );
+      }
+    }
+
+    if (newDate) {
       doc.retentionUntil = newDate;
       doc.dispositionEligibleAt = newDate;
       doc.effectiveRetentionUntil = newDate;
@@ -1998,7 +2060,7 @@ class DocumentAttachmentService {
     if (legalHold !== undefined) {
       doc.legalHold = Boolean(legalHold);
       if (doc.legalHold) {
-        doc.legalHoldReason = (legalHoldReason || reason).trim();
+        doc.legalHoldReason = String(legalHoldReason || auditReason).trim();
         doc.legalHoldPlacedAt = new Date();
         doc.legalHoldPlacedBy = auth.userId || 'MASTER';
       } else {
@@ -2008,22 +2070,42 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
-      organisationId,
-      cafeId: doc.cafeId || 'GLOBAL',
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      module: 'DOCUMENT_ATTACHMENT',
-      action: 'RETENTION_POLICY_UPDATED',
-      entityType: 'BUSINESS_DOCUMENT',
-      entityId: doc.documentId,
-      reason: reason.trim(),
-      result: 'SUCCESS',
-      metadata: {
-        legalHold: doc.legalHold,
-        retentionUntil: doc.retentionUntil,
-      },
-    }).catch(() => {});
+    let auditWarning = null;
+    try {
+      await auditService.recordAuditEvent({
+        organisationId,
+        cafeId: doc.cafeId || 'GLOBAL',
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        module: 'DOCUMENT_ATTACHMENT',
+        action: 'RETENTION_POLICY_UPDATED',
+        entityType: 'BUSINESS_DOCUMENT',
+        entityId: doc.documentId,
+        reason: auditReason,
+        result: 'SUCCESS',
+        riskClassification: relaxesProtection ? 'CRITICAL' : 'HIGH',
+        metadata: {
+          authorizationAuditEventId: authorizationAudit?.auditEventId || null,
+          legalHold: doc.legalHold,
+          retentionUntil: doc.retentionUntil,
+          relaxesProtection,
+        },
+      });
+    } catch (_auditError) {
+      if (relaxesProtection) {
+        // Pre-authorization was durably recorded before the mutation. Surface
+        // the reporting failure without pretending the authorized change failed.
+        auditWarning = 'Retention change was applied after immutable pre-authorization, but completion audit reporting failed.';
+      } else {
+        // Protective changes (placing a hold or extending retention) stay in
+        // effect if post-write audit reporting is temporarily unavailable.
+        auditWarning = 'Protective retention change is active, but its post-write audit event could not be confirmed.';
+      }
+    }
+
+    doc.$locals = doc.$locals || {};
+    doc.$locals.retentionAuditWarning = auditWarning;
+    doc.$locals.retentionAuthorizationAuditEventId = authorizationAudit?.auditEventId || null;
 
     return doc;
   }
