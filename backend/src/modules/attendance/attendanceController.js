@@ -80,6 +80,9 @@ const {
 const crypto = require('node:crypto');
 const attendanceQrService = require('../../services/attendanceQrService');
 const { attendanceEvidenceStorageService } = require('../../services/attendanceEvidenceStorageService');
+const {
+  reconcileExpiredOrphanAttendanceEvidence,
+} = require('../../services/attendanceEvidenceRetentionService');
 const { PrivateFile } = require('../../models/PrivateFile');
 const { AttendanceSubmission } = require('../../models/AttendanceSubmission');
 
@@ -1208,14 +1211,82 @@ const purgeSelfieEvidence = asyncHandler(async (request, response) => {
     );
   }
 
-  // Fail closed until retention is backed by an explicit cutoff policy and the
-  // active private-storage provider exposes a verified physical-delete path.
-  // Clearing MongoDB references alone would not constitute an evidence purge.
+  // Committed attendance evidence retention remains fail-closed. The separate
+  // orphan reconciliation workflow only removes expired uploads that are not
+  // referenced by any Attendance record.
   throw new ApiError(
     503,
     'EVIDENCE_PURGE_NOT_CONFIGURED',
-    'Attendance selfie purge is disabled until a retention cutoff policy and verified storage deletion are configured.'
+    'Committed attendance selfie purge remains disabled until a formal retention policy is approved. Use orphan reconciliation only for expired, unlinked uploads.'
   );
+});
+
+const reconcileOrphanSelfieEvidence = asyncHandler(async (request, response) => {
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may reconcile expired orphan attendance evidence.'
+    );
+  }
+
+  const {
+    execute = false,
+    confirmation = '',
+    graceMinutes,
+    batchSize,
+  } = request.body || {};
+
+  const dryRun = execute !== true;
+  if (
+    !dryRun &&
+    String(confirmation || '').trim() !== 'DELETE_EXPIRED_UNLINKED_ATTENDANCE_SELFIES'
+  ) {
+    throw new ApiError(
+      400,
+      'ORPHAN_RECONCILIATION_CONFIRMATION_REQUIRED',
+      'Execution requires confirmation DELETE_EXPIRED_UNLINKED_ATTENDANCE_SELFIES.'
+    );
+  }
+
+  const result = await reconcileExpiredOrphanAttendanceEvidence({
+    organisationId: request.auth.organisationId,
+    actorUserId: request.auth.userId,
+    graceMinutes,
+    batchSize,
+    dryRun,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'ATTENDANCE',
+    action: dryRun
+      ? 'ATTENDANCE_ORPHAN_EVIDENCE_RECONCILIATION_PREVIEWED'
+      : 'ATTENDANCE_ORPHAN_EVIDENCE_RECONCILED',
+    entityType: 'AttendanceEvidence',
+    entityId: request.auth.organisationId,
+    metadata: {
+      dryRun,
+      policy: result.policy,
+      scanned: result.scanned,
+      linkedProtected: result.linkedProtected,
+      eligibleOrphans: result.eligibleOrphans,
+      deleted: result.deleted,
+      storageAlreadyMissing: result.storageAlreadyMissing,
+      claimConflicts: result.claimConflicts,
+      metadataDeleteConflicts: result.metadataDeleteConflicts,
+      failed: result.failed,
+    },
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: dryRun
+      ? 'Expired orphan attendance evidence reconciliation preview completed.'
+      : 'Expired orphan attendance evidence reconciliation completed.',
+    data: result,
+    correlationId: request.correlationId || null,
+  });
 });
 
 // 9. GET /api/v1/attendance/server-time
@@ -3474,6 +3545,7 @@ module.exports = {
   closePeriod,
   reopenPeriod,
   purgeSelfieEvidence,
+  reconcileOrphanSelfieEvidence,
   getServerTime,
   getStaffPolicy,
   getStaffToday,
