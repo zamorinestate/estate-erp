@@ -81,4 +81,6 @@ services:
         value: zamorinDocuments
       - key: DOCUMENT_STORAGE_MAX_BYTES
         value: 15728640
+      - key: ATTENDANCE_ORPHAN_GRACE_MINUTES
+        value: 60
 
