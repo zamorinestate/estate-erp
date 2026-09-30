@@ -12,6 +12,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const trashController = require('../src/controllers/trashController.js');
 const { TrashEntry } = require('../src/models/TrashEntry.js');
 const { DispositionCertificate } = require('../src/models/DispositionCertificate.js');
+const { RetentionPolicy } = require('../src/models/RetentionPolicy.js');
 const { User } = require('../src/models/User.js');
 const { AuditEvent } = require('../src/models/AuditEvent.js');
 const roleGovernanceController = require('../src/controllers/roleGovernanceController.js');
@@ -166,7 +167,20 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     assert.equal(releasedItem.lifecycleStatus, 'RECOVERABLE');
   });
 
-  await t.test('PM-04 DOMAIN C: Permanent disposition purge emits Proof Certificate and erases payload atomically', async () => {
+  await t.test('PM-04 DOMAIN C: Permanent disposition requires verified policy and transactional execution', async () => {
+    await RetentionPolicy.create({
+      policyId: 'RET-000001-00011',
+      organisationId: 'ORG-ZAMORIN',
+      name: 'Inventory Permanent Disposition Test Policy',
+      entityType: 'INVENTORY_ITEM',
+      dataClassification: 'OPERATIONAL_DATA',
+      retentionDurationDays: 30,
+      dispositionReviewRequired: true,
+      makerCheckerRequired: false,
+      permanentDispositionAllowed: true,
+      version: 1,
+    });
+
     const item = new TrashEntry({
       trashId: 'TRASH-202609-00002',
       organisationId: 'ORG-ZAMORIN',
@@ -179,64 +193,69 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
       deletedByUserId: 'MU-0001',
       deletedAt: new Date(Date.now() - 40 * 86400000),
       expiresAt: new Date(Date.now() - 10 * 86400000),
+      retentionPolicyId: 'RET-000001-00011',
+      retentionPolicyVersion: 1,
       lifecycleStatus: 'DISPOSITION_APPROVED',
       holdState: 'NONE',
+      dispositionRequestId: 'DISP-REQ-TEST01',
+      dispositionRequestedByUserId: 'MU-0001',
+      dispositionRequestedAt: new Date(Date.now() - 2 * 86400000),
+      dispositionJustification: 'Test disposition request after retention completion.',
+      dispositionApprovedByUserId: 'MU-0001',
+      dispositionApprovedAt: new Date(Date.now() - 86400000),
+      dispositionApprovalReason: 'Test approval for transaction safety verification.',
       payload: { sensitiveData: 'Original item snapshot' },
-      attachments: [{ filename: 'damage_report.pdf', storageKey: 'att-123' }],
+      attachments: [],
     });
     await item.save();
 
-    // Malformed MASTER attempting executeDispositionPurge -> 403
     const malformedMasterPurgeReq = {
       auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       params: { trashId: 'TRASH-202609-00002' },
+      body: {
+        reason: 'Permanent disposition test execution reason.',
+        confirmation: 'PERMANENTLY_DISPOSE_TRASH_RECORD',
+      },
     };
     const dummyPurgeRes = { status() { return this; }, json() { return this; } };
     await assert.rejects(
-      async () => {
-        await trashController.executeDispositionPurge(malformedMasterPurgeReq, dummyPurgeRes);
-      },
+      async () => trashController.executeDispositionPurge(malformedMasterPurgeReq, dummyPurgeRes),
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.match(err.message, /Primary Master/i);
         return true;
-      },
-      'Malformed MASTER must be denied from executing disposition purge'
+      }
     );
 
     const purgeReq = {
       auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { trashId: 'TRASH-202609-00002' },
+      body: {
+        reason: 'Permanent disposition test execution reason.',
+        confirmation: 'PERMANENTLY_DISPOSE_TRASH_RECORD',
+      },
+      method: 'POST',
+      originalUrl: '/api/v1/trash/TRASH-202609-00002/purge',
+      get: () => null,
     };
-    let purgeResData = null;
-    const purgeRes = {
-      status(code) { assert.equal(code, 200); return this; },
-      json(p) { purgeResData = p; return this; },
-    };
 
-    await trashController.executeDispositionPurge(purgeReq, purgeRes);
-    assert.equal(purgeResData.success, true);
-    assert.equal(purgeResData.data.status, 'DISPOSED');
-    assert.ok(purgeResData.data.certificateId, 'DispositionCertificate ID must be generated');
+    await assert.rejects(
+      async () => trashController.executeDispositionPurge(purgeReq, dummyPurgeRes),
+      (err) => {
+        assert.equal(err.statusCode, 503);
+        assert.equal(err.code, 'TRANSACTION_SUPPORT_REQUIRED');
+        return true;
+      },
+      'Standalone MongoDB must never execute irreversible disposition without transactions'
+    );
 
-    const purgedItem = await TrashEntry.findOne({ trashId: 'TRASH-202609-00002' });
-    assert.equal(purgedItem.lifecycleStatus, 'DISPOSED');
-    assert.equal(purgedItem.payload, null, 'Payload snapshot must be permanently erased');
-    assert.equal(purgedItem.attachments.length, 0, 'Attachments must be purged');
-    assert.equal(purgedItem.dispositionCertificateId, purgeResData.data.certificateId);
+    const retainedItem = await TrashEntry.findOne({ trashId: 'TRASH-202609-00002' });
+    assert.equal(retainedItem.lifecycleStatus, 'DISPOSITION_APPROVED');
+    assert.notEqual(retainedItem.payload, null, 'Payload must remain intact when transaction support is unavailable');
+    assert.equal(retainedItem.dispositionCertificateId, null);
 
-    // Certificate check
-    const cert = await DispositionCertificate.findOne({ certificateId: purgeResData.data.certificateId });
-    assert.ok(cert, 'Proof of Disposition Certificate must exist');
-    assert.equal(cert.recordReference, 'SKU-PURGE-01');
-    assert.equal(cert.entityType, 'INVENTORY_ITEM');
-
-    // AuditEvent check
-    const audit = await AuditEvent.findOne({
-      action: 'EXECUTE_PERMANENT_DISPOSITION',
-      'metadata.certificateId': purgeResData.data.certificateId,
-    });
-    assert.ok(audit, 'AuditEvent must be atomically recorded for permanent purge');
+    const cert = await DispositionCertificate.findOne({ trashId: 'TRASH-202609-00002' });
+    assert.equal(cert, null, 'No proof certificate may be issued when disposition did not execute');
   });
 
   await t.test('PM-04 DOMAIN A & E: Primary Master protection invariant blocks role change and archiving', async () => {
