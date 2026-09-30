@@ -694,17 +694,21 @@ function calculateShiftHours(shiftStr) {
 }
 
 function renderRosterSubpanel() {
-  const activeCafeId = isCafeAdmin
-    ? (state.user?.assignedCafeIds?.[0] || state.currentCafeId || "")
-    : (selectedRosterCafe || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "");
+  const role = state.role || state.user?.role || ROLES.MASTER;
+  const isCafeAdmin = role === ROLES.CAFE_ADMIN;
+  const activeCafeId = getActiveRosterCafeId();
+  const weekStartDate = getRosterWeekStartDate();
   const cafeName = CAFE_NAMES[activeCafeId] || state.currentCafeName || (activeCafeId ? `Outlet ${activeCafeId}` : "Assigned Outlet");
-  const isPublished = rosterPublishedMap[activeCafeId] ?? true;
+  const isCurrentRoster =
+    cachedRoster &&
+    String(cachedRoster.cafeId || "") === String(activeCafeId || "") &&
+    String(cachedRoster.weekStartDate || "") === String(weekStartDate);
+  const isPublished = Boolean(isCurrentRoster && cachedRoster.status === "PUBLISHED");
 
-  const staff = cafeRosterSchedules[activeCafeId] || Object.values(cafeRosterSchedules)[0] || [];
+  const staff = cafeRosterSchedules[activeCafeId] || [];
 
-  // Calculate week dates
-  const baseDate = new Date(2026, 7, 17); // Aug 17, 2026 (Monday)
-  baseDate.setDate(baseDate.getDate() + (selectedRosterWeekOffset * 7));
+  // Calculate dates from the current server-targeted roster week.
+  const baseDate = new Date(`${weekStartDate}T12:00:00+05:30`);
   const endDate = new Date(baseDate);
   endDate.setDate(endDate.getDate() + 6);
 
@@ -738,7 +742,7 @@ function renderRosterSubpanel() {
               Weekly Shift Roster — ${cafeName}
             </h3>
             <span class="status ${isPublished ? "success" : "warning"}" id="roster-status-badge" style="font-size:11px; font-weight:700;">
-              ${isPublished ? "🟢 PUBLISHED & BROADCAST" : "🟡 DRAFT (UNPUBLISHED)"}
+              ${isPublished ? "🟢 PUBLISHED" : "🟡 DRAFT"}
             </span>
           </div>
           <p style="font-size:12.5px; color:var(--muted); margin:0;">
@@ -778,20 +782,14 @@ function renderRosterSubpanel() {
           <button class="btn btn-primary btn-sm" id="add-staff-roster-btn" type="button" style="font-size:12px; font-weight:700;">
             + Add Staff to Roster
           </button>
-          <button class="btn btn-ghost btn-sm" id="auto-schedule-roster-btn" type="button" style="font-size:12px; font-weight:700; color:var(--color-accent-amber);" title="AI-based shift auto-scheduler">
-            ⚡ Auto-Fill Coverage
-          </button>
-          <button class="btn btn-ghost btn-sm" id="copy-prev-week-roster-btn" type="button" style="font-size:12px;">
-            📋 Copy Last Week
-          </button>
           <button class="btn btn-ghost btn-sm" id="export-roster-csv-btn" type="button" style="font-size:12px;">
-            📥 Export / Print
+            📥 Export Loaded Roster
           </button>
         </div>
 
         <div style="display:flex; gap:8px; align-items:center;">
-          <button class="btn ${isPublished ? "btn-warning" : "btn-primary"} btn-sm" id="publish-roster-btn" type="button" style="font-size:12.5px; font-weight:700;">
-            ${isPublished ? "Revert to Draft" : "🚀 Publish & Broadcast"}
+          <button class="btn ${isPublished ? "btn-secondary" : "btn-primary"} btn-sm" id="publish-roster-btn" type="button" ${isPublished ? "disabled" : ""} style="font-size:12.5px; font-weight:700;">
+            ${isPublished ? "✓ Published" : "🚀 Publish & Notify"}
           </button>
         </div>
       </div>
