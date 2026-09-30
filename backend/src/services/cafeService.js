@@ -2590,7 +2590,7 @@ class CafeService {
       );
     }
 
-    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+    if (access.accessStatus !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_ACCESS_UNAVAILABLE',
@@ -2604,7 +2604,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+    if (!cafe || cafe.status !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2680,7 +2680,7 @@ class CafeService {
       );
     }
 
-    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+    if (access.accessStatus !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_ACCESS_UNAVAILABLE',
@@ -2693,7 +2693,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+    if (!cafe || cafe.status !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2745,7 +2745,7 @@ class CafeService {
       );
     }
 
-    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+    if (access.accessStatus !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_ACCESS_UNAVAILABLE',
@@ -2758,7 +2758,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+    if (!cafe || cafe.status !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2810,8 +2810,8 @@ class CafeService {
       throw new ApiError(404, 'CAFE_NOT_FOUND', 'Target café not found.');
     }
 
-    if (['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
-      throw new ApiError(403, 'CAFE_INACTIVE', 'Café is inactive or suspended.');
+    if (cafe.status !== 'ACTIVE') {
+      throw new ApiError(403, 'CAFE_INACTIVE', 'Café is not active.');
     }
 
     // 2. Role-based authorization binding check
@@ -3131,22 +3131,36 @@ class CafeService {
       testResults: cafe.readinessChecklist ? { ...cafe.readinessChecklist } : null,
     });
 
-    await cafe.save();
+    const requiresAccessTransition =
+      normalizedTarget === 'ACTIVE' ||
+      normalizedTarget === 'TEMPORARILY_CLOSED' ||
+      normalizedTarget === 'CLOSED';
 
-    // Synchronize CafeAccess status
-    try {
-      if (normalizedTarget === 'ACTIVE') {
-        await CafeAccess.updateOne(
-          { organisationId: cafe.organisationId, cafeId: cafe.cafeId },
-          { $set: { accessStatus: 'ACTIVE', updatedBy: auth.userId } }
-        );
-      } else if (normalizedTarget === 'TEMPORARILY_CLOSED' || normalizedTarget === 'CLOSED') {
-        await CafeAccess.updateOne(
-          { organisationId: cafe.organisationId, cafeId: cafe.cafeId },
-          { $set: { accessStatus: 'DISABLED', updatedBy: auth.userId } }
+    if (requiresAccessTransition) {
+      const targetAccessStatus = normalizedTarget === 'ACTIVE' ? 'ACTIVE' : 'DISABLED';
+      const accessResult = await CafeAccess.updateOne(
+        {
+          organisationId: cafe.organisationId,
+          cafeId: cafe.cafeId,
+        },
+        {
+          $set: {
+            accessStatus: targetAccessStatus,
+            updatedBy: auth.userId,
+          },
+        }
+      );
+
+      if (!accessResult || accessResult.matchedCount !== 1) {
+        throw new ApiError(
+          409,
+          'CAFE_ACCESS_STATE_MISSING',
+          'Café lifecycle transition was not completed because its access record could not be updated.'
         );
       }
-    } catch (_) {}
+    }
+
+    await cafe.save();
 
     await auditService.recordAuditEvent({
       organisationId: cafe.organisationId,
