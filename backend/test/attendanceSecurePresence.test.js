@@ -1305,6 +1305,48 @@ test('RBAC-005: Primary Master can stream evidence across cafes in organisation'
   }
 });
 
+test('RBAC-006: evidence endpoint fails closed when stored selfie bytes are missing', async () => {
+  const origFindOnePrivateFile = PrivateFile.findOne;
+  const origFindOneAttendance = Attendance.findOne;
+  const origReadBuffer = defaultStorageService.readObjectBuffer;
+
+  PrivateFile.findOne = () => ({
+    fileId: 'FILE-PHOTO-MISSING',
+    fileKey: 'org/missing_selfie.jpg',
+    mimeType: 'image/jpeg',
+    uploadedByUserId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+  });
+
+  Attendance.findOne = () => ({
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    attendanceEvidence: {
+      checkIn: { photoFileId: 'FILE-PHOTO-MISSING' },
+    },
+  });
+
+  defaultStorageService.readObjectBuffer = async () => null;
+
+  try {
+    await assert.rejects(
+      async () => getEvidenceMedia({
+        auth: {
+          userId: 'EMP-STAFF-1',
+          role: 'STAFF',
+          organisationId: 'ORG-ZAMORIN',
+        },
+        params: { mediaId: 'FILE-PHOTO-MISSING' },
+      }, createMockRes()),
+      { statusCode: 404, code: 'ATTENDANCE_EVIDENCE_BYTES_NOT_FOUND' }
+    );
+  } finally {
+    PrivateFile.findOne = origFindOnePrivateFile;
+    Attendance.findOne = origFindOneAttendance;
+    defaultStorageService.readObjectBuffer = origReadBuffer;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 6. FROZEN BOUNDARY INVARIANT: CafeAccess IS UNTOUCHED
 // ---------------------------------------------------------------------------
