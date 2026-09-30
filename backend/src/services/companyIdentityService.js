@@ -16,8 +16,9 @@ const path = require('path');
 const mongoose = require('mongoose');
 const { CompanyIdentity } = require('../models/CompanyIdentity');
 const { Cafe } = require('../models/Cafe');
-const { AuditEvent } = require('../models/AuditEvent');
 const { ApiError } = require('../utils/ApiError');
+const { recordAuditEvent } = require('./auditService');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 
 // Default Official Vector Logo Embeddings
 let cachedOfficialLogoSvg = null;
@@ -73,6 +74,48 @@ function loadOfficialAppLogos() {
   return { primarySvg: cachedOfficialLogoSvg, monochromeSvg: cachedMonochromeSvg };
 }
 
+function modelSourceAvailable(model, methodName) {
+  const method = model?.[methodName];
+  return Boolean(
+    mongoose.connection?.readyState === 1 ||
+    method?.mock ||
+    typeof method?.restore === 'function'
+  );
+}
+
+function formatAddress(address = {}) {
+  return [
+    address.line1,
+    address.line2,
+    address.city,
+    address.state,
+    address.pincode,
+    address.country,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
+function formatOutletAddress(outlet = {}) {
+  const gstPrincipalPlace = String(outlet?.registrations?.gstDetails?.principalPlace || '').trim();
+  if (gstPrincipalPlace) return gstPrincipalPlace;
+  const address = outlet?.address || {};
+  return [
+    address.building,
+    address.unit,
+    address.floor,
+    address.street,
+    address.area,
+    address.city,
+    address.district,
+    address.state,
+    address.pinCode,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
 class CompanyIdentityService {
   /**
    * Retrieves the current authoritative Company Identity.
@@ -84,186 +127,210 @@ class CompanyIdentityService {
       throw new ApiError(400, 'ORGANISATION_REQUIRED', 'organisationId is required to resolve company identity.');
     }
 
-    let identity = null;
-    const logos = loadOfficialAppLogos();
-
-    const fallbackIdentity = {
-      _id: 'default-identity-01',
-      organisationId: normalizedOrganisationId,
-      legalName: 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.',
-      brandName: 'Zamorin Café',
-      tagline: 'Speciality Coffee & Estate Kitchens',
-      logo: {
-        primarySvg: logos.primarySvg,
-        monochromeSvg: logos.monochromeSvg,
-        primaryPngUrl: '/assets/zamorin-estate-logo.png',
-        monochromePngUrl: '/assets/zamorin-estate-mark.png',
-        ingestedAt: new Date(),
-      },
-      pan: 'AABCT1332L',
-      cin: 'U55101KA2024PTC189201',
-      udyamNumber: 'UDYAM-KR-03-0019284',
-      registeredAddress: {
-        line1: '12th Main Road, 5th Block',
-        line2: 'Koramangala',
-        city: 'Bengaluru',
-        state: 'Karnataka',
-        stateCode: '29',
-        pincode: '560095',
-        country: 'India',
-      },
-      gstin: [
-        {
-          state: 'Karnataka',
-          stateCode: '29',
-          number: '29AABCT1332L1ZV',
-          isPrimary: true,
-        },
-        {
-          state: 'Kerala',
-          stateCode: '32',
-          number: '32AABCZ1234M1Z8',
-          isPrimary: false,
-        },
-      ],
-      licences: [
-        {
-          type: 'FSSAI Central Head Office',
-          number: '10024043000192',
-          validFrom: new Date('2024-01-01'),
-          validTill: new Date('2029-12-31'),
-        },
-      ],
-      contact: {
-        phone: '+91 80 4123 9876',
-        supportPhone: '+91 80 4123 9800',
-        email: 'corporate@zamorin.cafe',
-        supportEmail: 'support@zamorin.cafe',
-        website: 'https://zamorin.cafe',
-        whatsapp: '+91 98450 12345',
-      },
-      banking: {
-        accountName: 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.',
-        bankName: 'HDFC Bank Ltd.',
-        accountNumberMasked: 'XXXX-XXXX-8921',
-        ifsc: 'HDFC0001742',
-      },
-      authorisedSignatory: {
-        name: 'Managing Director',
-        designation: 'Authorised Signatory',
-      },
-      version: 1,
-      status: 'CURRENT',
-      effectiveFrom: new Date(),
-      createdBy: 'System Provisioner',
-      changeReason: 'Initial Canonical Company Identity Provisioning',
-    };
-
-    if (mongoose.connection.readyState !== 1) {
-      return fallbackIdentity;
+    if (!modelSourceAvailable(CompanyIdentity, 'findOne')) {
+      throw new ApiError(
+        503,
+        'COMPANY_IDENTITY_SOURCE_UNAVAILABLE',
+        'The authoritative Organisation Identity source is unavailable.'
+      );
     }
 
+    let query;
     try {
-      identity = await CompanyIdentity.findOne({
+      query = CompanyIdentity.findOne({
         organisationId: normalizedOrganisationId,
         status: 'CURRENT',
-      }).lean();
+      });
+      const identity = query && typeof query.lean === 'function'
+        ? await query.lean()
+        : await query;
 
       if (!identity) {
-        const initial = await CompanyIdentity.create(fallbackIdentity);
-        identity = initial.toObject();
+        throw new ApiError(
+          409,
+          'COMPANY_IDENTITY_NOT_CONFIGURED',
+          'Organisation Identity has not been configured for this organisation.'
+        );
       }
-    } catch (err) {
-      // Return canonical fallback when DB is offline or mock mode
-      identity = fallbackIdentity;
-    }
 
-    return identity || fallbackIdentity;
+      return identity;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      const wrapped = new ApiError(
+        503,
+        'COMPANY_IDENTITY_SOURCE_UNAVAILABLE',
+        'The authoritative Organisation Identity could not be read.'
+      );
+      wrapped.originalError = error;
+      throw wrapped;
+    }
   }
 
   /**
    * Resolves authoritative export branding for any export generator (PDF/XLSX/CSV).
    * Implements two-tier resolution (Organisation vs Outlet) per Section 368.
    */
-  static async resolveExportBranding({ cafeId = null, sensitivityLevel = 'INTERNAL', organisationId } = {}) {
+  static async resolveExportBranding({
+    cafeId = null,
+    sensitivityLevel = 'INTERNAL',
+    organisationId,
+  } = {}) {
     const normalizedOrganisationId = String(organisationId || '').trim().toUpperCase();
     if (!normalizedOrganisationId) {
       throw new ApiError(400, 'ORGANISATION_REQUIRED', 'organisationId is required to resolve export branding.');
     }
-    const master = (await this.getCurrentIdentity(normalizedOrganisationId)) || {};
+
+    const master = await this.getCurrentIdentity(normalizedOrganisationId);
     const logos = loadOfficialAppLogos();
 
-    const isOutletScoped = Boolean(cafeId && cafeId !== 'ALL' && cafeId !== 'GLOBAL');
-    let outletInfo = null;
+    const normalizedCafeId = String(cafeId || '').trim().toUpperCase();
+    const isOutletScoped = Boolean(
+      normalizedCafeId &&
+      normalizedCafeId !== 'ALL' &&
+      normalizedCafeId !== 'GLOBAL'
+    );
 
-    if (isOutletScoped && mongoose.connection.readyState === 1) {
-      try {
-        outletInfo = await Cafe.findOne({ organisationId: normalizedOrganisationId, cafeId }).lean();
-      } catch (err) {
-        outletInfo = null;
+    let outletInfo = null;
+    if (isOutletScoped) {
+      if (!modelSourceAvailable(Cafe, 'findOne')) {
+        throw new ApiError(
+          503,
+          'CAFE_IDENTITY_SOURCE_UNAVAILABLE',
+          'Outlet-scoped export branding requires the authoritative café master.'
+        );
+      }
+
+      const outletQuery = Cafe.findOne({
+        organisationId: normalizedOrganisationId,
+        cafeId: normalizedCafeId,
+      });
+      outletInfo = outletQuery && typeof outletQuery.lean === 'function'
+        ? await outletQuery.lean()
+        : await outletQuery;
+
+      if (!outletInfo) {
+        throw new ApiError(
+          404,
+          'CAFE_NOT_FOUND',
+          'The requested café could not be resolved for export branding.'
+        );
       }
     }
 
-    // Determine GSTIN
     const gstinList = Array.isArray(master.gstin) ? master.gstin : [];
-    let resolvedGstin = gstinList.find((g) => g.isPrimary)?.number || gstinList[0]?.number || '29AABCT1332L1ZV';
+    let resolvedGstin = String(
+      gstinList.find((entry) => entry?.isPrimary)?.number ||
+      gstinList[0]?.number ||
+      ''
+    ).trim().toUpperCase();
+
     const licenceList = Array.isArray(master.licences) ? master.licences : [];
-    let resolvedFssai = licenceList.find((l) => l.type && l.type.includes('FSSAI'))?.number || '10024043000192';
-    const regAddr = master.registeredAddress || {};
-    let resolvedAddress = `${regAddr.line1 || '12th Main Road'}, ${regAddr.line2 || '5th Block, Koramangala'}, ${regAddr.city || 'Bengaluru'}, ${regAddr.state || 'Karnataka'} — ${regAddr.pincode || '560095'}`;
-    let outletName = master.brandName || 'Zamorin Café';
+    let resolvedFssai = String(
+      licenceList.find((entry) => /FSSAI/i.test(String(entry?.type || '')))?.number ||
+      ''
+    ).trim();
+
+    let resolvedAddress = formatAddress(master.registeredAddress || {});
+    let outletName = String(master.brandName || '').trim();
 
     if (outletInfo) {
-      outletName = `${master.brandName || 'Zamorin Café'} (${outletInfo.displayName || outletInfo.name})`;
-      
-      // Outlet-level address
-      const addr = outletInfo.address || {};
-      const parts = [addr.building, addr.street, addr.area, addr.city, addr.state, addr.pinCode].filter(Boolean);
-      if (parts.length > 0) {
-        resolvedAddress = parts.join(', ');
+      const displayName = String(outletInfo.displayName || outletInfo.name || '').trim();
+      outletName = displayName
+        ? `${String(master.brandName || '').trim()} (${displayName})`
+        : String(master.brandName || '').trim();
+
+      const outletAddress = formatOutletAddress(outletInfo);
+      if (outletAddress) resolvedAddress = outletAddress;
+
+      const outletFssai = outletInfo.registrations?.fssai;
+      if (outletFssai?.isApplicable === false) {
+        resolvedFssai = '';
+      } else if (outletFssai?.number) {
+        resolvedFssai = String(outletFssai.number).trim();
       }
 
-      // Outlet-level FSSAI
-      if (outletInfo.registrations?.fssai?.number) {
-        resolvedFssai = String(outletInfo.registrations.fssai.number).trim();
-      }
-
-      // Outlet-level GSTIN or state match
-      if (outletInfo.registrations?.gstin) {
-        resolvedGstin = String(outletInfo.registrations.gstin).trim();
-      } else if (addr.state) {
-        const stateMatch = gstinList.find((g) => g.state?.toLowerCase() === addr.state.toLowerCase());
-        if (stateMatch) {
-          resolvedGstin = stateMatch.number;
+      const outletGstin =
+        outletInfo.registrations?.gstDetails?.gstin ||
+        outletInfo.registrations?.gstin ||
+        '';
+      if (outletGstin) {
+        resolvedGstin = String(outletGstin).trim().toUpperCase();
+      } else if (outletInfo.address?.state) {
+        const stateName = String(outletInfo.address.state).trim().toLowerCase();
+        const stateMatch = gstinList.find(
+          (entry) => String(entry?.state || '').trim().toLowerCase() === stateName
+        );
+        if (stateMatch?.number) {
+          resolvedGstin = String(stateMatch.number).trim().toUpperCase();
         }
       }
     }
 
-    // Banking details only for high sensitivity / tax invoice reports (Section 389)
-    const includeBanking = sensitivityLevel === 'CONFIDENTIAL' || sensitivityLevel === 'TAX_INVOICE';
+    const legalName = String(master.legalName || '').trim();
+    const brandName = String(master.brandName || '').trim();
+    const missingCore = [];
+    if (!legalName) missingCore.push('legalName');
+    if (!brandName) missingCore.push('brandName');
+
+    if (missingCore.length > 0) {
+      throw new ApiError(
+        409,
+        'COMPANY_IDENTITY_INCOMPLETE',
+        `Organisation Identity is incomplete: ${missingCore.join(', ')}.`
+      );
+    }
+
+    const normalizedSensitivity = String(sensitivityLevel || 'INTERNAL').trim().toUpperCase();
+    if (normalizedSensitivity === 'TAX_INVOICE') {
+      const missingStatutory = [];
+      if (!resolvedAddress) missingStatutory.push('address');
+      if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(resolvedGstin)) {
+        missingStatutory.push('gstin');
+      }
+
+      const fssaiApplicable = outletInfo
+        ? outletInfo.registrations?.fssai?.isApplicable !== false
+        : true;
+      if (fssaiApplicable && !/^\d{14}$/.test(resolvedFssai)) {
+        missingStatutory.push('fssai');
+      }
+
+      if (missingStatutory.length > 0) {
+        throw new ApiError(
+          409,
+          'EXPORT_STATUTORY_IDENTITY_INCOMPLETE',
+          `Tax-invoice branding is incomplete: ${missingStatutory.join(', ')}.`
+        );
+      }
+    }
+
+    const includeBanking =
+      normalizedSensitivity === 'CONFIDENTIAL' ||
+      normalizedSensitivity === 'TAX_INVOICE';
 
     return {
-      organisationId: master.organisationId || 'ORG-ZAMORIN-01',
-      legalName: String(master.legalName || 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.'),
-      brandName: String(master.brandName || 'Zamorin Café'),
-      outletName: String(outletName),
-      tagline: String(master.tagline || 'Speciality Coffee & Estate Kitchens'),
+      organisationId: normalizedOrganisationId,
+      legalName,
+      brandName,
+      outletName,
+      tagline: String(master.tagline || '').trim(),
       logoSvg: master.logo?.primarySvg || logos.primarySvg,
       watermarkSvg: master.logo?.monochromeSvg || logos.monochromeSvg,
-      address: String(resolvedAddress),
-      gstin: String(resolvedGstin),
-      fssai: String(resolvedFssai),
-      pan: String(master.pan || 'AABCT1332L'),
-      cin: String(master.cin || 'U55101KA2024PTC189201'),
+      address: resolvedAddress,
+      gstin: resolvedGstin,
+      fssai: resolvedFssai,
+      pan: String(master.pan || '').trim().toUpperCase(),
+      cin: String(master.cin || '').trim().toUpperCase(),
       contact: {
-        phone: String(master.contact?.phone || '+91 80 4123 9876'),
-        email: String(master.contact?.email || 'corporate@zamorin.cafe'),
-        website: String(master.contact?.website || 'https://zamorin.cafe'),
+        phone: String(master.contact?.phone || '').trim(),
+        email: String(master.contact?.email || '').trim().toLowerCase(),
+        website: String(master.contact?.website || '').trim(),
       },
-      banking: includeBanking ? master.banking : null,
-      authorisedSignatory: master.authorisedSignatory || { name: 'Managing Director', designation: 'Authorised Signatory' },
-      companyDetailsVersionId: `v${master.version || 1}-${master._id || 'default'}`,
-      versionNumber: master.version || 1,
+      banking: includeBanking ? (master.banking || null) : null,
+      authorisedSignatory: master.authorisedSignatory || null,
+      companyDetailsVersionId: `v${master.version}-${String(master._id)}`,
+      versionNumber: master.version,
+      identityStatus: 'CONFIGURED',
       isOutletScoped,
       cafeId: outletInfo?.cafeId || null,
     };
@@ -309,113 +376,266 @@ class CompanyIdentityService {
    * Creates a new version of the Company Identity Master (Section 378/385).
    * Gated and audited.
    */
-  static async createNewVersion({ updates, userId, userName = 'Primary Master', changeReason = 'Updated Corporate Details' }) {
-    const organisationId = updates.organisationId || 'ORG-ZAMORIN-01';
-    const current = await this.getCurrentIdentity(organisationId);
+  static async createNewVersion({
+    organisationId,
+    updates = {},
+    userId,
+    actorRole = 'MASTER',
+    userName = 'Primary Master',
+    changeReason = 'Updated Corporate Details',
+  }) {
+    const normalizedOrganisationId = String(organisationId || '').trim().toUpperCase();
+    const normalizedUserId = String(userId || '').trim().toUpperCase();
+    const normalizedActorRole = String(actorRole || '').trim().toUpperCase();
+    const reason = String(changeReason || '').trim();
 
-    const currentVersionNum = current ? current.version : 0;
-    const nextVersionNum = currentVersionNum + 1;
-
-    // Deep-merge current with updates
-    const merged = {
-      ...current,
-      ...updates,
-      registeredAddress: {
-        ...(current?.registeredAddress || {}),
-        ...(updates.registeredAddress || {}),
-      },
-      contact: {
-        ...(current?.contact || {}),
-        ...(updates.contact || {}),
-      },
-      banking: {
-        ...(current?.banking || {}),
-        ...(updates.banking || {}),
-      },
-      authorisedSignatory: {
-        ...(current?.authorisedSignatory || {}),
-        ...(updates.authorisedSignatory || {}),
-      },
-    };
-
-    delete merged._id;
-    delete merged.id;
-    delete merged.__v;
-    delete merged.createdAt;
-    delete merged.updatedAt;
-
-    this.validateIdentityData(merged);
-
-    // Prepare new document payload
-    const payload = {
-      ...merged,
-      organisationId,
-      version: nextVersionNum,
-      status: 'CURRENT',
-      effectiveFrom: new Date(),
-      createdBy: userName,
-      changeReason: changeReason.trim(),
-      supersedesId: current ? current._id : null,
-      supersededById: null,
-    };
-
-    // Ensure logo assets are preserved if not provided in updates
-    if (!payload.logo?.primarySvg) {
-      const logos = loadOfficialAppLogos();
-      payload.logo = {
-        primarySvg: current?.logo?.primarySvg || logos.primarySvg,
-        monochromeSvg: current?.logo?.monochromeSvg || logos.monochromeSvg,
-        primaryPngUrl: current?.logo?.primaryPngUrl || '/assets/zamorin-estate-logo.png',
-        monochromePngUrl: current?.logo?.monochromePngUrl || '/assets/zamorin-estate-mark.png',
-        ingestedAt: new Date(),
-      };
+    if (!normalizedOrganisationId) {
+      throw new ApiError(400, 'ORGANISATION_REQUIRED', 'organisationId is required to update company identity.');
+    }
+    if (!normalizedUserId || !normalizedActorRole) {
+      throw new ApiError(400, 'ACTOR_REQUIRED', 'Authenticated actor identity and role are required.');
+    }
+    if (reason.length < 5) {
+      throw new ApiError(400, 'CHANGE_REASON_REQUIRED', 'A detailed change reason is required.');
     }
 
-    // Create the new current record
-    const newRecord = await CompanyIdentity.create(payload);
-
-    // If there was a previous current record, mark it SUPERSEDED
-    if (current && current._id) {
-      await CompanyIdentity.updateOne(
-        { _id: current._id },
-        { $set: { status: 'SUPERSEDED', supersededById: newRecord._id } }
+    const requestedOrganisationId = String(updates?.organisationId || '').trim().toUpperCase();
+    if (requestedOrganisationId && requestedOrganisationId !== normalizedOrganisationId) {
+      throw new ApiError(
+        403,
+        'CROSS_ORGANISATION_IDENTITY_DENIED',
+        'Organisation Identity cannot be changed outside the authenticated organisation.'
       );
     }
 
-    // Write immutable Audit Event
-    try {
-      await AuditEvent.create({
-        organisationId: payload.organisationId,
-        eventType: 'ORGANISATION_IDENTITY_UPDATED',
-        performedBy: userId || 'MASTER',
-        performedByName: userName,
-        targetResource: 'CompanyIdentity',
-        targetResourceId: String(newRecord._id),
-        details: {
-          version: nextVersionNum,
-          changeReason: changeReason.trim(),
-          legalName: newRecord.legalName,
-          primaryGstin: newRecord.gstin?.[0]?.number,
-        },
-        ipAddress: '127.0.0.1',
-        createdAt: new Date(),
-      });
-    } catch (auditErr) {
-      // Non-fatal if AuditEvent collection schema differs
+    if (!modelSourceAvailable(CompanyIdentity, 'findOne')) {
+      throw new ApiError(
+        503,
+        'COMPANY_IDENTITY_SOURCE_UNAVAILABLE',
+        'The authoritative Organisation Identity source is unavailable.'
+      );
     }
 
-    return newRecord.toObject();
+    const cleanUpdates = {
+      ...updates,
+      organisationId: normalizedOrganisationId,
+    };
+    for (const controlledField of [
+      '_id',
+      'id',
+      '__v',
+      'version',
+      'status',
+      'effectiveFrom',
+      'createdBy',
+      'changeReason',
+      'supersedesId',
+      'supersededById',
+      'createdAt',
+      'updatedAt',
+    ]) {
+      delete cleanUpdates[controlledField];
+    }
+
+    return executeTransactionWithRetry(async (session) => {
+      let currentQuery = CompanyIdentity.findOne({
+        organisationId: normalizedOrganisationId,
+        status: 'CURRENT',
+      });
+      if (session && currentQuery && typeof currentQuery.session === 'function') {
+        currentQuery = currentQuery.session(session);
+      }
+      const current = currentQuery && typeof currentQuery.lean === 'function'
+        ? await currentQuery.lean()
+        : await currentQuery;
+
+      const merged = {
+        ...(current || {}),
+        ...cleanUpdates,
+        organisationId: normalizedOrganisationId,
+        registeredAddress: {
+          ...(current?.registeredAddress || {}),
+          ...(cleanUpdates.registeredAddress || {}),
+        },
+        contact: {
+          ...(current?.contact || {}),
+          ...(cleanUpdates.contact || {}),
+        },
+        banking: {
+          ...(current?.banking || {}),
+          ...(cleanUpdates.banking || {}),
+        },
+        authorisedSignatory: {
+          ...(current?.authorisedSignatory || {}),
+          ...(cleanUpdates.authorisedSignatory || {}),
+        },
+      };
+
+      for (const field of [
+        '_id',
+        'id',
+        '__v',
+        'createdAt',
+        'updatedAt',
+        'status',
+        'version',
+        'effectiveFrom',
+        'createdBy',
+        'changeReason',
+        'supersedesId',
+        'supersededById',
+      ]) {
+        delete merged[field];
+      }
+
+      this.validateIdentityData(merged);
+
+      const nextVersionNum = Number(current?.version || 0) + 1;
+      const logos = loadOfficialAppLogos();
+      const payload = {
+        ...merged,
+        organisationId: normalizedOrganisationId,
+        version: nextVersionNum,
+        status: 'CURRENT',
+        effectiveFrom: new Date(),
+        createdBy: String(userName || normalizedUserId).trim(),
+        changeReason: reason,
+        supersedesId: current?._id || null,
+        supersededById: null,
+        logo: {
+          ...(merged.logo || {}),
+          primarySvg: merged.logo?.primarySvg || logos.primarySvg,
+          monochromeSvg: merged.logo?.monochromeSvg || logos.monochromeSvg,
+          primaryPngUrl: merged.logo?.primaryPngUrl || '/assets/zamorin-estate-logo.png',
+          monochromePngUrl: merged.logo?.monochromePngUrl || '/assets/zamorin-estate-mark.png',
+          ingestedAt: new Date(),
+        },
+      };
+
+      if (current?._id) {
+        const supersedeResult = await CompanyIdentity.updateOne(
+          {
+            _id: current._id,
+            organisationId: normalizedOrganisationId,
+            status: 'CURRENT',
+            version: current.version,
+          },
+          {
+            $set: {
+              status: 'SUPERSEDED',
+            },
+          },
+          session ? { session } : undefined
+        );
+
+        const matchedCount = Number(
+          supersedeResult?.matchedCount ??
+          supersedeResult?.n ??
+          0
+        );
+        if (matchedCount !== 1) {
+          throw new ApiError(
+            409,
+            'COMPANY_IDENTITY_VERSION_CONFLICT',
+            'Organisation Identity changed concurrently. Reload and retry from the latest version.'
+          );
+        }
+      }
+
+      const newRecord = new CompanyIdentity(payload);
+      await newRecord.save(session ? { session } : undefined);
+
+      if (current?._id) {
+        const lineageResult = await CompanyIdentity.updateOne(
+          {
+            _id: current._id,
+            organisationId: normalizedOrganisationId,
+            status: 'SUPERSEDED',
+            version: current.version,
+          },
+          {
+            $set: {
+              supersededById: newRecord._id,
+            },
+          },
+          session ? { session } : undefined
+        );
+        const matchedCount = Number(
+          lineageResult?.matchedCount ??
+          lineageResult?.n ??
+          0
+        );
+        if (matchedCount !== 1) {
+          throw new ApiError(
+            409,
+            'COMPANY_IDENTITY_LINEAGE_CONFLICT',
+            'Organisation Identity lineage could not be finalized atomically.'
+          );
+        }
+      }
+
+      const audit = await recordAuditEvent({
+        organisationId: normalizedOrganisationId,
+        cafeId: 'GLOBAL',
+        actorUserId: normalizedUserId,
+        actorRole: normalizedActorRole,
+        module: 'COMPANY_IDENTITY',
+        action: current ? 'COMPANY_IDENTITY_VERSION_CREATED' : 'COMPANY_IDENTITY_INITIALIZED',
+        entityType: 'COMPANY_IDENTITY',
+        entityId: `COMPANY_IDENTITY_V${nextVersionNum}`,
+        before: current || null,
+        after: newRecord.toObject(),
+        reason,
+        result: 'SUCCESS',
+        riskClassification: 'CRITICAL',
+        metadata: {
+          version: nextVersionNum,
+          supersedesVersion: current?.version || null,
+        },
+        session,
+      });
+
+      if (!audit?.auditEventId) {
+        throw new ApiError(
+          503,
+          'COMPANY_IDENTITY_AUDIT_NOT_CONFIRMED',
+          'Organisation Identity was not changed because its immutable audit event could not be confirmed.'
+        );
+      }
+
+      return newRecord.toObject();
+    }, {
+      requireTransactions: process.env.NODE_ENV === 'production',
+    });
   }
 
   /**
    * Retrieves version history timeline (Section 385).
    */
-  static async getVersionHistory(organisationId = 'ORG-ZAMORIN-01') {
-    return CompanyIdentity.find({ organisationId })
+  static async getVersionHistory(organisationId) {
+    const normalizedOrganisationId = String(organisationId || '').trim().toUpperCase();
+    if (!normalizedOrganisationId) {
+      throw new ApiError(400, 'ORGANISATION_REQUIRED', 'organisationId is required to read identity history.');
+    }
+    if (!modelSourceAvailable(CompanyIdentity, 'find')) {
+      throw new ApiError(
+        503,
+        'COMPANY_IDENTITY_SOURCE_UNAVAILABLE',
+        'The authoritative Organisation Identity source is unavailable.'
+      );
+    }
+
+    const query = CompanyIdentity.find({
+      organisationId: normalizedOrganisationId,
+    })
       .sort({ version: -1 })
-      .select('version status effectiveFrom createdBy changeReason legalName brandName gstin createdAt')
-      .lean();
+      .select('version status effectiveFrom createdBy changeReason legalName brandName gstin createdAt');
+
+    return query && typeof query.lean === 'function'
+      ? query.lean()
+      : query;
   }
+
 }
 
 module.exports = {
