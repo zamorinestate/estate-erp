@@ -122,24 +122,38 @@ const getQualityOverview = asyncHandler(async (request, response) => {
     QualityChecklist.countDocuments(filter),
   ]);
 
-  const activeHolds = inMemoryQualityHolds.filter(
-    (h) =>
-      h.organisationId === organisationId &&
-      h.status === 'ON_HOLD' &&
-      (!filter.cafeId || h.cafeId === filter.cafeId)
-  );
   const openNcrs = inMemoryNcrs.filter(
     (n) =>
       n.organisationId === organisationId &&
       n.status !== 'CLOSED' &&
       (!filter.cafeId || n.cafeId === filter.cafeId)
   );
-  const openCapas = inMemoryCapas.filter(
-    (entry) =>
-      entry.organisationId === organisationId &&
-      entry.status !== 'CLOSED' &&
-      (!filter.cafeId || entry.cafeId === filter.cafeId)
-  );
+
+  let activeHolds = [];
+  if (qualitySourceConnected(InventoryLot.find)) {
+    const holdQuery = InventoryLot.find({
+      organisationId,
+      ...(filter.cafeId ? { cafeId: filter.cafeId } : {}),
+      status: { $in: ['QUARANTINE', 'RECALL_HOLD'] },
+    }).limit(500);
+    activeHolds = holdQuery && typeof holdQuery.lean === 'function'
+      ? await holdQuery.lean()
+      : await holdQuery;
+    if (!Array.isArray(activeHolds)) activeHolds = [];
+  }
+
+  let openCapas = [];
+  if (qualitySourceConnected(CapaRecord.find)) {
+    const capaQuery = CapaRecord.find({
+      organisationId,
+      ...(filter.cafeId ? { cafeId: filter.cafeId } : {}),
+      status: { $ne: 'CLOSED' },
+    }).limit(500);
+    openCapas = capaQuery && typeof capaQuery.lean === 'function'
+      ? await capaQuery.lean()
+      : await capaQuery;
+    if (!Array.isArray(openCapas)) openCapas = [];
+  }
 
   let temperatures = [];
   if (filter.cafeId && qualitySourceConnected(FoodSafetyService.listTemperatures)) {
@@ -160,7 +174,7 @@ const getQualityOverview = asyncHandler(async (request, response) => {
       id: 'act-hold-1',
       type: 'QUALITY_HOLD',
       title: `${activeHolds.length} Inventory Lot(s) on Quality Quarantine`,
-      description: `${activeHolds[0].itemName} (${activeHolds[0].lotNumber}) isolated due to ${String(activeHolds[0].reason || 'quality hold').toLowerCase().replace(/_/g, ' ')}.`,
+      description: `${activeHolds[0].itemId || 'Inventory lot'} (${activeHolds[0].lotId}) isolated due to ${String(activeHolds[0].quarantineReason || 'quality hold').toLowerCase().replace(/_/g, ' ')}.`,
       deepTab: 'holds',
       severity: 'CRITICAL',
     });
@@ -214,9 +228,9 @@ const getQualityOverview = asyncHandler(async (request, response) => {
       sourceStatus: {
         checklistRecords: 'DURABLE',
         temperatureRecords: filter.cafeId ? 'DURABLE_IF_AVAILABLE' : 'CAFE_SCOPE_REQUIRED',
-        qualityHolds: 'VOLATILE_RUNTIME_ONLY',
+        qualityHolds: 'DURABLE_INVENTORY_LOT',
         ncrs: 'VOLATILE_RUNTIME_ONLY',
-        capas: 'VOLATILE_RUNTIME_ONLY',
+        capas: 'DURABLE_CAPA_RECORD',
         audits: 'VOLATILE_RUNTIME_ONLY',
       },
     },
