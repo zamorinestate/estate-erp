@@ -554,3 +554,31 @@ test('P0-WF-036: attendance correction rechecks live authority, café scope, and
   assert.equal(editBlock.includes('option value="ON_LEAVE"'), false);
   assert.equal(editBlock.includes('approvedOvertimeMinutes: otMins'), false);
 });
+
+
+test('P0-WF-037: attendance correction lists, exception resolution, QR display, and evidence metadata share strict café scope', () => {
+  const pendingStart = attendanceController.indexOf('const getPendingCorrections = asyncHandler');
+  const pendingEnd = attendanceController.indexOf('// 15c.', pendingStart);
+  const pendingBlock = attendanceController.slice(pendingStart, pendingEnd);
+  assert.ok(pendingBlock.includes('ensureCafeOperationsAllowed(request);'));
+  assert.ok(pendingBlock.includes("request.auth.role === 'OWNER' || request.auth.role === 'CAFE_ADMIN'"));
+  assert.ok(pendingBlock.includes("filter.cafeId = { $in: assigned };"));
+
+  const resolveStart = attendanceController.indexOf('const resolveException = asyncHandler');
+  const resolveEnd = attendanceController.indexOf('// ── SECURE PRESENCE EVIDENCE HANDLERS', resolveStart);
+  const resolveBlock = attendanceController.slice(resolveStart, resolveEnd);
+  assert.ok(resolveBlock.includes('ensureCafeOperationsAllowed(request);'));
+  assert.ok(resolveBlock.includes('ensureCafeAccess(request, exception.cafeId);'));
+
+  const qrStart = attendanceController.indexOf('const getActiveCafeQr = asyncHandler');
+  const qrEnd = attendanceController.indexOf('/**\n * POST /api/v1/attendance/qr/verify', qrStart);
+  const qrBlock = attendanceController.slice(qrStart, qrEnd);
+  assert.ok(qrBlock.includes('ensureCafeOperationsAllowed(request);'));
+  assert.ok(qrBlock.includes('ensureCafeAccess(request, cafeId);'));
+
+  const evidenceStart = attendanceController.indexOf('const getAttendanceEvidenceRecord = asyncHandler');
+  const evidenceBlock = attendanceController.slice(evidenceStart);
+  assert.ok(evidenceBlock.includes("role === 'OWNER'"));
+  assert.ok(evidenceBlock.includes("'CROSS_CAFE_RESOURCE_DENIED'"));
+  assert.ok(evidenceBlock.includes("'FORBIDDEN_EVIDENCE_ACCESS'"));
+});
