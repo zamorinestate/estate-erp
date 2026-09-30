@@ -82,6 +82,7 @@ const attendanceQrService = require('../../services/attendanceQrService');
 const { attendanceEvidenceStorageService } = require('../../services/attendanceEvidenceStorageService');
 const {
   reconcileExpiredOrphanAttendanceEvidence,
+  setCommittedAttendanceEvidenceHold,
 } = require('../../services/attendanceEvidenceRetentionService');
 const {
   auditAttendanceEvidenceIntegrity,
@@ -1369,6 +1370,174 @@ const purgeSelfieEvidence = asyncHandler(async (request, response) => {
     'EVIDENCE_PURGE_NOT_CONFIGURED',
     'Committed attendance selfie purge remains disabled until a formal retention policy is approved. Use orphan reconciliation only for expired, unlinked uploads.'
   );
+});
+
+const manageAttendanceEvidenceHold = asyncHandler(async (request, response) => {
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may place or release committed attendance evidence holds.'
+    );
+  }
+
+  const {
+    attendanceId: rawAttendanceId,
+    punchType: rawPunchType,
+    action: rawAction = 'HOLD',
+    reason = '',
+    confirmation = '',
+  } = request.body || {};
+
+  const attendanceId = normalizeIdentifier(rawAttendanceId);
+  const punchType = normalizeIdentifier(rawPunchType);
+  const action = normalizeIdentifier(rawAction);
+  const holdReason = String(reason || '').trim();
+
+  if (!attendanceId || !['CHECK_IN', 'CHECK_OUT'].includes(punchType)) {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_EVIDENCE_HOLD_REFERENCE_INVALID',
+      'A valid attendanceId and CHECK_IN or CHECK_OUT punch type are required.'
+    );
+  }
+
+  if (!['HOLD', 'RELEASE'].includes(action)) {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_EVIDENCE_HOLD_ACTION_INVALID',
+      'action must be HOLD or RELEASE.'
+    );
+  }
+
+  if (holdReason.length < 10) {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_EVIDENCE_HOLD_REASON_REQUIRED',
+      'A specific hold reason of at least 10 characters is required.'
+    );
+  }
+
+  const expectedConfirmation = action === 'HOLD'
+    ? 'PLACE_ATTENDANCE_EVIDENCE_HOLD'
+    : 'RELEASE_ATTENDANCE_EVIDENCE_HOLD';
+  if (String(confirmation || '').trim() !== expectedConfirmation) {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_EVIDENCE_HOLD_CONFIRMATION_REQUIRED',
+      `This action requires confirmation ${expectedConfirmation}.`
+    );
+  }
+
+  const query = Attendance.findOne({
+    organisationId: request.auth.organisationId,
+    attendanceId,
+  });
+  const attendance = query && typeof query.lean === 'function'
+    ? await query.lean()
+    : await query;
+
+  if (!attendance) {
+    throw new ApiError(404, 'ATTENDANCE_NOT_FOUND', 'Attendance record not found.');
+  }
+
+  let authorizationAudit = null;
+  if (action === 'RELEASE') {
+    // Hold release can make evidence eligible under a future retention policy,
+    // so immutable authorization must be confirmed before the protective state
+    // can be relaxed.
+    authorizationAudit = await recordRequestAudit({
+      request,
+      module: 'ATTENDANCE',
+      action: 'ATTENDANCE_EVIDENCE_HOLD_RELEASE_AUTHORIZED',
+      entityType: 'AttendanceEvidence',
+      entityId: `${attendanceId}:${punchType}`,
+      cafeId: attendance.cafeId || null,
+      reason: holdReason,
+      result: 'SUCCESS',
+      riskClassification: 'HIGH',
+      metadata: {
+        attendanceId,
+        punchType,
+        releaseAuthorizedByUserId: request.auth.userId,
+      },
+    });
+
+    if (!authorizationAudit?.auditEventId) {
+      throw new ApiError(
+        503,
+        'ATTENDANCE_EVIDENCE_HOLD_RELEASE_AUDIT_FAILED',
+        'Hold release was not applied because immutable authorization audit could not be confirmed.'
+      );
+    }
+  }
+
+  let result;
+  try {
+    result = await setCommittedAttendanceEvidenceHold({
+      organisationId: request.auth.organisationId,
+      attendance,
+      punchType,
+      actorUserId: request.auth.userId,
+      reason: holdReason,
+      action,
+    });
+  } catch (error) {
+    const code = String(error?.code || '');
+    const status = code.endsWith('_CONFLICT') ? 409 : 400;
+    throw new ApiError(
+      status,
+      code || 'ATTENDANCE_EVIDENCE_HOLD_FAILED',
+      error?.message || 'Attendance evidence hold change failed.'
+    );
+  }
+
+  let auditRecorded = Boolean(authorizationAudit?.auditEventId);
+  let auditEventId = authorizationAudit?.auditEventId || null;
+  let auditWarning = null;
+
+  if (action === 'HOLD') {
+    try {
+      const holdAudit = await recordRequestAudit({
+        request,
+        module: 'ATTENDANCE',
+        action: 'ATTENDANCE_EVIDENCE_HOLD_PLACED',
+        entityType: 'AttendanceEvidence',
+        entityId: `${attendanceId}:${punchType}`,
+        cafeId: attendance.cafeId || null,
+        reason: holdReason,
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+        metadata: {
+          attendanceId,
+          punchType,
+          fileId: result.fileId,
+          holdPlacedByUserId: request.auth.userId,
+        },
+      });
+      auditRecorded = Boolean(holdAudit?.auditEventId);
+      auditEventId = holdAudit?.auditEventId || null;
+    } catch (auditError) {
+      // Fail closed: the protective hold remains applied even if audit
+      // persistence is temporarily unavailable.
+      auditWarning = 'Hold is active, but its post-write audit event could not be confirmed.';
+    }
+  }
+
+  return response.status(200).json({
+    success: true,
+    message: action === 'HOLD'
+      ? 'Attendance evidence hold is active. Committed purge remains disabled.'
+      : 'Attendance evidence hold released. This does not delete evidence or enable purge.',
+    data: {
+      ...result,
+      auditRecorded,
+      auditEventId,
+      auditWarning,
+      committedEvidencePurgeEnabled: false,
+    },
+    correlationId: request.correlationId || null,
+  });
 });
 
 const reconcileOrphanSelfieEvidence = asyncHandler(async (request, response) => {
@@ -4036,6 +4205,7 @@ module.exports = {
   closePeriod,
   reopenPeriod,
   purgeSelfieEvidence,
+  manageAttendanceEvidenceHold,
   reconcileOrphanSelfieEvidence,
   auditAttendanceEvidence,
   releaseAttendanceEvidenceQuarantine,
