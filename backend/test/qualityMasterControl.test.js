@@ -451,7 +451,7 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(verifyRes.data.data.capa.effectivenessStatus, 'EFFECTIVE');
   });
 
-  await t.test('10. GET /api/v1/quality/traceability returns gapless backward and forward trace', async () => {
+  await t.test('10. GET /api/v1/quality/traceability never fabricates trace or recall readiness when source is unavailable', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -461,12 +461,14 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.ok(res.data.data.trace.backwardTrace.supplier);
-    assert.ok(res.data.data.trace.forwardTrace.inventoryStatus);
-    assert.equal(res.data.data.trace.recallReadiness.status, 'RECALL_READY');
+    assert.equal(res.data.data.trace.sourceStatus, 'UNAVAILABLE');
+    assert.equal(res.data.data.trace.backwardTrace, null);
+    assert.equal(res.data.data.trace.forwardTrace, null);
+    assert.equal(res.data.data.trace.recallReadiness.status, 'NOT_ASSESSED');
+    assert.equal(res.data.data.trace.recallReadiness.drillElapsedSeconds, null);
   });
 
-  await t.test('11. GET /api/v1/quality/compliance returns statutory FSSAI and calibration register', async () => {
+  await t.test('11. GET /api/v1/quality/compliance does not return sample licences when authoritative sources are unavailable', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -476,11 +478,11 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.ok(res.data.data.compliance.length >= 4);
-    assert.ok(res.data.data.compliance.some((c) => c.category === 'STATUTORY_LICENCE'));
+    assert.deepEqual(res.data.data.compliance, []);
+    assert.equal(res.data.data.sourceStatus, 'UNAVAILABLE');
   });
 
-  await t.test('12. GET /api/v1/quality/integrity performs 16-point audit verification', async () => {
+  await t.test('12. GET /api/v1/quality/integrity never claims 100% PASS without verification coverage', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -490,8 +492,10 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.integrityScore, 100);
-    assert.equal(res.data.data.totalChecks, 16);
-    assert.equal(res.data.data.allPassed, true);
+    assert.equal(res.data.data.integrityScore, null);
+    assert.equal(res.data.data.coveragePercent, 0);
+    assert.equal(res.data.data.allPassed, false);
+    assert.ok(res.data.data.totalChecks >= 10);
+    assert.ok(res.data.data.checks.every((check) => check.status === 'NOT_VERIFIED'));
   });
 });
