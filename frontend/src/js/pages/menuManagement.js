@@ -425,12 +425,15 @@ function renderOverviewTab(wrap) {
 // ── 2. Global Menu Item Master Workspace ──────────────────────────────────────
 async function renderItemsTab(wrap) {
   wrap.innerHTML = `<div style="text-align:center; padding:30px;"><div class="spinner"></div></div>`;
-  let items = SAMPLE_MENU;
+  let items = [];
+  let loadError = null;
   try {
     const res = await apiGet(`/menu/items?concept=${activeConcept}&category=${activeCategory}&search=${encodeURIComponent(searchQuery)}`);
-    if (res && res.items?.length) items = res.items;
+    items = Array.isArray(res?.items)
+      ? res.items
+      : (Array.isArray(res?.data?.items) ? res.data.items : []);
   } catch (err) {
-    items = SAMPLE_MENU;
+    loadError = err;
   }
 
   if (activeCategory !== "ALL") {
@@ -461,8 +464,18 @@ async function renderItemsTab(wrap) {
           `).join("")}
         </div>
 
-        <input type="text" id="inp-menu-search" class="form-input" placeholder="Search items / PLU..." value="${searchQuery}" style="width:200px; padding:5px 8px; font-size:12.5px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="inp-menu-search" class="form-input" placeholder="Search items / PLU..." value="${searchQuery}" style="width:200px; padding:5px 8px; font-size:12.5px;">
+          <button type="button" id="btn-items-add-menu-item" class="btn btn-sm btn-primary">+ Add POS Menu Item</button>
+        </div>
       </div>
+
+      ${loadError ? `
+        <div style="padding:18px;text-align:center;border:1px solid var(--danger);border-radius:8px;margin-bottom:12px;">
+          <strong style="color:var(--danger);">Menu catalogue could not be loaded.</strong>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">${loadError?.message || "Please retry."}</div>
+        </div>
+      ` : ""}
 
       <!-- Menu Items Table -->
       <div style="overflow-x:auto;">
@@ -479,6 +492,14 @@ async function renderItemsTab(wrap) {
             </tr>
           </thead>
           <tbody>
+            ${!loadError && items.length === 0 ? `
+              <tr>
+                <td colspan="7" style="padding:28px 12px;text-align:center;color:var(--muted);">
+                  <strong style="color:var(--ink);display:block;margin-bottom:4px;">No POS menu items yet</strong>
+                  Create a sellable MenuItem with the button above. Inventory ingredients remain in Inventory.
+                </td>
+              </tr>
+            ` : ""}
             ${items.map((item) => `
               <tr class="clickable-row btn-drill-item360" data-id="${item.menuItemId || item.id}" style="cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.05);">
                 <td style="padding:8px 10px; font-family:monospace; font-weight:700; color:var(--color-accent-gold-bright);">
@@ -517,6 +538,8 @@ async function renderItemsTab(wrap) {
       </div>
     </div>
   `;
+
+  wrap.querySelector("#btn-items-add-menu-item")?.addEventListener("click", () => openAddItemModal(wrap));
 
   wrap.querySelectorAll(".btn-toggle-avail").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -1164,9 +1187,9 @@ function openAddItemModal(wrap) {
         <div style="margin-bottom:12px;">
           <label class="form-label" style="font-size:12px; font-weight:600;">Dietary Tag</label>
           <select name="foodType" class="form-input">
-            <option value="Veg">Vegetarian (Veg)</option>
-            <option value="Non-Veg">Non-Vegetarian</option>
-            <option value="Vegan">Vegan (100% Plant-based)</option>
+            <option value="VEG">Vegetarian (Veg)</option>
+            <option value="NON_VEG">Non-Vegetarian</option>
+            <option value="VEGAN">Vegan (100% Plant-based)</option>
           </select>
         </div>
 
@@ -1190,29 +1213,25 @@ function openAddItemModal(wrap) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
+      const dietary = String(fd.get("foodType") || "VEG");
       const newItem = {
-        id: "MENU-0" + (SAMPLE_MENU.length + 1),
-        menuItemId: "MENU-0" + (SAMPLE_MENU.length + 1),
-        name: fd.get("name"),
-        conceptEligibility: fd.get("conceptEligibility"),
-        category: fd.get("category"),
+        name: String(fd.get("name") || "").trim(),
+        conceptEligibility: String(fd.get("conceptEligibility") || "CAFE"),
+        category: String(fd.get("category") || "OTHER"),
         price: parseFloat(fd.get("price")),
-        foodType: fd.get("foodType"),
-        dietaryTags: [fd.get("foodType")],
-        description: fd.get("description"),
-        isAvailable: true
+        dietaryTags: dietary === "VEGAN" ? ["VEG", "VEGAN"] : [dietary],
+        description: String(fd.get("description") || "").trim(),
       };
 
       try {
         await apiPost("/menu/items", newItem);
-        showToast("Menu item created successfully.", "success");
+        showToast("POS menu item created successfully.", "success");
+        closeModal();
+        activeTab = "items";
+        renderCurrentWorkspace(wrap);
       } catch (err) {
-        SAMPLE_MENU.push(newItem);
-        showToast("Menu item created (Preview Mode).", "success");
+        showToast(`Menu item creation failed: ${err?.message || "Unknown error"}`, "error");
       }
-      closeModal();
-      activeTab = "items";
-      renderCurrentWorkspace(wrap);
     });
   }
 }
