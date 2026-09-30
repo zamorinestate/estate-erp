@@ -3169,23 +3169,36 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     buffer,
   });
 
-  const privateFile = await PrivateFile.create({
-    fileId,
-    organisationId,
-    originalName: `selfie_${punchType.toLowerCase()}_${Date.now()}.${fileExtension}`,
-    mimeType: extractedMime,
-    sizeBytes: buffer.length,
-    sha256: uploadResult.sha256 || crypto.createHash('sha256').update(buffer).digest('hex'),
-    storagePath: uploadResult.fileKey,
-    uploadedByUserId: userId,
-    attendanceContext: {
-      challengeId: evidenceProof.challengeId,
-      cafeId: normalizeIdentifier(evidenceProof.resolvedCafeId),
-      punchType,
-      boundAt: new Date(),
-      grantExpiresAt: evidenceProof.expiresAt || null,
-    },
-  });
+  let privateFile;
+  try {
+    privateFile = await PrivateFile.create({
+      fileId,
+      organisationId,
+      originalName: `selfie_${punchType.toLowerCase()}_${Date.now()}.${fileExtension}`,
+      mimeType: extractedMime,
+      sizeBytes: buffer.length,
+      sha256: uploadResult.sha256 || crypto.createHash('sha256').update(buffer).digest('hex'),
+      storagePath: uploadResult.fileKey,
+      uploadedByUserId: userId,
+      attendanceContext: {
+        challengeId: evidenceProof.challengeId,
+        cafeId: normalizeIdentifier(evidenceProof.resolvedCafeId),
+        punchType,
+        boundAt: new Date(),
+        grantExpiresAt: evidenceProof.expiresAt || null,
+      },
+    });
+  } catch (metadataErr) {
+    try {
+      await attendanceEvidenceStorageService.deleteObject({ fileKey: uploadResult.fileKey });
+    } catch (cleanupErr) {
+      console.error('[Attendance] orphan selfie cleanup failed after metadata persistence error', {
+        fileId,
+        cleanupError: cleanupErr?.message || 'UNKNOWN_STORAGE_CLEANUP_ERROR',
+      });
+    }
+    throw metadataErr;
+  }
 
   return response.status(201).json({
     success: true,
