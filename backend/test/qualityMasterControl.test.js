@@ -15,6 +15,8 @@ const auditService = require('../src/services/auditService');
 const { FoodSafetyService } = require('../src/services/foodSafetyService');
 const { InventoryLot } = require('../src/models/InventoryLot');
 const { CapaRecord } = require('../src/models/CapaRecord');
+const { QualityHold } = require('../src/models/QualityHold');
+const { QualityNonConformance } = require('../src/models/QualityNonConformance');
 
 function makeRequest({ port, method, path, headers = {}, body = null }) {
   return new Promise((resolve, reject) => {
@@ -324,47 +326,85 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     mockLots.filter((lot) => matchesLot(lot, query)).length
   );
 
+  const mockHolds = [];
+  const matchesScoped = (entry, query = {}) => {
+    if (query.organisationId && entry.organisationId !== query.organisationId) return false;
+    if (query.cafeId && typeof query.cafeId === 'string' && entry.cafeId !== query.cafeId) return false;
+    if (query.cafeId?.$in && !query.cafeId.$in.includes(entry.cafeId)) return false;
+    return true;
+  };
+
+  const matchesHold = (hold, query = {}) => {
+    if (!matchesScoped(hold, query)) return false;
+    if (query.holdId && hold.holdId !== query.holdId) return false;
+    if (query.inventoryLotId && hold.inventoryLotId !== query.inventoryLotId) return false;
+    if (query.status && typeof query.status === 'string' && hold.status !== query.status) return false;
+    if (query.status?.$ne && hold.status === query.status.$ne) return false;
+    return true;
+  };
+
+  t.mock.method(QualityHold, 'find', (query) => ({
+    sort() { return this; },
+    limit() { return this; },
+    lean: async () => mockHolds.filter((hold) => matchesHold(hold, query)).map((hold) => hold.toObject()),
+  }));
+  t.mock.method(QualityHold, 'findOne', async (query) =>
+    mockHolds.find((hold) => matchesHold(hold, query)) || null
+  );
+  QualityHold.prototype.save = async function () {
+    const idx = mockHolds.findIndex((hold) => hold.holdId === this.holdId);
+    if (idx >= 0) mockHolds[idx] = this;
+    else mockHolds.push(this);
+    return this;
+  };
+
+  const mockNcrs = [];
+  const matchesNcr = (ncr, query = {}) => {
+    if (!matchesScoped(ncr, query)) return false;
+    if (query.ncrId && ncr.ncrId !== query.ncrId) return false;
+    if (query.status && typeof query.status === 'string' && ncr.status !== query.status) return false;
+    if (query.status?.$ne && ncr.status === query.status.$ne) return false;
+    return true;
+  };
+
+  t.mock.method(QualityNonConformance, 'find', (query) => ({
+    sort() { return this; },
+    limit() { return this; },
+    lean: async () => mockNcrs.filter((ncr) => matchesNcr(ncr, query)).map((ncr) => ncr.toObject()),
+  }));
+  t.mock.method(QualityNonConformance, 'findOne', async (query) =>
+    mockNcrs.find((ncr) => matchesNcr(ncr, query)) || null
+  );
+  QualityNonConformance.prototype.save = async function () {
+    const idx = mockNcrs.findIndex((ncr) => ncr.ncrId === this.ncrId);
+    if (idx >= 0) mockNcrs[idx] = this;
+    else mockNcrs.push(this);
+    return this;
+  };
+
   const mockCapas = [];
   const matchesCapa = (capa, query = {}) => {
-    if (query.organisationId && capa.organisationId !== query.organisationId) return false;
-    if (query.cafeId && typeof query.cafeId === 'string' && capa.cafeId !== query.cafeId) return false;
+    if (!matchesScoped(capa, query)) return false;
     if (query.capaId && capa.capaId !== query.capaId) return false;
     if (query.status && typeof query.status === 'string' && capa.status !== query.status) return false;
     if (query.status?.$ne && capa.status === query.status.$ne) return false;
     return true;
   };
 
-  t.mock.method(CapaRecord, 'create', async (payload) => {
-    const record = {
-      _id: `CAPA-MONGO-${mockCapas.length + 1}`,
-      ...payload,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    mockCapas.push(record);
-    return {
-      ...record,
-      toObject: () => ({ ...record }),
-    };
-  });
   t.mock.method(CapaRecord, 'find', (query) => ({
     sort() { return this; },
     limit() { return this; },
-    lean: async () => mockCapas.filter((capa) => matchesCapa(capa, query)),
+    lean: async () => mockCapas.filter((capa) => matchesCapa(capa, query)).map((capa) => capa.toObject()),
   }));
-  t.mock.method(CapaRecord, 'findOne', (query) => ({
-    lean: async () => mockCapas.find((capa) => matchesCapa(capa, query)) || null,
-  }));
-  t.mock.method(CapaRecord, 'findOneAndUpdate', async (filter, update) => {
-    const capa = mockCapas.find((entry) => matchesCapa(entry, filter));
-    if (!capa) return null;
-    Object.assign(capa, update?.$set || {});
-    if (update?.$push?.auditHistory) {
-      capa.auditHistory = [...(capa.auditHistory || []), update.$push.auditHistory];
-    }
-    capa.updatedAt = new Date();
-    return { ...capa };
-  });
+  t.mock.method(CapaRecord, 'findOne', async (query) =>
+    mockCapas.find((capa) => matchesCapa(capa, query)) || null
+  );
+  CapaRecord.prototype.save = async function () {
+    const idx = mockCapas.findIndex((capa) => capa.capaId === this.capaId);
+    if (idx >= 0) mockCapas[idx] = this;
+    else mockCapas.push(this);
+    return this;
+  };
   t.mock.method(CapaRecord, 'countDocuments', async (query) =>
     mockCapas.filter((capa) => matchesCapa(capa, query)).length
   );
@@ -397,12 +437,13 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(res.data.data.kpis.checksDueToday, null);
     assert.equal(
       res.data.data.kpis.checksDueTodayStatus,
-      'NOT_AVAILABLE_NO_DURABLE_CHECKLIST_SCHEDULE'
+      'NOT_AVAILABLE_NO_DURABLE_TEMPLATE_SCHEDULE_ENGINE'
     );
     assert.ok(Array.isArray(res.data.data.actionCentreItems));
     assert.equal(res.data.data.prpStatus.cleaningSanitation, 'NOT_ASSESSED');
-    assert.equal(res.data.data.sourceStatus.qualityHolds, 'DURABLE_INVENTORY_LOT');
-    assert.equal(res.data.data.sourceStatus.capas, 'DURABLE_CAPA_RECORD');
+    assert.equal(res.data.data.sourceStatus.qualityHolds, 'DURABLE');
+    assert.equal(res.data.data.sourceStatus.ncrs, 'DURABLE');
+    assert.equal(res.data.data.sourceStatus.capas, 'DURABLE');
   });
 
   await t.test('2. GET /api/v1/quality/overview is accessible to OWNER', async () => {
