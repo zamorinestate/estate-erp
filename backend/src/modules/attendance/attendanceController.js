@@ -1469,6 +1469,8 @@ const auditAttendanceEvidence = asyncHandler(async (request, response) => {
       failed: result.failed,
       integrityOk: result.integrityOk,
       verifyStorageBytes: result.verifyStorageBytes,
+      legacyProofSnapshots: result.legacyProofSnapshots,
+      legacyGeofenceSnapshots: result.legacyGeofenceSnapshots,
       quarantined: incidentResponse.quarantined,
       alreadyQuarantined: incidentResponse.alreadyQuarantined,
       auditEventsRecorded: incidentResponse.auditEventsRecorded,
