@@ -17,6 +17,12 @@ const {
 const {
   auditAttendanceEvidence,
 } = require('../src/modules/attendance/attendanceController');
+const {
+  classifyIntegrityFailure,
+  buildSecurityAlertKey,
+  quarantineAttendanceEvidenceFailures,
+} = require('../src/services/attendanceEvidenceIncidentService');
+const { notificationService } = require('../src/services/NotificationService');
 
 function createAttendance(overrides = {}) {
   return {
@@ -512,5 +518,160 @@ test('EVI-010: employee QR deep-link drives QR + GPS + fresh selfie for both Che
   assert.match(staff, /selfieFileId/);
   assert.match(staff, /"📷 IN"/);
   assert.match(staff, /"📷 OUT"/);
+});
+
+test('EVI-011: evidence integrity failures are quarantined and security-alerted without image bytes', async () => {
+  const originals = {
+    findOne: Attendance.findOne,
+    updateOne: Attendance.updateOne,
+    publishNotification: notificationService.publishNotification,
+  };
+
+  const attendance = createAttendance({
+    _id: 'ATT-DOC-901',
+    attendanceId: 'AT-20260930-901',
+    userId: 'EMP-901',
+    cafeId: 'CAFE-KNR-01',
+    attendanceEvidence: {
+      checkIn: {
+        selfieMediaId: 'FILE-901',
+        photoFileId: 'FILE-901',
+        verificationStatus: 'VERIFIED',
+      },
+      checkOut: null,
+    },
+    selfieFileId: 'FILE-901',
+  });
+
+  Attendance.findOne = () => ({
+    lean: async () => attendance,
+  });
+
+  const updates = [];
+  Attendance.updateOne = async (filter, update) => {
+    updates.push({ filter, update });
+    return { matchedCount: 1, modifiedCount: 1 };
+  };
+
+  const alerts = [];
+  notificationService.publishNotification = async (payload) => {
+    alerts.push(payload);
+    return { success: true, recipientCount: 1, outboxQueued: 1, inAppDelivered: 1 };
+  };
+
+  const request = {
+    auth: {
+      organisationId: 'ORG-ZAMORIN',
+      userId: 'MU-PRIMARY-01',
+      role: 'MASTER',
+      isPrimaryMaster: true,
+    },
+    correlationId: 'CORR-EVI-901',
+    method: 'POST',
+    originalUrl: '/api/v1/attendance/evidence/integrity/audit',
+    get: () => null,
+  };
+
+  try {
+    const result = await quarantineAttendanceEvidenceFailures({
+      request,
+      failures: [{
+        attendanceId: 'AT-20260930-901',
+        punchType: 'CHECK_IN',
+        fileId: 'FILE-901',
+        failedChecks: ['storage_sha256_matches_metadata', 'employee_binding'],
+      }],
+    });
+
+    assert.equal(result.attempted, 1);
+    assert.equal(result.quarantined, 1);
+    assert.equal(result.auditEventsRecorded, 1);
+    assert.equal(result.alertsQueued, 1);
+
+    const quarantineUpdate = updates.find(
+      (entry) => entry.update?.$set?.['attendanceEvidence.checkIn.integrityState'] === 'QUARANTINED'
+    );
+    assert.ok(quarantineUpdate);
+    assert.equal(
+      quarantineUpdate.update.$set['attendanceEvidence.checkIn.verificationStatus'],
+      'FLAGGED'
+    );
+    assert.deepEqual(
+      quarantineUpdate.update.$set['attendanceEvidence.checkIn.integrityFailedChecks'],
+      ['storage_sha256_matches_metadata', 'employee_binding']
+    );
+
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].includePrimaryMaster, true);
+    assert.equal(alerts[0].templateId, 'SECURITY_ALERT');
+    assert.equal(alerts[0].sourceModule, 'ATTENDANCE');
+    assert.equal(alerts[0].acknowledgementRequired, true);
+    assert.equal(JSON.stringify(alerts[0]).includes('forensic-selfie-bytes'), false);
+  } finally {
+    Attendance.findOne = originals.findOne;
+    Attendance.updateOne = originals.updateOne;
+    notificationService.publishNotification = originals.publishNotification;
+  }
+});
+
+test('EVI-012: integrity failure classification and alert key are deterministic', () => {
+  assert.equal(
+    classifyIntegrityFailure(['storage_sha256_matches_metadata']),
+    'CRITICAL'
+  );
+  assert.equal(
+    classifyIntegrityFailure(['geofence_distance_recomputed']),
+    'HIGH'
+  );
+
+  const input = {
+    attendanceId: 'AT-20260930-901',
+    punchType: 'CHECK_IN',
+    fileId: 'FILE-901',
+    failedChecks: ['employee_binding', 'storage_sha256_matches_metadata'],
+  };
+  assert.equal(buildSecurityAlertKey(input), buildSecurityAlertKey(input));
+  assert.match(buildSecurityAlertKey(input), /^ATTENDANCE_EVIDENCE_INTEGRITY_[a-f0-9]{24}$/);
+});
+
+test('EVI-013: audit-event model remains insert-only across query, document, and bulk mutation paths', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/models/AuditEvent.js'),
+    'utf8'
+  );
+
+  for (const operation of [
+    'updateOne',
+    'updateMany',
+    'findOneAndUpdate',
+    'replaceOne',
+    'findOneAndReplace',
+    'deleteOne',
+    'deleteMany',
+    'findOneAndDelete',
+  ]) {
+    assert.ok(source.includes(`'${operation}'`), `AuditEvent must block ${operation}`);
+  }
+
+  assert.match(source, /Block document-instance deleteOne/);
+  assert.match(source, /Block save\(\) on modified \(existing\) documents/);
+  assert.match(source, /Block bulkWrite mutations/);
+});
+
+test('EVI-014: evidence media endpoint refuses quarantined evidence before byte streaming', () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceController.js'),
+    'utf8'
+  );
+
+  const quarantineCheck = controllerSource.indexOf('ATTENDANCE_EVIDENCE_QUARANTINED');
+  const byteRead = controllerSource.indexOf(
+    'attendanceEvidenceStorageService.readObjectBuffer',
+    quarantineCheck
+  );
+
+  assert.ok(quarantineCheck >= 0);
+  assert.ok(byteRead > quarantineCheck);
+  assert.match(controllerSource, /integrityState \|\| ''\)\.toUpperCase\(\) === 'QUARANTINED'/);
 });
 
