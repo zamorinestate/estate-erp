@@ -496,42 +496,88 @@ const placePreservationHold = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'CANNOT_HOLD_DISPOSED', 'Cannot place a hold on an already disposed record.');
   }
 
-  const holdId = `HOLD-${Date.now().toString().slice(-6)}`;
-  await executeTransactionWithRetry(async (session) => {
-    if (!item.holds.some((h) => h.holdId === holdId)) {
-      item.holds.push({
-        holdId,
-        reason: reason.trim(),
-        scope,
-        placedByUserId: userId,
-        placedByName: userName,
-        placedAt: new Date(),
-        reviewDate: reviewDate ? new Date(reviewDate) : null,
-      });
-    }
+  if (item.lifecycleStatus === 'DISPOSITION_PROCESSING') {
+    throw new ApiError(
+      409,
+      'DISPOSITION_ALREADY_IRREVERSIBLE',
+      'A new preservation hold cannot be placed after irreversible disposition processing has started.'
+    );
+  }
 
-    item.holdState = 'ACTIVE';
-    item.lifecycleStatus = 'ON_HOLD';
-    await item.save(session ? { session } : {});
+  const holdDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const holdId = await SequenceCounter.generateId({
+    organisationId: orgId,
+    sequenceKey: `TRASH_HOLD_${holdDate}`,
+    prefix: `HOLD-${holdDate}`,
+    minimumDigits: 5,
+  });
+
+  let changedItem = null;
+
+  await executeTransactionWithRetry(async (session) => {
+    changedItem = await TrashEntry.findOneAndUpdate(
+      {
+        _id: item._id,
+        organisationId: orgId,
+        lifecycleStatus: {
+          $nin: ['DISPOSITION_PROCESSING', 'DISPOSED', 'RESTORED'],
+        },
+        holdState: { $ne: 'ACTIVE' },
+      },
+      {
+        $push: {
+          holds: {
+            holdId,
+            reason: reason.trim(),
+            scope,
+            placedByUserId: userId,
+            placedByName: userName,
+            placedAt: new Date(),
+            reviewDate: reviewDate ? new Date(reviewDate) : null,
+          },
+        },
+        $set: {
+          holdState: 'ACTIVE',
+          lifecycleStatus: 'ON_HOLD',
+        },
+      },
+      {
+        new: true,
+        ...(session ? { session } : {}),
+      }
+    );
+
+    if (!changedItem) {
+      throw new ApiError(
+        409,
+        'PRESERVATION_HOLD_STATE_CONFLICT',
+        'The Trash record changed state before the hold could be placed. No hold was applied.'
+      );
+    }
 
     if (request.auth) {
       await recordRequestAudit({
         request,
         module: 'TRASH_BIN',
         action: 'PLACE_PRESERVATION_HOLD',
-        entityType: item.entityType,
-        entityId: item.entityId,
+        entityType: changedItem.entityType,
+        entityId: changedItem.entityId,
         result: 'SUCCESS',
         riskClassification: 'HIGH',
-        metadata: { trashId: item.trashId, holdId, reason },
+        metadata: {
+          trashId: changedItem.trashId,
+          holdId,
+          reason,
+          previousLifecycleStatus: item.lifecycleStatus,
+        },
         session,
       });
     }
-  });
+  }, { requireTransactions: true });
 
   return response.status(200).json({
     success: true,
-    message: `Preservation hold placed on ${item.recordReference}. Permanent disposition is strictly suspended.`,
+    message: `Preservation hold placed on ${changedItem.recordReference}. Permanent disposition is strictly suspended.`,
     data: { holdId, holdState: 'ACTIVE' },
   });
 });
