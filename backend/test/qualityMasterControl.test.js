@@ -557,6 +557,10 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(createRes.data.success, true);
     const holdId = createRes.data.data.hold.holdId;
     assert.ok(holdId.startsWith('QHOLD-'));
+    assert.equal(createRes.data.data.hold.durableSource, 'QUALITY_HOLD');
+    assert.equal(mockHolds.length, 1);
+    assert.equal(mockLots[0].status, 'QUARANTINE');
+    assert.equal(mockLots[0].quarantineReason, 'TEMPERATURE_DEVIATION');
 
     // Release hold
     const releaseRes = await makeRequest({
@@ -573,6 +577,10 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(releaseRes.status, 200);
     assert.equal(releaseRes.data.data.hold.status, 'RELEASED');
     assert.equal(releaseRes.data.data.hold.disposition, 'RELEASE');
+    assert.equal(releaseRes.data.data.hold.durableSource, 'QUALITY_HOLD');
+    assert.equal(mockLots[0].status, 'AVAILABLE');
+    assert.equal(mockLots[0].releaseReason, 'Acidity test passed; cleared by quality manager.');
+    assert.equal(mockHolds[0].status, 'RELEASED');
   });
 
   await t.test('8. POST /api/v1/quality/ncrs creates Non-Conformance Report', async () => {
@@ -595,6 +603,9 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(res.data.success, true);
     assert.ok(res.data.data.ncr.ncrId.startsWith('NCR-'));
     assert.equal(res.data.data.ncr.severity, 'MAJOR');
+    assert.equal(res.data.data.ncr.durableSource, 'QUALITY_NCR');
+    assert.equal(mockNcrs.length, 1);
+    assert.equal(mockNcrs[0].status, 'OPEN');
   });
 
   await t.test('9. POST /api/v1/quality/capas creates CAPA and verifies effectiveness', async () => {
@@ -616,6 +627,9 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(createRes.status, 201);
     assert.equal(createRes.data.success, true);
     const capaId = createRes.data.data.capa.capaId;
+    assert.equal(createRes.data.data.capa.durableSource, 'CAPA_RECORD');
+    assert.equal(mockCapas.length, 1);
+    assert.equal(mockCapas[0].status, 'INVESTIGATING');
 
     // Verify effectiveness to close
     const verifyRes = await makeRequest({
@@ -633,6 +647,8 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(verifyRes.data.data.capa.status, 'CLOSED');
     assert.equal(verifyRes.data.data.capa.effectivenessStatus, 'EFFECTIVE');
     assert.equal(verifyRes.data.data.capa.durableSource, 'CAPA_RECORD');
+    assert.equal(mockCapas[0].status, 'CLOSED');
+    assert.equal(mockCapas[0].verifiedByUserId, 'MU-PRIMARY-01');
   });
 
   await t.test('10. GET /api/v1/quality/traceability uses the authoritative lot and never fabricates recall readiness', async () => {
