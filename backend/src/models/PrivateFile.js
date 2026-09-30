@@ -61,6 +61,39 @@ const privateFileSchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
     },
+
+    // Optional secure-attendance binding. Generic private files leave this null.
+    // Attendance selfies are bound to the verified employee scan grant so a
+    // previously uploaded file ID cannot be replayed for another QR challenge
+    // or reused across CHECK_IN / CHECK_OUT transitions.
+    attendanceContext: {
+      challengeId: {
+        type: String,
+        default: null,
+        trim: true,
+        index: true,
+      },
+      cafeId: {
+        type: String,
+        default: null,
+        trim: true,
+        uppercase: true,
+        index: true,
+      },
+      punchType: {
+        type: String,
+        enum: ['CHECK_IN', 'CHECK_OUT', null],
+        default: null,
+      },
+      boundAt: {
+        type: Date,
+        default: null,
+      },
+      grantExpiresAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,
