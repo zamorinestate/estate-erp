@@ -20,6 +20,7 @@ const { AttendanceQrChallenge } = require('../src/models/AttendanceQrChallenge')
 const { AttendanceSubmission } = require('../src/models/AttendanceSubmission');
 const { PrivateFile } = require('../src/models/PrivateFile');
 const { AuditEvent } = require('../src/models/AuditEvent');
+const { notificationService } = require('../src/services/NotificationService');
 const { Cafe } = require('../src/models/Cafe');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
 
@@ -1474,6 +1475,124 @@ test('RBAC-007: evidence endpoint rejects bytes that fail the stored SHA-256 che
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
     attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
+  }
+});
+
+
+test('RBAC-008: view-time SHA failure auto-quarantines evidence and alerts Primary Master', async () => {
+  const originals = {
+    privateFindOne: PrivateFile.findOne,
+    attendanceFindOne: Attendance.findOne,
+    attendanceUpdateOne: Attendance.updateOne,
+    readBuffer: attendanceEvidenceStorageService.readObjectBuffer,
+    auditCreate: AuditEvent.create,
+    publishNotification: notificationService.publishNotification,
+  };
+
+  const expectedBytes = VALID_TEST_JPEG_BYTES;
+  const tamperedBytes = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff]),
+    Buffer.from('TAMPERED-ATTENDANCE-EVIDENCE', 'utf8'),
+    Buffer.from([0xff, 0xd9]),
+  ]);
+
+  const attendance = {
+    _id: 'ATT-DOC-AUTO-QUARANTINE',
+    attendanceId: 'AT-20260930-AUTO-1',
+    organisationId: 'ORG-ZAMORIN',
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    attendanceEvidence: {
+      checkIn: {
+        photoFileId: 'FILE-PHOTO-AUTO-QUARANTINE',
+        selfieMediaId: 'FILE-PHOTO-AUTO-QUARANTINE',
+        verificationStatus: 'VERIFIED',
+        integrityState: 'UNVERIFIED',
+      },
+    },
+    selfieFileId: 'FILE-PHOTO-AUTO-QUARANTINE',
+  };
+
+  PrivateFile.findOne = () => ({
+    fileId: 'FILE-PHOTO-AUTO-QUARANTINE',
+    fileKey: 'org/selfie_auto_quarantine.jpg',
+    storagePath: 'org/selfie_auto_quarantine.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: tamperedBytes.length,
+    sha256: crypto.createHash('sha256').update(expectedBytes).digest('hex'),
+    uploadedByUserId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+  });
+
+  Attendance.findOne = () => ({
+    ...attendance,
+    lean: async () => attendance,
+  });
+
+  const updates = [];
+  Attendance.updateOne = async (filter, update) => {
+    updates.push({ filter, update });
+    return { matchedCount: 1, modifiedCount: 1 };
+  };
+
+  attendanceEvidenceStorageService.readObjectBuffer = async () => tamperedBytes;
+
+  const audits = [];
+  AuditEvent.create = async (payload) => {
+    audits.push(payload);
+    return { ...payload, auditEventId: 'AUD-AUTO-QUARANTINE-1' };
+  };
+
+  const alerts = [];
+  notificationService.publishNotification = async (payload) => {
+    alerts.push(payload);
+    return {
+      success: true,
+      recipientCount: 1,
+      outboxQueued: 1,
+      inAppDelivered: 1,
+    };
+  };
+
+  try {
+    await assert.rejects(
+      async () => getEvidenceMedia({
+        auth: {
+          userId: 'EMP-STAFF-1',
+          role: 'STAFF',
+          organisationId: 'ORG-ZAMORIN',
+        },
+        params: { mediaId: 'FILE-PHOTO-AUTO-QUARANTINE' },
+        correlationId: 'CORR-AUTO-QUARANTINE-1',
+        method: 'GET',
+        originalUrl: '/api/v1/attendance/evidence/media/FILE-PHOTO-AUTO-QUARANTINE',
+        get: () => null,
+      }, createMockRes()),
+      { statusCode: 409, code: 'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE' }
+    );
+
+    assert.ok(
+      updates.some(
+        (entry) =>
+          entry.update?.$set?.['attendanceEvidence.checkIn.integrityState'] === 'QUARANTINED' &&
+          entry.update?.$set?.['attendanceEvidence.checkIn.verificationStatus'] === 'FLAGGED'
+      ),
+      'view-time integrity failure must quarantine the exact evidence slot'
+    );
+
+    assert.ok(
+      audits.some((payload) => payload.action === 'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE_QUARANTINED')
+    );
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].includePrimaryMaster, true);
+    assert.equal(alerts[0].severity, 'CRITICAL');
+  } finally {
+    PrivateFile.findOne = originals.privateFindOne;
+    Attendance.findOne = originals.attendanceFindOne;
+    Attendance.updateOne = originals.attendanceUpdateOne;
+    attendanceEvidenceStorageService.readObjectBuffer = originals.readBuffer;
+    AuditEvent.create = originals.auditCreate;
+    notificationService.publishNotification = originals.publishNotification;
   }
 });
 
