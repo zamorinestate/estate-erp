@@ -146,8 +146,105 @@ async function dispatchReceiptToClient(dispatch, bill, { isReprint = false } = {
   };
 }
 
-// Master menu catalogue (Loaded dynamically from database)
+// Canonical POS menu catalogue. This is intentionally distinct from GlobalInventoryItem:
+// sellable MenuItem records populate the till; inventory ingredients/packaging stay in Inventory.
 let _menuCatalogue = [];
+let _menuCatalogueLoadState = "IDLE"; // IDLE | LOADING | LOADED | ERROR
+let _menuCatalogueLoadError = "";
+
+const POS_CATEGORY_GROUPS = Object.freeze([
+  { key: "ALL", label: "All Items", categories: null },
+  { key: "HOT_COFFEES", label: "Hot Coffees", categories: ["COFFEE"] },
+  { key: "COLD_BREWS", label: "Cold Brews", categories: ["TEA", "BEVERAGES_OTHER"] },
+  { key: "BAKERY", label: "Bakery & Viennoiserie", categories: ["BAKERY"] },
+  { key: "SAVOURIES_MAINS", label: "Savouries & Mains", categories: ["SNACKS", "STARTERS", "SOUPS", "SALADS", "MAIN_COURSE", "SIDES"] },
+  { key: "DESSERTS", label: "Desserts", categories: ["DESSERTS"] },
+]);
+
+function canManagePosMenu() {
+  const user = state.auth?.user || state.user || {};
+  const role = user.role || state.role;
+  return role === ROLES.MASTER && user.isPrimaryMaster === true;
+}
+
+function normalizePosMenuItem(item, effective = null) {
+  const menuItemId = item?.menuItemId || item?.id || "";
+  const effectivePrice =
+    effective?.effectivePriceRupees ??
+    item?.price ??
+    (Number.isFinite(Number(item?.currentPricePaisa)) ? Number(item.currentPricePaisa) / 100 : 0);
+
+  return {
+    id: menuItemId,
+    menuItemId,
+    code: item?.plu || item?.itemCode || menuItemId,
+    name: item?.name || menuItemId,
+    category: item?.category || "OTHER",
+    conceptEligibility: item?.conceptEligibility || "CAFE",
+    price: Number(effectivePrice || 0),
+    currentPricePaisa:
+      Number.isFinite(Number(effective?.effectivePricePaisa))
+        ? Number(effective.effectivePricePaisa)
+        : Number(item?.currentPricePaisa || Math.round(Number(effectivePrice || 0) * 100)),
+    foodType:
+      item?.foodType ||
+      (Array.isArray(item?.dietaryTags) && item.dietaryTags.includes("NON_VEG") ? "Non-Veg" : "Veg"),
+    dietaryTags: Array.isArray(item?.dietaryTags) ? item.dietaryTags : [],
+    description: item?.description || "",
+    hasModifiers: Number(item?.variantsCount || 0) > 0,
+    isAvailable:
+      item?.isAvailable !== false &&
+      item?.status !== "INACTIVE" &&
+      item?.status !== "RETIRED" &&
+      effective?.isAvailable !== false,
+    availabilityReason: effective?.availabilityReason || null,
+    priceSourceExplanation: effective?.sourceExplanation || "Global Base Price",
+  };
+}
+
+async function loadPOSMenuCatalogue() {
+  _menuCatalogueLoadState = "LOADING";
+  _menuCatalogueLoadError = "";
+
+  try {
+    const itemResponse = await apiGet("/menu/items?concept=CAFE&status=ACTIVE&limit=500");
+    const sourceItems = Array.isArray(itemResponse?.items)
+      ? itemResponse.items
+      : (Array.isArray(itemResponse?.data?.items) ? itemResponse.data.items : []);
+
+    const cafeId = resolvePosCafeId();
+    let effectiveByItemId = new Map();
+
+    if (cafeId) {
+      try {
+        const effectiveResponse = await apiGet(
+          `/menu/simulator?outletId=${encodeURIComponent(cafeId)}&serviceMode=${encodeURIComponent(activeServiceMode)}`
+        );
+        const effectiveItems = Array.isArray(effectiveResponse?.simulatedItems)
+          ? effectiveResponse.simulatedItems
+          : (Array.isArray(effectiveResponse?.data?.simulatedItems) ? effectiveResponse.data.simulatedItems : []);
+        effectiveByItemId = new Map(
+          effectiveItems.map((item) => [String(item.menuItemId || ""), item])
+        );
+      } catch (effectiveError) {
+        // The global active catalogue remains usable if outlet simulation is temporarily unavailable.
+        console.warn("POS effective menu overlay unavailable:", effectiveError?.message || effectiveError);
+      }
+    }
+
+    _menuCatalogue = sourceItems
+      .map((item) => normalizePosMenuItem(item, effectiveByItemId.get(String(item.menuItemId || item.id || ""))))
+      .filter((item) => item.id && item.isAvailable);
+
+    _menuCatalogueLoadState = "LOADED";
+    return _menuCatalogue;
+  } catch (error) {
+    _menuCatalogue = [];
+    _menuCatalogueLoadState = "ERROR";
+    _menuCatalogueLoadError = error?.message || "Unable to load the POS menu.";
+    throw error;
+  }
+}
 
 // POS State
 let cart = []; // Array of { lineId, item, qty, modifiers, notes }
@@ -217,8 +314,11 @@ function renderTerminalView() {
     year: "numeric",
   }).format(new Date());
 
+  const activeCategoryGroup = POS_CATEGORY_GROUPS.find((group) => group.key === activeCategory);
   const filteredItems = _menuCatalogue.filter((item) => {
-    const matchesCat = activeCategory === "ALL" || item.category === activeCategory;
+    const matchesCat =
+      activeCategory === "ALL" ||
+      Boolean(activeCategoryGroup?.categories?.includes(item.category));
     const matchesSearch = !searchQuery ||
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.code.toLowerCase().includes(searchQuery.toLowerCase());
@@ -236,7 +336,7 @@ function renderTerminalView() {
   const gst = isZeroCollectMode ? 0 : Math.round(taxableAmount * 0.05);
   const grandTotal = isZeroCollectMode ? 0 : (taxableAmount + gst);
 
-  const categories = ["ALL", "Hot Coffees", "Cold Brews", "Bakery & Viennoiserie", "Savouries & Mains", "Desserts"];
+  const categories = POS_CATEGORY_GROUPS;
   const totalItemCount = cart.reduce((a, c) => a + c.qty, 0);
 
   return `
@@ -349,6 +449,14 @@ function renderTerminalView() {
 
         <!-- Top Right Actions -->
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          ${canManagePosMenu() ? `
+            <button class="btn btn-sm btn-primary" id="pos-add-menu-item-btn" style="font-size:12px;padding:6px 12px;font-weight:700;min-height:32px;" type="button" title="Create a sellable POS menu item">
+              ＋ Add POS Item
+            </button>
+          ` : ""}
+          <button class="pos-service-mode-btn" id="pos-refresh-menu-btn" style="padding:6px 10px;font-size:12px;" type="button" title="Reload sellable menu items">
+            ↻ Menu
+          </button>
           <button class="pos-service-mode-btn ${state.isTrainingMode ? 'active' : ''}" id="toggle-training-mode-btn" style="padding:6px 12px;font-size:12px; ${state.isTrainingMode ? 'background:#fef3c7; color:#92400e; border-color:#f59e0b;' : ''}" type="button" title="Toggle Isolated Training Mode (Practice without affecting live sales)">
             🎓 ${state.isTrainingMode ? 'Training ACTIVE' : 'Training Mode'}
           </button>
@@ -395,13 +503,13 @@ function renderTerminalView() {
             <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;max-width:100%;-webkit-overflow-scrolling:touch;">
               ${categories.map((cat) => `
                 <button
-                  class="pos-cat-pill-btn ${activeCategory === cat ? "active" : ""}"
-                  data-pos-cat="${cat}"
+                  class="pos-cat-pill-btn ${activeCategory === cat.key ? "active" : ""}"
+                  data-pos-cat="${cat.key}"
                   style="
                     display:inline-flex;
                     align-items:center;
                     gap:4px;
-                    border:1.5px solid ${activeCategory === cat ? "var(--ink, #18181b)" : "var(--line, #e2e8f0)"};
+                    border:1.5px solid ${activeCategory === cat.key ? "var(--ink, #18181b)" : "var(--line, #e2e8f0)"};
                     outline:none;
                     cursor:pointer;
                     padding:5px 13px;
@@ -411,13 +519,13 @@ function renderTerminalView() {
                     border-radius:20px;
                     white-space:nowrap;
                     transition:all 0.15s ease;
-                    background:${activeCategory === cat ? "var(--ink, #18181b)" : "var(--surface, #ffffff)"};
-                    color:${activeCategory === cat ? "#ffffff" : "var(--ink, #1e293b)"};
-                    box-shadow:${activeCategory === cat ? "0 2px 4px rgba(0,0,0,0.15)" : "0 1px 2px rgba(0,0,0,0.04)"};
+                    background:${activeCategory === cat.key ? "var(--ink, #18181b)" : "var(--surface, #ffffff)"};
+                    color:${activeCategory === cat.key ? "#ffffff" : "var(--ink, #1e293b)"};
+                    box-shadow:${activeCategory === cat.key ? "0 2px 4px rgba(0,0,0,0.15)" : "0 1px 2px rgba(0,0,0,0.04)"};
                   "
                   type="button"
                 >
-                  ${cat === "ALL" ? "☕ All Items" : cat}
+                  ${cat.key === "ALL" ? "☕ " : ""}${cat.label}
                 </button>
               `).join("")}
             </div>
@@ -447,10 +555,26 @@ function renderTerminalView() {
                 ${searchQuery ? `
                   <p style="font-size:13px;margin:0;">No menu items match "<strong>${escapeHtml(searchQuery)}</strong>"</p>
                   <button class="btn btn-sm btn-secondary" id="pos-reset-search-btn" style="margin-top:8px;font-size:11.5px;" type="button">Clear Search</button>
+                ` : (_menuCatalogueLoadState === "IDLE" || _menuCatalogueLoadState === "LOADING") ? `
+                  <div style="font-size:32px;margin-bottom:8px;">⏳</div>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">Loading POS Menu…</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">Fetching active sellable MenuItem records.</p>
+                ` : _menuCatalogueLoadState === "ERROR" ? `
+                  <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">POS Menu Could Not Load</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">${escapeHtml(_menuCatalogueLoadError)}</p>
+                  <button class="btn btn-sm btn-secondary" id="pos-retry-menu-btn" style="margin-top:10px;font-size:11.5px;" type="button">Retry Menu Load</button>
                 ` : `
                   <div style="font-size:32px;margin-bottom:8px;">☕</div>
-                  <strong style="font-size:14px;display:block;color:var(--ink);">No Menu Products Configured</strong>
-                  <p style="font-size:12px;margin:4px 0 0;">Create products in Menu Management or configure your café POS catalogue.</p>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">No POS Menu Items Yet</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">
+                    ${canManagePosMenu()
+                      ? "Create the first sellable item here. Inventory ingredients remain separate."
+                      : "The Primary Master must create an active sellable menu item."}
+                  </p>
+                  ${canManagePosMenu() ? `
+                    <button class="btn btn-sm btn-primary" id="pos-empty-add-menu-item-btn" style="margin-top:10px;font-size:11.5px;" type="button">＋ Add First POS Item</button>
+                  ` : ""}
                 `}
               </div>
             `}
@@ -999,10 +1123,122 @@ function renderKdsView() {
   `;
 }
 
+function openPosMenuItemModal(root) {
+  if (!canManagePosMenu()) {
+    showToast("Only the Primary Master can create global POS menu items.", "warning");
+    return;
+  }
+
+  const modalHtml = `
+    <div style="padding:6px;">
+      <h3 style="font-size:18px;font-weight:800;margin:0 0 6px;color:var(--ink);">Add POS Menu Item</h3>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">
+        Creates a sellable MenuItem. It does not create or alter inventory ingredients.
+      </p>
+      <form id="form-pos-add-menu-item">
+        <div style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;font-weight:600;">Item Name</label>
+          <input type="text" name="name" class="form-input" placeholder="e.g. Cappuccino" required maxlength="200">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Category</label>
+            <select name="category" class="form-input" required>
+              <option value="COFFEE">Hot Coffee</option>
+              <option value="TEA">Tea / Cold Brew</option>
+              <option value="BEVERAGES_OTHER">Other Beverage</option>
+              <option value="BAKERY">Bakery & Viennoiserie</option>
+              <option value="SNACKS">Snacks</option>
+              <option value="MAIN_COURSE">Savouries & Mains</option>
+              <option value="DESSERTS">Desserts</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Selling Price (₹)</label>
+            <input type="number" name="price" class="form-input" min="0.01" step="0.01" placeholder="180.00" required>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Dietary</label>
+            <select name="dietary" class="form-input">
+              <option value="VEG">Vegetarian</option>
+              <option value="NON_VEG">Non-Vegetarian</option>
+              <option value="VEGAN">Vegan</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Concept</label>
+            <select name="conceptEligibility" class="form-input">
+              <option value="CAFE">Zamorin Café</option>
+              <option value="SHARED">Shared Café / Restaurant</option>
+              <option value="RESTAURANT">Restaurant</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label class="form-label" style="font-size:12px;font-weight:600;">Description</label>
+          <textarea name="description" class="form-input" rows="3" maxlength="1000" placeholder="Customer-facing item description"></textarea>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button type="button" class="btn btn-secondary" id="pos-add-item-cancel-btn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="pos-add-item-submit-btn">Create & Add to POS</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  openModal(modalHtml);
+
+  document.querySelector("#pos-add-item-cancel-btn")?.addEventListener("click", () => closeModal());
+
+  const form = document.querySelector("#form-pos-add-menu-item");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fd = new FormData(form);
+    const submitBtn = document.querySelector("#pos-add-item-submit-btn");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating…";
+    }
+
+    try {
+      const dietary = String(fd.get("dietary") || "VEG");
+      await apiPost("/menu/items", {
+        name: String(fd.get("name") || "").trim(),
+        category: String(fd.get("category") || "OTHER"),
+        price: Number(fd.get("price")),
+        conceptEligibility: String(fd.get("conceptEligibility") || "CAFE"),
+        dietaryTags: dietary === "VEGAN" ? ["VEG", "VEGAN"] : [dietary],
+        description: String(fd.get("description") || "").trim(),
+      });
+
+      await loadPOSMenuCatalogue();
+      closeModal();
+      root.innerHTML = renderPOS();
+      wirePOSEventListeners(root);
+      showToast("POS menu item created and loaded into the till.", "success");
+    } catch (error) {
+      showToast(error?.message || "Could not create the POS menu item.", "error");
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create & Add to POS";
+      }
+    }
+  });
+}
+
 // -----------------------------------------------------------------------------
 // EVENT WIRING & INTERACTION LOGIC
 // -----------------------------------------------------------------------------
 export async function wirePOS(root) {
+  try {
+    await loadPOSMenuCatalogue();
+  } catch (error) {
+    console.warn("POS menu catalogue load failed:", error?.message || error);
+  }
+
   // Load background operational data exactly once per mount
   try {
     const statsRes = await apiGet("/bills/history/stats");
@@ -1027,6 +1263,9 @@ export async function wirePOS(root) {
     console.warn("POS background data load notice:", e.message);
   }
 
+  // Re-render after the asynchronous menu/background load so sellable products are visible.
+  root.innerHTML = renderPOS();
+
   // REC-13: Subscribe to offlineManager events for real-time queue badge & connectivity
   offlineManager.subscribe(async ({ pendingCount, isOnline }) => {
     _offlinePendingCount = pendingCount;
@@ -1047,6 +1286,30 @@ export async function wirePOS(root) {
 }
 
 function wirePOSEventListeners(root) {
+  const addMenuItem = () => openPosMenuItemModal(root);
+  root.querySelector("#pos-add-menu-item-btn")?.addEventListener("click", addMenuItem);
+  root.querySelector("#pos-empty-add-menu-item-btn")?.addEventListener("click", addMenuItem);
+
+  const reloadMenu = async (button) => {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "⏳ Loading…";
+    }
+    try {
+      await loadPOSMenuCatalogue();
+      root.innerHTML = renderPOS();
+      wirePOSEventListeners(root);
+      showToast("POS menu refreshed.", "success");
+    } catch (error) {
+      root.innerHTML = renderPOS();
+      wirePOSEventListeners(root);
+      showToast(error?.message || "Could not reload the POS menu.", "error");
+    }
+  };
+
+  root.querySelector("#pos-refresh-menu-btn")?.addEventListener("click", (event) => reloadMenu(event.currentTarget));
+  root.querySelector("#pos-retry-menu-btn")?.addEventListener("click", (event) => reloadMenu(event.currentTarget));
+
   // Keyboard shortcut listener: Ctrl+K or F2 focuses search
   const handleKeydown = (e) => {
     if ((e.ctrlKey && e.key === "k") || e.key === "F2") {
