@@ -283,6 +283,7 @@ test('EVI-003C: geofence snapshot detects distance or radius tampering independe
   attendanceEvidenceStorageService.readObjectBuffer = async () => bytes;
 
   const attendance = createAttendance();
+  attendance.attendanceEvidence.checkIn.cafeLatitude = 11.8755;
   attendance.attendanceEvidence.checkIn.distanceMeters = 999;
   attendance.attendanceEvidence.checkIn.allowedRadiusMeters = 10;
 
@@ -295,6 +296,7 @@ test('EVI-003C: geofence snapshot detects distance or radius tampering independe
 
     assert.equal(result.status, 'FAIL');
     assert.ok(result.failedChecks.includes('geofence_distance_recomputed'));
+    assert.ok(result.failedChecks.includes('geofence_within_snapshot_radius'));
   } finally {
     PrivateFile.findOne = originals.findOne;
     attendanceEvidenceStorageService.readObjectBuffer = originals.read;
