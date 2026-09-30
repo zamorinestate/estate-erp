@@ -2,7 +2,7 @@
 // PAGE: Trash Bin, Recovery & Data Disposition — SCR-024
 //
 // Enterprise Soft-Delete Recovery, Retention Governance, Preservation Holds,
-// Disposition Review, Multi-Store Deletion Propagation & ZURF Certificates.
+// Disposition Review, Verified-Stage Disposition Proof & ZURF Certificates.
 //
 // LOCATION: Administration → Data Management → Trash Bin & Recovery
 // PERMISSIONS: MASTER ONLY (Or explicitly authorized governance auditors)
@@ -71,7 +71,7 @@ export function renderTrashBin() {
             <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-028 TRASH</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0 0;">
-            Administration → Data Management · Governed recovery, retention holds &amp; multi-store purge
+            Administration → Data Management · Governed recovery, retention holds &amp; verified-stage disposition
           </p>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -460,17 +460,38 @@ function _wireRowActions(root) {
     });
   });
 
-  // Purge execution
+  // Permanent disposition execution. The server certifies only stages it
+  // actually executes and verifies; unsupported external-store stages are never
+  // represented as completed.
   root.querySelectorAll('[data-trash-action="purge"]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const trashId = btn.dataset.trashId;
       confirmAction({
         title: 'PERMANENT DATA DISPOSITION',
-        message: 'This will permanently destroy the business record across primary database, search index, and object storage. A ZURF compliance certificate will be issued. Proceed?',
+        message: 'This permanently erases the governed Trash payload only after final server-side retention, approval, hold, policy, transaction, and storage-capability checks. The certificate records verified stages only. Proceed to authorization?',
         onConfirm: async () => {
+          const reason = String(
+            window.prompt('Enter the permanent-disposition reason (minimum 10 characters):', '') || ''
+          ).trim();
+          if (reason.length < 10) {
+            showToast('A specific permanent-disposition reason of at least 10 characters is required.', 'coral');
+            return;
+          }
+
+          const confirmation = String(
+            window.prompt('Type PERMANENTLY_DISPOSE_TRASH_RECORD exactly to confirm:', '') || ''
+          ).trim();
+          if (confirmation !== 'PERMANENTLY_DISPOSE_TRASH_RECORD') {
+            showToast('Permanent-disposition confirmation phrase does not match.', 'coral');
+            return;
+          }
+
           try {
-            const res = await apiPost(`/trash/${trashId}/purge`);
-            showToast(res?.message || 'Permanent disposition completed.', 'mint');
+            const res = await apiPost(`/trash/${trashId}/purge`, {
+              reason,
+              confirmation,
+            });
+            showToast(res?.message || 'Verified-stage permanent disposition completed.', 'mint');
             _loadTabContent(root);
           } catch (err) {
             showToast(err?.message || 'Disposition purge failed.', 'coral');
@@ -498,7 +519,7 @@ async function _renderCertificatesTab(root, container) {
         <div style="font-size:28px; margin-bottom:8px;">📜</div>
         <div style="color:var(--ink); font-weight:600; font-size:14px;">No disposition certificates issued yet</div>
         <div style="color:var(--muted); font-size:12px; margin-top:4px;">
-          Governed permanent purges produce immutable ZURF v1 compliance certificates recorded here.
+          Governed permanent disposition produces immutable ZURF v1 certificates that record only server-verified disposition stages.
         </div>
       </div>`;
     return;
