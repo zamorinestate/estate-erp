@@ -461,3 +461,25 @@ test('P0-WF-032: attendance roster publication rechecks Primary Master and café
     'Roster publication café scope must not be limited only to Café Admin.'
   );
 });
+
+
+test('P0-WF-033: attendance administration uses an explicit management-role allowlist', () => {
+  const helperStart = attendanceController.indexOf('function ensureCafeOperationsAllowed');
+  const helperEnd = attendanceController.indexOf('function ensureCafeAccess', helperStart);
+  const helperBlock = attendanceController.slice(helperStart, helperEnd);
+
+  assert.ok(helperBlock.includes("request.auth.role === 'MASTER'"));
+  assert.ok(helperBlock.includes("request.auth.isPrimaryMaster !== true"));
+  assert.ok(helperBlock.includes("request.auth.role === 'OWNER'"));
+  assert.ok(helperBlock.includes("request.auth.role === 'CAFE_ADMIN'"));
+  assert.ok(helperBlock.includes("'PERMISSION_DENIED'"));
+  assert.equal(
+    helperBlock.includes("if (['MASTER', 'OWNER'].includes(request.auth.role)) return"),
+    false
+  );
+
+  const rosterShiftStart = attendanceController.indexOf('const listShiftsForRoster = asyncHandler');
+  const rosterShiftBlock = attendanceController.slice(rosterShiftStart);
+  assert.ok(rosterShiftBlock.includes('ensureCafeOperationsAllowed(request);'));
+  assert.ok(rosterShiftBlock.includes('ensureCafeAccess(request, cafeId);'));
+});
