@@ -54,6 +54,7 @@ function createPrivateFile(buffer, overrides = {}) {
     sizeBytes: buffer.length,
     sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
     attendanceContext: {
+      proofSnapshotVersion: 1,
       challengeId: 'CH-3001',
       cafeId: 'CAFE-KNR-01',
       punchType: 'CHECK_IN',
@@ -217,6 +218,44 @@ test('EVI-003A: durable QR proof snapshot fails on device, purpose, or temporal 
     ]) {
       assert.ok(result.failedChecks.includes(expected), expected);
     }
+  } finally {
+    PrivateFile.findOne = originals.findOne;
+    attendanceEvidenceStorageService.readObjectBuffer = originals.read;
+  }
+});
+
+
+
+test('EVI-003B: legacy evidence can still be streamed without new proof snapshot fields', async () => {
+  const originals = {
+    findOne: PrivateFile.findOne,
+    read: attendanceEvidenceStorageService.readObjectBuffer,
+  };
+  const bytes = Buffer.from('legacy-evidence');
+
+  const legacyFile = createPrivateFile(bytes);
+  delete legacyFile.attendanceContext.proofSnapshotVersion;
+  delete legacyFile.attendanceContext.grantIssuedAt;
+  delete legacyFile.attendanceContext.deviceId;
+  delete legacyFile.attendanceContext.proofPurpose;
+
+  PrivateFile.findOne = async () => legacyFile;
+  attendanceEvidenceStorageService.readObjectBuffer = async () => bytes;
+
+  try {
+    const result = await verifyAttendanceEvidenceSlot({
+      organisationId: 'ORG-ZAMORIN',
+      attendance: createAttendance(),
+      punchType: 'CHECK_IN',
+      verifyStorageBytes: false,
+      requireProofSnapshot: false,
+    });
+
+    assert.equal(result.status, 'PASS');
+    assert.equal(
+      result.checks.some((check) => check.name === 'proof_snapshot_version'),
+      false
+    );
   } finally {
     PrivateFile.findOne = originals.findOne;
     attendanceEvidenceStorageService.readObjectBuffer = originals.read;
