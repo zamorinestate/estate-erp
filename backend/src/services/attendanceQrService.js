@@ -62,6 +62,7 @@ class AttendanceQrService {
     deviceId = 'OPS_CONSOLE',
     requestedByUserId = 'SYSTEM',
     requestedByRole = 'SYSTEM',
+    isPrimaryMaster = false,
     assignedCafeIds = [],
     rotationIntervalSeconds = 45,
   }) {
@@ -72,6 +73,14 @@ class AttendanceQrService {
     // Role-based authorization for displaying the live rotating QR challenge
     if (requestedByRole === 'STAFF') {
       throw new ApiError(403, 'FORBIDDEN', 'Staff members are not permitted to generate or view raw QR challenges.');
+    }
+
+    if (requestedByRole === 'MASTER' && isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Attendance QR issuance requires the designated Primary Master.'
+      );
     }
 
     if (requestedByRole === 'CAFE_ADMIN' && Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0) {
@@ -206,6 +215,14 @@ class AttendanceQrService {
   async validateChallengeToken(qrToken, { employeeOrgId, employeeAssignedCafes = [], employeeRole = 'STAFF', isPrimaryMaster = false } = {}) {
     if (!qrToken) {
       throw new ApiError(400, 'QR_TOKEN_REQUIRED', 'Attendance QR token is required.');
+    }
+
+    if (employeeRole === 'MASTER' && isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Attendance QR verification requires the designated Primary Master.'
+      );
     }
 
     let trimmedToken = typeof qrToken === 'string' ? qrToken.trim() : '';
