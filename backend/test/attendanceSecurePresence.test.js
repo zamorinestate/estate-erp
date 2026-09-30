@@ -14,7 +14,7 @@ mongoose.set('bufferCommands', false);
 mongoose.Model.prototype.save = async function () { return this; };
 
 const attendanceQrService = require('../src/services/attendanceQrService');
-const { defaultStorageService } = require('../src/services/storageAdapterService');
+const { attendanceEvidenceStorageService } = require('../src/services/attendanceEvidenceStorageService');
 const { Attendance } = require('../src/modules/attendance/Attendance');
 const { AttendanceQrChallenge } = require('../src/models/AttendanceQrChallenge');
 const { AttendanceSubmission } = require('../src/models/AttendanceSubmission');
@@ -582,12 +582,13 @@ test('GEO-006: verifyGeofence rejects low accuracy GPS readings (> 100m)', async
 // 3. EVIDENCE UPLOAD & STORAGE ADAPTER SERVICE
 // ---------------------------------------------------------------------------
 
-test('STORE-001: defaultStorageService stores object buffer and retrieves it cleanly', async () => {
+test('STORE-001: attendanceEvidenceStorageService stores object buffer and retrieves it cleanly', async () => {
   const testBuffer = Buffer.from('TEST-IMAGE-BYTES-PRESENCE-VERIFICATION-2026', 'utf8');
-  const uploadResult = await defaultStorageService.uploadObject({
+  const uploadResult = await attendanceEvidenceStorageService.storeSelfie({
     organisationId: 'ORG-ZAMORIN',
-    fileType: 'ATTENDANCE_SELFIE',
-    fileName: 'presence_test.jpg',
+    cafeId: 'CAFE-KNR-01',
+    fileId: 'FILE-9001',
+    punchType: 'CHECK_IN',
     mimeType: 'image/jpeg',
     buffer: testBuffer,
   });
@@ -595,9 +596,12 @@ test('STORE-001: defaultStorageService stores object buffer and retrieves it cle
   assert.ok(uploadResult.fileKey);
   assert.equal(uploadResult.sizeBytes, testBuffer.length);
 
-  const retrieved = await defaultStorageService.readObjectBuffer({ fileKey: uploadResult.fileKey });
+  const retrieved = await attendanceEvidenceStorageService.readObjectBuffer({ fileKey: uploadResult.fileKey });
   assert.ok(retrieved);
   assert.equal(retrieved.toString('utf8'), 'TEST-IMAGE-BYTES-PRESENCE-VERIFICATION-2026');
+
+  const deleted = await attendanceEvidenceStorageService.deleteObject({ fileKey: uploadResult.fileKey });
+  assert.equal(deleted, true);
 });
 
 test('UPLOAD-001: uploadPunchSelfie rejects non-image MIME types', async () => {
@@ -1050,7 +1054,7 @@ test('PUNCH-004: staffCheckOut records authoritative exit with distinct selfie',
 test('RBAC-001: Staff can stream own attendance evidence photograph', async () => {
   const origFindOnePrivateFile = PrivateFile.findOne;
   const origFindOneAttendance = Attendance.findOne;
-  const origReadBuffer = defaultStorageService.readObjectBuffer;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
   const origCreateAudit = AuditEvent.create;
 
   PrivateFile.findOne = () => ({
@@ -1071,7 +1075,7 @@ test('RBAC-001: Staff can stream own attendance evidence photograph', async () =
     },
   });
 
-  defaultStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
   AuditEvent.create = async () => ({});
 
   const req = {
@@ -1092,7 +1096,7 @@ test('RBAC-001: Staff can stream own attendance evidence photograph', async () =
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
-    defaultStorageService.readObjectBuffer = origReadBuffer;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
     AuditEvent.create = origCreateAudit;
   }
 });
@@ -1189,7 +1193,7 @@ test('RBAC-003: Cafe Admin CANNOT stream evidence of employee in another cafe (4
 test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for other cafes', async () => {
   const origFindOnePrivateFile = PrivateFile.findOne;
   const origFindOneAttendance = Attendance.findOne;
-  const origReadBuffer = defaultStorageService.readObjectBuffer;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
   const origCreateAudit = AuditEvent.create;
 
   PrivateFile.findOne = () => ({
@@ -1209,7 +1213,7 @@ test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for othe
     },
   });
 
-  defaultStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
   AuditEvent.create = async () => ({});
 
   // Bound to Kannur -> Allowed
@@ -1245,7 +1249,7 @@ test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for othe
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
-    defaultStorageService.readObjectBuffer = origReadBuffer;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
     AuditEvent.create = origCreateAudit;
   }
 });
@@ -1253,7 +1257,7 @@ test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for othe
 test('RBAC-005: Primary Master can stream evidence across cafes in organisation', async () => {
   const origFindOnePrivateFile = PrivateFile.findOne;
   const origFindOneAttendance = Attendance.findOne;
-  const origReadBuffer = defaultStorageService.readObjectBuffer;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
   const origCreateAudit = AuditEvent.create;
 
   PrivateFile.findOne = () => ({
@@ -1273,7 +1277,7 @@ test('RBAC-005: Primary Master can stream evidence across cafes in organisation'
     },
   });
 
-  defaultStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
   let auditPayload = null;
   AuditEvent.create = async (payload) => { auditPayload = payload; };
 
@@ -1300,7 +1304,7 @@ test('RBAC-005: Primary Master can stream evidence across cafes in organisation'
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
-    defaultStorageService.readObjectBuffer = origReadBuffer;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
     AuditEvent.create = origCreateAudit;
   }
 });
@@ -1308,7 +1312,7 @@ test('RBAC-005: Primary Master can stream evidence across cafes in organisation'
 test('RBAC-006: evidence endpoint fails closed when stored selfie bytes are missing', async () => {
   const origFindOnePrivateFile = PrivateFile.findOne;
   const origFindOneAttendance = Attendance.findOne;
-  const origReadBuffer = defaultStorageService.readObjectBuffer;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
 
   PrivateFile.findOne = () => ({
     fileId: 'FILE-PHOTO-MISSING',
@@ -1326,7 +1330,7 @@ test('RBAC-006: evidence endpoint fails closed when stored selfie bytes are miss
     },
   });
 
-  defaultStorageService.readObjectBuffer = async () => null;
+  attendanceEvidenceStorageService.readObjectBuffer = async () => null;
 
   try {
     await assert.rejects(
@@ -1343,7 +1347,7 @@ test('RBAC-006: evidence endpoint fails closed when stored selfie bytes are miss
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
-    defaultStorageService.readObjectBuffer = origReadBuffer;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
   }
 });
 
