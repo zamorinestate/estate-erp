@@ -38,6 +38,7 @@ const {
   closePeriod,
   reopenPeriod,
   purgeSelfieEvidence,
+  reconcileOrphanSelfieEvidence,
   getServerTime,
   getStaffPolicy,
   getStaffToday,
@@ -126,7 +127,8 @@ router.post('/exceptions/:exceptionId/resolve', resolveException);
 router.post('/periods/:periodId/close', closePeriod);
 router.post('/periods/:periodId/reopen', reopenPeriod);
 
-// Privacy & Selfie Evidence Purge (Primary Master)
+// Privacy & Selfie Evidence Governance (Primary Master)
+router.post('/evidence/orphans/reconcile', reconcileOrphanSelfieEvidence);
 router.post('/evidence/purge', purgeSelfieEvidence);
 
 module.exports = router;
