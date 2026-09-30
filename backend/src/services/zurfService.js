@@ -11,8 +11,7 @@ const crypto = require('crypto');
 const { CompanyIdentityService } = require('./companyIdentityService');
 
 /**
- * Backward-compatibility shim. Returns resolved branding via CompanyIdentityService.
- * Callers that used the static COMPANY_CONFIG must await this function.
+ * Resolves export branding exclusively through the configured CompanyIdentity master.
  */
 async function getCompanyConfig({ organisationId, cafeId = null, sensitivityLevel = 'INTERNAL' } = {}) {
   return CompanyIdentityService.resolveExportBranding({
@@ -22,17 +21,7 @@ async function getCompanyConfig({ organisationId, cafeId = null, sensitivityLeve
   });
 }
 
-// Kept for legacy synchronous callers that have not yet migrated to async
-const COMPANY_CONFIG = {
-  legalName: 'Zamorin Estate Pvt. Ltd.',
-  tradingName: 'Zamorin Café',
-  gstin: '29AABCZ1234M1Z5',
-  cin: 'U55101KA2024PTC189201',
-  regAddress: 'Koramangala, Bengaluru, Karnataka — 560095',
-  contact: '+91 80 4123 9876 · corporate@zamorin.cafe',
-  logoSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect x="10" y="10" width="180" height="180" rx="48" fill="#16223F"/><path d="M58 68 L142 68 L58 132 L142 132" fill="none" stroke="#C6A567" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-};
-
+// No synchronous statutory/legal identity fallback is permitted.
 const exportJobs = new Map();
 const exportArtifacts = new Map();
 
@@ -56,8 +45,8 @@ class ZurfService {
    */
   static generateRunId() {
     const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    return `RPT-RUN-${d}-${rand}`;
+    const entropy = crypto.randomBytes(6).toString('hex').toUpperCase();
+    return `RPT-RUN-${d}-${entropy}`;
   }
 
   /**
@@ -401,7 +390,7 @@ class ZurfService {
    * Asynchronously schedules an export job in the queue and caches artifact data.
    */
   static enqueueExportJob({ reportId, format = 'PDF', scope, period, userId, organisationId = null, artifact = null }) {
-    const jobId = `EXP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+    const jobId = `EXP-${Date.now()}-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
     const job = {
       jobId,
       reportId,
@@ -514,6 +503,5 @@ class ZurfService {
 
 module.exports = {
   ZurfService,
-  COMPANY_CONFIG,
   getCompanyConfig,
 };
