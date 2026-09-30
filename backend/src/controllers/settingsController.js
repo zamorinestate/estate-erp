@@ -486,7 +486,7 @@ async function getMyAccess(req, res) {
         effectiveTo: grant.effectiveTo,
         sourceRequestId: grant.sourceRequestId,
         state: 'ACTIVE',
-      }))
+      })),
       pendingRequests: pendingAccessRequests.map((r) => ({
         requestId: r.requestId,
         requestType: r.requestType,
