@@ -10,6 +10,7 @@
 
 const { Incident } = require('../models/Incident');
 const { notificationService } = require('./NotificationService');
+const { SequenceCounter } = require('../models/SequenceCounter');
 
 class IncidentService {
   /**
@@ -60,8 +61,12 @@ class IncidentService {
 
     // Create new incident
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
-    const incidentId = `INC-${dateStr}-${rand}`;
+    const incidentId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `INCIDENT_${dateStr}`,
+      prefix: `INC-${dateStr}`,
+      minimumDigits: 5,
+    });
 
     const newIncident = await Incident.create({
       incidentId,
