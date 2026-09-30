@@ -15,6 +15,7 @@ const { ComplianceObligation } = require('../models/ComplianceObligation');
 const { MasterDuplicateCandidate } = require('../models/MasterDuplicateCandidate');
 const { MasterChangeRequest } = require('../models/MasterChangeRequest');
 const CafeTemplate = require('../models/CafeTemplate');
+const { CafeAccess } = require('../models/CafeAccess');
 
 const cafeService = require('../services/cafeService');
 
@@ -428,22 +429,12 @@ const changeCafeStatus = asyncHandler(
   async (request, response) => {
     requireMaster(request);
 
-    const cafeId =
-      normalizeIdentifier(
-        request.params.cafeId
-      );
-
+    const cafeId = normalizeIdentifier(request.params.cafeId);
     assertCafeAccess(request, cafeId);
 
-    const status =
-      normalizeIdentifier(
-        request.body?.status
-      );
+    const status = normalizeIdentifier(request.body?.status);
 
-    if (
-      !CAFE_STATUSES.includes(status) ||
-      status === 'ARCHIVED'
-    ) {
+    if (!CAFE_STATUSES.includes(status) || status === 'ARCHIVED') {
       throw new ApiError(
         400,
         'INVALID_CAFE_STATUS',
@@ -451,34 +442,61 @@ const changeCafeStatus = asyncHandler(
       );
     }
 
+    const organisationId = request.auth.organisationId;
+    const currentCafe = await Cafe.findOne({
+      organisationId,
+      cafeId,
+      status: { $ne: 'ARCHIVED' },
+    });
+
+    if (!currentCafe) {
+      throw new ApiError(
+        404,
+        'CAFE_NOT_FOUND',
+        'The café was not found.'
+      );
+    }
+
     if (status === 'ACTIVE') {
-      const existingCafe = await Cafe.findOne({
-        organisationId: request.auth.organisationId,
-        cafeId,
-        status: { $ne: 'ARCHIVED' },
-      }).lean();
+      normalizeCafeGeofenceAddress(currentCafe.address || {}, { required: true });
+    }
 
-      if (!existingCafe) {
-        throw new ApiError(404, 'CAFE_NOT_FOUND', 'The café was not found.');
+    const targetAccessStatus = ['TEST_MODE', 'ACTIVE'].includes(status)
+      ? 'ACTIVE'
+      : 'DISABLED';
+
+    // Fail-closed ordering: access state changes first. If the café write later
+    // fails, the parent café state still blocks or the access record remains
+    // disabled; no transition can accidentally open an inactive café.
+    const accessResult = await CafeAccess.updateOne(
+      { organisationId, cafeId },
+      {
+        $set: {
+          accessStatus: targetAccessStatus,
+          updatedBy: request.auth.userId,
+        },
       }
+    );
 
-      normalizeCafeGeofenceAddress(existingCafe.address || {}, { required: true });
+    if (!accessResult || accessResult.matchedCount !== 1) {
+      throw new ApiError(
+        409,
+        'CAFE_ACCESS_STATE_MISSING',
+        'Café status was not changed because its access record could not be synchronized.'
+      );
     }
 
     const cafe = await Cafe.findOneAndUpdate(
       {
-        organisationId:
-          request.auth.organisationId,
+        _id: currentCafe._id,
+        organisationId,
         cafeId,
-        status: {
-          $ne: 'ARCHIVED',
-        },
+        status: currentCafe.status,
       },
       {
         $set: {
           status,
-          updatedBy:
-            request.auth.userId,
+          updatedBy: request.auth.userId,
         },
       },
       {
@@ -489,36 +507,17 @@ const changeCafeStatus = asyncHandler(
 
     if (!cafe) {
       throw new ApiError(
-        404,
-        'CAFE_NOT_FOUND',
-        'The café was not found.'
+        409,
+        'CAFE_STATUS_STATE_CONFLICT',
+        'Café status changed concurrently. Access remains fail-closed and the status change must be retried from fresh state.'
       );
     }
 
-    try {
-      const { CafeAccess } = require('../models/CafeAccess');
-      if (status === 'TEMPORARILY_CLOSED' || status === 'CLOSED') {
-        await CafeAccess.updateOne(
-          { organisationId: request.auth.organisationId, cafeId },
-          { $set: { accessStatus: 'DISABLED', updatedBy: request.auth.userId } }
-        ).catch(() => {});
-      } else if (status === 'ACTIVE') {
-        await CafeAccess.updateOne(
-          { organisationId: request.auth.organisationId, cafeId, accessStatus: 'DISABLED' },
-          { $set: { accessStatus: 'ACTIVE', updatedBy: request.auth.userId } }
-        ).catch(() => {});
-      }
-    } catch (_) {}
-
     return response.status(200).json({
       success: true,
-      message:
-        'Café status updated successfully.',
-      data: {
-        cafe,
-      },
-      correlationId:
-        request.correlationId || null,
+      message: 'Café status updated successfully.',
+      data: { cafe },
+      correlationId: request.correlationId || null,
     });
   }
 );
@@ -527,34 +526,26 @@ const archiveCafe = asyncHandler(
   async (request, response) => {
     requireMaster(request);
 
-    const cafeId =
-      normalizeIdentifier(
-        request.params.cafeId
-      );
-
+    const cafeId = normalizeIdentifier(request.params.cafeId);
     assertCafeAccess(request, cafeId);
 
-    const reason =
-      typeof request.body?.reason ===
-        'string'
-        ? request.body.reason.trim()
-        : '';
+    const reason = typeof request.body?.reason === 'string'
+      ? request.body.reason.trim()
+      : '';
 
-    if (!reason) {
+    if (reason.length < 10) {
       throw new ApiError(
         400,
         'ARCHIVE_REASON_REQUIRED',
-        'An archive reason is required.'
+        'A specific archive reason of at least 10 characters is required.'
       );
     }
 
+    const organisationId = request.auth.organisationId;
     const cafe = await Cafe.findOne({
-      organisationId:
-        request.auth.organisationId,
+      organisationId,
       cafeId,
-      status: {
-        $ne: 'ARCHIVED',
-      },
+      status: { $ne: 'ARCHIVED' },
     });
 
     if (!cafe) {
@@ -565,38 +556,37 @@ const archiveCafe = asyncHandler(
       );
     }
 
+    // Suspend operational access BEFORE archiving the café. A failure after
+    // this point leaves the café safely inaccessible rather than partially open.
+    const accessResult = await CafeAccess.updateOne(
+      { organisationId, cafeId },
+      {
+        $set: {
+          accessStatus: 'SUSPENDED',
+          provisioningStatus: 'ARCHIVED',
+          updatedBy: request.auth.userId,
+        },
+      }
+    );
+
+    if (!accessResult || accessResult.matchedCount !== 1) {
+      throw new ApiError(
+        409,
+        'CAFE_ACCESS_STATE_MISSING',
+        'Café was not archived because its access record could not be suspended.'
+      );
+    }
+
     await cafe.archive({
-      userId:
-        request.auth.userId,
+      userId: request.auth.userId,
       reason,
     });
 
-    try {
-      const { CafeAccess } = require('../models/CafeAccess');
-      await CafeAccess.updateOne(
-        {
-          organisationId: request.auth.organisationId,
-          cafeId,
-        },
-        {
-          $set: {
-            accessStatus: 'SUSPENDED',
-            provisioningStatus: 'ARCHIVED',
-            updatedBy: request.auth.userId,
-          },
-        }
-      ).catch(() => {});
-    } catch (_) {}
-
     return response.status(200).json({
       success: true,
-      message:
-        'Café archived successfully.',
-      data: {
-        cafe,
-      },
-      correlationId:
-        request.correlationId || null,
+      message: 'Café archived successfully.',
+      data: { cafe },
+      correlationId: request.correlationId || null,
     });
   }
 );
