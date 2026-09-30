@@ -31,6 +31,7 @@ let cachedExceptions = [];
 let cachedOvertime = [];
 let cachedOrphanReconciliation = null;
 let cachedEvidenceIntegrityAudit = null;
+let cachedRetentionReadiness = null;
 
 const CAFE_NAMES = {};
 
@@ -1367,6 +1368,17 @@ function renderPoliciesSubpanel() {
   const integrityStatus = cachedEvidenceIntegrityAudit
     ? (cachedEvidenceIntegrityAudit.integrityOk === true ? "PASS" : "ATTENTION REQUIRED")
     : "NOT RUN";
+  const retentionCounts = cachedRetentionReadiness?.counts || {};
+  const retentionCommitted = Number(retentionCounts.committedEvidence || 0);
+  const retentionHolds = Number(retentionCounts.activeHolds || 0);
+  const retentionAssigned = Number(retentionCounts.policyAssigned || 0);
+  const retentionUnassigned = Number(retentionCounts.policyUnassigned || 0);
+  const retentionMetadataGate = Number(retentionCounts.metadataGateMatches || 0);
+  const retentionPolicyStatus = cachedRetentionReadiness
+    ? (cachedRetentionReadiness.formalPolicyConfigured
+        ? "FORMAL POLICY PRESENT · PURGE DISABLED"
+        : "FORMAL POLICY NOT CONFIGURED")
+    : "LOAD READINESS";
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
@@ -1449,21 +1461,44 @@ function renderPoliciesSubpanel() {
 
           <div style="display:flex; flex-direction:column; gap:10px; font-size:12.5px; margin-bottom:16px;">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Selfie Storage Consumed</span>
-              <strong style="font-family:var(--font-mono); color:var(--ink);">Not calculated here</strong>
+              <span style="color:var(--muted);">Committed Attendance Evidence</span>
+              <strong style="font-family:var(--font-mono); color:var(--ink);">${cachedRetentionReadiness ? retentionCommitted : "Load readiness"}</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Retention / Purge Eligibility</span>
-              <strong style="color:var(--warning); font-family:var(--font-mono);">Policy-driven</strong>
+              <span style="color:var(--muted);">Retention Policy Status</span>
+              <strong style="color:var(--warning); font-family:var(--font-mono);">${retentionPolicyStatus}</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Active Evidence Holds</span>
-              <strong style="color:#059669; font-weight:700;">Not loaded in this view</strong>
+              <strong style="color:#059669; font-weight:700;">${cachedRetentionReadiness ? retentionHolds : "Load readiness"}</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="color:var(--muted);">Biometric Identity Storage</span>
               <strong style="color:#059669; font-weight:700;">No facial-recognition template is created by the attendance punch flow</strong>
             </div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:10px; padding:10px; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--line); margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; gap:10px; font-size:11.5px;">
+              <span style="color:var(--muted);">Committed purge state</span>
+              <strong style="color:var(--color-danger);">DISABLED</strong>
+            </div>
+            ${isPrimary && cachedRetentionReadiness ? `
+              <div style="display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px;">
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${retentionCommitted}</strong><div style="font-size:10px;color:var(--muted);">Committed</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${retentionHolds}</strong><div style="font-size:10px;color:var(--muted);">Active Holds</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${retentionAssigned}</strong><div style="font-size:10px;color:var(--muted);">Policy Assigned</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${retentionUnassigned}</strong><div style="font-size:10px;color:var(--muted);">Policy Unassigned</div></div>
+              </div>
+              <div style="font-size:10.5px;color:var(--muted);">
+                ${retentionMetadataGate} record(s) currently match the future metadata gate, but none are deletable because committed-evidence purge is disabled.
+              </div>
+            ` : ""}
+            ${isPrimary ? `
+              <button class="btn btn-secondary" id="load-retention-readiness-btn" type="button" style="font-size:11.5px; align-self:flex-start;">
+                Load Retention Readiness
+              </button>
+            ` : ""}
           </div>
 
           <div style="display:flex; flex-direction:column; gap:10px; padding:10px; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--line);">
@@ -2199,6 +2234,24 @@ function wireAttendanceSubpanelActions(root) {
       await loadLiveAttendanceData();
       rerender(root);
     });
+  });
+
+  // Primary Master: read-only attendance evidence retention readiness.
+  root.querySelector("#load-retention-readiness-btn")?.addEventListener("click", async () => {
+    try {
+      const res = await apiGet("/attendance/evidence/retention/readiness");
+      cachedRetentionReadiness = res?.data || null;
+      const counts = res?.data?.counts || {};
+      showToast(
+        res?.data?.formalPolicyConfigured
+          ? `Retention readiness loaded: ${Number(counts.committedEvidence || 0)} committed evidence item(s), ${Number(counts.activeHolds || 0)} hold(s). Committed purge remains disabled.`
+          : `No formal attendance-evidence retention policy is configured. ${Number(counts.committedEvidence || 0)} committed evidence item(s) remain protected and purge stays disabled.`,
+        "info"
+      );
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Unable to load attendance evidence retention readiness.", "error");
+    }
   });
 
   // Primary Master: read-only forensic integrity audit of committed attendance evidence.
