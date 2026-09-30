@@ -375,16 +375,27 @@ class PosReconciliationService {
         job.resolvedAt = new Date();
         await job.save();
 
-        try {
-          await Bill.findOneAndUpdate(
-            {
-              organisationId: normalizeId(job.organisationId),
-              cafeId: normalizeId(job.cafeId),
-              billId: job.billId,
+        const billUpdate = await Bill.findOneAndUpdate(
+          {
+            organisationId: normalizeId(job.organisationId),
+            cafeId: normalizeId(job.cafeId),
+            billId: job.billId,
+          },
+          {
+            $set: {
+              bomDepletionStatus: bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED',
+              bomDepletionError: null,
             },
-            { $set: { bomDepletionStatus: bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED', bomDepletionError: null } }
+          }
+        );
+
+        if (!billUpdate) {
+          throw new ApiError(
+            409,
+            'BILL_BOM_STATUS_UPDATE_FAILED',
+            'BOM depletion completed but the authoritative Bill status could not be updated; reconciliation remains unresolved.'
           );
-        } catch {}
+        }
 
         return {
           success: true,
@@ -405,18 +416,22 @@ class PosReconciliationService {
         });
 
         if (!existingCt) {
-          const datePart = (job.payloadSnapshot?.businessDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
-          let ctSeqId;
-          try {
-            ctSeqId = await SequenceCounter.generateId({
-              organisationId: job.organisationId,
-              sequenceKey: `CASH_TX_${datePart}`,
-              prefix: `CT-${datePart}`,
-              minimumDigits: 4,
-            });
-          } catch {
-            ctSeqId = `CT-${datePart}-${Math.floor(1000 + Math.random() * 9000)}`;
+          const expectedAmount = Number(job.expectedAmount);
+          if (!Number.isFinite(expectedAmount) || expectedAmount <= 0) {
+            throw new ApiError(
+              409,
+              'INVALID_CASH_RECONCILIATION_AMOUNT',
+              'Cash reconciliation requires a positive authoritative expected amount.'
+            );
           }
+
+          const datePart = (job.payloadSnapshot?.businessDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+          const ctSeqId = await SequenceCounter.generateId({
+            organisationId: job.organisationId,
+            sequenceKey: `CASH_TX_${datePart}`,
+            prefix: `CT-${datePart}`,
+            minimumDigits: 4,
+          });
 
           const cashTx = new CashTransaction({
             cashTransactionId: ctSeqId,
@@ -426,7 +441,7 @@ class PosReconciliationService {
             transactionType: 'CASH_IN',
             direction: 'IN',
             category: 'POS_SALE',
-            amount: Math.max(0.01, job.expectedAmount || 0),
+            amount: expectedAmount,
             paymentMethod: 'CASH',
             status: 'POSTED',
             description: `POS Sale Receipt #${job.invoiceNumber || job.billId} (Reconciled)`,
