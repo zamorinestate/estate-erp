@@ -1324,6 +1324,25 @@ function renderPoliciesSubpanel() {
   const role = state.role || state.user?.role || ROLES.MASTER;
   const isPrimary = state.user?.isPrimaryMaster === true;
   const isCafeAdmin = role === ROLES.CAFE_ADMIN;
+  const scopedCafeId =
+    (state.selectedCafeId && state.selectedCafeId !== "ALL" ? state.selectedCafeId : "") ||
+    state.currentCafeId ||
+    state.user?.primaryCafeId ||
+    state.user?.assignedCafeIds?.[0] ||
+    "";
+  const scopedCafe = (cachedCafes || []).find((c) =>
+    String(c.cafeId || c.code || c.id || "").toUpperCase() === String(scopedCafeId).toUpperCase()
+  ) || null;
+  const geofenceRadius = Number(
+    scopedCafe?.address?.geofenceRadiusMetres ?? scopedCafe?.geofenceRadiusMetres
+  );
+  const geofenceConfigured =
+    Number.isFinite(Number(scopedCafe?.address?.latitude)) &&
+    Number.isFinite(Number(scopedCafe?.address?.longitude)) &&
+    Number.isFinite(geofenceRadius);
+  const geofenceDisplay = geofenceConfigured
+    ? `${Math.round(geofenceRadius)} m`
+    : (scopedCafeId ? "Not configured" : "Per café");
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
@@ -1331,8 +1350,8 @@ function renderPoliciesSubpanel() {
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
         <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Geofence Security</div>
-          <div style="font-size:22px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">50 Meters <span style="font-size:12px; font-weight:600; color:var(--muted);">Radius</span></div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● High-Accuracy GPS Required</div>
+          <div style="font-size:22px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">${geofenceDisplay} <span style="font-size:12px; font-weight:600; color:var(--muted);">Configured</span></div>
+          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">${geofenceConfigured ? "● High-Accuracy GPS Required" : "● Configure café latitude, longitude and radius"}</div>
         </div>
 
         <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
@@ -1349,8 +1368,8 @@ function renderPoliciesSubpanel() {
 
         <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Statutory Status</div>
-          <div style="font-size:22px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:4px;">100% Compliant</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Kerala Labour Act 1960</div>
+          <div style="font-size:22px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:4px;">Not Evaluated</div>
+          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Legal compliance is reported in the dedicated compliance workspace</div>
         </div>
       </div>
 
@@ -1373,7 +1392,7 @@ function renderPoliciesSubpanel() {
           <div style="display:flex; flex-direction:column; gap:10px; font-size:12.5px;">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Geofence Radius &amp; Accuracy</span>
-              <strong style="color:var(--ink); font-family:var(--font-mono);">50 Meters (GPS Required)</strong>
+              <strong style="color:var(--ink); font-family:var(--font-mono);">${geofenceDisplay} (${geofenceConfigured ? "GPS Required" : "Configuration Required"})</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Rotating QR Code Interval</span>
@@ -1385,7 +1404,7 @@ function renderPoliciesSubpanel() {
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Unpaid Break Rule</span>
-              <strong style="color:var(--ink); font-family:var(--font-mono);">30 Minutes (Standard 8h Shift)</strong>
+              <strong style="color:var(--ink); font-family:var(--font-mono);">Defined by published shift / roster</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="color:var(--muted);">Private Selfie Capture</span>
@@ -1399,7 +1418,7 @@ function renderPoliciesSubpanel() {
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
             <div>
               <h3 style="font-size:15.5px; font-weight:800; margin:0 0 2px; color:var(--ink);">Evidence Retention &amp; Privacy Standards</h3>
-              <p style="font-size:12px; color:var(--muted); margin:0;">Zero facial recognition · Short-lived signed links · 90-day retention</p>
+              <p style="font-size:12px; color:var(--muted); margin:0;">Private attendance evidence · authenticated access · governance-controlled retention</p>
             </div>
             <span class="status info" style="font-size:10px; font-weight:700;">PRIVACY SAFE</span>
           </div>
@@ -1407,87 +1426,62 @@ function renderPoliciesSubpanel() {
           <div style="display:flex; flex-direction:column; gap:10px; font-size:12.5px; margin-bottom:16px;">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Selfie Storage Consumed</span>
-              <strong style="font-family:var(--font-mono); color:var(--ink);">14.2 MB</strong>
+              <strong style="font-family:var(--font-mono); color:var(--ink);">Not calculated here</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Purge-Eligible Selfies (&gt; 90 Days)</span>
-              <strong style="color:var(--warning); font-family:var(--font-mono);">148 Photos</strong>
+              <span style="color:var(--muted);">Retention / Purge Eligibility</span>
+              <strong style="color:var(--warning); font-family:var(--font-mono);">Policy-driven</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Active Evidence Holds</span>
-              <strong style="color:#059669; font-weight:700;">0 Open Disputes</strong>
+              <strong style="color:#059669; font-weight:700;">Not loaded in this view</strong>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="color:var(--muted);">Biometric Identity Storage</span>
-              <strong style="color:#059669; font-weight:700;">None (Prohibited by Architecture)</strong>
+              <strong style="color:#059669; font-weight:700;">No facial-recognition template is created by the attendance punch flow</strong>
             </div>
           </div>
 
-          ${
-            isPrimary
-              ? `<button class="btn btn-secondary" id="purge-selfies-btn" type="button" style="font-size:12px; color:var(--danger); width:100%; font-weight:700; border-color:rgba(239,68,68,0.3);">
-                  🗑️ Execute Retention Purge (Primary Master Only)
-                 </button>`
-              : `<div style="font-size:11.5px; color:var(--muted); text-align:center; padding:6px; background:var(--surface-sunken); border-radius:6px;">Evidence purge authority: Primary Master only</div>`
-          }
-        </div>
-
-        <!-- Card 3: Statutory Labour Law Alignment -->
-        <div class="card" style="padding:20px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-            <div>
-              <h3 style="font-size:15.5px; font-weight:800; margin:0 0 2px; color:var(--ink);">Statutory Labour Law Conformity</h3>
-              <p style="font-size:12px; color:var(--muted); margin:0;">Kerala Shops &amp; Commercial Establishments Act, 1960</p>
-            </div>
-            <span class="status success" style="font-size:10px; font-weight:700;">AUDIT PASS</span>
-          </div>
-
-          <div style="display:flex; flex-direction:column; gap:10px; font-size:12.5px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Maximum Working Hours</span>
-              <strong style="color:var(--ink);">48 Hours / Week (6 Working Days)</strong>
-            </div>
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Mandatory Weekly Rest</span>
-              <strong style="color:var(--ink);">1 Full Day (24 Consecutive Hours)</strong>
-            </div>
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Overtime Wage Multiplier</span>
-              <strong style="color:var(--bronze-600); font-family:var(--font-mono); font-weight:700;">2.0× Standard Hourly Rate</strong>
-            </div>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="color:var(--muted);">Minimum Statutory Wage Floor</span>
-              <strong style="color:#059669; font-weight:700;">100% Staff Above Floor</strong>
-            </div>
+          <div style="font-size:11.5px; color:var(--muted); text-align:center; padding:8px; background:var(--surface-sunken); border-radius:6px;">
+            Evidence retention changes require an audited governance workflow. This screen does not simulate purge counts or deletion results.
           </div>
         </div>
 
-        <!-- Card 4: Audit Trail & Tamper Resistance -->
+        <!-- Card 3: Compliance Scope -->
         <div class="card" style="padding:20px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
             <div>
-              <h3 style="font-size:15.5px; font-weight:800; margin:0 0 2px; color:var(--ink);">Audit Trail &amp; Evidence Integrity</h3>
-              <p style="font-size:12px; color:var(--muted); margin:0;">Cryptographic punch attribution and dispute resolution SLA</p>
+              <h3 style="font-size:15.5px; font-weight:800; margin:0 0 2px; color:var(--ink);">Compliance Scope</h3>
+              <p style="font-size:12px; color:var(--muted); margin:0;">Attendance controls do not independently certify statutory compliance.</p>
             </div>
-            <span class="status info" style="font-size:10px; font-weight:700;">VERIFIED</span>
+            <span class="status info" style="font-size:10px; font-weight:700;">SEPARATE REVIEW</span>
           </div>
+          <div style="font-size:12.5px; color:var(--muted); line-height:1.55;">
+            Working-hour limits, wage floors, overtime multipliers and jurisdiction-specific legal conclusions must come from the canonical compliance and payroll configuration. No legal pass/fail percentage is manufactured in this attendance view.
+          </div>
+        </div>
 
+        <!-- Card 4: Runtime Evidence Integrity -->
+        <div class="card" style="padding:20px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+            <div>
+              <h3 style="font-size:15.5px; font-weight:800; margin:0 0 2px; color:var(--ink);">Runtime Evidence Integrity</h3>
+              <p style="font-size:12px; color:var(--muted); margin:0;">Controls enforced by the current QR → GPS → selfie punch path.</p>
+            </div>
+            <span class="status success" style="font-size:10px; font-weight:700;">ENFORCED</span>
+          </div>
           <div style="display:flex; flex-direction:column; gap:10px; font-size:12.5px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Biometric Proof Standard</span>
-              <strong style="color:var(--ink);">Cryptographically Signed Token</strong>
+            <div style="display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding-bottom:8px;">
+              <span style="color:var(--muted);">Rotating café challenge</span><strong>Required</strong>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Audit Ledger Immutability</span>
-              <strong style="color:#059669; font-weight:700;">Hash-Chained Event Stream</strong>
+            <div style="display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding-bottom:8px;">
+              <span style="color:var(--muted);">Server-side geofence verification</span><strong>Required</strong>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); padding-bottom:8px;">
-              <span style="color:var(--muted);">Dispute Resolution SLA</span>
-              <strong style="color:var(--ink);">48 Hours (Primary Master Sign-Off)</strong>
+            <div style="display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding-bottom:8px;">
+              <span style="color:var(--muted);">Distinct Check-In / Check-Out selfies</span><strong>Required</strong>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="color:var(--muted);">Third-Party Export Format</span>
-              <strong style="color:var(--ink);">PDF Statutory Proof &amp; CSV</strong>
+            <div style="display:flex; justify-content:space-between; gap:12px;">
+              <span style="color:var(--muted);">Evidence viewing</span><strong>Authenticated &amp; audited</strong>
             </div>
           </div>
         </div>
@@ -2422,14 +2416,6 @@ function wireAttendanceSubpanelActions(root) {
   root.querySelectorAll("#export-policy-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       openCompliancePolicyModal(root);
-    });
-  });
-
-  // Policies: Execute Ephemeral Selfie Retention Purge Action
-  root.querySelector("#purge-selfies-btn")?.addEventListener("click", () => {
-    confirmAction("Permanently purge 148 ephemeral attendance selfies older than 90 days? Cryptographic audit logs and GPS proofs will be preserved immutably.", () => {
-      showToast("Retention purge executed: 148 expired selfies deleted, 14.2 MB storage reclaimed.", "success");
-      rerender(root);
     });
   });
 
