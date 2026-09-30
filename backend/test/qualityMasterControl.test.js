@@ -271,6 +271,8 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     lotId: 'LOT-20260820-CREAM',
     supplierLot: 'SUP-CREAM-20260820',
     itemId: 'SKU-CREAM',
+    vendorId: 'VEN-TEST-01',
+    procurementReference: 'PO-TEST-CREAM-01',
     unit: 'L',
     initialQuantity: 12,
     quantityBase: 12,
@@ -592,19 +594,20 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(verifyRes.data.data.capa.durableSource, 'CAPA_RECORD');
   });
 
-  await t.test('10. GET /api/v1/quality/traceability never fabricates trace or recall readiness when source is unavailable', async () => {
+  await t.test('10. GET /api/v1/quality/traceability uses the authoritative lot and never fabricates recall readiness', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
-      path: '/api/v1/quality/traceability?lotNumber=LOT-20260815-MILK',
+      path: '/api/v1/quality/traceability?lotNumber=LOT-20260820-CREAM',
       headers: masterHeaders,
     });
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.trace.sourceStatus, 'UNAVAILABLE');
-    assert.equal(res.data.data.trace.backwardTrace, null);
-    assert.equal(res.data.data.trace.forwardTrace, null);
+    assert.equal(res.data.data.trace.sourceStatus, 'AUTHORITATIVE');
+    assert.equal(res.data.data.trace.resolvedLotId, 'LOT-20260820-CREAM');
+    assert.equal(res.data.data.trace.backwardTrace.supplierId, 'VEN-TEST-01');
+    assert.equal(res.data.data.trace.traceGapCheck.status, 'BACKWARD_TRACE_GAPS_PRESENT');
     assert.equal(res.data.data.trace.recallReadiness.status, 'NOT_ASSESSED');
     assert.equal(res.data.data.trace.recallReadiness.drillElapsedSeconds, null);
   });
@@ -623,7 +626,7 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
     assert.equal(res.data.data.sourceStatus, 'UNAVAILABLE');
   });
 
-  await t.test('12. GET /api/v1/quality/integrity never claims 100% PASS without verification coverage', async () => {
+  await t.test('12. GET /api/v1/quality/integrity reports partial measured coverage without blanket certification', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -633,10 +636,12 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.integrityScore, null);
-    assert.equal(res.data.data.coveragePercent, 0);
     assert.equal(res.data.data.allPassed, false);
     assert.ok(res.data.data.totalChecks >= 10);
-    assert.ok(res.data.data.checks.every((check) => check.status === 'NOT_VERIFIED'));
+    assert.ok(res.data.data.verifiedChecks >= 2);
+    assert.ok(res.data.data.coveragePercent > 0);
+    assert.ok(res.data.data.coveragePercent < 100);
+    assert.ok(res.data.data.checks.some((check) => check.status === 'PASS'));
+    assert.ok(res.data.data.checks.some((check) => check.status === 'NOT_VERIFIED'));
   });
 });
