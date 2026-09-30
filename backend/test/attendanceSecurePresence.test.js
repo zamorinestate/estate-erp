@@ -134,6 +134,12 @@ const {
   getAttendanceEvidenceRecord,
 } = require('../src/modules/attendance/attendanceController');
 
+const VALID_TEST_JPEG_BYTES = Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff]),
+  Buffer.from('ZAMORIN-ATTENDANCE-TEST-JPEG', 'utf8'),
+  Buffer.from([0xff, 0xd9]),
+]);
+
 function createMockRes() {
   return {
     statusCode: 200,
@@ -1134,7 +1140,7 @@ test('RBAC-001: Staff can stream own attendance evidence photograph', async () =
     fileId: 'FILE-PHOTO-01',
     fileKey: 'org/selfie_01.jpg',
     mimeType: 'image/jpeg',
-    sizeBytes: Buffer.byteLength('JPEG-RAW-IMAGE-DATA'),
+    sizeBytes: VALID_TEST_JPEG_BYTES.length,
     isPurged: false,
     uploadedByUserId: 'EMP-STAFF-1',
     organisationId: 'ORG-ZAMORIN',
@@ -1148,7 +1154,7 @@ test('RBAC-001: Staff can stream own attendance evidence photograph', async () =
     },
   });
 
-  attendanceEvidenceStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => VALID_TEST_JPEG_BYTES;
   AuditEvent.create = async () => ({});
 
   const req = {
@@ -1286,7 +1292,7 @@ test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for othe
     },
   });
 
-  attendanceEvidenceStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => VALID_TEST_JPEG_BYTES;
   AuditEvent.create = async () => ({});
 
   // Bound to Kannur -> Allowed
@@ -1350,7 +1356,7 @@ test('RBAC-005: Primary Master can stream evidence across cafes in organisation'
     },
   });
 
-  attendanceEvidenceStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => VALID_TEST_JPEG_BYTES;
   let auditPayload = null;
   AuditEvent.create = async (payload) => { auditPayload = payload; };
 
