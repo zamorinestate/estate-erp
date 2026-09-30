@@ -102,15 +102,25 @@ function getIstBusinessDate(date = new Date()) {
 }
 
 function ensureCafeOperationsAllowed(request) {
-  if (['MASTER', 'OWNER'].includes(request.auth.role)) return;
+  if (request.auth.role === 'MASTER') {
+    if (request.auth.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Attendance administration requires the designated Primary Master.'
+      );
+    }
+    return;
+  }
+  if (request.auth.role === 'OWNER') return;
   if (request.auth.privilegeProfile === 'SELF_ONLY') {
     throw new ApiError(403, 'PERMISSION_DENIED', 'Cafe Operations attendance administration is restricted on personal or untrusted devices.');
   }
 }
 
 function ensureCafeAccess(request, cafeId) {
-  if (request.auth.role === 'MASTER') return;
   ensureCafeOperationsAllowed(request);
+  if (request.auth.role === 'MASTER') return;
   const assigned = (request.auth.assignedCafeIds || []).map((c) => String(c).trim().toUpperCase());
   if (!assigned.length && request.auth.role === 'OWNER') {
     throw new ApiError(403, 'CROSS_CAFE_RESOURCE_DENIED', 'Owner has no assigned cafés.');
@@ -645,10 +655,10 @@ const publishRoster = asyncHandler(async (request, response) => {
 
   if (!roster) throw new ApiError(404, 'ROSTER_NOT_FOUND', 'Roster not found.');
 
-  if (request.auth.role === 'CAFE_ADMIN') {
-    ensureCafeOperationsAllowed(request);
-    ensureCafeAccess(request, roster.cafeId);
-  }
+  // Re-check live authority at execution time. This rejects any retired/non-primary
+  // MASTER identity and applies café scope to Owner and Café Admin publication.
+  ensureCafeOperationsAllowed(request);
+  ensureCafeAccess(request, roster.cafeId);
 
   if (roster.status === 'PUBLISHED') {
     return response.status(200).json({
