@@ -260,8 +260,19 @@ class FoodSafetyService {
   /**
    * Queries temperature logs with filtering.
    */
-  static async listTemperatures({ organisationId, cafeId, excursionsOnly = false, limit = 50 }) {
-    const query = { organisationId, cafeId };
+  static async listTemperatures({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    excursionsOnly = false,
+    limit = 50,
+  }) {
+    const query = { organisationId };
+    if (cafeId) {
+      query.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      query.cafeId = { $in: cafeIds };
+    }
     if (excursionsOnly) {
       query.isExcursion = true;
     }
@@ -358,20 +369,31 @@ class FoodSafetyService {
   /**
    * Lists cleaning tasks, marking overdue uncompleted tasks as MISSED.
    */
-  static async listCleaningTasks({ organisationId, cafeId, status = null, limit = 50 }) {
+  static async listCleaningTasks({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    status = null,
+    limit = 50,
+  }) {
     const now = new Date();
-    // Auto-update overdue tasks that are still DUE
+    const scope = { organisationId };
+    if (cafeId) {
+      scope.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      scope.cafeId = { $in: cafeIds };
+    }
+
     await CleaningTask.updateMany(
       {
-        organisationId,
-        cafeId,
+        ...scope,
         status: 'DUE',
         dueDateTime: { $lt: now },
       },
       { $set: { status: 'MISSED' } }
     );
 
-    const query = { organisationId, cafeId };
+    const query = { ...scope };
     if (status) {
       query.status = status;
     }
@@ -423,8 +445,19 @@ class FoodSafetyService {
     });
   }
 
-  static async listPestControl({ organisationId, cafeId, limit = 50 }) {
-    return PestControlRecord.find({ organisationId, cafeId }).sort({ serviceDate: -1 }).limit(limit).lean();
+  static async listPestControl({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    limit = 50,
+  }) {
+    const query = { organisationId };
+    if (cafeId) {
+      query.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      query.cafeId = { $in: cafeIds };
+    }
+    return PestControlRecord.find(query).sort({ serviceDate: -1 }).limit(limit).lean();
   }
 
   /**
@@ -469,8 +502,19 @@ class FoodSafetyService {
     });
   }
 
-  static async listCalibrations({ organisationId, cafeId, limit = 50 }) {
-    return CalibrationRecord.find({ organisationId, cafeId }).sort({ nextDueDate: 1 }).limit(limit).lean();
+  static async listCalibrations({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    limit = 50,
+  }) {
+    const query = { organisationId };
+    if (cafeId) {
+      query.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      query.cafeId = { $in: cafeIds };
+    }
+    return CalibrationRecord.find(query).sort({ nextDueDate: 1 }).limit(limit).lean();
   }
 
   /**
