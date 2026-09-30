@@ -1359,6 +1359,9 @@ function renderPoliciesSubpanel() {
   const integrityScanned = Number(cachedEvidenceIntegrityAudit?.evidenceSlotsScanned || 0);
   const integrityPassed = Number(cachedEvidenceIntegrityAudit?.passed || 0);
   const integrityFailed = Number(cachedEvidenceIntegrityAudit?.failed || 0);
+  const integrityQuarantined = Number(cachedEvidenceIntegrityAudit?.incidentResponse?.quarantined || 0);
+  const integrityAuditEvents = Number(cachedEvidenceIntegrityAudit?.incidentResponse?.auditEventsRecorded || 0);
+  const integrityAlertsQueued = Number(cachedEvidenceIntegrityAudit?.incidentResponse?.alertsQueued || 0);
   const integrityStatus = cachedEvidenceIntegrityAudit
     ? (cachedEvidenceIntegrityAudit.integrityOk === true ? "PASS" : "ATTENTION REQUIRED")
     : "NOT RUN";
@@ -1546,6 +1549,9 @@ function renderPoliciesSubpanel() {
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityScanned}</strong><div style="font-size:10px;color:var(--muted);">Evidence Slots</div></div>
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityPassed}</strong><div style="font-size:10px;color:var(--muted);">Passed</div></div>
                 <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityFailed}</strong><div style="font-size:10px;color:var(--muted);">Failed</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityQuarantined}</strong><div style="font-size:10px;color:var(--muted);">Quarantined</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityAuditEvents}</strong><div style="font-size:10px;color:var(--muted);">Audit Events</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityAlertsQueued}</strong><div style="font-size:10px;color:var(--muted);">Security Alerts</div></div>
               </div>
             ` : ""}
             ${isPrimary ? `
@@ -2202,9 +2208,11 @@ function wireAttendanceSubpanelActions(root) {
       });
       cachedEvidenceIntegrityAudit = res?.data || null;
       const failed = Number(res?.data?.failed || 0);
+      const quarantined = Number(res?.data?.incidentResponse?.quarantined || 0);
+      const alertsQueued = Number(res?.data?.incidentResponse?.alertsQueued || 0);
       showToast(
         failed
-          ? `Evidence integrity audit found ${failed} failed evidence slot(s). Review before relying on those records.`
+          ? `Evidence integrity audit found ${failed} failed slot(s); ${quarantined} quarantined and ${alertsQueued} Primary Master security alert(s) queued.`
           : `Evidence integrity audit passed ${Number(res?.data?.passed || 0)} evidence slot(s).`,
         failed ? "error" : "success"
       );
