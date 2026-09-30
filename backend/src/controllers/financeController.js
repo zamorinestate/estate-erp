@@ -773,9 +773,22 @@ const createJournal = asyncHandler(async (request, response) => {
 
 const postJournal = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { journalId } = request.params;
+  const journalId = normalizeFinanceId(request.params.journalId);
 
-  const journal = await Journal.findOne({ organisationId, journalId });
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_REQUIRED',
+      'Only the Primary Master may post accounting journals.'
+    );
+  }
+
+  const journalQuery = Journal.findOne({ organisationId, journalId });
+  const journal =
+    journalQuery && typeof journalQuery.lean === 'function'
+      ? await journalQuery.lean()
+      : await journalQuery;
+
   if (!journal) {
     throw new ApiError(404, 'JOURNAL_NOT_FOUND', 'Journal not found.');
   }
@@ -783,20 +796,147 @@ const postJournal = asyncHandler(async (request, response) => {
   if (journal.status === 'POSTED') {
     throw new ApiError(409, 'ALREADY_POSTED', 'This journal is already posted to the General Ledger.');
   }
-
-  // Check period status
-  const period = await FinancialPeriod.findOne({ organisationId, periodId: journal.periodId });
-  if (period && period.status === 'CLOSED') {
-    throw new ApiError(403, 'PERIOD_CLOSED', `Financial period ${journal.periodId} is closed. Postings are locked.`);
+  if (!['DRAFT', 'SUBMITTED', 'APPROVED', 'PENDING_APPROVAL'].includes(journal.status)) {
+    throw new ApiError(
+      409,
+      'JOURNAL_NOT_POSTABLE',
+      `Journal in ${journal.status} state cannot be posted.`
+    );
   }
 
-  journal.status = 'POSTED';
-  journal.postedAt = new Date();
-  journal.postedBy = userId;
-  journal.checkerUserId = userId;
-  await journal.save();
+  const periodQuery = FinancialPeriod.findOne({
+    organisationId,
+    periodId: journal.periodId,
+  });
+  const period =
+    periodQuery && typeof periodQuery.lean === 'function'
+      ? await periodQuery.lean()
+      : await periodQuery;
 
-  return response.status(200).json({ message: `Journal ${journalId} successfully posted to General Ledger.`, journal });
+  if (!period) {
+    throw new ApiError(
+      409,
+      'FINANCIAL_PERIOD_NOT_FOUND',
+      'Journal posting is blocked because the referenced financial period does not exist.'
+    );
+  }
+  if (!['OPEN', 'CLOSING', 'REOPENED'].includes(period.status)) {
+    throw new ApiError(
+      403,
+      'PERIOD_CLOSED',
+      `Financial period ${journal.periodId} is ${period.status}. Postings are locked.`
+    );
+  }
+
+  const lines = Array.isArray(journal.lines) ? journal.lines : [];
+  if (lines.length < 2) {
+    throw new ApiError(
+      409,
+      'JOURNAL_LINES_INVALID',
+      'Journal posting requires at least two double-entry lines.'
+    );
+  }
+
+  let totalDebitPaisa = 0;
+  let totalCreditPaisa = 0;
+  const accountCodes = new Set();
+
+  for (const line of lines) {
+    const debit = Number(line.debitPaisa || 0);
+    const credit = Number(line.creditPaisa || 0);
+    if (
+      !Number.isSafeInteger(debit) ||
+      !Number.isSafeInteger(credit) ||
+      debit < 0 ||
+      credit < 0 ||
+      (debit > 0 && credit > 0) ||
+      (debit === 0 && credit === 0)
+    ) {
+      throw new ApiError(
+        409,
+        'JOURNAL_LINE_INVALID',
+        `Journal line ${line.lineId || 'UNKNOWN'} has invalid debit/credit values.`
+      );
+    }
+    totalDebitPaisa += debit;
+    totalCreditPaisa += credit;
+    accountCodes.add(normalizeFinanceId(line.accountCode));
+  }
+
+  if (
+    totalDebitPaisa !== totalCreditPaisa ||
+    totalDebitPaisa !== Number(journal.totalDebitPaisa || 0) ||
+    totalCreditPaisa !== Number(journal.totalCreditPaisa || 0)
+  ) {
+    throw new ApiError(
+      409,
+      'UNBALANCED_JOURNAL',
+      'Journal totals changed or no longer balance. Posting is blocked.'
+    );
+  }
+
+  const accountQuery = ChartOfAccount.find({
+    organisationId,
+    accountCode: { $in: [...accountCodes] },
+    status: 'ACTIVE',
+    isPostingAllowed: { $ne: false },
+  });
+  const accounts =
+    accountQuery && typeof accountQuery.lean === 'function'
+      ? await accountQuery.lean()
+      : await accountQuery;
+  const activeCodes = new Set((accounts || []).map((account) => normalizeFinanceId(account.accountCode)));
+  const missingOrBlocked = [...accountCodes].filter((code) => !activeCodes.has(code));
+
+  if (missingOrBlocked.length > 0) {
+    throw new ApiError(
+      409,
+      'JOURNAL_ACCOUNT_UNAVAILABLE',
+      'One or more journal accounts are missing, inactive, or not posting-enabled.',
+      { accountCodes: missingOrBlocked }
+    );
+  }
+
+  const postedAt = new Date();
+  const posted = await Journal.findOneAndUpdate(
+    {
+      _id: journal._id,
+      organisationId,
+      journalId,
+      status: journal.status,
+      totalDebitPaisa: journal.totalDebitPaisa,
+      totalCreditPaisa: journal.totalCreditPaisa,
+    },
+    {
+      $set: {
+        status: 'POSTED',
+        postedAt,
+        postedBy: userId,
+        // A distinct journal checker role is not currently configured.
+        // Do not misrepresent the poster as an independent checker.
+        checkerUserId: null,
+      },
+    },
+    { new: true, runValidators: true }
+  );
+
+  if (!posted) {
+    throw new ApiError(
+      409,
+      'JOURNAL_POST_STATE_CONFLICT',
+      'Journal state changed while posting was being committed. Reload and retry from fresh state.'
+    );
+  }
+
+  return response.status(200).json({
+    success: true,
+    message: `Journal ${journalId} successfully posted to the General Ledger.`,
+    data: {
+      journal: posted,
+      postingControl: 'PRIMARY_MASTER_SINGLE_CONTROL',
+      makerCheckerStatus: 'NOT_CONFIGURED',
+    },
+  });
 });
 
 const reverseJournal = asyncHandler(async (request, response) => {
@@ -2314,97 +2454,229 @@ const getFinancialStatements = asyncHandler(async (request, response) => {
 const getFinanceIntegrity = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
 
-  const journals = await Journal.find({ organisationId }).lean();
-  const apInvoices = await APInvoice.find({ organisationId }).lean();
-  const bankAccounts = await BankAccount.find({ organisationId }).lean();
-  const storeDays = await StoreDayAudit.find({ organisationId }).lean();
-  const settlements = await MarketplaceSettlement.find({ organisationId }).lean();
+  const [
+    journals,
+    apInvoices,
+    bankAccounts,
+    storeDays,
+    settlements,
+    periods,
+    chartAccounts,
+  ] = await Promise.all([
+    Journal.find({ organisationId }).lean(),
+    APInvoice.find({ organisationId }).lean(),
+    BankAccount.find({ organisationId }).lean(),
+    StoreDayAudit.find({ organisationId }).lean(),
+    MarketplaceSettlement.find({ organisationId }).lean(),
+    FinancialPeriod.find({ organisationId }).lean(),
+    ChartOfAccount.find({ organisationId, status: 'ACTIVE' }).lean(),
+  ]);
 
-  const issues = [];
+  const journalRows = Array.isArray(journals) ? journals : [];
+  const apRows = Array.isArray(apInvoices) ? apInvoices : [];
+  const bankRows = Array.isArray(bankAccounts) ? bankAccounts : [];
+  const storeRows = Array.isArray(storeDays) ? storeDays : [];
+  const settlementRows = Array.isArray(settlements) ? settlements : [];
+  const periodRows = Array.isArray(periods) ? periods : [];
+  const accountRows = Array.isArray(chartAccounts) ? chartAccounts : [];
 
-  // Check 1: Unbalanced journals (Total Debits !== Total Credits)
-  journals.forEach((j) => {
-    if (j.totalDebitPaisa !== j.totalCreditPaisa) {
-      issues.push({
-        check: 'UNBALANCED_JOURNAL',
-        severity: 'CRITICAL',
-        description: `Journal ${j.journalId} has unequal debits (₹${(j.totalDebitPaisa / 100).toFixed(2)}) and credits (₹${(j.totalCreditPaisa / 100).toFixed(2)}).`,
-      });
+  const checks = [];
+  const addCheck = (check, status, description, evidence = {}) => {
+    checks.push({ check, status, description, evidence });
+  };
+
+  const unbalanced = journalRows.filter(
+    (journal) =>
+      Number(journal.totalDebitPaisa || 0) !== Number(journal.totalCreditPaisa || 0)
+  );
+  addCheck(
+    'JOURNAL_BALANCE',
+    journalRows.length === 0 ? 'NOT_CONFIGURED' : (unbalanced.length === 0 ? 'PASS' : 'FAIL'),
+    journalRows.length === 0
+      ? 'No journal records exist.'
+      : `${journalRows.length} journal(s) inspected; ${unbalanced.length} unbalanced.`,
+    { journalCount: journalRows.length, unbalancedCount: unbalanced.length }
+  );
+
+  const apControlCodes = new Set(
+    accountRows
+      .filter((account) => account.controlAccountType === 'ACCOUNTS_PAYABLE')
+      .map((account) => normalizeFinanceId(account.accountCode))
+  );
+  const apSubledgerPaisa = apRows
+    .filter((invoice) => invoice.paymentStatus !== 'CANCELLED')
+    .reduce((sum, invoice) => sum + Number(invoice.outstandingPaisa || 0), 0);
+  let apGlPaisa = 0;
+  for (const journal of journalRows.filter((row) => row.status === 'POSTED')) {
+    for (const line of journal.lines || []) {
+      if (apControlCodes.has(normalizeFinanceId(line.accountCode))) {
+        apGlPaisa += Number(line.creditPaisa || 0) - Number(line.debitPaisa || 0);
+      }
     }
+  }
+  if (apControlCodes.size === 0) {
+    addCheck(
+      'AP_SUBLEDGER_TO_GL',
+      'NOT_CONFIGURED',
+      'No active Accounts Payable control account is configured.'
+    );
+  } else {
+    addCheck(
+      'AP_SUBLEDGER_TO_GL',
+      apSubledgerPaisa === apGlPaisa ? 'PASS' : 'FAIL',
+      `AP subledger ₹${(apSubledgerPaisa / 100).toFixed(2)} vs posted GL ₹${(apGlPaisa / 100).toFixed(2)}.`,
+      { apSubledgerPaisa, apGlPaisa, variancePaisa: apSubledgerPaisa - apGlPaisa }
+    );
+  }
+
+  const unreconciledBanks = bankRows.filter((account) => !account.lastReconciledDate);
+  addCheck(
+    'BANK_RECONCILIATION',
+    bankRows.length === 0
+      ? 'NOT_CONFIGURED'
+      : (unreconciledBanks.length === 0 ? 'PASS' : 'FAIL'),
+    bankRows.length === 0
+      ? 'No active bank-account reconciliation source is configured.'
+      : `${bankRows.length} bank account(s) inspected; ${unreconciledBanks.length} never reconciled.`,
+    { bankAccountCount: bankRows.length, unreconciledCount: unreconciledBanks.length }
+  );
+
+  const posGaps = storeRows.filter(
+    (row) => Number(row.posEventCount || 0) > Number(row.financeEventCount || 0)
+  );
+  addCheck(
+    'POS_POSTING_COMPLETENESS',
+    storeRows.length === 0 ? 'NOT_CONFIGURED' : (posGaps.length === 0 ? 'PASS' : 'FAIL'),
+    storeRows.length === 0
+      ? 'No StoreDayAudit records exist.'
+      : `${storeRows.length} store-day record(s) inspected; ${posGaps.length} posting gap(s).`,
+    { storeDayCount: storeRows.length, postingGapCount: posGaps.length }
+  );
+
+  const settlementIssues = settlementRows.filter(
+    (settlement) => !['MATCHED', 'RECONCILED'].includes(settlement.status)
+  );
+  addCheck(
+    'MARKETPLACE_SETTLEMENT_RECONCILIATION',
+    settlementRows.length === 0
+      ? 'NO_ACTIVITY'
+      : (settlementIssues.length === 0 ? 'PASS' : 'FAIL'),
+    settlementRows.length === 0
+      ? 'No marketplace settlement activity.'
+      : `${settlementRows.length} settlement(s) inspected; ${settlementIssues.length} unresolved.`,
+    { settlementCount: settlementRows.length, unresolvedCount: settlementIssues.length }
+  );
+
+  const periodById = new Map(periodRows.map((period) => [normalizeFinanceId(period.periodId), period]));
+  const postCloseJournals = journalRows.filter((journal) => {
+    if (journal.status !== 'POSTED' || !journal.postedAt) return false;
+    const period = periodById.get(normalizeFinanceId(journal.periodId));
+    const closedAt = period?.closeSnapshot?.closedAt;
+    return closedAt && new Date(journal.postedAt) > new Date(closedAt);
   });
+  addCheck(
+    'CLOSED_PERIOD_POSTING',
+    periodRows.length === 0
+      ? 'NOT_CONFIGURED'
+      : (postCloseJournals.length === 0 ? 'PASS' : 'FAIL'),
+    periodRows.length === 0
+      ? 'No financial periods exist.'
+      : `${postCloseJournals.length} posted journal(s) were recorded after their period close timestamp.`,
+    { postCloseJournalIds: postCloseJournals.map((journal) => journal.journalId) }
+  );
 
-  // Check 2: AP Subledger to GL control variance
-  const apTotalUnpaidPaisa = apInvoices
-    .filter((inv) => inv.paymentStatus !== 'PAID')
-    .reduce((sum, inv) => sum + (inv.outstandingPaisa || 0), 0);
-  // (AP Control Account matching verification)
+  const duplicateSourceMap = new Map();
+  for (const journal of journalRows.filter(
+    (row) => row.status === 'POSTED' && row.sourceReferenceId
+  )) {
+    const key = `${journal.sourceModule || 'UNKNOWN'}:${journal.sourceReferenceId}`;
+    duplicateSourceMap.set(key, (duplicateSourceMap.get(key) || 0) + 1);
+  }
+  const duplicateSources = [...duplicateSourceMap.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([source, count]) => ({ source, count }));
+  addCheck(
+    'DUPLICATE_SOURCE_POSTING',
+    duplicateSources.length === 0 ? 'PASS' : 'FAIL',
+    `${duplicateSources.length} duplicated posted source reference(s) detected.`,
+    { duplicateSources }
+  );
 
-  // Check 3: AR Subledger to GL control variance
-  // (AR Control Account matching verification)
-
-  // Check 4: Bank accounts with pending reconciliations
-  bankAccounts.forEach((b) => {
-    if (!b.lastReconciledDate) {
-      issues.push({
-        check: 'BANK_RECONCILIATION_PENDING',
-        severity: 'REVIEW',
-        description: `Bank account ${b.accountAlias} (${b.maskedAccountNumber}) has never been reconciled against a bank statement.`,
-      });
+  const missingAccountCodes = new Set();
+  const activeAccountCodes = new Set(accountRows.map((account) => normalizeFinanceId(account.accountCode)));
+  for (const journal of journalRows.filter((row) => row.status === 'POSTED')) {
+    for (const line of journal.lines || []) {
+      const code = normalizeFinanceId(line.accountCode);
+      if (code && !activeAccountCodes.has(code)) missingAccountCodes.add(code);
     }
-  });
+  }
+  addCheck(
+    'POSTED_ACCOUNT_MAPPING',
+    journalRows.some((row) => row.status === 'POSTED') && activeAccountCodes.size === 0
+      ? 'NOT_CONFIGURED'
+      : (missingAccountCodes.size === 0 ? 'PASS' : 'FAIL'),
+    missingAccountCodes.size === 0
+      ? 'All posted journal line account codes resolve to active Chart of Accounts records.'
+      : `${missingAccountCodes.size} posted account code(s) are not active/mapped.`,
+    { missingAccountCodes: [...missingAccountCodes].sort() }
+  );
 
-  // Check 5: POS Posting Completeness
-  storeDays.forEach((s) => {
-    if (s.posEventCount > 0 && s.financeEventCount < s.posEventCount) {
-      issues.push({
-        check: 'POS_POSTING_MISSING',
-        severity: 'CRITICAL',
-        description: `Store Day ${s.storeDayId} is missing ${s.posEventCount - s.financeEventCount} POS finance events.`,
-      });
-    }
-  });
+  const invoiceHolds = apRows.filter(
+    (invoice) => Array.isArray(invoice.holds) && invoice.holds.length > 0
+  );
+  addCheck(
+    'SUPPLIER_INVOICE_HOLDS',
+    apRows.length === 0 ? 'NO_ACTIVITY' : (invoiceHolds.length === 0 ? 'PASS' : 'REVIEW'),
+    apRows.length === 0
+      ? 'No AP invoice activity.'
+      : `${apRows.length} AP invoice(s) inspected; ${invoiceHolds.length} have active hold records.`,
+    { invoiceCount: apRows.length, holdCount: invoiceHolds.length }
+  );
 
-  // Check 6: Marketplace Settlement Missing / Disputed
-  settlements.forEach((m) => {
-    if (m.status === 'DISPUTED') {
-      issues.push({
-        check: 'MARKETPLACE_SETTLEMENT_DISPUTED',
-        severity: 'WARNING',
-        description: `Marketplace batch ${m.settlementId} (${m.platform}) has an active fee/commission dispute.`,
-      });
-    }
-  });
+  // The following controls are intentionally not claimed as verified until
+  // canonical evidence sources or durable linkage are implemented.
+  for (const [check, description] of [
+    ['AR_SUBLEDGER_TO_GL', 'No canonical AR control-account reconciliation is wired.'],
+    ['UPI_SETTLEMENT_DIFFERENCE', 'No canonical UPI settlement feed-to-GL reconciliation is wired.'],
+    ['SUSPENSE_BALANCE', 'No governed suspense-account designation/review workflow is configured.'],
+    ['PAYROLL_POSTING_COMPLETENESS', 'Payroll-to-GL posting linkage is not yet canonical.'],
+    ['INVENTORY_GL_RECONCILIATION', 'Inventory quantity movements are not yet transaction-valued and posted to GL.'],
+    ['GST_CONTROL_RECONCILIATION', 'No durable GST filing/control-account reconciliation sign-off exists.'],
+    ['UNAPPLIED_RECEIPTS', 'No canonical unapplied-receipts control register is configured.'],
+    ['FAILED_ACCOUNTING_EVENTS', 'No durable accounting-event outbox/failure register is configured.'],
+    ['JOURNAL_MAKER_CHECKER', 'A distinct journal checker role is not currently configured; Primary Master is the sole poster.'],
+  ]) {
+    addCheck(check, 'NOT_VERIFIED', description);
+  }
 
-  // Check 7: UPI Settlement Difference
-  // Check 8: Closed Period Posting Attempt
-  // Check 9: Duplicate Journal Reference
-  // Check 10: Suspense Balance
-  // Check 11: Payroll Posting Incomplete
-  // Check 12: Inventory/GL Difference
-  // Check 13: GST Control Difference
-  // Check 14: Unapplied Receipt
-  // Check 15: Supplier Invoice Hold
-  apInvoices.forEach((inv) => {
-    if (inv.holds && inv.holds.length > 0) {
-      issues.push({
-        check: 'SUPPLIER_INVOICE_ON_HOLD',
-        severity: 'REVIEW',
-        description: `Invoice ${inv.invoiceId} from ${inv.vendorName} is held (${inv.holds[0].reason}).`,
-      });
-    }
-  });
+  const verified = checks.filter((entry) =>
+    ['PASS', 'FAIL', 'REVIEW'].includes(entry.status)
+  );
+  const failures = checks.filter((entry) => entry.status === 'FAIL');
+  const reviews = checks.filter((entry) => entry.status === 'REVIEW');
+  const coveragePercent = Number(((verified.length / checks.length) * 100).toFixed(1));
 
-  // Check 16: Failed Accounting Event
-  // Check 17: Missing Account Mapping
-  // Check 18: Duplicate Source Posting
+  const overallStatus =
+    failures.length > 0
+      ? 'ATTENTION_REQUIRED'
+      : (reviews.length > 0 ? 'REVIEW_REQUIRED' : (verified.length === checks.length ? 'VERIFIED' : 'PARTIAL_COVERAGE'));
 
   return response.status(200).json({
-    status: issues.some((i) => i.severity === 'CRITICAL') ? 'CRITICAL' : issues.length > 0 ? 'WARNING' : 'HEALTHY',
-    checksEvaluated: 18,
-    issuesFound: issues.length,
-    issues,
+    success: true,
+    data: {
+      status: overallStatus,
+      checksConfigured: checks.length,
+      checksVerified: verified.length,
+      coveragePercent,
+      failures: failures.length,
+      reviews: reviews.length,
+      checks,
+      sourceStatus: 'EVIDENCE_BASED_PARTIAL_COVERAGE',
+    },
+    correlationId: request.correlationId || null,
   });
 });
+
 
 /**
  * POST /api/v1/finance/invoices/gst
