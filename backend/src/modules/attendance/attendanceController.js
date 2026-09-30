@@ -402,7 +402,7 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
     userId: rawUserId,
     cafeId: rawCafeId,
     businessDate = getIstBusinessDate(),
-    eventType = 'CHECK_IN', // 'CHECK_IN' | 'CHECK_OUT' | 'FULL_DAY' | 'ON_LEAVE'
+    eventType: rawEventType = 'CHECK_IN',
     time = null,
     reason,
     notes = '',
@@ -411,20 +411,54 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
   if (!['MASTER', 'CAFE_ADMIN'].includes(request.auth.role)) {
     throw new ApiError(403, 'PERMISSION_DENIED', 'Only Primary Master or Café Admin can record manual attendance.');
   }
-  if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
-    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for MASTER attendance access.');
-  }
 
   ensureCafeOperationsAllowed(request);
 
   const userId = normalizeIdentifier(rawUserId);
   const cafeId = normalizeIdentifier(rawCafeId);
+  const eventType = normalizeIdentifier(rawEventType);
 
   if (!userId) throw new ApiError(400, 'USER_ID_REQUIRED', 'Employee userId is required.');
   if (!cafeId) throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
   if (!reason || !reason.trim()) throw new ApiError(400, 'REASON_REQUIRED', 'A reason for manual attendance entry is required.');
+  if (!['CHECK_IN', 'CHECK_OUT'].includes(eventType)) {
+    throw new ApiError(
+      400,
+      'MANUAL_EVENT_TYPE_UNSUPPORTED',
+      'Manual attendance supports CHECK_IN or CHECK_OUT only. Leave and full-day changes must use their dedicated approval/correction workflow.'
+    );
+  }
 
   ensureCafeAccess(request, cafeId);
+
+  const targetUser = await User.findOne({
+    organisationId: request.auth.organisationId,
+    userId,
+  });
+
+  if (!targetUser) {
+    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', 'Employee account was not found.');
+  }
+
+  const employeeCafes = new Set([
+    ...(targetUser.assignedCafeIds || []),
+    targetUser.primaryCafeId,
+  ].filter(Boolean).map(normalizeIdentifier));
+
+  if (!employeeCafes.has(cafeId)) {
+    throw new ApiError(
+      422,
+      'ATTENDANCE_EMPLOYEE_CAFE_MISMATCH',
+      'The selected employee is not currently assigned to this café.'
+    );
+  }
+
+  if (
+    String(targetUser.accountStatus || '').toUpperCase() !== 'ACTIVE' ||
+    ['EXITED', 'ARCHIVED'].includes(String(targetUser.employmentStatus || '').toUpperCase())
+  ) {
+    throw new ApiError(422, 'ATTENDANCE_EMPLOYEE_INACTIVE', 'Manual attendance cannot be recorded for an inactive employee.');
+  }
 
   let attendance = await Attendance.findOne({
     organisationId: request.auth.organisationId,
@@ -433,8 +467,19 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
   });
 
   const punchTime = time ? new Date(time) : new Date();
+  if (Number.isNaN(punchTime.getTime())) {
+    throw new ApiError(400, 'ATTENDANCE_TIME_INVALID', 'Manual attendance time is invalid.');
+  }
 
-  if (!attendance) {
+  if (eventType === 'CHECK_IN') {
+    if (attendance) {
+      throw new ApiError(
+        409,
+        'ATTENDANCE_RECORD_ALREADY_EXISTS',
+        'Attendance already exists for this employee and date. Use the audited correction workflow instead.'
+      );
+    }
+
     const attendanceId = await SequenceCounter.generateId({
       organisationId: request.auth.organisationId,
       sequenceKey: 'ATTENDANCE',
@@ -448,8 +493,8 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
       cafeId,
       userId,
       businessDate,
-      status: eventType === 'ON_LEAVE' ? 'ON_LEAVE' : 'CHECKED_IN',
-      checkInAt: eventType === 'CHECK_IN' || eventType === 'FULL_DAY' ? punchTime : null,
+      status: 'CHECKED_IN',
+      checkInAt: punchTime,
       checkInSource: request.auth.role === 'MASTER' ? 'MASTER' : 'CAFE_ADMIN',
       checkInRecordedBy: request.auth.userId,
       isManualEntry: true,
@@ -457,7 +502,7 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
       createdBy: request.auth.userId,
       rawTimeEvents: [
         {
-          eventType: eventType === 'ON_LEAVE' ? 'CHECK_IN' : eventType,
+          eventType: 'CHECK_IN',
           timestamp: punchTime,
           source: request.auth.role === 'MASTER' ? 'MASTER' : 'CAFE_ADMIN',
           recordedByUserId: request.auth.userId,
@@ -466,21 +511,52 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
       ],
     });
   } else {
+    if (!attendance || !attendance.checkInAt || attendance.checkOutAt) {
+      throw new ApiError(
+        409,
+        'MANUAL_CHECK_OUT_STATE_INVALID',
+        'Manual check-out requires an existing open check-in for the selected employee and date.'
+      );
+    }
+
+    if (normalizeIdentifier(attendance.cafeId) !== cafeId) {
+      throw new ApiError(
+        422,
+        'ATTENDANCE_CAFE_MISMATCH',
+        'Manual check-out must use the café recorded on the active attendance entry.'
+      );
+    }
+
     attendance.isManualEntry = true;
     attendance.updatedBy = request.auth.userId;
-    if (eventType === 'CHECK_OUT' || eventType === 'FULL_DAY') {
-      attendance.checkOutAt = punchTime;
-      attendance.checkOutSource = request.auth.role === 'MASTER' ? 'MASTER' : 'CAFE_ADMIN';
-      attendance.checkOutRecordedBy = request.auth.userId;
-      attendance.status = 'CHECKED_OUT';
-    }
+    attendance.checkOutAt = punchTime;
+    attendance.checkOutSource = request.auth.role === 'MASTER' ? 'MASTER' : 'CAFE_ADMIN';
+    attendance.checkOutRecordedBy = request.auth.userId;
+    attendance.status = 'CHECKED_OUT';
+    if (!Array.isArray(attendance.rawTimeEvents)) attendance.rawTimeEvents = [];
     attendance.rawTimeEvents.push({
-      eventType: eventType === 'ON_LEAVE' ? 'CHECK_OUT' : eventType,
+      eventType: 'CHECK_OUT',
       timestamp: punchTime,
       source: request.auth.role === 'MASTER' ? 'MASTER' : 'CAFE_ADMIN',
       recordedByUserId: request.auth.userId,
       notes: reason.trim(),
     });
+
+    const metrics = calculateAttendanceMetrics({
+      checkInAt: attendance.checkInAt,
+      checkOutAt: attendance.checkOutAt,
+      breaks: attendance.breaks,
+      breakMinutes: attendance.breakMinutes,
+      scheduledStartAt: attendance.scheduledStartAt,
+      scheduledEndAt: attendance.scheduledEndAt,
+      scheduledDurationMinutes: attendance.scheduledDurationMinutes,
+      approvedOvertimeMinutes: attendance.approvedOvertimeMinutes,
+    });
+    attendance.totalWorkedMinutes = metrics.totalWorkedMinutes;
+    attendance.workedMinutes = metrics.totalWorkedMinutes;
+    attendance.regularMinutes = metrics.regularMinutes;
+    attendance.detectedOvertimeMinutes = metrics.detectedOvertimeMinutes;
+    attendance.payableMinutes = metrics.payableMinutes;
   }
 
   await attendance.save();
@@ -496,7 +572,7 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
       cafeId,
       businessDate,
       eventType,
-      reason,
+      reason: reason.trim(),
       operatorSessionId: request.auth.operatorSession?.sessionId || null,
       deviceId: request.auth.deviceContext?.deviceId || null,
     },
@@ -519,12 +595,12 @@ const getEmployeeMonthlyCalendar = asyncHandler(async (request, response) => {
   const monthStr = String(month).padStart(2, '0');
   const datePrefix = `${year}-${monthStr}`;
 
-  // P0-A08: Strict employee privacy check & Cafe Admin boundary enforcement
+  // Strict employee privacy and live authority boundary.
   if (request.auth.role === 'STAFF') {
-    if (request.auth.userId !== normUserId) {
+    if (normalizeIdentifier(request.auth.userId) !== normUserId) {
       throw new ApiError(403, 'FORBIDDEN', 'Staff members may only view their own attendance records.');
     }
-  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
+  } else {
     ensureCafeOperationsAllowed(request);
   }
 
@@ -534,8 +610,12 @@ const getEmployeeMonthlyCalendar = asyncHandler(async (request, response) => {
     businessDate: { $regex: `^${datePrefix}` },
   };
 
-  if (!['MASTER', 'OWNER', 'STAFF'].includes(request.auth.role)) {
-    filter.cafeId = { $in: request.auth.assignedCafeIds };
+  if (request.auth.role === 'OWNER' || request.auth.role === 'CAFE_ADMIN') {
+    const assigned = (request.auth.assignedCafeIds || []).map(normalizeIdentifier).filter(Boolean);
+    if (!assigned.length) {
+      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'No authorised café scope is available for attendance history.');
+    }
+    filter.cafeId = { $in: assigned };
   }
 
   const records = await Attendance.find(filter).sort({ businessDate: 1 }).lean();
