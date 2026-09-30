@@ -87,6 +87,9 @@ const {
   auditAttendanceEvidenceIntegrity,
   verifyAttendanceEvidenceSlot,
 } = require('../../services/attendanceEvidenceIntegrityService');
+const {
+  quarantineAttendanceEvidenceFailures,
+} = require('../../services/attendanceEvidenceIncidentService');
 const { PrivateFile } = require('../../models/PrivateFile');
 const { AttendanceSubmission } = require('../../models/AttendanceSubmission');
 
@@ -1432,12 +1435,31 @@ const auditAttendanceEvidence = asyncHandler(async (request, response) => {
     verifyStorageBytes: verifyStorageBytes !== false,
   });
 
+  const incidentResponse = result.failed > 0
+    ? await quarantineAttendanceEvidenceFailures({
+        request,
+        failures: result.failures,
+      })
+    : {
+        attempted: 0,
+        quarantined: 0,
+        alreadyQuarantined: 0,
+        notQuarantinable: 0,
+        auditEventsRecorded: 0,
+        alertsQueued: 0,
+        processingFailures: [],
+      };
+
+  result.incidentResponse = incidentResponse;
+
   await recordRequestAudit({
     request,
     module: 'ATTENDANCE',
     action: 'ATTENDANCE_EVIDENCE_INTEGRITY_AUDITED',
     entityType: 'AttendanceEvidence',
     entityId: normalizeIdentifier(attendanceId) || normalizeIdentifier(cafeId) || request.auth.organisationId,
+    result: result.integrityOk ? 'SUCCESS' : 'PARTIAL',
+    riskClassification: result.integrityOk ? 'LOW' : 'HIGH',
     metadata: {
       attendanceId: normalizeIdentifier(attendanceId) || null,
       cafeId: normalizeIdentifier(cafeId) || null,
@@ -1447,6 +1469,11 @@ const auditAttendanceEvidence = asyncHandler(async (request, response) => {
       failed: result.failed,
       integrityOk: result.integrityOk,
       verifyStorageBytes: result.verifyStorageBytes,
+      quarantined: incidentResponse.quarantined,
+      alreadyQuarantined: incidentResponse.alreadyQuarantined,
+      auditEventsRecorded: incidentResponse.auditEventsRecorded,
+      alertsQueued: incidentResponse.alertsQueued,
+      incidentProcessingFailures: incidentResponse.processingFailures.length,
     },
   });
 
@@ -1454,7 +1481,7 @@ const auditAttendanceEvidence = asyncHandler(async (request, response) => {
     success: true,
     message: result.integrityOk
       ? 'Attendance evidence integrity audit completed without detected failures.'
-      : 'Attendance evidence integrity audit detected one or more failures.',
+      : 'Attendance evidence integrity audit detected failures; affected evidence was quarantined where an exact evidence slot could be identified.',
     data: result,
     correlationId: request.correlationId || null,
   });
@@ -3638,6 +3665,20 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     attendance?.attendanceEvidence?.checkIn?.photoFileId === privateFile.fileId ||
     attendance?.selfieFileId === privateFile.fileId;
   const evidenceType = isCheckIn ? 'CHECK_IN' : 'CHECK_OUT';
+  const evidenceSlot = evidenceType === 'CHECK_IN'
+    ? attendance?.attendanceEvidence?.checkIn
+    : attendance?.attendanceEvidence?.checkOut;
+
+  if (
+    String(evidenceSlot?.verificationStatus || '').toUpperCase() === 'FLAGGED' ||
+    String(evidenceSlot?.integrityState || '').toUpperCase() === 'QUARANTINED'
+  ) {
+    throw new ApiError(
+      423,
+      'ATTENDANCE_EVIDENCE_QUARANTINED',
+      'Attendance photograph is quarantined after an integrity failure and cannot be displayed until investigated.'
+    );
+  }
 
   if (privateFile.attendanceContext?.challengeId) {
     const metadataIntegrity = await verifyAttendanceEvidenceSlot({
