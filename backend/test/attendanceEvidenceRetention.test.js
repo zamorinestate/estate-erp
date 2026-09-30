@@ -242,10 +242,12 @@ test('RET-003: execute deletes only claimed, unlinked orphan objects and metadat
   };
 
   const deletedStorage = [];
+  const existingStorage = new Set(['attendance/file-1003.jpg']);
   attendanceEvidenceStorageService.objectExists = async ({ fileKey }) =>
-    fileKey.includes('1003');
+    existingStorage.has(fileKey);
   attendanceEvidenceStorageService.deleteObject = async ({ fileKey }) => {
     deletedStorage.push(fileKey);
+    existingStorage.delete(fileKey);
     return true;
   };
 
