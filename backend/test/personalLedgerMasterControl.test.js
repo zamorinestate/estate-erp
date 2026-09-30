@@ -421,6 +421,30 @@ test('SCR-018: Master Control & Financial Invariant Tests', async (t) => {
     }
   });
 
+  await t.test('10b. Settlement rejects amount that does not equal selected voucher outstanding balance', async () => {
+    const mock = setupMockEnvironment('MASTER', true, 'MU-0001');
+    try {
+      const res = await fetch(`${baseUrl}/personal-ledger/settlements`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          voucherIds: ['PL-20260814-0001'],
+          settlementAmountPaisa: 1000000,
+          paymentMethod: 'BANK_TRANSFER',
+          paymentReference: 'NEFT-MISMATCH-001',
+        }),
+      });
+      const body = await res.json();
+      assert.equal(res.status, 409);
+      assert.equal(body.error.code, 'SETTLEMENT_AMOUNT_MISMATCH');
+    } finally {
+      mock.restore();
+    }
+  });
+
   await t.test('11. POST /personal-ledger/confirmations records owner sign-off and discrepancy', async () => {
     const mock = setupMockEnvironment('OWNER', false, 'OW-0001');
     try {
