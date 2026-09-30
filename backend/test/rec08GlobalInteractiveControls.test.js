@@ -300,7 +300,19 @@ test('REC-08: Global Interactive Control Audit & Final Functional Certification 
     assert.strictEqual(committedBill.status, 'COMPLETED');
 
     // 4. Reprint Last Bill (CTL-05 / CTL-12)
-    const reprintResult = await PosOrderService.generatePrintArtifacts(committedBill, { isReprint: true });
+    const reprintResult = await PosOrderService.generatePrintArtifacts(committedBill, {
+      isReprint: true,
+      cafeInfo: {
+      brandName: 'Zamorin Test Cafe',
+      legalName: 'Zamorin Test Foods Private Limited',
+      gstin: '32AABCT1332L1ZV',
+      gstRegistered: true,
+      fssai: '12345678901234',
+      fssaiApplicable: true,
+      address: '1 Test Road, Kozhikode, Kerala, 673001',
+      phone: '+91 99999 99999',
+    },
+    });
     assert.ok(reprintResult.rawBuffer);
     assert.ok(reprintResult.htmlPreview);
 
