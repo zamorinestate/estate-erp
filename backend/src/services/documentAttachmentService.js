@@ -1747,27 +1747,40 @@ class DocumentAttachmentService {
       );
     }
 
-    const objectKeys = new Set();
+    const storageObjects = new Map();
     const localPaths = new Set();
 
-    for (const key of [
-      claimed.storageObjectKey,
-      claimed.storageKey,
-      claimed.quarantineObjectKey,
-    ]) {
-      if (key) objectKeys.add(String(key));
-    }
+    const addStorageObject = ({ storageKey = null, fileId = null } = {}) => {
+      if (!storageKey && !fileId) return;
+      const identity = storageKey
+        ? `KEY:${String(storageKey)}`
+        : `FILE_ID:${String(fileId)}`;
+      if (!storageObjects.has(identity)) {
+        storageObjects.set(identity, {
+          storageKey: storageKey ? String(storageKey) : null,
+          fileId: fileId || null,
+        });
+      }
+    };
+
+    addStorageObject({
+      storageKey: claimed.storageObjectKey || claimed.storageKey,
+      fileId: claimed.gridFsFileId || null,
+    });
+    addStorageObject({ storageKey: claimed.quarantineObjectKey || null });
     if (claimed.storagePath) localPaths.add(String(claimed.storagePath));
 
     for (const version of claimed.versions || []) {
-      const key = version?.storageObjectKey || version?.storageKey;
-      if (key) objectKeys.add(String(key));
-      if (version?.quarantineObjectKey) objectKeys.add(String(version.quarantineObjectKey));
+      addStorageObject({
+        storageKey: version?.storageObjectKey || version?.storageKey || null,
+        fileId: version?.gridFsFileId || null,
+      });
+      addStorageObject({ storageKey: version?.quarantineObjectKey || null });
       if (version?.storagePath) localPaths.add(String(version.storagePath));
     }
 
     const storageSummary = {
-      objectKeysChecked: objectKeys.size,
+      storageObjectsChecked: storageObjects.size,
       objectsDeleted: 0,
       objectsAlreadyMissing: 0,
       localPathsChecked: localPaths.size,
@@ -1776,21 +1789,21 @@ class DocumentAttachmentService {
     };
 
     try {
-      for (const storageKey of objectKeys) {
-        const existedBefore = await documentStorageAdapter.exists({ storageKey });
+      for (const storageObject of storageObjects.values()) {
+        const existedBefore = await documentStorageAdapter.exists(storageObject);
         if (existedBefore) {
-          await documentStorageAdapter.delete({ storageKey });
+          await documentStorageAdapter.delete(storageObject);
           storageSummary.objectsDeleted += 1;
         } else {
           storageSummary.objectsAlreadyMissing += 1;
         }
 
-        const existsAfter = await documentStorageAdapter.exists({ storageKey });
+        const existsAfter = await documentStorageAdapter.exists(storageObject);
         if (existsAfter) {
           throw new ApiError(
             503,
             'DOCUMENT_STORAGE_DELETE_UNVERIFIED',
-            `Storage object ${storageKey} still exists after permanent-deletion attempt.`
+            'A document storage object still exists after permanent-deletion attempt.'
           );
         }
       }
