@@ -1234,19 +1234,52 @@ class PosOrderService {
           userId: authContext.userId || 'CASHIER-01',
           businessDate,
         });
-        // Mark successful depletion on bill
-        const deplStatus = bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED';
-        try {
-          billDoc.bomDepletionStatus = deplStatus;
-          await billDoc.save();
-        } catch { /* non-fatal */ }
+        // BomDepletionService owns the durable bill depletion state.
+        // Reflect it on the in-memory response object without issuing a stale
+        // second save that could overwrite the transactional claim/finalization.
+        if (bomResult?.noInventoryRequirements) {
+          billDoc.bomDepletionStatus = 'NOT_ATTEMPTED';
+        } else if (bomResult?.alreadyDepleted) {
+          billDoc.bomDepletionStatus = 'DEPLETED';
+        } else if (bomResult?.allDeductionsSucceeded === true) {
+          billDoc.bomDepletionStatus = 'DEPLETED';
+        } else {
+          throw new ApiError(
+            409,
+            'BOM_DEPLETION_INCOMPLETE',
+            'Inventory depletion did not complete for every required ingredient.'
+          );
+        }
+        billDoc.bomDepletionError = null;
       } catch (invErr) {
         console.warn('[POS] BOM depletion failed for bill', billId, invErr?.message);
+        const depletionError = String(invErr?.code || invErr?.message || 'UNKNOWN').slice(0, 250);
+        billDoc.bomDepletionStatus = 'FAILED';
+        billDoc.bomDepletionError = depletionError;
+
         try {
-          billDoc.bomDepletionStatus = 'FAILED';
-          billDoc.bomDepletionError = String(invErr?.message || 'UNKNOWN').slice(0, 250);
-          await billDoc.save();
-        } catch { /* non-fatal */ }
+          await Bill.findOneAndUpdate(
+            {
+              organisationId: orgId,
+              cafeId,
+              billId,
+              bomDepletionStatus: { $in: ['NOT_ATTEMPTED', 'PROCESSING', 'FAILED'] },
+            },
+            {
+              $set: {
+                bomDepletionStatus: 'FAILED',
+                bomDepletionError: depletionError,
+              },
+            },
+            { new: true }
+          );
+        } catch (stateErr) {
+          console.error(
+            '[POS] Failed to persist BOM failure state for bill',
+            billId,
+            stateErr?.message
+          );
+        }
 
         try {
           await PosReconciliationService.recordReconciliationFailure({
@@ -1264,8 +1297,9 @@ class PosOrderService {
         }
       }
     } else {
-      billDoc.bomDepletionStatus = 'TRAINING_MODE_SKIPPED';
-      await billDoc.save().catch(() => {});
+      // Training transactions never mutate real inventory. Keep the canonical
+      // bill state as NOT_ATTEMPTED instead of introducing a non-schema status.
+      billDoc.bomDepletionStatus = 'NOT_ATTEMPTED';
     }
 
     // 7. Post-save operations: Register Session & Cash Book (Skipped in Isolated Training Mode)
