@@ -148,7 +148,7 @@ function renderCurrentWorkspace(wrap) {
 
   const submodules = {
     items: {
-      title: "Global Item Master",
+      title: "POS Menu Item Master",
       icon: "📋",
       desc: "Catalog items, culinary descriptions, food types, allergen tags and concept eligibility.",
       actionsHtml: `<button class="btn btn-sm btn-primary" id="btn-child-add-menu-item" type="button">+ Add Menu Item</button>`
@@ -314,7 +314,7 @@ function renderOverviewTab(wrap) {
   const attention = liveOverview?.needsAttention || [];
 
   const menuTiles = [
-    { id: "items", icon: "📋", title: "Global Item Master", subtitle: "Catalogue items, categories & dietary tags", badge: `${kpis.activeItems || 7} Items`, badgeType: "accent" },
+    { id: "items", icon: "📋", title: "POS Menu Item Master", subtitle: "Sellable products, categories, pricing & dietary tags", badge: `${kpis.activeItems ?? 0} Items`, badgeType: "accent" },
     { id: "menus", icon: "📅", title: "Menus & Schedules", subtitle: "Daypart menus, breakfast & dinner schedules", badge: "Active", badgeType: "" },
     { id: "recipes", icon: "🍳", title: "Recipes & BOM", subtitle: "Ingredient formulation, sub-recipes & COGS", badge: `${kpis.totalRecipes || 7} Recipes`, badgeType: "success" },
     { id: "modifiers", icon: "🔀", title: "Modifiers & Variants", subtitle: "Milk choices, size variations & syrups", badge: "Customisers", badgeType: "" },
@@ -905,7 +905,7 @@ function renderAvailabilityTab(wrap) {
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <strong style="color:var(--ink); font-size:13.5px;">Instant Outlet Availability Control</strong>
-            <p style="font-size:12px; color:var(--muted); margin:2px 0 0;">Click on any item in the Global Item Master to instantly toggle local sold-out status.</p>
+            <p style="font-size:12px; color:var(--muted); margin:2px 0 0;">Click on any sellable item in the POS Menu Item Master to toggle local sold-out status.</p>
           </div>
           <button class="btn btn-sm btn-primary" onclick="document.querySelector('[data-menu-hub-tile=items]').click()">Open Item Master</button>
         </div>
