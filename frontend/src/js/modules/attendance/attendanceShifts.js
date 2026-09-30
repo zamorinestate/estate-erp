@@ -1686,6 +1686,59 @@ function renderAnalyticsSubpanel() {
     </div>
   `;
 }
+export function wireAttendance(root, subroute) {
+  if (subroute !== undefined) {
+    activeSubTab = subroute || "overview";
+  }
+
+  root.querySelectorAll("[data-attendance-hub-tile]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const tileId = e.currentTarget.dataset.attendanceHubTile;
+      navigate("attendance/" + tileId);
+    });
+  });
+
+  root.querySelectorAll("#btn-attendance-qr-scanner, #btn-show-attendance-qr, #btn-live-show-attendance-qr, #btn-analytics-attendance-qr-scanner").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      navigate("attendance/qr-scanner");
+    });
+  });
+
+  root.querySelector("#attendance-back-to-hub-btn")?.addEventListener("click", () => {
+    navigate("attendance");
+  });
+
+  root.querySelectorAll(".attendance-nav-tab").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      activeSubTab = e.currentTarget.dataset.tab;
+      rerender(root);
+    });
+  });
+
+  const refreshBtn = root.querySelector("#refresh-attendance-btn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", async () => {
+      await loadLiveAttendanceData();
+      rerender(root);
+      showToast("Workforce attendance refreshed.", "info");
+    });
+  }
+
+  root.querySelector("#open-manual-attendance-btn")?.addEventListener("click", () => {
+    openScopedManualAttendanceModal(root);
+  });
+
+  wireAttendanceSubpanelActions(root);
+
+  if (!cachedOverview) {
+    loadLiveAttendanceData().then(() => {
+      if (state.route?.startsWith("attendance") || state.route === "staff-attendance") {
+        rerender(root);
+      }
+    });
+  }
+}
+
 function rerender(root) {
   if (!state.route?.startsWith("attendance") && state.route !== "staff-attendance") return;
   const subpanelRoot = root?.querySelector ? root.querySelector("#attendance-subpanel-root") : null;
