@@ -949,69 +949,316 @@ const getPayrollCompliance = asyncHandler(
   async (request, response) => {
     requirePayrollManagementAccess(request);
 
+    // This endpoint reports verification capability, not a legal certification.
+    // Statutory compliance requires current effective-dated law/rate sources and
+    // employee-specific applicability evidence; neither is inferred from the
+    // mere presence of payroll deduction fields.
     const compliance = {
       salaryTds: {
-        regime: '2026_DEFAULT_NEW_REGIME',
-        status: 'COMPLIANT',
-        description: 'TDS computed under Section 192 with standard rebate threshold.',
+        status: 'NOT_VERIFIED',
+        evidenceField: 'Payslip.deductions.incomeTaxPaise',
+        reason: 'No current effective-dated income-tax rule evaluation is executed by this overview endpoint.',
       },
       epf: {
-        scheme: 'EPF_1952',
-        ecrVersion: '2.0',
-        status: 'COMPLIANT',
-        employeeRatePct: 12,
-        employerRatePct: 12,
-        wageCeilingPaise: 1500000, // ₹15,000
+        status: 'NOT_VERIFIED',
+        evidenceField: 'Payslip.deductions.providentFundPaise',
+        reason: 'Contribution values exist, but statutory applicability/rate compliance is not re-evaluated here.',
       },
       esi: {
-        scheme: 'ESI_1948',
-        status: 'COMPLIANT',
-        employeeRatePct: 0.75,
-        employerRatePct: 3.25,
-        wageCeilingPaise: 2100000, // ₹21,000
+        status: 'NOT_VERIFIED',
+        evidenceField: 'Payslip.deductions.employeeStateInsurancePaise',
+        reason: 'Contribution values exist, but statutory applicability/rate compliance is not re-evaluated here.',
       },
       professionalTax: {
-        status: 'COMPLIANT',
-        jurisdiction: 'KERALA_KARNATAKA',
-        schedule: 'HALF_YEARLY_AND_MONTHLY',
+        status: 'NOT_VERIFIED',
+        evidenceField: 'Payslip.deductions.professionalTaxPaise',
+        reason: 'Jurisdiction-specific professional-tax compliance is not re-evaluated by this endpoint.',
       },
       minimumWage: {
-        status: 'COMPLIANT',
-        description: 'All basic wages exceed Kerala/Karnataka commercial establishments minimum wage baselines.',
+        status: 'NOT_VERIFIED',
+        evidenceField: 'Payslip.earnings.basicPayPaise',
+        reason: 'No current jurisdiction/role-specific statutory minimum-wage schedule is compared by this endpoint.',
       },
     };
 
     return response.status(200).json({
       success: true,
-      data: compliance,
+      data: {
+        ...compliance,
+        sourceStatus: 'PAYROLL_FIELDS_AVAILABLE_LEGAL_VERIFICATION_NOT_IMPLEMENTED',
+        legalCertification: false,
+      },
       correlationId: request.correlationId || null,
     });
   }
 );
 
+function payrollCheck({ id, name, status, detail, evidence = null }) {
+  return {
+    id,
+    name,
+    status,
+    passed: status === 'PASS',
+    detail,
+    evidence,
+  };
+}
+
 const getPayrollIntegrity = asyncHandler(
   async (request, response) => {
     requirePayrollManagementAccess(request);
 
+    const scopeFilter = buildPayrollRunFilter(request);
+    // Integrity is a factual scan of the requested scope. The optional status
+    // filter from normal list views must not hide other run states.
+    delete scopeFilter.status;
+
+    const payslipFilter = {
+      organisationId: scopeFilter.organisationId,
+      ...(scopeFilter.cafeId ? { cafeId: scopeFilter.cafeId } : {}),
+      ...(scopeFilter.periodKey ? { periodKey: scopeFilter.periodKey } : {}),
+    };
+
+    const runsQuery = PayrollRun.find(scopeFilter);
+    const payslipsQuery = Payslip.find(payslipFilter);
+    const [runs, payslips] = await Promise.all([
+      runsQuery && typeof runsQuery.lean === 'function' ? runsQuery.lean() : runsQuery,
+      payslipsQuery && typeof payslipsQuery.lean === 'function' ? payslipsQuery.lean() : payslipsQuery,
+    ]);
+
+    const runRows = Array.isArray(runs) ? runs : [];
+    const payslipRows = Array.isArray(payslips) ? payslips : [];
+
+    const isSafeMoney = (value) =>
+      Number.isSafeInteger(value) && value >= 0;
+
+    const invalidMoney = [];
+    for (const run of runRows) {
+      for (const [field, value] of [
+        ['totalGrossPaise', run.totalGrossPaise],
+        ['totalDeductionPaise', run.totalDeductionPaise],
+        ['totalNetPayPaise', run.totalNetPayPaise],
+      ]) {
+        if (!isSafeMoney(Number(value ?? 0))) {
+          invalidMoney.push({ type: 'PAYROLL_RUN', id: run.payrollRunId, field });
+        }
+      }
+    }
+
+    for (const payslip of payslipRows) {
+      const moneyFields = [
+        ['earnings.grossPayPaise', payslip.earnings?.grossPayPaise],
+        ['deductions.totalDeductionPaise', payslip.deductions?.totalDeductionPaise],
+        ['netPayPaise', payslip.netPayPaise],
+      ];
+      for (const [field, value] of moneyFields) {
+        if (!isSafeMoney(Number(value ?? 0))) {
+          invalidMoney.push({ type: 'PAYSLIP', id: payslip.payslipId || payslip.employeeUserId, field });
+        }
+      }
+    }
+
+    const mathMismatches = [];
+    for (const run of runRows) {
+      if (
+        Number(run.totalGrossPaise || 0) -
+          Number(run.totalDeductionPaise || 0) !==
+        Number(run.totalNetPayPaise || 0)
+      ) {
+        mathMismatches.push({ type: 'PAYROLL_RUN', id: run.payrollRunId });
+      }
+    }
+    for (const payslip of payslipRows) {
+      if (
+        Number(payslip.earnings?.grossPayPaise || 0) -
+          Number(payslip.deductions?.totalDeductionPaise || 0) !==
+        Number(payslip.netPayPaise || 0)
+      ) {
+        mathMismatches.push({ type: 'PAYSLIP', id: payslip.payslipId || payslip.employeeUserId });
+      }
+    }
+
+    const duplicateKeys = [];
+    const runKeyCounts = new Map();
+    for (const run of runRows) {
+      const key = `${run.cafeId || ''}:${run.periodKey || ''}`;
+      const next = (runKeyCounts.get(key) || 0) + 1;
+      runKeyCounts.set(key, next);
+      if (next === 2) duplicateKeys.push(key);
+    }
+
+    const dayBoundViolations = payslipRows
+      .filter((payslip) => {
+        const calendar = Number(payslip.attendanceSummary?.totalCalendarDays || 0);
+        const payable = Number(payslip.attendanceSummary?.payableDays || 0);
+        return payable < 0 || calendar < 0 || payable > calendar;
+      })
+      .map((payslip) => payslip.payslipId || payslip.employeeUserId);
+
+    const payslipsByRun = new Map();
+    for (const payslip of payslipRows) {
+      const key = normalizeIdentifier(payslip.payrollRunId);
+      if (!payslipsByRun.has(key)) payslipsByRun.set(key, []);
+      payslipsByRun.get(key).push(payslip);
+    }
+
+    const countMismatches = [];
+    const totalMismatches = [];
+    for (const run of runRows) {
+      const rows = payslipsByRun.get(normalizeIdentifier(run.payrollRunId)) || [];
+      if (Number(run.employeeCount || 0) !== rows.length) {
+        countMismatches.push({
+          payrollRunId: run.payrollRunId,
+          runEmployeeCount: Number(run.employeeCount || 0),
+          payslipCount: rows.length,
+        });
+      }
+
+      const sums = rows.reduce(
+        (acc, payslip) => {
+          acc.gross += Number(payslip.earnings?.grossPayPaise || 0);
+          acc.deductions += Number(payslip.deductions?.totalDeductionPaise || 0);
+          acc.net += Number(payslip.netPayPaise || 0);
+          return acc;
+        },
+        { gross: 0, deductions: 0, net: 0 }
+      );
+
+      if (
+        sums.gross !== Number(run.totalGrossPaise || 0) ||
+        sums.deductions !== Number(run.totalDeductionPaise || 0) ||
+        sums.net !== Number(run.totalNetPayPaise || 0)
+      ) {
+        totalMismatches.push({
+          payrollRunId: run.payrollRunId,
+          run: {
+            gross: Number(run.totalGrossPaise || 0),
+            deductions: Number(run.totalDeductionPaise || 0),
+            net: Number(run.totalNetPayPaise || 0),
+          },
+          payslips: sums,
+        });
+      }
+    }
+
+    const paidWithoutReference = runRows
+      .filter(
+        (run) =>
+          run.status === 'PAID' &&
+          (!run.paidAt || !String(run.paymentReference || '').trim())
+      )
+      .map((run) => run.payrollRunId);
+
+    const hasData = runRows.length > 0 || payslipRows.length > 0;
+
     const checks = [
-      { id: 'CHK-01', name: 'Integer Paise Invariant', passed: true, detail: 'All values stored as safe non-negative integer paise.' },
-      { id: 'CHK-02', name: 'Gross - Deductions = Net Invariant', passed: true, detail: '100% mathematical consistency across all runs and payslips.' },
-      { id: 'CHK-03', name: 'Duplicate Run Protection', passed: true, detail: 'Unique compound index on organisationId + cafeId + periodKey.' },
-      { id: 'CHK-04', name: 'Frozen 4-Role RBAC', passed: true, detail: 'Strict MASTER/OWNER control centre; CAFE_ADMIN/STAFF 403 denied.' },
-      { id: 'CHK-05', name: 'OWNER Mutation Lock', passed: true, detail: 'OWNER restricted to governance read-only.' },
-      { id: 'CHK-06', name: 'Primary Master Authority Lock', passed: true, detail: 'Only Primary Master may execute payroll financial mutations.' },
-      { id: 'CHK-07', name: 'Payable Days Within Calendar Days', passed: true, detail: 'Payable days never exceed monthly calendar days.' },
-      { id: 'CHK-08', name: 'Payment Batch Total Match', passed: true, detail: 'Disbursement batch sum strictly equals run Net Pay.' },
-      { id: 'CHK-09', name: 'EPF / ESI Statutory Caps', passed: true, detail: 'Wages capped at statutory limits for PF and ESI contributions.' },
-      { id: 'CHK-10', name: 'Audit Trail Completeness', passed: true, detail: 'Every lifecycle action records immutable AuditEvent entries.' },
+      payrollCheck({
+        id: 'CHK-01',
+        name: 'Integer Paise Invariant',
+        status: !hasData ? 'NOT_CONFIGURED' : (invalidMoney.length === 0 ? 'PASS' : 'FAIL'),
+        detail: !hasData
+          ? 'No payroll records exist in the selected scope.'
+          : `${invalidMoney.length} unsafe/non-integer monetary field(s) found.`,
+        evidence: invalidMoney.slice(0, 100),
+      }),
+      payrollCheck({
+        id: 'CHK-02',
+        name: 'Gross - Deductions = Net Invariant',
+        status: !hasData ? 'NOT_CONFIGURED' : (mathMismatches.length === 0 ? 'PASS' : 'FAIL'),
+        detail: !hasData
+          ? 'No payroll records exist in the selected scope.'
+          : `${mathMismatches.length} gross-to-net mismatch(es) found.`,
+        evidence: mathMismatches.slice(0, 100),
+      }),
+      payrollCheck({
+        id: 'CHK-03',
+        name: 'Duplicate Café/Period Run Keys',
+        status: runRows.length === 0 ? 'NOT_CONFIGURED' : (duplicateKeys.length === 0 ? 'PASS' : 'FAIL'),
+        detail: runRows.length === 0
+          ? 'No payroll runs exist in the selected scope.'
+          : `${duplicateKeys.length} duplicate café/period key(s) found in returned records.`,
+        evidence: duplicateKeys,
+      }),
+      payrollCheck({
+        id: 'CHK-04',
+        name: 'Payable Days Within Calendar Days',
+        status: payslipRows.length === 0 ? 'NOT_CONFIGURED' : (dayBoundViolations.length === 0 ? 'PASS' : 'FAIL'),
+        detail: payslipRows.length === 0
+          ? 'No payslips exist in the selected scope.'
+          : `${dayBoundViolations.length} payable-day bound violation(s) found.`,
+        evidence: dayBoundViolations.slice(0, 100),
+      }),
+      payrollCheck({
+        id: 'CHK-05',
+        name: 'Payroll Run Employee Count Matches Payslips',
+        status: runRows.length === 0 ? 'NOT_CONFIGURED' : (countMismatches.length === 0 ? 'PASS' : 'FAIL'),
+        detail: runRows.length === 0
+          ? 'No payroll runs exist in the selected scope.'
+          : `${countMismatches.length} run/payslip count mismatch(es) found.`,
+        evidence: countMismatches.slice(0, 100),
+      }),
+      payrollCheck({
+        id: 'CHK-06',
+        name: 'Payroll Run Totals Match Payslip Sums',
+        status: runRows.length === 0 ? 'NOT_CONFIGURED' : (totalMismatches.length === 0 ? 'PASS' : 'FAIL'),
+        detail: runRows.length === 0
+          ? 'No payroll runs exist in the selected scope.'
+          : `${totalMismatches.length} run total mismatch(es) found.`,
+        evidence: totalMismatches.slice(0, 100),
+      }),
+      payrollCheck({
+        id: 'CHK-07',
+        name: 'Paid Run Payment Reference',
+        status: runRows.length === 0 ? 'NOT_CONFIGURED' : (paidWithoutReference.length === 0 ? 'PASS' : 'FAIL'),
+        detail: runRows.length === 0
+          ? 'No payroll runs exist in the selected scope.'
+          : `${paidWithoutReference.length} PAID run(s) missing paidAt/paymentReference evidence.`,
+        evidence: paidWithoutReference.slice(0, 100),
+      }),
+      payrollCheck({
+        id: 'CHK-08',
+        name: 'Statutory EPF / ESI Applicability and Rate Verification',
+        status: 'NOT_VERIFIED',
+        detail: 'Current effective-dated statutory applicability and rate verification is not executed by this integrity endpoint.',
+      }),
+      payrollCheck({
+        id: 'CHK-09',
+        name: 'Audit Trail Completeness',
+        status: 'NOT_VERIFIED',
+        detail: 'Lifecycle-to-AuditEvent completeness reconciliation is not yet implemented for every payroll action.',
+      }),
+      payrollCheck({
+        id: 'CHK-10',
+        name: 'Runtime Authorization Policy Verification',
+        status: 'NOT_VERIFIED',
+        detail: 'RBAC is enforced by middleware/tests; this data endpoint does not independently prove every route policy.',
+      }),
     ];
+
+    const verifiedChecks = checks.filter((check) => ['PASS', 'FAIL'].includes(check.status));
+    const passedChecks = verifiedChecks.filter((check) => check.status === 'PASS');
+    const coveragePercent = Number(((verifiedChecks.length / checks.length) * 100).toFixed(1));
+    const integrityScore = verifiedChecks.length > 0
+      ? Number(((passedChecks.length / verifiedChecks.length) * 100).toFixed(1))
+      : null;
+    const allVerifiedPassed =
+      verifiedChecks.length === checks.length &&
+      passedChecks.length === checks.length;
 
     return response.status(200).json({
       success: true,
       data: {
-        status: 'CERTIFIED_INTEGRITY',
+        status: allVerifiedPassed ? 'VERIFIED_PASS' : 'PARTIAL_VERIFICATION',
+        integrityScore,
+        coveragePercent,
         totalChecks: checks.length,
-        passedChecks: checks.filter((c) => c.passed).length,
+        verifiedChecks: verifiedChecks.length,
+        passedChecks: passedChecks.length,
+        allPassed: allVerifiedPassed,
+        recordsInspected: {
+          payrollRuns: runRows.length,
+          payslips: payslipRows.length,
+        },
         checks,
       },
       correlationId: request.correlationId || null,
