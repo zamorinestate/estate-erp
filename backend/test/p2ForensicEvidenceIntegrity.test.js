@@ -149,3 +149,20 @@ test('P2 seed integrity: production/minimal seed cannot create demo identities a
     assert.match(envTemplate, new RegExp(name));
   }
 });
+
+test('P2 attendance evidence regressions remain inside the canonical CI allowlist', () => {
+  const pkg = JSON.parse(read('backend/package.json'));
+  const canonical = String(pkg?.scripts?.test || '');
+
+  for (const rel of [
+    'test/attendanceSecurePresence.test.js',
+    'test/attendanceEvidenceRetention.test.js',
+    'test/attendanceEvidenceIntegrity.test.js',
+    'test/attendanceCalendarEvidence.test.js',
+  ]) {
+    assert.ok(
+      canonical.includes(rel),
+      rel + ' must remain in the canonical backend regression command'
+    );
+  }
+});
