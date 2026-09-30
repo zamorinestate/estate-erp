@@ -57,27 +57,31 @@ class AttendanceEvidenceStorageService {
     const storageKey = String(fileKey || '').trim();
     if (!storageKey) return null;
 
-    let stream;
+    const isMissingStorageError = (err) =>
+      err?.statusCode === 404 ||
+      err?.status === 404 ||
+      ['STORAGE_OBJECT_NOT_FOUND', 'DOCUMENT_NOT_FOUND'].includes(err?.code) ||
+      /FileNotFound|not found/i.test(String(err?.message || ''));
+
     try {
-      stream = await documentStorageAdapter.getStream({ storageKey });
+      const exists = await documentStorageAdapter.exists({ storageKey });
+      if (!exists) return null;
+
+      const stream = await documentStorageAdapter.getStream({ storageKey });
+      if (!stream) return null;
+
+      const chunks = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      return buffer.length ? buffer : null;
     } catch (err) {
-      if (
-        err?.statusCode === 404 ||
-        err?.status === 404 ||
-        ['STORAGE_OBJECT_NOT_FOUND', 'DOCUMENT_NOT_FOUND'].includes(err?.code)
-      ) {
+      if (isMissingStorageError(err)) {
         return null;
       }
       throw err;
     }
-
-    if (!stream) return null;
-    const chunks = [];
-    for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const buffer = Buffer.concat(chunks);
-    return buffer.length ? buffer : null;
   }
 
   async deleteObject({ fileKey }) {
