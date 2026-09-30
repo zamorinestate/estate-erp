@@ -505,7 +505,9 @@ function renderDirectoryRows(filtered) {
           <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
           <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
           <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
-          <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account &amp; Revoke Access">🗑️ Delete</button>
+          ${isViewerPrimaryMaster ? `
+            <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Primary Master only: permanently delete account after audited confirmation">🗑️ Delete</button>
+          ` : ''}
         `}
       </td>
     </tr>
@@ -1170,68 +1172,68 @@ function attachDirectoryRowListeners() {
 }
 
 function confirmAndDeleteEmployee(userId, name) {
+  if (!isCurrentViewerPrimaryMaster()) {
+    showToast("Only the Primary Master may permanently delete an employee identity.", "coral");
+    return;
+  }
+
   openModal(`
-    <div style="padding:24px; max-width:480px; width:100%; color:var(--ink);">
+    <div style="padding:24px; max-width:520px; width:100%; color:var(--ink);">
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
-        <div style="width:40px; height:40px; border-radius:50%; background:rgba(220,38,38,0.12); display:flex; align-items:center; justify-content:center; font-size:20px; color:#dc2626;">
-          ⚠️
-        </div>
+        <div style="width:40px; height:40px; border-radius:50%; background:rgba(220,38,38,0.12); display:flex; align-items:center; justify-content:center; font-size:20px; color:#dc2626;">⚠️</div>
         <div>
-          <h2 style="font-size:18px; font-weight:700; margin:0; color:#dc2626;">Permanently Delete Account</h2>
+          <h2 style="font-size:18px; font-weight:700; margin:0; color:#dc2626;">Primary Master Permanent Deletion</h2>
           <div style="font-size:12px; color:var(--muted);">${escapeHtml(name)} (${escapeHtml(userId)})</div>
         </div>
       </div>
-      <p style="font-size:13.5px; line-height:1.5; color:var(--ink); margin:0 0 16px;">
-        Are you sure you want to permanently delete the account for <strong>${escapeHtml(name)}</strong> (<code>${escapeHtml(userId)}</code>)?
-      </p>
-      <div style="background:rgba(220,38,38,0.06); border:1px solid rgba(220,38,38,0.2); border-radius:8px; padding:12px; font-size:12px; color:#991b1b; margin-bottom:20px;">
-        <strong>Warning:</strong> This will permanently delete the employee record from the database, instantly terminate all active sessions, and revoke all login credentials. The employee will not be able to log in or access the ERP again.
+      <div style="background:rgba(220,38,38,0.06); border:1px solid rgba(220,38,38,0.2); border-radius:8px; padding:12px; font-size:12px; color:#991b1b; margin-bottom:16px;">
+        <strong>Irreversible:</strong> authentication credentials and preferences are revoked first; the employee identity is deleted only after those revocations succeed and an immutable authorization audit is confirmed.
       </div>
-      <div style="display:flex; justify-content:flex-end; gap:10px;">
+      <label style="font-size:12px;font-weight:700;display:block;margin-bottom:5px;">Deletion reason *</label>
+      <textarea id="delete-employee-reason" rows="3" placeholder="Enter a specific reason (minimum 10 characters)" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;resize:vertical;margin-bottom:12px;"></textarea>
+      <label style="font-size:12px;font-weight:700;display:block;margin-bottom:5px;">Type confirmation exactly *</label>
+      <input id="delete-employee-confirmation" type="text" autocomplete="off" placeholder="PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;font-family:var(--font-mono, monospace);" />
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
         <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
-        <button class="btn btn-primary" id="confirm-delete-emp-btn" type="button" style="background:#dc2626; border-color:#dc2626; color:#fff; font-weight:600;">
-          🗑️ Permanently Delete
-        </button>
+        <button class="btn btn-primary" id="confirm-delete-emp-btn" type="button" style="background:#dc2626;border-color:#dc2626;color:#fff;font-weight:600;">🗑️ Permanently Delete</button>
       </div>
     </div>
   `);
 
   document.getElementById("confirm-delete-emp-btn")?.addEventListener("click", async () => {
     const btn = document.getElementById("confirm-delete-emp-btn");
+    const reason = String(document.getElementById("delete-employee-reason")?.value || "").trim();
+    const confirmation = String(document.getElementById("delete-employee-confirmation")?.value || "").trim();
+
+    if (reason.length < 10) {
+      showToast("Enter a specific deletion reason of at least 10 characters.", "warning");
+      return;
+    }
+    if (confirmation !== "PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT") {
+      showToast("The permanent-deletion confirmation phrase does not match.", "warning");
+      return;
+    }
+
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Deleting...";
     }
+
     try {
-      try {
-        await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
-      } catch (postErr) {
-        if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-          try {
-            await apiDelete(`/employees/${encodeURIComponent(userId)}`);
-          } catch (delErr) {
-            if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
-              console.warn("Backend deletion endpoint unavailable or record already purged from database:", delErr);
-            } else {
-              throw delErr;
-            }
-          }
-        } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-          console.warn("Employee record already purged from database.");
-        } else {
-          throw postErr;
-        }
-      }
-      liveEmployees = liveEmployees.filter(e => e.userId !== userId);
+      await apiPost(`/employees/${encodeURIComponent(userId)}/delete`, {
+        reason,
+        confirmation,
+      });
+      liveEmployees = liveEmployees.filter((employee) => employee.userId !== userId);
       document.getElementById("modal-root").innerHTML = "";
-      showToast(`Account for ${name} (${userId}) has been permanently deleted and access revoked.`, "success");
+      showToast(`Account for ${name} (${userId}) was permanently deleted after credential revocation.`, "success");
       rerenderCurrentSubpanel();
     } catch (err) {
       if (btn) {
         btn.disabled = false;
         btn.textContent = "🗑️ Permanently Delete";
       }
-      showToast(err?.userMessage || err?.message || "Failed to delete employee account", "coral");
+      showToast(err?.userMessage || err?.message || "Failed to permanently delete employee account", "coral");
     }
   });
 }
@@ -2113,36 +2115,19 @@ function openOffboardModal(targetUserId) {
     };
 
     try {
-      if (payload.accessRevoked || payload.exitType === "TERMINATION") {
-        try {
-          await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
-        } catch (postErr) {
-          if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-            try {
-              await apiDelete(`/employees/${encodeURIComponent(userId)}`);
-            } catch (delErr) {
-              if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
-                console.warn("Backend deletion endpoint unavailable or record already purged:", delErr);
-              } else {
-                throw delErr;
-              }
-            }
-          } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-            console.warn("Employee record already purged from database.");
-          } else {
-            throw postErr;
-          }
-        }
-        liveEmployees = liveEmployees.filter(e => e.userId !== userId);
-        showToast(`Account for ${userId} has been permanently deleted and access revoked.`, "success");
-      } else {
-        await apiPost(`/employees/${encodeURIComponent(userId)}/offboard`, payload);
-        const emp = liveEmployees.find(e => e.userId === userId);
-        if (emp) {
-          emp.employmentStatus = "NOTICE_PERIOD";
-        }
-        showToast(`Offboarding clearance initiated for ${userId} (${payload.exitType}).`, "success");
+      const res = await apiPost(`/employees/${encodeURIComponent(userId)}/offboard`, payload);
+      const emp = liveEmployees.find((employee) => employee.userId === userId);
+      if (emp) {
+        const accessRevokedNow = Boolean(res?.data?.accessRevoked);
+        emp.employmentStatus = accessRevokedNow ? "EXITED" : "NOTICE_PERIOD";
+        if (accessRevokedNow) emp.accountStatus = "DISABLED";
       }
+      showToast(
+        res?.data?.accessRevoked
+          ? `Access revoked for ${userId}; employee identity and HR history were preserved.`
+          : `Offboarding clearance initiated for ${userId} (${payload.exitType}).`,
+        "success"
+      );
     } catch (err) {
       showToast(err?.message || "Failed to process offboarding", "coral");
     }
