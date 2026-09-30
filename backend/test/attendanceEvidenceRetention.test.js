@@ -1,0 +1,262 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { PrivateFile } = require('../src/models/PrivateFile');
+const { Attendance } = require('../src/modules/attendance/Attendance');
+const { attendanceEvidenceStorageService } = require('../src/services/attendanceEvidenceStorageService');
+const {
+  DEFAULT_ORPHAN_GRACE_MINUTES,
+  buildAttendanceEvidenceReferenceQuery,
+  reconcileExpiredOrphanAttendanceEvidence,
+} = require('../src/services/attendanceEvidenceRetentionService');
+
+function installCandidateFind(candidates) {
+  PrivateFile.find = () => ({
+    sort() { return this; },
+    limit() { return this; },
+    lean: async () => candidates,
+  });
+}
+
+test('RET-001: attendance reference query covers every canonical selfie reference location', () => {
+  const query = buildAttendanceEvidenceReferenceQuery('ORG-ZAMORIN', 'FILE-0001');
+  assert.equal(query.organisationId, 'ORG-ZAMORIN');
+  const json = JSON.stringify(query);
+  for (const path of [
+    'attendanceEvidence.checkIn.selfieMediaId',
+    'attendanceEvidence.checkIn.photoFileId',
+    'attendanceEvidence.checkOut.selfieMediaId',
+    'attendanceEvidence.checkOut.photoFileId',
+    'selfieFileId',
+    'rawTimeEvents.selfieFileId',
+  ]) {
+    assert.ok(json.includes(path), `reference query must include ${path}`);
+  }
+});
+
+test('RET-002: dry-run protects linked evidence and reports only unlinked expired uploads', async () => {
+  const originals = {
+    find: PrivateFile.find,
+    exists: Attendance.exists,
+    objectExists: attendanceEvidenceStorageService.objectExists,
+    deleteObject: attendanceEvidenceStorageService.deleteObject,
+  };
+
+  const expired = new Date('2026-09-30T02:00:00Z');
+  installCandidateFind([
+    {
+      _id: 'PF-1',
+      fileId: 'FILE-1001',
+      organisationId: 'ORG-ZAMORIN',
+      storagePath: 'attendance/file-1001.jpg',
+      attendanceContext: { challengeId: 'CH-1', grantExpiresAt: expired },
+    },
+    {
+      _id: 'PF-2',
+      fileId: 'FILE-1002',
+      organisationId: 'ORG-ZAMORIN',
+      storagePath: 'attendance/file-1002.jpg',
+      attendanceContext: { challengeId: 'CH-2', grantExpiresAt: expired },
+    },
+  ]);
+
+  Attendance.exists = async (query) =>
+    JSON.stringify(query).includes('FILE-1002') ? { _id: 'AT-LINKED' } : null;
+
+  let storageTouched = false;
+  attendanceEvidenceStorageService.objectExists = async () => {
+    storageTouched = true;
+    return true;
+  };
+  attendanceEvidenceStorageService.deleteObject = async () => {
+    storageTouched = true;
+    return true;
+  };
+
+  try {
+    const result = await reconcileExpiredOrphanAttendanceEvidence({
+      organisationId: 'ORG-ZAMORIN',
+      actorUserId: 'MU-PRIMARY-01',
+      now: new Date('2026-09-30T04:00:00Z'),
+      dryRun: true,
+    });
+
+    assert.equal(result.policy.graceMinutes, DEFAULT_ORPHAN_GRACE_MINUTES);
+    assert.equal(result.scanned, 2);
+    assert.equal(result.linkedProtected, 1);
+    assert.equal(result.eligibleOrphans, 1);
+    assert.equal(result.deleted, 0);
+    assert.equal(storageTouched, false, 'dry-run must not touch storage');
+  } finally {
+    PrivateFile.find = originals.find;
+    Attendance.exists = originals.exists;
+    attendanceEvidenceStorageService.objectExists = originals.objectExists;
+    attendanceEvidenceStorageService.deleteObject = originals.deleteObject;
+  }
+});
+
+test('RET-003: execute deletes only claimed, unlinked orphan objects and metadata', async () => {
+  const originals = {
+    find: PrivateFile.find,
+    exists: Attendance.exists,
+    findOneAndUpdate: PrivateFile.findOneAndUpdate,
+    updateOne: PrivateFile.updateOne,
+    deleteOne: PrivateFile.deleteOne,
+    objectExists: attendanceEvidenceStorageService.objectExists,
+    deleteObject: attendanceEvidenceStorageService.deleteObject,
+  };
+
+  const expired = new Date('2026-09-30T02:00:00Z');
+  const candidates = [
+    {
+      _id: 'PF-3',
+      fileId: 'FILE-1003',
+      organisationId: 'ORG-ZAMORIN',
+      storagePath: 'attendance/file-1003.jpg',
+      attendanceContext: { challengeId: 'CH-3', grantExpiresAt: expired },
+    },
+    {
+      _id: 'PF-4',
+      fileId: 'FILE-1004',
+      organisationId: 'ORG-ZAMORIN',
+      storagePath: 'attendance/file-1004.jpg',
+      attendanceContext: { challengeId: 'CH-4', grantExpiresAt: expired },
+    },
+  ];
+  installCandidateFind(candidates);
+  Attendance.exists = async () => null;
+
+  PrivateFile.findOneAndUpdate = async (filter, update) => {
+    const candidate = candidates.find((item) => String(item._id) === String(filter._id));
+    return candidate
+      ? {
+          ...candidate,
+          attendanceCleanup: {
+            status: 'CLAIMED',
+            claimId: update.$set['attendanceCleanup.claimId'],
+          },
+        }
+      : null;
+  };
+
+  const updates = [];
+  PrivateFile.updateOne = async (filter, update) => {
+    updates.push({ filter, update });
+    return { modifiedCount: 1 };
+  };
+
+  const deletedMetadata = [];
+  PrivateFile.deleteOne = async (filter) => {
+    deletedMetadata.push(filter);
+    return { deletedCount: 1 };
+  };
+
+  const deletedStorage = [];
+  attendanceEvidenceStorageService.objectExists = async ({ fileKey }) =>
+    fileKey.includes('1003');
+  attendanceEvidenceStorageService.deleteObject = async ({ fileKey }) => {
+    deletedStorage.push(fileKey);
+    return true;
+  };
+
+  try {
+    const result = await reconcileExpiredOrphanAttendanceEvidence({
+      organisationId: 'ORG-ZAMORIN',
+      actorUserId: 'MU-PRIMARY-01',
+      now: new Date('2026-09-30T04:00:00Z'),
+      dryRun: false,
+    });
+
+    assert.equal(result.scanned, 2);
+    assert.equal(result.eligibleOrphans, 2);
+    assert.equal(result.deleted, 2);
+    assert.equal(result.storageAlreadyMissing, 1);
+    assert.deepEqual(deletedStorage, ['attendance/file-1003.jpg']);
+    assert.equal(deletedMetadata.length, 2);
+    assert.ok(
+      updates.some((entry) => entry.update?.$set?.['attendanceCleanup.status'] === 'STORAGE_DELETED')
+    );
+  } finally {
+    PrivateFile.find = originals.find;
+    Attendance.exists = originals.exists;
+    PrivateFile.findOneAndUpdate = originals.findOneAndUpdate;
+    PrivateFile.updateOne = originals.updateOne;
+    PrivateFile.deleteOne = originals.deleteOne;
+    attendanceEvidenceStorageService.objectExists = originals.objectExists;
+    attendanceEvidenceStorageService.deleteObject = originals.deleteObject;
+  }
+});
+
+test('RET-004: storage deletion failure retains metadata and records retryable FAILED state', async () => {
+  const originals = {
+    find: PrivateFile.find,
+    exists: Attendance.exists,
+    findOneAndUpdate: PrivateFile.findOneAndUpdate,
+    updateOne: PrivateFile.updateOne,
+    deleteOne: PrivateFile.deleteOne,
+    objectExists: attendanceEvidenceStorageService.objectExists,
+    deleteObject: attendanceEvidenceStorageService.deleteObject,
+  };
+
+  const candidate = {
+    _id: 'PF-5',
+    fileId: 'FILE-1005',
+    organisationId: 'ORG-ZAMORIN',
+    storagePath: 'attendance/file-1005.jpg',
+    attendanceContext: {
+      challengeId: 'CH-5',
+      grantExpiresAt: new Date('2026-09-30T02:00:00Z'),
+    },
+  };
+
+  installCandidateFind([candidate]);
+  Attendance.exists = async () => null;
+  PrivateFile.findOneAndUpdate = async (filter, update) => ({
+    ...candidate,
+    attendanceCleanup: {
+      status: 'CLAIMED',
+      claimId: update.$set['attendanceCleanup.claimId'],
+    },
+  });
+
+  const updates = [];
+  PrivateFile.updateOne = async (filter, update) => {
+    updates.push({ filter, update });
+    return { modifiedCount: 1 };
+  };
+
+  let metadataDeleteCalled = false;
+  PrivateFile.deleteOne = async () => {
+    metadataDeleteCalled = true;
+    return { deletedCount: 1 };
+  };
+
+  attendanceEvidenceStorageService.objectExists = async () => true;
+  attendanceEvidenceStorageService.deleteObject = async () => false;
+
+  try {
+    const result = await reconcileExpiredOrphanAttendanceEvidence({
+      organisationId: 'ORG-ZAMORIN',
+      actorUserId: 'MU-PRIMARY-01',
+      now: new Date('2026-09-30T04:00:00Z'),
+      dryRun: false,
+    });
+
+    assert.equal(result.deleted, 0);
+    assert.equal(result.failed, 1);
+    assert.equal(metadataDeleteCalled, false);
+    assert.ok(
+      updates.some((entry) => entry.update?.$set?.['attendanceCleanup.status'] === 'FAILED')
+    );
+  } finally {
+    PrivateFile.find = originals.find;
+    Attendance.exists = originals.exists;
+    PrivateFile.findOneAndUpdate = originals.findOneAndUpdate;
+    PrivateFile.updateOne = originals.updateOne;
+    PrivateFile.deleteOne = originals.deleteOne;
+    attendanceEvidenceStorageService.objectExists = originals.objectExists;
+    attendanceEvidenceStorageService.deleteObject = originals.deleteObject;
+  }
+});
