@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const cafeService = require('../src/services/cafeService');
+const operatorSessionService = require('../src/services/operatorSessionService');
 const { Cafe } = require('../src/models/Cafe');
 const { CafeAccess } = require('../src/models/CafeAccess');
 const { CafeGatewayContext } = require('../src/models/CafeGatewayContext');
@@ -118,3 +119,67 @@ test('CAFE-LIFE-006: operator-session gateway requires ACTIVE access and TEST_MO
   assert.ok(source.includes("cafeAccessDoc.accessStatus !== 'ACTIVE'"));
   assert.ok(source.includes("!['TEST_MODE', 'ACTIVE'].includes(cafe.status)"));
 });
+
+test('CAFE-GWC-001: gateway context consumption is an atomic expected-state claim', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/operatorSessionService.js'), 'utf8');
+  const start = source.indexOf('if (cleanGatewayToken)');
+  const end = source.indexOf('} else {\n      // Direct registered device sign-in', start);
+  const block = source.slice(start, end);
+
+  assert.ok(block.includes('CafeGatewayContext.findOneAndUpdate'));
+  assert.ok(block.includes("status: 'ACTIVE'"));
+  assert.ok(block.includes('consumed: { $ne: true }'));
+  assert.ok(block.includes('expiresAt: { $gt: consumedAt }'));
+  assert.ok(block.includes("status: 'CONSUMED'"));
+  assert.ok(block.includes('{ new: true }'));
+  assert.ok(block.includes('GATEWAY_CONTEXT_STATE_CONFLICT'));
+  assert.equal(block.includes('gatewayContext.save().catch(() => {})'), false);
+});
+
+test('CAFE-GWC-002: losing the atomic gateway claim is classified as consumed replay', async () => {
+  const originals = {
+    findOne: CafeGatewayContext.findOne,
+    findOneAndUpdate: CafeGatewayContext.findOneAndUpdate,
+  };
+
+  let findOneCalls = 0;
+  CafeGatewayContext.findOne = () => {
+    findOneCalls += 1;
+    if (findOneCalls === 1) {
+      return Promise.resolve({
+        _id: 'GWC-MONGO-1',
+        gatewayContextId: 'GWC-TEST-REPLAY',
+        organisationId: 'ORG-ZAMORIN',
+        cafeId: 'ZC-0001',
+        accessMethod: 'QR',
+        status: 'ACTIVE',
+        consumed: false,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+    }
+    return {
+      lean: async () => ({
+        gatewayContextId: 'GWC-TEST-REPLAY',
+        status: 'CONSUMED',
+        consumed: true,
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    };
+  };
+  CafeGatewayContext.findOneAndUpdate = async () => null;
+
+  try {
+    await assert.rejects(
+      async () => operatorSessionService.signInOperator({
+        organisationId: 'ORG-ZAMORIN',
+        gatewayContextToken: 'GWC-TEST-REPLAY',
+        operatorUserId: 'EMP-0001',
+      }),
+      (err) => err.code === 'GATEWAY_CONTEXT_CONSUMED' && err.statusCode === 401
+    );
+  } finally {
+    CafeGatewayContext.findOne = originals.findOne;
+    CafeGatewayContext.findOneAndUpdate = originals.findOneAndUpdate;
+  }
+});
+
