@@ -83,6 +83,9 @@ const { attendanceEvidenceStorageService } = require('../../services/attendanceE
 const {
   reconcileExpiredOrphanAttendanceEvidence,
 } = require('../../services/attendanceEvidenceRetentionService');
+const {
+  auditAttendanceEvidenceIntegrity,
+} = require('../../services/attendanceEvidenceIntegrityService');
 const { PrivateFile } = require('../../models/PrivateFile');
 const { AttendanceSubmission } = require('../../models/AttendanceSubmission');
 
@@ -1399,6 +1402,58 @@ const reconcileOrphanSelfieEvidence = asyncHandler(async (request, response) => 
     message: dryRun
       ? 'Expired orphan attendance evidence reconciliation preview completed.'
       : 'Expired orphan attendance evidence reconciliation completed.',
+    data: result,
+    correlationId: request.correlationId || null,
+  });
+});
+
+const auditAttendanceEvidence = asyncHandler(async (request, response) => {
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may execute attendance evidence integrity audits.'
+    );
+  }
+
+  const {
+    attendanceId = '',
+    cafeId = '',
+    batchSize,
+    verifyStorageBytes = true,
+  } = request.body || {};
+
+  const result = await auditAttendanceEvidenceIntegrity({
+    organisationId: request.auth.organisationId,
+    attendanceId,
+    cafeId,
+    batchSize,
+    verifyStorageBytes: verifyStorageBytes !== false,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'ATTENDANCE',
+    action: 'ATTENDANCE_EVIDENCE_INTEGRITY_AUDITED',
+    entityType: 'AttendanceEvidence',
+    entityId: normalizeIdentifier(attendanceId) || normalizeIdentifier(cafeId) || request.auth.organisationId,
+    metadata: {
+      attendanceId: normalizeIdentifier(attendanceId) || null,
+      cafeId: normalizeIdentifier(cafeId) || null,
+      recordsScanned: result.recordsScanned,
+      evidenceSlotsScanned: result.evidenceSlotsScanned,
+      passed: result.passed,
+      failed: result.failed,
+      integrityOk: result.integrityOk,
+      verifyStorageBytes: result.verifyStorageBytes,
+    },
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: result.integrityOk
+      ? 'Attendance evidence integrity audit completed without detected failures.'
+      : 'Attendance evidence integrity audit detected one or more failures.',
     data: result,
     correlationId: request.correlationId || null,
   });
@@ -3580,9 +3635,31 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     );
   }
 
-  if (privateFile.sha256) {
+  const expectedSizeBytes = Number(privateFile.sizeBytes);
+  if (
+    Number.isFinite(expectedSizeBytes) &&
+    expectedSizeBytes > 0 &&
+    buffer.length !== expectedSizeBytes
+  ) {
+    throw new ApiError(
+      409,
+      'ATTENDANCE_EVIDENCE_SIZE_MISMATCH',
+      'Attendance photograph byte length does not match its stored metadata.'
+    );
+  }
+
+  const storedSha256 = String(privateFile.sha256 || '').trim().toLowerCase();
+  if (privateFile.attendanceContext?.challengeId && !/^[a-f0-9]{64}$/.test(storedSha256)) {
+    throw new ApiError(
+      409,
+      'ATTENDANCE_EVIDENCE_HASH_MISSING',
+      'Secure attendance photograph is missing its canonical SHA-256 integrity metadata.'
+    );
+  }
+
+  if (storedSha256) {
     const computedSha256 = crypto.createHash('sha256').update(buffer).digest('hex');
-    if (computedSha256 !== String(privateFile.sha256).toLowerCase()) {
+    if (computedSha256 !== storedSha256) {
       throw new ApiError(
         409,
         'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE',
@@ -3738,6 +3815,7 @@ module.exports = {
   reopenPeriod,
   purgeSelfieEvidence,
   reconcileOrphanSelfieEvidence,
+  auditAttendanceEvidence,
   getServerTime,
   getStaffPolicy,
   getStaffToday,
