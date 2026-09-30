@@ -112,10 +112,25 @@ function ensureCafeOperationsAllowed(request) {
     }
     return;
   }
+
   if (request.auth.role === 'OWNER') return;
-  if (request.auth.privilegeProfile === 'SELF_ONLY') {
-    throw new ApiError(403, 'PERMISSION_DENIED', 'Cafe Operations attendance administration is restricted on personal or untrusted devices.');
+
+  if (request.auth.role === 'CAFE_ADMIN') {
+    if (request.auth.privilegeProfile === 'SELF_ONLY') {
+      throw new ApiError(
+        403,
+        'PERMISSION_DENIED',
+        'Cafe Operations attendance administration is restricted on personal or untrusted devices.'
+      );
+    }
+    return;
   }
+
+  throw new ApiError(
+    403,
+    'PERMISSION_DENIED',
+    'Attendance administration is restricted to the Primary Master, Owner, or Café Admin.'
+  );
 }
 
 function ensureCafeAccess(request, cafeId) {
@@ -789,9 +804,24 @@ const publishRoster = asyncHandler(async (request, response) => {
 // 5c. GET /api/v1/attendance/roster/shifts — list shift templates available for roster builder
 const listShiftsForRoster = asyncHandler(async (request, response) => {
   const { Shift } = require('../../models/Shift');
+  ensureCafeOperationsAllowed(request);
+
   const cafeId = request.query.cafeId ? normalizeIdentifier(request.query.cafeId) : null;
   const filter = { organisationId: request.auth.organisationId, isActive: true };
-  if (cafeId) filter.$or = [{ cafeId }, { cafeId: null }];
+
+  if (cafeId) {
+    ensureCafeAccess(request, cafeId);
+    filter.$or = [{ cafeId }, { cafeId: null }];
+  } else if (request.auth.role !== 'MASTER') {
+    const assigned = (request.auth.assignedCafeIds || [])
+      .map((id) => normalizeIdentifier(id))
+      .filter(Boolean);
+    if (!assigned.length) {
+      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'No authorised café scope is available for roster shift templates.');
+    }
+    filter.$or = [{ cafeId: { $in: assigned } }, { cafeId: null }];
+  }
+
   const shifts = await Shift.find(filter).sort({ isDefault: -1, name: 1 }).lean();
   return response.status(200).json({
     success: true, data: { shifts }, correlationId: request.correlationId || null,
