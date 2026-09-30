@@ -94,6 +94,6 @@ test('CAL-EVI-002: Calendar 360 renders separate IN/OUT evidence markers and ope
   assert.match(frontend, /calendar-day-card/);
   assert.match(
     frontend,
-    /openAttendanceEvidenceViewer({s*attendanceIds*})/
+    /openAttendanceEvidenceViewer\(\{\s*attendanceId\s*\}\)/
   );
 });
