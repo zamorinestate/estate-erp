@@ -220,6 +220,8 @@ function buildAuditAttendanceFilter({ organisationId, attendanceId, cafeId }) {
     { 'attendanceEvidence.checkOut.selfieMediaId': { $ne: null } },
     { 'attendanceEvidence.checkOut.photoFileId': { $ne: null } },
     { selfieFileId: { $ne: null } },
+    { checkInSource: 'SELF' },
+    { checkOutSource: 'SELF' },
   ];
 
   return filter;
