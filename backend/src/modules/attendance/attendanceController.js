@@ -1193,9 +1193,16 @@ const staffCheckIn = asyncHandler(async (request, response) => {
       fileId: selfieMediaId,
       organisationId,
       uploadedByUserId: userId,
+      'attendanceContext.challengeId': qrValidation.challengeId,
+      'attendanceContext.cafeId': cafeId,
+      'attendanceContext.punchType': 'CHECK_IN',
     });
     if (!selfieFile) {
-      throw new ApiError(400, 'INVALID_SELFIE_MEDIA', 'Uploaded selfie photograph was not found.');
+      throw new ApiError(
+        400,
+        'SELFIE_CHALLENGE_BINDING_MISMATCH',
+        'Check-In selfie is not bound to this verified QR challenge and transition.'
+      );
     }
   }
 
@@ -1592,9 +1599,16 @@ const staffCheckOut = asyncHandler(async (request, response) => {
       fileId: selfieMediaId,
       organisationId,
       uploadedByUserId: userId,
+      'attendanceContext.challengeId': qrValidation.challengeId,
+      'attendanceContext.cafeId': normalizeIdentifier(qrValidation.resolvedCafeId || attendance.cafeId),
+      'attendanceContext.punchType': 'CHECK_OUT',
     });
     if (!selfieFile) {
-      throw new ApiError(400, 'INVALID_SELFIE_MEDIA', 'Uploaded selfie photograph was not found.');
+      throw new ApiError(
+        400,
+        'SELFIE_CHALLENGE_BINDING_MISMATCH',
+        'Check-Out selfie is not bound to this verified QR challenge and transition.'
+      );
     }
   }
 
@@ -2701,8 +2715,16 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     selfieDataUrl,
     selfieBase64,
     mimeType = 'image/jpeg',
-    punchType = 'CHECK_IN',
+    punchType: rawPunchType = 'CHECK_IN',
+    scanGrant,
+    qrToken: uploadQrToken,
+    qrChallengeId,
   } = request.body || {};
+  const punchType = normalizeIdentifier(rawPunchType);
+
+  if (!['CHECK_IN', 'CHECK_OUT'].includes(punchType)) {
+    throw new ApiError(400, 'INVALID_PUNCH_TYPE', 'Selfie evidence punchType must be CHECK_IN or CHECK_OUT.');
+  }
 
   let buffer;
   let extractedMime = mimeType;
@@ -2749,6 +2771,32 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'EMPTY_IMAGE_PAYLOAD', 'Decoded image payload contains 0 bytes.');
   }
 
+  const grantToken = String(scanGrant || uploadQrToken || '').trim();
+  if (!grantToken) {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_SCAN_GRANT_REQUIRED',
+      'A verified attendance scan grant is required before selfie evidence can be uploaded.'
+    );
+  }
+
+  const evidenceProof = await attendanceQrService.validatePunchQrProof(grantToken, {
+    employeeOrgId: organisationId,
+    employeeUserId: userId,
+    expectedTransition: punchType,
+  });
+
+  if (
+    qrChallengeId &&
+    normalizeIdentifier(qrChallengeId) !== normalizeIdentifier(evidenceProof.challengeId)
+  ) {
+    throw new ApiError(
+      403,
+      'SELFIE_CHALLENGE_SCOPE_MISMATCH',
+      'Selfie evidence challenge does not match the verified attendance scan grant.'
+    );
+  }
+
   const fileId = await SequenceCounter.generateId({
     organisationId,
     sequenceKey: 'PRIVATE_FILE',
@@ -2772,6 +2820,13 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     sizeBytes: buffer.length,
     storagePath: uploadResult.fileKey || uploadResult.url,
     uploadedByUserId: userId,
+    attendanceContext: {
+      challengeId: evidenceProof.challengeId,
+      cafeId: normalizeIdentifier(evidenceProof.resolvedCafeId),
+      punchType,
+      boundAt: new Date(),
+      grantExpiresAt: evidenceProof.expiresAt || null,
+    },
   });
 
   return response.status(201).json({
