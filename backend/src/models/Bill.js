@@ -786,9 +786,19 @@ const billSchema = new mongoose.Schema(
     // 'ALREADY_DEPLETED' = idempotent replay; depletion skipped safely.
     bomDepletionStatus: {
       type: String,
-      enum: ['NOT_ATTEMPTED', 'DEPLETED', 'FAILED', 'ALREADY_DEPLETED'],
+      enum: ['NOT_ATTEMPTED', 'PROCESSING', 'DEPLETED', 'FAILED', 'ALREADY_DEPLETED'],
       default: 'NOT_ATTEMPTED',
       index: true,
+    },
+
+    bomDepletionStartedAt: {
+      type: Date,
+      default: null,
+    },
+
+    bomDepletionCompletedAt: {
+      type: Date,
+      default: null,
     },
 
     bomDepletionError: {
