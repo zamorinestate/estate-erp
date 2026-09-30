@@ -140,6 +140,28 @@ const punchEvidenceSchema = new mongoose.Schema(
       uppercase: true,
       default: null,
     },
+    integrityReleaseAuditEventId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    integrityReleasedAt: {
+      type: Date,
+      default: null,
+    },
+    integrityReleasedByUserId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    integrityReleaseReason: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: '',
+    },
     qrChallengeId: {
       type: String,
       trim: true,
