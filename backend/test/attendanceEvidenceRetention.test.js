@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const { PrivateFile } = require('../src/models/PrivateFile');
 const { Attendance } = require('../src/modules/attendance/Attendance');
+const { RetentionPolicy } = require('../src/models/RetentionPolicy');
 const { attendanceEvidenceStorageService } = require('../src/services/attendanceEvidenceStorageService');
 const {
   DEFAULT_ORPHAN_GRACE_MINUTES,
@@ -14,6 +15,7 @@ const {
   buildReservationAttendanceReferenceQuery,
   setCommittedAttendanceEvidenceHold,
   buildCommittedEvidenceRetentionCandidateFilter,
+  getAttendanceEvidenceRetentionReadiness,
   reconcileExpiredOrphanAttendanceEvidence,
 } = require('../src/services/attendanceEvidenceRetentionService');
 
@@ -745,5 +747,72 @@ test('RET-012: committed-evidence purge stays disabled while Primary Master hold
   assert.match(viewer, /Place Retention Hold/);
   assert.match(viewer, /Release Retention Hold/);
   assert.match(viewer, /committed purge is still disabled/);
+});
+
+test('RET-013: retention readiness distinguishes policy metadata from actual purge enablement', async () => {
+  const originals = {
+    countDocuments: PrivateFile.countDocuments,
+    policyFindOne: RetentionPolicy.findOne,
+  };
+
+  RetentionPolicy.findOne = () => ({
+    sort() { return this; },
+    lean: async () => null,
+  });
+
+  PrivateFile.countDocuments = async (filter) => {
+    if (filter?.['attendanceRetention.holdStatus'] === 'HELD') return 2;
+    if (filter?.['attendanceRetention.purgeEligibleAfter']?.$lte) return 1;
+    if (filter?.['attendanceRetention.policyVersion']) return 3;
+    return 5;
+  };
+
+  try {
+    const result = await getAttendanceEvidenceRetentionReadiness({
+      organisationId: 'ORG-ZAMORIN',
+      now: new Date('2026-09-30T09:30:00Z'),
+    });
+
+    assert.equal(result.formalPolicyConfigured, false);
+    assert.equal(result.formalPolicy, null);
+    assert.equal(result.committedEvidencePurgeEnabled, false);
+    assert.equal(result.status, 'FORMAL_POLICY_NOT_CONFIGURED');
+    assert.deepEqual(result.counts, {
+      committedEvidence: 5,
+      activeHolds: 2,
+      policyAssigned: 3,
+      policyUnassigned: 2,
+      metadataGateMatches: 1,
+    });
+    assert.equal(result.safeguards.activeHoldBlocksFuturePurge, true);
+    assert.equal(result.safeguards.committedPurgeFailClosed, true);
+  } finally {
+    PrivateFile.countDocuments = originals.countDocuments;
+    RetentionPolicy.findOne = originals.policyFindOne;
+  }
+});
+
+test('RET-014: retention readiness endpoint and UI remain Primary-Master read-only governance', () => {
+  const controller = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceController.js'),
+    'utf8'
+  );
+  const routes = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceRoutes.js'),
+    'utf8'
+  );
+  const frontend = fs.readFileSync(
+    path.join(__dirname, '../../frontend/src/js/modules/attendance/attendanceShifts.js'),
+    'utf8'
+  );
+
+  assert.match(controller, /Only the Primary Master may view attendance evidence retention readiness/);
+  assert.match(controller, /committedEvidencePurgeEnabled/);
+  assert.match(routes, /router\.get\('\/evidence\/retention\/readiness', getAttendanceEvidenceRetentionReadinessStatus\)/);
+  assert.match(frontend, /load-retention-readiness-btn/);
+  assert.match(frontend, /FORMAL POLICY NOT CONFIGURED/);
+  assert.match(frontend, /Committed purge state/);
+  assert.match(frontend, />DISABLED</);
+  assert.match(frontend, /none are deletable because committed-evidence purge is disabled/);
 });
 
