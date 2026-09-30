@@ -623,3 +623,14 @@ test('P0-WF-040: evidence-view audit occurs only after durable read and checksum
   assert.ok(integrityIndex > readIndex);
   assert.ok(auditIndex > integrityIndex);
 });
+
+
+test('P0-WF-041: selfie storage is compensated if PrivateFile metadata persistence fails', () => {
+  const uploadStart = attendanceController.indexOf('const uploadPunchSelfie = asyncHandler');
+  const uploadEnd = attendanceController.indexOf('/**\n * GET /api/v1/attendance/evidence/media', uploadStart);
+  const uploadBlock = attendanceController.slice(uploadStart, uploadEnd);
+
+  assert.ok(uploadBlock.includes('try {\n    privateFile = await PrivateFile.create({'));
+  assert.ok(uploadBlock.includes('attendanceEvidenceStorageService.deleteObject({ fileKey: uploadResult.fileKey })'));
+  assert.ok(uploadBlock.includes('throw metadataErr;'));
+});
