@@ -3506,7 +3506,10 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
         cafeId: normalizeIdentifier(evidenceProof.resolvedCafeId),
         punchType,
         boundAt: new Date(),
+        grantIssuedAt: evidenceProof.issuedAt || null,
         grantExpiresAt: evidenceProof.expiresAt || null,
+        deviceId: String(evidenceProof.challenge?.deviceId || '').trim() || null,
+        proofPurpose: evidenceProof.purpose || 'ATTENDANCE_PUNCH',
       },
     });
   } catch (metadataErr) {
