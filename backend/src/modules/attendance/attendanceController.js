@@ -3502,6 +3502,7 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
       storagePath: uploadResult.fileKey,
       uploadedByUserId: userId,
       attendanceContext: {
+        proofSnapshotVersion: 1,
         challengeId: evidenceProof.challengeId,
         cafeId: normalizeIdentifier(evidenceProof.resolvedCafeId),
         punchType,
