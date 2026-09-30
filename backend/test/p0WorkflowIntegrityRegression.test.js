@@ -28,6 +28,11 @@ const staffAttendancePage = read('frontend/src/js/modules/attendance/staffAttend
 const staffHomePage = read('frontend/src/js/pages/staffHome.js');
 const attendanceRoutes = read('backend/src/modules/attendance/attendanceRoutes.js');
 const correctionModel = read('backend/src/models/AttendanceCorrectionRequest.js');
+const attendanceQrService = read('backend/src/services/attendanceQrService.js');
+const mainFrontend = read('frontend/src/js/main.js');
+const cafeOpsApi = read('frontend/cafe-operations/js/api/cafeOpsApi.js');
+const cafeOpsAttendanceKiosk = read('frontend/cafe-operations/js/screens/attendanceKiosk.js');
+const cafeOpsDeviceRoutes = read('backend/src/cafe-operations/routes/deviceEnrollmentRoutes.js');
 
 test('P0-WF-001: approval notification outbox is queued, never pre-marked SENT', () => {
   const helperStart = approvalController.indexOf('async function sendNotificationAndOutbox');
@@ -254,4 +259,54 @@ test('P0-WF-021: staff shift-request surfaces do not submit fabricated STANDARD/
   const homeShiftBlock = staffHomePage.slice(homeShiftStart, homeShiftEnd);
   assert.equal(homeShiftBlock.includes('currentShift: "STANDARD"'), false);
   assert.equal(homeShiftBlock.includes('prefTime || "MORNING"'), false);
+});
+
+
+test('P0-WF-022: attendance selfie FormData is parsed by bounded multipart middleware', () => {
+  assert.ok(attendanceRoutes.includes("const multer = require('multer')"));
+  assert.ok(attendanceRoutes.includes('storage: multer.memoryStorage()'));
+  assert.ok(attendanceRoutes.includes('const ATTENDANCE_SELFIE_MAX_BYTES = 5 * 1024 * 1024'));
+  assert.ok(attendanceRoutes.includes('fileSize: ATTENDANCE_SELFIE_MAX_BYTES'));
+  assert.ok(attendanceRoutes.includes("attendanceSelfieUpload.single('selfie')"));
+  assert.ok(attendanceController.includes('if (request.file)'));
+  assert.ok(attendanceController.includes('request.file.buffer'));
+});
+
+test('P0-WF-023: check-in and check-out keep distinct selfie evidence and expose it from the calendar', () => {
+  const checkInStart = attendanceController.indexOf('const staffCheckIn = asyncHandler');
+  const checkOutStart = attendanceController.indexOf('const staffCheckOut = asyncHandler');
+  const checkInBlock = attendanceController.slice(checkInStart, checkOutStart);
+  const checkOutEnd = attendanceController.indexOf('// 13a.', checkOutStart) > checkOutStart
+    ? attendanceController.indexOf('// 13a.', checkOutStart)
+    : attendanceController.indexOf('// 13c.', checkOutStart);
+  const checkOutBlock = attendanceController.slice(checkOutStart, checkOutEnd > checkOutStart ? checkOutEnd : undefined);
+
+  assert.ok(checkInBlock.includes("'SELFIE_EVIDENCE_REQUIRED'"));
+  assert.ok(checkInBlock.includes('attendanceEvidence: {'));
+  assert.ok(checkInBlock.includes('checkIn: checkInEvidence'));
+
+  assert.ok(checkOutBlock.includes("'SELFIE_EVIDENCE_REQUIRED'"));
+  assert.ok(checkOutBlock.includes("'SAME_SELFIE_REUSED'"));
+  assert.ok(checkOutBlock.includes('attendance.attendanceEvidence.checkOut = checkOutEvidence'));
+
+  assert.ok(attendanceController.includes('selfieMediaId: checkInEvidence?.selfieMediaId || attendance.selfieFileId'));
+  assert.ok(attendanceController.includes('selfieMediaId: checkOutEvidence?.selfieMediaId || null'));
+
+  assert.ok(staffAttendancePage.includes('📷 IN'));
+  assert.ok(staffAttendancePage.includes('📷 OUT'));
+  assert.ok(staffAttendancePage.includes('openAttendanceEvidenceViewer({ attendanceId: attId })'));
+});
+
+test('P0-WF-024: both management and Café Operations QR displays use the canonical staff attendance deep-link', () => {
+  assert.ok(attendanceQrService.includes("returnTo=staff-attendance&attendanceQr="));
+  assert.ok(mainFrontend.includes('sessionStorage.setItem("zamorin.pendingAttendanceQr", attendanceQr)'));
+  assert.ok(staffAttendancePage.includes('sessionStorage.getItem("zamorin.pendingAttendanceQr")'));
+  assert.ok(staffAttendancePage.includes('{ preScannedQrToken: pendingQr }'));
+
+  assert.ok(cafeOpsApi.includes("attendanceQr: () => apiRequest('/devices/attendance/qr', { method: 'GET' })"));
+  assert.ok(cafeOpsAttendanceKiosk.includes('global.CafeOpsApi.attendanceQr()'));
+  assert.ok(cafeOpsAttendanceKiosk.includes('body.attendanceUrl'));
+  assert.ok(cafeOpsDeviceRoutes.includes("router.get('/attendance/qr', deviceContext"));
+  assert.ok(cafeOpsDeviceRoutes.includes('attendanceQrService.getActiveOrNewChallenge'));
+  assert.ok(cafeOpsDeviceRoutes.includes('attendanceUrl: challenge.attendanceUrl'));
 });
