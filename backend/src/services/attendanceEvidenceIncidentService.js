@@ -319,6 +319,8 @@ async function releaseQuarantinedAttendanceEvidence({
   attendanceId,
   punchType,
   reason,
+  verifyEvidence = verifyAttendanceEvidenceSlot,
+  recordAudit = recordRequestAudit,
 } = {}) {
   if (!request?.auth?.organisationId || !request?.auth?.userId) {
     throw new TypeError('Authenticated request context is required.');
@@ -374,7 +376,7 @@ async function releaseQuarantinedAttendanceEvidence({
   // A release is permitted only after a fresh full byte-level verification.
   // Versioned proof/geofence snapshots remain strictly enforced; historical
   // pre-version evidence is not treated as corrupt merely because it is older.
-  const verification = await verifyAttendanceEvidenceSlot({
+  const verification = await verifyEvidence({
     organisationId,
     attendance,
     punchType: normalizedPunchType,
@@ -393,7 +395,7 @@ async function releaseQuarantinedAttendanceEvidence({
   // First write an immutable authorization/verification event. This event does
   // not claim the state transition occurred; it records that release criteria
   // were satisfied and that the Primary Master authorized the attempt.
-  const releaseAudit = await recordRequestAudit({
+  const releaseAudit = await recordAudit({
     request,
     module: 'ATTENDANCE',
     action: 'ATTENDANCE_EVIDENCE_QUARANTINE_RELEASE_VERIFIED',
