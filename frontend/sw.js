@@ -2,7 +2,7 @@
 // ZAMORIN CAFÉ ERP — SERVICE WORKER (PWA & OFFLINE KIOSK ENGINE)
 // =============================================================================
 
-const CACHE_VERSION = 'zamorin-pwa-v3.9.1';
+const CACHE_VERSION = 'zamorin-pwa-v3.9.2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 
@@ -70,35 +70,51 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. Stale-While-Revalidate for local static assets (CSS, JS, WebP, PNG, SVG)
+  // 3. Network-First for application code/config so a deployed POS fix is never
+  // hidden behind a stale JavaScript/CSS response. Cache remains an offline fallback.
   if (
     url.origin === self.location.origin &&
     (url.pathname.endsWith('.css') ||
       url.pathname.endsWith('.js') ||
-      url.pathname.endsWith('.webp') ||
-      url.pathname.endsWith('.avif') ||
-      url.pathname.endsWith('.jpg') ||
-      url.pathname.endsWith('.png') ||
-      url.pathname.endsWith('.svg') ||
       url.pathname.endsWith('.json'))
   ) {
     event.respondWith(
+      fetch(event.request, { cache: 'no-store' }).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const clone = networkResponse.clone();
+          caches.open(STATIC_CACHE).then((cache) => cache.put(event.request, clone));
+        }
+        return networkResponse;
+      }).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // 4. Cache-First for image assets; these are content-stable and safe to reuse.
+  if (
+    url.origin === self.location.origin &&
+    (url.pathname.endsWith('.webp') ||
+      url.pathname.endsWith('.avif') ||
+      url.pathname.endsWith('.jpg') ||
+      url.pathname.endsWith('.png') ||
+      url.pathname.endsWith('.svg'))
+  ) {
+    event.respondWith(
       caches.match(event.request).then((cached) => {
-        const fetchPromise = fetch(event.request).then((networkResponse) => {
+        if (cached) return cached;
+        return fetch(event.request).then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const clone = networkResponse.clone();
             caches.open(STATIC_CACHE).then((cache) => cache.put(event.request, clone));
           }
           return networkResponse;
-        }).catch(() => cached);
-
-        return cached || fetchPromise;
+        });
       })
     );
     return;
   }
 
-  // 4. Network-First with Shell fallback for HTML navigation
+  // 5. Network-First with Shell fallback for HTML navigation
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request).catch(() => {
@@ -108,7 +124,27 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
-// 5. Background Synchronization API Handler (REC-13 / R02-09)
+// 6. Update/cache-control messages used by updateManager.js.
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+
+  if (event.data === 'CLEAR_PUBLIC_APP_CACHE') {
+    event.waitUntil(
+      caches.keys().then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key.startsWith('zamorin-pwa-'))
+            .map((key) => caches.delete(key))
+        )
+      )
+    );
+  }
+});
+
+// 7. Background Synchronization API Handler (REC-13 / R02-09)
 // Feature-detected by browser. Dispatches sync trigger to active client windows without in-memory dependency.
 self.addEventListener('sync', (event) => {
   if (event.tag === 'zamorin-pos-queue-sync') {
