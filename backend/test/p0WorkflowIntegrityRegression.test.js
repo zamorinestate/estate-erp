@@ -483,3 +483,20 @@ test('P0-WF-033: attendance administration uses an explicit management-role allo
   assert.ok(rosterShiftBlock.includes('ensureCafeOperationsAllowed(request);'));
   assert.ok(rosterShiftBlock.includes('ensureCafeAccess(request, cafeId);'));
 });
+
+
+test('P0-WF-034: roster save and publish validate live employee café membership', () => {
+  assert.ok(attendanceController.includes('async function ensureRosterAssignmentCafeMembership'));
+  assert.ok(attendanceController.includes("'ROSTER_EMPLOYEE_SCOPE_INVALID'"));
+  assert.ok(attendanceController.includes("accountStatus || '').toUpperCase() === 'ACTIVE'"));
+  assert.ok(attendanceController.includes("['EXITED', 'ARCHIVED'].includes"));
+
+  const saveStart = attendanceController.indexOf('const saveRoster = asyncHandler');
+  const publishStart = attendanceController.indexOf('const publishRoster = asyncHandler');
+  const saveBlock = attendanceController.slice(saveStart, publishStart);
+  const publishEnd = attendanceController.indexOf('// 5c. GET /api/v1/attendance/roster/shifts', publishStart);
+  const publishBlock = attendanceController.slice(publishStart, publishEnd);
+
+  assert.ok(saveBlock.includes('await ensureRosterAssignmentCafeMembership({'));
+  assert.ok(publishBlock.includes('await ensureRosterAssignmentCafeMembership({'));
+});
