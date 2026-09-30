@@ -18,6 +18,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { PosOrderService } = require('../src/services/posOrderService');
 const { Bill } = require('../src/models/Bill');
@@ -45,6 +47,68 @@ function createAuthContext(role = 'STAFF', cafeId = 'ZC-0001', userId = 'EMP-ZC-
 }
 
 test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
+  await t.test('0. POS catalogue wiring uses canonical MenuItem data and never inventory/SAMPLE preview data', () => {
+    const posSource = fs.readFileSync(
+      path.resolve(__dirname, '../../frontend/src/js/pages/posTill.js'),
+      'utf8'
+    );
+    const menuSource = fs.readFileSync(
+      path.resolve(__dirname, '../../frontend/src/js/pages/menuManagement.js'),
+      'utf8'
+    );
+    const navigationSource = fs.readFileSync(
+      path.resolve(__dirname, '../../frontend/src/js/navigation.js'),
+      'utf8'
+    );
+
+    assert.match(
+      posSource,
+      /apiGet\("\/menu\/items\?concept=CAFE&status=ACTIVE&limit=500"\)/,
+      'POS must load active sellable MenuItem records'
+    );
+    assert.match(
+      posSource,
+      /\/menu\/simulator\?outletId=/,
+      'POS must overlay outlet-specific effective availability and pricing when café context exists'
+    );
+    assert.match(
+      posSource,
+      /await loadPOSMenuCatalogue\(\)/,
+      'POS mount must actually invoke the canonical catalogue loader'
+    );
+    assert.match(
+      posSource,
+      /id="pos-add-menu-item-btn"/,
+      'Primary Master POS must expose a direct Add POS Item action'
+    );
+    assert.match(
+      posSource,
+      /apiPost\("\/menu\/items"/,
+      'Direct POS item creation must persist through the MenuItem API'
+    );
+    assert.match(
+      posSource,
+      /activeCategoryGroup\?\.categories\?\.includes\(item\.category\)/,
+      'POS category chips must map display groups to canonical backend category codes'
+    );
+
+    assert.match(
+      menuSource,
+      /let items = \[\];/,
+      'Menu Item Master must start from authoritative API data, not sample catalogue data'
+    );
+    assert.doesNotMatch(
+      menuSource,
+      /Menu item created \(Preview Mode\)/,
+      'Menu creation failure must never be presented as success'
+    );
+    assert.match(
+      navigationSource,
+      /label: 'POS Menu & Recipes'/,
+      'Navigation must distinguish sellable POS menu data from inventory'
+    );
+  });
+
   // In-memory mock database store
   const mockBills = [];
   const mockSessions = [];
