@@ -32,6 +32,8 @@ const correctionModel = read('backend/src/models/AttendanceCorrectionRequest.js'
 const privateFileModel = read('backend/src/models/PrivateFile.js');
 const attendanceEvidenceStorageSource = read('backend/src/services/attendanceEvidenceStorageService.js');
 const documentStorageAdapterSource = read('backend/src/services/documentStorageAdapter.js');
+const attendanceEvidenceRetentionSource = read('backend/src/services/attendanceEvidenceRetentionService.js');
+const renderConfigSource = read('render.yaml');
 const errorHandlerSource = read('backend/src/middleware/errorHandler.js');
 const deviceRoutesSource = read('backend/src/routes/deviceRoutes.js');
 const deviceControllerSource = read('backend/src/controllers/deviceController.js');
@@ -633,4 +635,50 @@ test('P0-WF-041: selfie storage is compensated if PrivateFile metadata persisten
   assert.ok(uploadBlock.includes('try {\n    privateFile = await PrivateFile.create({'));
   assert.ok(uploadBlock.includes('attendanceEvidenceStorageService.deleteObject({ fileKey: uploadResult.fileKey })'));
   assert.ok(uploadBlock.includes('throw metadataErr;'));
+});
+
+
+test('P0-WF-042: committed attendance evidence purge remains fail-closed while orphan cleanup is separate', () => {
+  const purgeStart = attendanceController.indexOf('const purgeSelfieEvidence = asyncHandler');
+  const reconcileStart = attendanceController.indexOf('const reconcileOrphanSelfieEvidence = asyncHandler');
+  const purgeBlock = attendanceController.slice(purgeStart, reconcileStart);
+
+  assert.ok(purgeBlock.includes("'EVIDENCE_PURGE_NOT_CONFIGURED'"));
+  assert.equal(purgeBlock.includes('attendanceEvidenceStorageService.deleteObject'), false);
+  assert.ok(attendanceRoutes.includes("router.post('/evidence/orphans/reconcile', reconcileOrphanSelfieEvidence)"));
+  assert.ok(attendanceRoutes.includes("router.post('/evidence/purge', purgeSelfieEvidence)"));
+});
+
+test('P0-WF-043: orphan reconciliation requires Primary Master, dry-run default, and explicit execution confirmation', () => {
+  const reconcileStart = attendanceController.indexOf('const reconcileOrphanSelfieEvidence = asyncHandler');
+  const serverTimeStart = attendanceController.indexOf('// 9. GET /api/v1/attendance/server-time', reconcileStart);
+  const reconcileBlock = attendanceController.slice(reconcileStart, serverTimeStart);
+
+  assert.ok(reconcileBlock.includes("request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true"));
+  assert.ok(reconcileBlock.includes('const dryRun = execute !== true;'));
+  assert.ok(reconcileBlock.includes("'ORPHAN_RECONCILIATION_CONFIRMATION_REQUIRED'"));
+  assert.ok(reconcileBlock.includes('DELETE_EXPIRED_UNLINKED_ATTENDANCE_SELFIES'));
+  assert.ok(reconcileBlock.includes('reconcileExpiredOrphanAttendanceEvidence({'));
+});
+
+test('P0-WF-044: orphan reconciliation is expiry-scoped, link-protecting, idempotent, and physically deletes before metadata', () => {
+  assert.ok(attendanceEvidenceRetentionSource.includes("'attendanceContext.grantExpiresAt': { $ne: null, $lte: cutoff }"));
+  assert.ok(attendanceEvidenceRetentionSource.includes('await isEvidenceLinked(normalizedOrganisationId, fileId)'));
+  assert.ok(attendanceEvidenceRetentionSource.includes("attendanceCleanup.status': 'CLAIMED'"));
+  assert.ok(attendanceEvidenceRetentionSource.includes('attendanceEvidenceStorageService.objectExists({'));
+  assert.ok(attendanceEvidenceRetentionSource.includes('attendanceEvidenceStorageService.deleteObject({'));
+  assert.ok(attendanceEvidenceRetentionSource.includes("'attendanceCleanup.status': 'STORAGE_DELETED'"));
+  assert.ok(attendanceEvidenceRetentionSource.includes('PrivateFile.deleteOne({'));
+
+  const storageDeleteIndex = attendanceEvidenceRetentionSource.indexOf('attendanceEvidenceStorageService.deleteObject({');
+  const metadataDeleteIndex = attendanceEvidenceRetentionSource.indexOf('PrivateFile.deleteOne({');
+  assert.ok(storageDeleteIndex >= 0);
+  assert.ok(metadataDeleteIndex > storageDeleteIndex);
+});
+
+test('P0-WF-045: production declares an explicit orphan-evidence grace window', () => {
+  assert.ok(renderConfigSource.includes('key: ATTENDANCE_ORPHAN_GRACE_MINUTES'));
+  assert.ok(renderConfigSource.includes('value: 60'));
+  assert.ok(attendanceEvidenceRetentionSource.includes('const DEFAULT_ORPHAN_GRACE_MINUTES = 60;'));
+  assert.ok(privateFileModel.includes("name: 'attendance_orphan_reconciliation_scan'"));
 });
