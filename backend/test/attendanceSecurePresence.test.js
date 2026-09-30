@@ -629,10 +629,63 @@ test('UPLOAD-002: uploadPunchSelfie rejects files larger than 5MB', async () => 
   );
 });
 
-test('UPLOAD-003: selfie upload returns canonical fileId and uploader ownership', async () => {
+test('UPLOAD-003: selfie upload is bound to the verified employee scan grant', async () => {
   const originalCreate = PrivateFile.create;
-  PrivateFile.create = async (doc) => doc;
+  let createdPrivateFile = null;
+  PrivateFile.create = async (doc) => {
+    createdPrivateFile = doc;
+    return doc;
+  };
 
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+  const verification = await attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+  const grant = attendanceQrService.issueScanGrant({
+    verification,
+    userId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+    transition: 'CHECK_IN',
+  });
+
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 12,
+      buffer: Buffer.from('selfie-bytes'),
+      originalname: 'selfie.jpg',
+    },
+    body: {
+      punchType: 'CHECK_IN',
+      scanGrant: grant.token,
+      qrChallengeId: verification.challengeId,
+    },
+  };
+  const res = createMockRes();
+
+  try {
+    await uploadPunchSelfie(req, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.data.fileId);
+    assert.equal(res.body.data.mediaId, res.body.data.fileId);
+    assert.ok(createdPrivateFile);
+    assert.equal(createdPrivateFile.attendanceContext.challengeId, verification.challengeId);
+    assert.equal(createdPrivateFile.attendanceContext.cafeId, 'CAFE-KNR-01');
+    assert.equal(createdPrivateFile.attendanceContext.punchType, 'CHECK_IN');
+  } finally {
+    PrivateFile.create = originalCreate;
+  }
+});
+
+test('UPLOAD-004: valid selfie bytes are rejected without a verified scan grant', async () => {
   const req = {
     auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
     file: {
@@ -643,17 +696,11 @@ test('UPLOAD-003: selfie upload returns canonical fileId and uploader ownership'
     },
     body: { punchType: 'CHECK_IN' },
   };
-  const res = createMockRes();
 
-  try {
-    await uploadPunchSelfie(req, res);
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.success, true);
-    assert.ok(res.body.data.fileId);
-    assert.equal(res.body.data.mediaId, res.body.data.fileId);
-  } finally {
-    PrivateFile.create = originalCreate;
-  }
+  await assert.rejects(
+    async () => uploadPunchSelfie(req, createMockRes()),
+    { statusCode: 400, code: 'ATTENDANCE_SCAN_GRANT_REQUIRED' }
+  );
 });
 
 // ---------------------------------------------------------------------------
