@@ -63,6 +63,26 @@ function calculateDistanceMetres(lat1, lon1, lat2, lon2) {
   return earthRadiusMetres * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function detectEvidenceImageMime(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) return 'image/png';
+  if (
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP'
+  ) return 'image/webp';
+  return null;
+}
+
 async function loadPrivateFile(query) {
   const result = PrivateFile.findOne(query);
   return result && typeof result.lean === 'function'
@@ -299,6 +319,17 @@ async function verifyAttendanceEvidenceSlot({
         'storage_sha256_matches_metadata',
         /^[a-f0-9]{64}$/.test(storedSha256) &&
           storage.actualSha256 === storedSha256
+      );
+
+      const detectedMime = detectEvidenceImageMime(buffer);
+      const metadataMime = String(privateFile.mimeType || '').trim().toLowerCase() === 'image/jpg'
+        ? 'image/jpeg'
+        : String(privateFile.mimeType || '').trim().toLowerCase();
+      pushCheck(
+        checks,
+        'storage_mime_matches_signature',
+        Boolean(detectedMime) && detectedMime === metadataMime,
+        { expected: metadataMime || null, actual: detectedMime }
       );
     }
   }
