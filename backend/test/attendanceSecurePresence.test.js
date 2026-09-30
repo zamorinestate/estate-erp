@@ -763,6 +763,77 @@ test('UPLOAD-004: valid selfie bytes are rejected without a verified scan grant'
   );
 });
 
+test('UPLOAD-005: metadata persistence failure compensates by deleting uploaded selfie bytes', async () => {
+  const originalCreate = PrivateFile.create;
+  const originalStore = attendanceEvidenceStorageService.storeSelfie;
+  const originalDelete = attendanceEvidenceStorageService.deleteObject;
+  let deletedFileKey = null;
+
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+  const verification = await attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+  const grant = attendanceQrService.issueScanGrant({
+    verification,
+    userId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+    transition: 'CHECK_IN',
+  });
+
+  attendanceEvidenceStorageService.storeSelfie = async () => ({
+    fileKey: 'ORG-ZAMORIN/CAFE-KNR-01/attendance_evidence/FILE-9999.jpg',
+    sizeBytes: 12,
+    sha256: crypto.createHash('sha256')
+      .update(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]))
+      .digest('hex'),
+  });
+  attendanceEvidenceStorageService.deleteObject = async ({ fileKey }) => {
+    deletedFileKey = fileKey;
+    return true;
+  };
+  PrivateFile.create = async () => {
+    const err = new Error('simulated metadata write failure');
+    err.code = 'SIMULATED_METADATA_FAILURE';
+    throw err;
+  };
+
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 12,
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+      originalname: 'selfie.jpg',
+    },
+    body: {
+      punchType: 'CHECK_IN',
+      scanGrant: grant.token,
+      qrChallengeId: verification.challengeId,
+    },
+  };
+
+  try {
+    await assert.rejects(
+      async () => uploadPunchSelfie(req, createMockRes()),
+      { code: 'SIMULATED_METADATA_FAILURE' }
+    );
+    assert.equal(
+      deletedFileKey,
+      'ORG-ZAMORIN/CAFE-KNR-01/attendance_evidence/FILE-9999.jpg'
+    );
+  } finally {
+    PrivateFile.create = originalCreate;
+    attendanceEvidenceStorageService.storeSelfie = originalStore;
+    attendanceEvidenceStorageService.deleteObject = originalDelete;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 4. AUTHORITATIVE CHECK-IN & CHECK-OUT ATTENDANCE CONTROLLER
 // ---------------------------------------------------------------------------
