@@ -397,3 +397,15 @@ test('P0-WF-029: attendance selfies are cryptographically scoped to QR challenge
 
   assert.ok(staffAttendancePage.includes('formData.append("scanGrant", scannedQrToken)'));
 });
+
+
+test('P0-WF-030: attendance selfie IDs use the canonical PrivateFile sequence prefix', () => {
+  const uploadStart = attendanceController.indexOf('const uploadPunchSelfie = asyncHandler');
+  const uploadEnd = attendanceController.indexOf('/**\n * GET /api/v1/attendance/evidence/media', uploadStart);
+  const uploadBlock = attendanceController.slice(uploadStart, uploadEnd);
+
+  assert.ok(uploadBlock.includes("sequenceKey: 'PRIVATE_FILE'"));
+  assert.ok(uploadBlock.includes("prefix: 'FILE'"));
+  assert.equal(uploadBlock.includes("prefix: 'FILE-'"), false);
+  assert.ok(privateFileModel.includes("match: /^FILE-\\d{4,}$/"));
+});
