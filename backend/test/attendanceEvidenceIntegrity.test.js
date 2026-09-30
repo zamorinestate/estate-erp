@@ -263,3 +263,66 @@ test('EVI-008: evidence viewer surfaces server integrity failures instead of gen
   assert.match(viewer, /failed its integrity verification and cannot be displayed/i);
 });
 
+test('EVI-009: Café Operations kiosk and Primary Master use canonical attendance QR flows', () => {
+  const root = path.join(__dirname, '../..');
+  const kiosk = fs.readFileSync(
+    path.join(root, 'frontend/cafe-operations/js/screens/attendanceKiosk.js'),
+    'utf8'
+  );
+  const cafeOpsApi = fs.readFileSync(
+    path.join(root, 'frontend/cafe-operations/js/api/cafeOpsApi.js'),
+    'utf8'
+  );
+  const deviceRoutes = fs.readFileSync(
+    path.join(__dirname, '../src/cafe-operations/routes/deviceEnrollmentRoutes.js'),
+    'utf8'
+  );
+  const masterAttendance = fs.readFileSync(
+    path.join(root, 'frontend/src/js/modules/attendance/attendanceShifts.js'),
+    'utf8'
+  );
+
+  assert.match(cafeOpsApi, /attendanceQr:\s*\(\)\s*=>\s*apiRequest\('\/devices\/attendance\/qr'/);
+  assert.match(kiosk, /body\.attendanceUrl/);
+  assert.match(kiosk, /QRCode\.toDataURL\(body\.attendanceUrl/);
+  assert.match(deviceRoutes, /router\.get\('\/attendance\/qr',\s*deviceContext/);
+  assert.match(deviceRoutes, /requestedByRole:\s*'CAFE_ADMIN'/);
+  assert.match(deviceRoutes, /assignedCafeIds:\s*\[device\.cafeId\]/);
+  assert.match(masterAttendance, /\/attendance\/qr\/active\?cafeId=/);
+  assert.match(masterAttendance, /res\.data\.attendanceUrl\s*\|\|\s*res\.data\.opaqueToken\s*\|\|\s*res\.data\.qrToken/);
+});
+
+test('EVI-010: employee QR deep-link drives QR + GPS + fresh selfie for both Check-In and Check-Out', () => {
+  const root = path.join(__dirname, '../..');
+  const staff = fs.readFileSync(
+    path.join(root, 'frontend/src/js/modules/attendance/staffAttendance.js'),
+    'utf8'
+  );
+  const main = fs.readFileSync(
+    path.join(root, 'frontend/src/js/main.js'),
+    'utf8'
+  );
+
+  assert.match(main, /zamorin\.pendingAttendanceQr/);
+  assert.match(main, /returnTo/);
+  assert.match(main, /staff-attendance/);
+  assert.match(staff, /preScannedQrToken/);
+  assert.match(staff, /apiPost\("\/attendance\/qr\/verify"/);
+  assert.match(staff, /scannedQrToken\s*=\s*res\.data\.scanGrant/);
+  assert.match(staff, /getCurrentPosition\(\{\s*highAccuracy:\s*true/);
+  assert.match(staff, /apiPost\("\/attendance\/geofence\/verify"/);
+  assert.match(staff, /openCamera\(videoEl,\s*"user"\)/);
+  assert.match(staff, /captureFrameAsBlob/);
+  assert.match(staff, /apiUpload\("\/attendance\/evidence\/upload"/);
+  assert.match(staff, /formData\.append\("punchType",\s*flowType\)/);
+  assert.match(staff, /formData\.append\("scanGrant",\s*scannedQrToken\)/);
+  assert.match(staff, /isCheckIn\s*\?\s*"\/attendance\/check-in"\s*:\s*"\/attendance\/check-out"/);
+  assert.match(staff, /qrToken:\s*scannedQrToken/);
+  assert.match(staff, /latitude:\s*geoCoords\.latitude/);
+  assert.match(staff, /longitude:\s*geoCoords\.longitude/);
+  assert.match(staff, /accuracyMeters:\s*geoCoords\.accuracyMeters/);
+  assert.match(staff, /selfieFileId/);
+  assert.match(staff, /"📷 IN"/);
+  assert.match(staff, /"📷 OUT"/);
+});
+
