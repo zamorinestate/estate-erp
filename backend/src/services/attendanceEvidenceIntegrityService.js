@@ -342,6 +342,10 @@ async function verifyAttendanceEvidenceSlot({
     fileId,
     status: failedChecks.length ? 'FAIL' : 'PASS',
     failedChecks,
+    proofSnapshotVersion: snapshotVersion,
+    geofencePolicyVersion: Number(slot?.geofencePolicyVersion || 0),
+    legacyProofSnapshot: snapshotVersion < 1,
+    legacyGeofenceSnapshot: Number(slot?.geofencePolicyVersion || 0) < 1,
     storage,
     checks,
   };
@@ -406,6 +410,8 @@ async function auditAttendanceEvidenceIntegrity({
     passed: 0,
     failed: 0,
     notApplicable: 0,
+    legacyProofSnapshots: 0,
+    legacyGeofenceSnapshots: 0,
     failures: [],
     records: [],
   };
@@ -431,10 +437,15 @@ async function auditAttendanceEvidenceIntegrity({
         attendance,
         punchType: type,
         verifyStorageBytes,
-        requireProofSnapshot: true,
+        // Historical evidence created before proof/geofence snapshot versioning
+        // remains auditable without being falsely classified as corrupted.
+        // Versioned evidence still self-enables all strict snapshot checks.
+        requireProofSnapshot: false,
       });
 
       result.evidenceSlotsScanned += 1;
+      if (verified.legacyProofSnapshot) result.legacyProofSnapshots += 1;
+      if (verified.legacyGeofenceSnapshot) result.legacyGeofenceSnapshots += 1;
       if (verified.status === 'PASS') result.passed += 1;
       else if (verified.status === 'NOT_APPLICABLE') result.notApplicable += 1;
       else {
