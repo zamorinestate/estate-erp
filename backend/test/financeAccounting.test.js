@@ -607,6 +607,96 @@ test('Screen 010: Finance & Accounts Integration Test Suite', async (t) => {
     assert.equal(res.body.paymentRun.status, 'PENDING_APPROVAL');
   });
 
+  await t.test('8b. Payment approval schedules invoices without marking them paid', async () => {
+    const run = inMemoryPaymentRuns[0];
+    assert.ok(run);
+
+    const res = await makeRequest({
+      port,
+      method: 'POST',
+      path: `/api/v1/finance/payments/runs/${run.paymentRunId}/decision`,
+      headers: { Authorization: 'Bearer token_primary_master' },
+      body: { decision: 'APPROVE' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(run.status, 'APPROVED');
+    assert.equal(inMemoryInvoices[0].paymentStatus, 'SCHEDULED');
+    assert.equal(inMemoryInvoices[0].paidPaisa, 0);
+    assert.equal(inMemoryInvoices[0].outstandingPaisa, 1450000);
+  });
+
+  await t.test('8c. Payment execution requires a real payment reference', async () => {
+    const run = inMemoryPaymentRuns[0];
+    const res = await makeRequest({
+      port,
+      method: 'POST',
+      path: `/api/v1/finance/payments/runs/${run.paymentRunId}/execute`,
+      headers: { Authorization: 'Bearer token_primary_master' },
+      body: { paymentMethod: 'NEFT' },
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.error.code, 'PAYMENT_EXECUTION_REFERENCE_REQUIRED');
+    assert.equal(run.status, 'APPROVED');
+    assert.equal(inMemoryInvoices[0].paymentStatus, 'SCHEDULED');
+  });
+
+  await t.test('8d. Executing approved payment run atomically marks invoice paid', async () => {
+    const run = inMemoryPaymentRuns[0];
+    const res = await makeRequest({
+      port,
+      method: 'POST',
+      path: `/api/v1/finance/payments/runs/${run.paymentRunId}/execute`,
+      headers: { Authorization: 'Bearer token_primary_master' },
+      body: {
+        paymentMethod: 'NEFT',
+        paymentReference: 'HDFC-NEFT-20260930-0001',
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(run.status, 'EXECUTED');
+    assert.equal(run.executionReference, 'HDFC-NEFT-20260930-0001');
+    assert.equal(inMemoryInvoices[0].paymentStatus, 'PAID');
+    assert.equal(inMemoryInvoices[0].outstandingPaisa, 0);
+    assert.equal(inMemoryInvoices[0].paidPaisa, 1450000);
+    assert.equal(inMemoryInvoices[0].paymentHistory.length, 1);
+  });
+
+  await t.test('8e. Institutional receivable maps canonical DepartmentOrder fields and persists receipt', async () => {
+    const listRes = await makeRequest({
+      port,
+      method: 'GET',
+      path: '/api/v1/finance/receivables?cafeId=ZC-0001',
+      headers: { Authorization: 'Bearer token_primary_master' },
+    });
+
+    assert.equal(listRes.statusCode, 200);
+    assert.equal(listRes.body.receivables[0].customerName, 'Zamorin Training Centre');
+    assert.equal(listRes.body.receivables[0].amountPaisa, 500000);
+    assert.equal(listRes.body.receivables[0].outstandingPaisa, 500000);
+
+    const receiptRes = await makeRequest({
+      port,
+      method: 'POST',
+      path: '/api/v1/finance/receivables/receipts',
+      headers: { Authorization: 'Bearer token_primary_master' },
+      body: {
+        receivableId: 'AR-DO-2026-0001',
+        amountPaisa: 200000,
+        paymentMethod: 'BANK_TRANSFER',
+        referenceNumber: 'BANK-AR-0001',
+      },
+    });
+
+    assert.equal(receiptRes.statusCode, 200);
+    assert.equal(receiptRes.body.receipt.outstandingPaisa, 300000);
+    assert.equal(receiptRes.body.receipt.creditStatus, 'PARTIALLY_SETTLED');
+    assert.equal(inMemoryDepartmentOrders[0].settledPaisa, 200000);
+    assert.equal(inMemoryDepartmentOrders[0].settlements.length, 1);
+  });
+
   await t.test('9. POST /api/v1/finance/marketplaces/settlements/:settlementId/reconcile reconciles batch', async () => {
     const res = await makeRequest({
       port,
@@ -620,6 +710,9 @@ test('Screen 010: Finance & Accounts Integration Test Suite', async (t) => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.settlement.status, 'RECONCILED');
+    assert.equal(res.body.settlement.bankMatchReference, 'TXN-BANK-HDFC-9912');
+    assert.equal(res.body.settlement.bankReceivedPaisa, 6800000);
+    assert.equal(res.body.settlement.variancePaisa, 0);
   });
 
   await t.test('10. POST /api/v1/finance/close/periods/:periodId/close and reopen tests', async () => {
