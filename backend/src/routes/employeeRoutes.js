@@ -373,13 +373,13 @@ router.post(
 
 router.delete(
   '/:userId',
-  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER'] }),
   deleteEmployeeAccount
 );
 
 router.post(
   '/:userId/delete',
-  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER', 'OWNER'] }),
+  authorize('EMPLOYEE:WRITE', { allowedRoles: ['MASTER'] }),
   deleteEmployeeAccount
 );
 
