@@ -3175,6 +3175,7 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     originalName: `selfie_${punchType.toLowerCase()}_${Date.now()}.${fileExtension}`,
     mimeType: extractedMime,
     sizeBytes: buffer.length,
+    sha256: uploadResult.sha256 || crypto.createHash('sha256').update(buffer).digest('hex'),
     storagePath: uploadResult.fileKey,
     uploadedByUserId: userId,
     attendanceContext: {
@@ -3320,6 +3321,17 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
       'ATTENDANCE_EVIDENCE_BYTES_NOT_FOUND',
       'Attendance photograph metadata exists but the stored image bytes are unavailable.'
     );
+  }
+
+  if (privateFile.sha256) {
+    const computedSha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    if (computedSha256 !== String(privateFile.sha256).toLowerCase()) {
+      throw new ApiError(
+        409,
+        'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE',
+        'Attendance photograph failed its stored SHA-256 integrity check.'
+      );
+    }
   }
 
   response.setHeader('Content-Type', privateFile.mimeType || 'image/jpeg');
