@@ -3190,6 +3190,7 @@ const getActiveCafeQr = asyncHandler(async (request, response) => {
     deviceId: request.headers['x-device-id'] || 'OPS_CONSOLE',
     requestedByUserId: userId,
     requestedByRole: role,
+    isPrimaryMaster: request.auth.isPrimaryMaster === true,
     assignedCafeIds: [
       ...(assignedCafeIds || []),
       assignedCafeId,
@@ -3224,6 +3225,7 @@ const verifyScannedQr = asyncHandler(async (request, response) => {
       primaryCafeId,
     ].filter(Boolean),
     employeeRole: role,
+    isPrimaryMaster: request.auth.isPrimaryMaster === true,
   });
 
   const cafe = await Cafe.findOne({
