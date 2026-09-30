@@ -81,6 +81,12 @@ const capaRecordSchema = new mongoose.Schema(
       enum: ['EQUIPMENT_FAILURE', 'HUMAN_PROCESS_ERROR', 'SUPPLIER_DEFECT', 'STORAGE_ENVIRONMENT', 'CLEANING_PROTOCOL', 'OTHER'],
       default: 'OTHER',
     },
+    rootCauseMethod: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: '5_WHY',
+    },
     rootCauseAnalysis: {
       type: String,
       required: true,
@@ -143,6 +149,12 @@ const capaRecordSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
+    },
+    effectivenessStatus: {
+      type: String,
+      enum: ['PENDING_VERIFICATION', 'EFFECTIVE', 'INEFFECTIVE'],
+      default: 'PENDING_VERIFICATION',
+      index: true,
     },
     closedAt: {
       type: Date,
