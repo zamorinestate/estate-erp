@@ -1134,7 +1134,7 @@ test('RBAC-001: Staff can stream own attendance evidence photograph', async () =
     fileId: 'FILE-PHOTO-01',
     fileKey: 'org/selfie_01.jpg',
     mimeType: 'image/jpeg',
-    sizeBytes: 15,
+    sizeBytes: Buffer.byteLength('JPEG-RAW-IMAGE-DATA'),
     isPurged: false,
     uploadedByUserId: 'EMP-STAFF-1',
     organisationId: 'ORG-ZAMORIN',
