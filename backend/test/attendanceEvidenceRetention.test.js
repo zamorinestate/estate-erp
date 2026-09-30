@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { PrivateFile } = require('../src/models/PrivateFile');
 const { Attendance } = require('../src/modules/attendance/Attendance');
@@ -259,4 +261,97 @@ test('RET-004: storage deletion failure retains metadata and records retryable F
     attendanceEvidenceStorageService.objectExists = originals.objectExists;
     attendanceEvidenceStorageService.deleteObject = originals.deleteObject;
   }
+});
+
+
+test('RET-005: orphan claim filter excludes punch-reserved and committed selfie evidence', async () => {
+  const originals = {
+    find: PrivateFile.find,
+    exists: Attendance.exists,
+    findOneAndUpdate: PrivateFile.findOneAndUpdate,
+  };
+
+  let candidateFilter = null;
+  let claimFilter = null;
+  const candidate = {
+    _id: 'PF-6',
+    fileId: 'FILE-1006',
+    organisationId: 'ORG-ZAMORIN',
+    storagePath: 'attendance/file-1006.jpg',
+    attendanceContext: {
+      challengeId: 'CH-6',
+      grantExpiresAt: new Date('2026-09-30T02:00:00Z'),
+    },
+  };
+
+  PrivateFile.find = (filter) => {
+    candidateFilter = filter;
+    return {
+      sort() { return this; },
+      limit() { return this; },
+      lean: async () => [candidate],
+    };
+  };
+  Attendance.exists = async () => null;
+  PrivateFile.findOneAndUpdate = async (filter) => {
+    claimFilter = filter;
+    return null;
+  };
+
+  try {
+    const result = await reconcileExpiredOrphanAttendanceEvidence({
+      organisationId: 'ORG-ZAMORIN',
+      actorUserId: 'MU-PRIMARY-01',
+      now: new Date('2026-09-30T04:00:00Z'),
+      dryRun: false,
+    });
+
+    assert.deepEqual(
+      candidateFilter?.['attendanceLink.status']?.$nin,
+      ['RESERVED', 'COMMITTED']
+    );
+    assert.deepEqual(
+      claimFilter?.['attendanceLink.status']?.$nin,
+      ['RESERVED', 'COMMITTED']
+    );
+    assert.equal(result.claimConflicts, 1);
+    assert.equal(result.deleted, 0);
+  } finally {
+    PrivateFile.find = originals.find;
+    Attendance.exists = originals.exists;
+    PrivateFile.findOneAndUpdate = originals.findOneAndUpdate;
+  }
+});
+
+test('RET-006: punch controller acquires selfie linkage reservation before attendance persistence', () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceController.js'),
+    'utf8'
+  );
+
+  const checkInReserve = controllerSource.indexOf(
+    'const checkInEvidenceReservation = await reserveAttendanceEvidenceLink'
+  );
+  const checkInSave = controllerSource.indexOf(
+    'await attendance.save();',
+    checkInReserve
+  );
+  const checkOutReserve = controllerSource.indexOf(
+    'const checkOutEvidenceReservation = await reserveAttendanceEvidenceLink'
+  );
+  const checkOutSave = controllerSource.indexOf(
+    'await attendance.save();',
+    checkOutReserve
+  );
+
+  assert.ok(checkInReserve >= 0 && checkInSave > checkInReserve);
+  assert.ok(checkOutReserve >= 0 && checkOutSave > checkOutReserve);
+  assert.match(
+    controllerSource,
+    /'attendanceLink\.status': \{ \$nin: \['RESERVED', 'COMMITTED'\] \}/
+  );
+  assert.match(
+    controllerSource,
+    /'attendanceCleanup\.status': \{ \$ne: 'CLAIMED' \}/
+  );
 });
