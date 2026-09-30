@@ -29,6 +29,16 @@ const { CalibrationRecord } = require('../models/CalibrationRecord');
 const { EmployeeTraining } = require('../models/EmployeeTraining');
 const { Bill } = require('../models/Bill');
 const { CapaRecord } = require('../models/CapaRecord');
+const {
+  QualityHold,
+  QUALITY_HOLD_DISPOSITIONS,
+} = require('../models/QualityHold');
+const {
+  QualityNonConformance,
+  NCR_SOURCES,
+  NCR_SEVERITIES,
+} = require('../models/QualityNonConformance');
+const { AuditEvent } = require('../models/AuditEvent');
 
 const {
   asyncHandler,
@@ -91,12 +101,61 @@ function assertCafeAccess(request, cafeId) {
   }
 }
 
-// In-memory persistent state stores for extended FSMS domains
-const inMemoryQualityHolds = [];
-const inMemoryNcrs = [];
-const inMemoryCapas = [];
-const inMemoryTemperatures = [];
-const inMemoryAudits = [];
+function buildQualityScopeFilter(request, extra = {}) {
+  const filter = {
+    organisationId: request.auth.organisationId,
+    ...extra,
+  };
+
+  const requestedCafeId = normalizeId(request.query?.cafeId || '');
+  if (requestedCafeId) {
+    assertCafeAccess(request, requestedCafeId);
+    filter.cafeId = requestedCafeId;
+    return filter;
+  }
+
+  if (request.auth.role !== 'MASTER') {
+    const assignedCafeIds = (request.auth.assignedCafeIds || [])
+      .map(normalizeId)
+      .filter(Boolean);
+    filter.cafeId = { $in: assignedCafeIds };
+  }
+
+  return filter;
+}
+
+async function runQualityAtomic(work) {
+  if (mongoose.connection?.readyState !== 1 || typeof mongoose.startSession !== 'function') {
+    return work(null);
+  }
+
+  const session = await mongoose.startSession();
+  let result;
+  try {
+    await session.withTransaction(async () => {
+      result = await work(session);
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
+function capaSourceFromNcr(ncr) {
+  switch (String(ncr?.source || '').toUpperCase()) {
+    case 'CHECKLIST_CRITICAL_FAIL':
+      return 'HYGIENE_CHECKLIST';
+    case 'TEMPERATURE_EXCURSION':
+      return 'TEMPERATURE_EXCURSION';
+    case 'RECEIVING_INSPECTION':
+    case 'SUPPLIER_QUALITY':
+      return 'SUPPLIER_QUALITY';
+    case 'INTERNAL_AUDIT':
+      return 'INTERNAL_AUDIT';
+    default:
+      return 'OPERATIONAL_ANOMALY';
+  }
+}
 
 /**
  * 1. GET /api/v1/quality/overview
