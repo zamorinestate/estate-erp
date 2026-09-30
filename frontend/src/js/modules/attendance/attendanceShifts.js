@@ -2924,15 +2924,25 @@ async function openScopedManualAttendanceModal(root) {
   // Fetch real employees to eliminate empty staff dropdown
   let employeeList = [];
   try {
-    const empRes = await apiGet("/employees");
-    employeeList = empRes?.data || empRes?.employees || (Array.isArray(empRes) ? empRes : []);
-  } catch {}
+    const empRes = await apiGet("/employees?limit=200");
+    const payload = empRes?.data?.employees || empRes?.data || empRes?.employees || (Array.isArray(empRes) ? empRes : []);
+    employeeList = Array.isArray(payload) ? payload : [];
+  } catch {
+    employeeList = [];
+  }
 
   const renderStaffOptions = (filterCafeId) => {
     let filtered = employeeList;
     if (filterCafeId) {
-      const cafeMatches = employeeList.filter(e => e.cafeId === filterCafeId || (e.assignedCafeIds && e.assignedCafeIds.includes(filterCafeId)));
-      if (cafeMatches.length > 0) filtered = cafeMatches;
+      const normalizedCafeId = String(filterCafeId).toUpperCase();
+      filtered = employeeList.filter((employee) => {
+        const assigned = new Set([
+          ...(employee?.assignedCafeIds || []),
+          employee?.primaryCafeId,
+          employee?.cafeId,
+        ].filter(Boolean).map((id) => String(id).toUpperCase()));
+        return assigned.has(normalizedCafeId);
+      });
     }
     if (filtered.length === 0) {
       return '<option value="">No employees found for selected outlet</option>';
@@ -3185,7 +3195,7 @@ async function openAddStaffToRosterModal(root) {
       employee?.cafeId,
     ].filter(Boolean).map((id) => String(id).toUpperCase()));
 
-    return assigned.size === 0 || assigned.has(String(activeCafeId).toUpperCase());
+    return assigned.has(String(activeCafeId).toUpperCase());
   });
 
   const shifts = (cachedShifts || []).filter((shift) =>
