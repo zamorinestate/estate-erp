@@ -529,3 +529,28 @@ test('P0-WF-035: manual attendance and Calendar 360 fail closed on state, employ
   assert.equal(manualUiBlock.includes('option value="ON_LEAVE"'), false);
   assert.ok(manualUiBlock.includes('time: effectiveTimestamp'));
 });
+
+
+test('P0-WF-036: attendance correction rechecks live authority, café scope, and dedicated workflows', () => {
+  const correctionStart = attendanceController.indexOf('const correctAttendance = asyncHandler');
+  const correctionEnd = attendanceController.indexOf('// 13c.', correctionStart);
+  const correctionBlock = attendanceController.slice(correctionStart, correctionEnd);
+
+  assert.ok(correctionBlock.includes('ensureCafeOperationsAllowed(request);'));
+  assert.ok(correctionBlock.includes('ensureCafeAccess(request, attendance.cafeId);'));
+  assert.ok(correctionBlock.includes("'OVERTIME_DECISION_WORKFLOW_REQUIRED'"));
+  assert.ok(correctionBlock.includes("'LEAVE_WORKFLOW_REQUIRED'"));
+  assert.ok(correctionBlock.includes("'ATTENDANCE_TIME_ORDER_INVALID'"));
+  assert.equal(
+    correctionBlock.includes("rawTimeEvents.push({\n    eventType: 'CHECK_IN'"),
+    false,
+    'Administrative corrections must not be mislabelled as raw CHECK_IN punches.'
+  );
+
+  const editStart = attendanceShiftsPage.indexOf('function openEditAttendanceModal');
+  const editEnd = attendanceShiftsPage.indexOf('// Scoped Manual Attendance Modal', editStart);
+  const editBlock = attendanceShiftsPage.slice(editStart, editEnd);
+  assert.equal(editBlock.includes('id="edit-att-ot"'), false);
+  assert.equal(editBlock.includes('option value="ON_LEAVE"'), false);
+  assert.equal(editBlock.includes('approvedOvertimeMinutes: otMins'), false);
+});
