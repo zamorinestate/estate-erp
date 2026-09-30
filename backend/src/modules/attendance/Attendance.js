@@ -142,6 +142,23 @@ const punchEvidenceSchema = new mongoose.Schema(
       type: Number,
       default: null,
     },
+    geofencePolicyVersion: {
+      type: Number,
+      enum: [1, null],
+      default: null,
+    },
+    cafeLatitude: {
+      type: Number,
+      default: null,
+    },
+    cafeLongitude: {
+      type: Number,
+      default: null,
+    },
+    allowedRadiusMeters: {
+      type: Number,
+      default: null,
+    },
     geofenceVerified: {
       type: Boolean,
       default: false,
