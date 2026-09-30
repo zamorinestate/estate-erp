@@ -642,6 +642,47 @@ test('UPLOAD-002: uploadPunchSelfie rejects files larger than 5MB', async () => 
   );
 });
 
+test('UPLOAD-002A: selfie upload rejects spoofed image MIME with non-image bytes', async () => {
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 16,
+      buffer: Buffer.from('NOT-A-REAL-IMAGE'),
+      originalname: 'fake.jpg',
+    },
+    body: { punchType: 'CHECK_IN', scanGrant: 'unused-because-signature-fails-first' },
+  };
+
+  await assert.rejects(
+    async () => uploadPunchSelfie(req, createMockRes()),
+    { statusCode: 400, code: 'INVALID_SELFIE_IMAGE_SIGNATURE' }
+  );
+});
+
+test('UPLOAD-002B: selfie upload rejects declared MIME that disagrees with image signature', async () => {
+  const png = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d,
+  ]);
+
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: png.length,
+      buffer: png,
+      originalname: 'mismatch.jpg',
+    },
+    body: { punchType: 'CHECK_IN', scanGrant: 'unused-because-signature-fails-first' },
+  };
+
+  await assert.rejects(
+    async () => uploadPunchSelfie(req, createMockRes()),
+    { statusCode: 400, code: 'SELFIE_MIME_SIGNATURE_MISMATCH' }
+  );
+});
+
 test('UPLOAD-003: selfie upload is bound to the verified employee scan grant', async () => {
   const originalCreate = PrivateFile.create;
   let createdPrivateFile = null;
@@ -672,7 +713,7 @@ test('UPLOAD-003: selfie upload is bound to the verified employee scan grant', a
     file: {
       mimetype: 'image/jpeg',
       size: 12,
-      buffer: Buffer.from('selfie-bytes'),
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
       originalname: 'selfie.jpg',
     },
     body: {
@@ -704,7 +745,7 @@ test('UPLOAD-004: valid selfie bytes are rejected without a verified scan grant'
     file: {
       mimetype: 'image/jpeg',
       size: 12,
-      buffer: Buffer.from('selfie-bytes'),
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
       originalname: 'selfie.jpg',
     },
     body: { punchType: 'CHECK_IN' },
