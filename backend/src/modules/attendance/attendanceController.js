@@ -3704,6 +3704,18 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     }
   }
 
+  const detectedMime = detectSelfieImageMime(buffer);
+  const metadataMime = String(privateFile.mimeType || '').trim().toLowerCase() === 'image/jpg'
+    ? 'image/jpeg'
+    : String(privateFile.mimeType || '').trim().toLowerCase();
+  if (!detectedMime || detectedMime !== metadataMime) {
+    throw new ApiError(
+      409,
+      'ATTENDANCE_EVIDENCE_MIME_INTEGRITY_FAILURE',
+      'Attendance photograph MIME metadata does not match its stored image signature.'
+    );
+  }
+
   // Audit only after the evidence bytes have been successfully retrieved and
   // their stored checksum has passed. Failed/missing/corrupt evidence must not
   // be recorded as a successful view.
@@ -3725,7 +3737,8 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     },
   });
 
-  response.setHeader('Content-Type', privateFile.mimeType || 'image/jpeg');
+  response.setHeader('Content-Type', detectedMime);
+  response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
   return response.status(200).send(buffer);
 });
