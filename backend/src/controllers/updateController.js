@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { AppRelease, TARGET_AUDIENCES, CRITICALITY_LEVELS, RELEASE_CATEGORIES } = require('../models/AppRelease');
 const { Notification } = require('../models/Notification');
 const { User } = require('../models/User');
+const { SequenceCounter } = require('../models/SequenceCounter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 
@@ -189,8 +190,14 @@ const publishRelease = asyncHandler(async (req, res) => {
     throw new ApiError(400, `Invalid target audience. Must be one or more of: ${TARGET_AUDIENCES.join(', ')}`);
   }
 
-  const releaseId = `REL-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
   const organisationId = user.organisationId;
+  const releaseDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const releaseId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `APP_RELEASE_${releaseDate}`,
+    prefix: `REL-${releaseDate}`,
+    minimumDigits: 4,
+  });
 
   const checksum = crypto
     .createHash('sha256')
@@ -277,14 +284,19 @@ const publishRelease = asyncHandler(async (req, res) => {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
 
-  const notificationsToInsert = targetedUsers.map((targetUser, idx) => {
-    const seq = String(idx + 1001).padStart(4, '0');
-    const notifId = `NT-${dateStr}-${seq}${Math.floor(100 + Math.random() * 900)}`;
+  const notificationsToInsert = [];
+  for (const targetUser of targetedUsers) {
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${dateStr}`,
+      prefix: `NT-${dateStr}`,
+      minimumDigits: 5,
+    });
     const isMandatory = criticality === 'MANDATORY';
     const targetUid = String(targetUser.userId || targetUser._id);
     const targetRole = targetUser.role === 'MASTER' ? 'MASTER' : (targetUser.role === 'OWNER' ? 'OWNER' : (targetUser.role === 'CAFE_ADMIN' ? 'CAFE_ADMIN' : 'STAFF'));
 
-    return {
+    notificationsToInsert.push({
       notificationId: notifId,
       organisationId,
       eventType: 'APP_RELEASE_PUBLISHED',
@@ -311,8 +323,8 @@ const publishRelease = asyncHandler(async (req, res) => {
         route: 'settings/updates',
       },
       createdAt: now,
-    };
-  });
+    });
+  }
 
   if (notificationsToInsert.length > 0) {
     try {
