@@ -23,6 +23,7 @@ const { AuditEvent } = require('../src/models/AuditEvent');
 const { notificationService } = require('../src/services/NotificationService');
 const { Cafe } = require('../src/models/Cafe');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
+const { getAttendanceTokenSecret } = require('../src/config/attendanceSecurityConfig');
 
 // Sequence counter mock
 SequenceCounter.generateId = async ({ prefix = 'ATT' }) => `${prefix}-${Date.now()}`;
@@ -304,7 +305,7 @@ test('QR-005: validateChallengeToken rejects expired challenge token', async () 
   const issuedAt = Math.floor((Date.now() - 100000) / 1000); // 100s ago
   const expiresAt = Math.floor((Date.now() - 55000) / 1000); // expired 55s ago
   const payload = `${challengeId}.${organisationId}.${cafeId}.${issuedAt}.${expiresAt}`;
-  const sig = crypto.createHmac('sha256', process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026')
+  const sig = crypto.createHmac('sha256', getAttendanceTokenSecret())
     .update(payload)
     .digest('hex');
   const expiredToken = `${challengeId}.${organisationId}.${cafeId}.${expiresAt}.${sig}`;
