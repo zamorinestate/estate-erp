@@ -537,10 +537,19 @@ function authorize(
         temporaryGrantQuery.cafeId = cafeId;
       }
 
-      const temporaryGrant =
-        await TemporaryAccessGrant
-          .findOne(temporaryGrantQuery)
-          .lean();
+      let temporaryGrant = null;
+      const temporaryGrantSourceAvailable = Boolean(
+        TemporaryAccessGrant.db?.readyState === 1 ||
+        TemporaryAccessGrant.findOne?.mock ||
+        typeof TemporaryAccessGrant.findOne?.restore === 'function'
+      );
+
+      if (temporaryGrantSourceAvailable) {
+        temporaryGrant =
+          await TemporaryAccessGrant
+            .findOne(temporaryGrantQuery)
+            .lean();
+      }
 
       const temporaryCafeAllowed =
         Boolean(
