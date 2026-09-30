@@ -102,6 +102,33 @@ function ensureCafeAccess(request, cafeId) {
   }
 }
 
+async function runFinanceAtomic(work) {
+  if (mongoose.connection?.readyState !== 1 || typeof mongoose.startSession !== 'function') {
+    return work(null);
+  }
+
+  const session = await mongoose.startSession();
+  let result;
+  try {
+    await session.withTransaction(async () => {
+      result = await work(session);
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
+function normalizeFinanceId(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+
 // 1. Overview Command Centre
 const getFinanceOverview = asyncHandler(async (request, response) => {
   const { organisationId, role, assignedCafeIds } = request.auth;
@@ -928,14 +955,79 @@ const listPaymentRuns = asyncHandler(async (request, response) => {
 
 const createPaymentRun = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { bankAccountId, selectedInvoiceIds = [] } = request.body;
+  const { bankAccountId, selectedInvoiceIds = [] } = request.body || {};
 
-  if (!bankAccountId || !Array.isArray(selectedInvoiceIds) || selectedInvoiceIds.length === 0) {
+  const cleanBankAccountId = normalizeFinanceId(bankAccountId);
+  const invoiceIds = [...new Set(
+    (Array.isArray(selectedInvoiceIds) ? selectedInvoiceIds : [])
+      .map(normalizeFinanceId)
+      .filter(Boolean)
+  )];
+
+  if (!cleanBankAccountId || invoiceIds.length === 0) {
     throw new ApiError(400, 'VALIDATION_FAILED', 'Bank account and selected invoices are required.');
   }
 
-  const invoices = await APInvoice.find({ organisationId, invoiceId: { $in: selectedInvoiceIds } });
-  const totalAmountPaisa = invoices.reduce((sum, inv) => sum + inv.outstandingPaisa, 0);
+  const bankQuery = BankAccount.findOne({
+    organisationId,
+    bankAccountId: cleanBankAccountId,
+    status: 'ACTIVE',
+  });
+  const bankAccount = bankQuery && typeof bankQuery.lean === 'function'
+    ? await bankQuery.lean()
+    : await bankQuery;
+  if (!bankAccount) {
+    throw new ApiError(404, 'BANK_ACCOUNT_NOT_FOUND', 'The selected active bank account was not found.');
+  }
+
+  const invoicesQuery = APInvoice.find({
+    organisationId,
+    invoiceId: { $in: invoiceIds },
+  });
+  const invoices = invoicesQuery && typeof invoicesQuery.lean === 'function'
+    ? await invoicesQuery.lean()
+    : await invoicesQuery;
+  const invoiceRows = Array.isArray(invoices) ? invoices : [];
+
+  if (invoiceRows.length !== invoiceIds.length) {
+    const foundIds = new Set(invoiceRows.map((invoice) => normalizeFinanceId(invoice.invoiceId)));
+    const missingInvoiceIds = invoiceIds.filter((id) => !foundIds.has(id));
+    throw new ApiError(
+      404,
+      'AP_INVOICE_NOT_FOUND',
+      'One or more selected Accounts Payable invoices were not found.',
+      { missingInvoiceIds }
+    );
+  }
+
+  const ineligibleInvoices = invoiceRows
+    .filter((invoice) => {
+      const outstanding = Number(invoice.outstandingPaisa || 0);
+      return (
+        !Number.isSafeInteger(outstanding) ||
+        outstanding <= 0 ||
+        !['UNPAID', 'DUE', 'OVERDUE', 'PARTIALLY_PAID'].includes(invoice.paymentStatus)
+      );
+    })
+    .map((invoice) => invoice.invoiceId);
+
+  if (ineligibleInvoices.length > 0) {
+    throw new ApiError(
+      409,
+      'AP_INVOICE_NOT_PAYABLE',
+      'One or more selected invoices are not eligible for a new payment run.',
+      { ineligibleInvoices }
+    );
+  }
+
+  const totalAmountPaisa = invoiceRows.reduce(
+    (sum, invoice) => sum + Number(invoice.outstandingPaisa || 0),
+    0
+  );
+
+  if (!Number.isSafeInteger(totalAmountPaisa) || totalAmountPaisa <= 0) {
+    throw new ApiError(409, 'INVALID_PAYMENT_RUN_TOTAL', 'Payment run total is invalid.');
+  }
 
   const paymentRunYear = new Date().getFullYear();
   const paymentRunId = await SequenceCounter.generateId({
@@ -949,10 +1041,10 @@ const createPaymentRun = asyncHandler(async (request, response) => {
     organisationId,
     paymentRunId,
     runDate: getIstBusinessDate(),
-    bankAccountId,
+    bankAccountId: cleanBankAccountId,
     totalAmountPaisa,
-    itemCount: invoices.length,
-    selectedInvoiceIds,
+    itemCount: invoiceRows.length,
+    selectedInvoiceIds: invoiceIds,
     status: 'PENDING_APPROVAL',
     makerUserId: userId,
   });
@@ -962,12 +1054,23 @@ const createPaymentRun = asyncHandler(async (request, response) => {
 
 const decidePaymentRun = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { paymentRunId } = request.params;
-  const { decision } = request.body; // 'APPROVE' or 'REJECT'
+  const paymentRunId = normalizeFinanceId(request.params.paymentRunId);
+  const decision = normalizeFinanceId(request.body?.decision);
+
+  if (!['APPROVE', 'REJECT'].includes(decision)) {
+    throw new ApiError(400, 'INVALID_PAYMENT_RUN_DECISION', 'decision must be APPROVE or REJECT.');
+  }
 
   const run = await PaymentRun.findOne({ organisationId, paymentRunId });
   if (!run) {
     throw new ApiError(404, 'PAYMENT_RUN_NOT_FOUND', 'Payment run not found.');
+  }
+  if (run.status !== 'PENDING_APPROVAL') {
+    throw new ApiError(
+      409,
+      'PAYMENT_RUN_STATE_CONFLICT',
+      `Only PENDING_APPROVAL runs may be decided; current state is ${run.status}.`
+    );
   }
 
   if (run.makerUserId === userId && request.auth.role === 'CAFE_ADMIN') {
@@ -975,21 +1078,196 @@ const decidePaymentRun = asyncHandler(async (request, response) => {
   }
 
   if (decision === 'APPROVE') {
+    const scheduleResult = await APInvoice.updateMany(
+      {
+        organisationId,
+        invoiceId: { $in: run.selectedInvoiceIds },
+        paymentStatus: { $in: ['UNPAID', 'DUE', 'OVERDUE', 'PARTIALLY_PAID'] },
+        outstandingPaisa: { $gt: 0 },
+      },
+      {
+        $set: { paymentStatus: 'SCHEDULED' },
+      }
+    );
+
+    if (
+      Number.isInteger(scheduleResult?.matchedCount) &&
+      scheduleResult.matchedCount !== run.selectedInvoiceIds.length
+    ) {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_INVOICE_STATE_CONFLICT',
+        'One or more invoices changed state before approval. Refresh the payment run.'
+      );
+    }
+
     run.status = 'APPROVED';
     run.checkerUserId = userId;
     run.approvedAt = new Date();
-
-    // Mark associated invoices as scheduled/paid
-    await APInvoice.updateMany(
-      { organisationId, invoiceId: { $in: run.selectedInvoiceIds } },
-      { $set: { paymentStatus: 'PAID', paidPaisa: '$totalPaisa', outstandingPaisa: 0 } }
-    );
   } else {
     run.status = 'VOIDED';
+    run.checkerUserId = userId;
+    run.approvedAt = null;
   }
 
   await run.save();
-  return response.status(200).json({ message: `Payment run ${paymentRunId} ${decision.toLowerCase()}d.`, paymentRun: run });
+  return response.status(200).json({
+    message: `Payment run ${paymentRunId} ${decision === 'APPROVE' ? 'approved' : 'rejected'}.`,
+    paymentRun: run,
+  });
+});
+
+const executePaymentRun = asyncHandler(async (request, response) => {
+  const { organisationId, userId } = request.auth;
+  const paymentRunId = normalizeFinanceId(request.params.paymentRunId);
+  const executionReference = String(request.body?.paymentReference || '').trim();
+  const paymentMethod = normalizeFinanceId(request.body?.paymentMethod || 'BANK_TRANSFER');
+  const allowedMethods = ['BANK_TRANSFER', 'NEFT', 'RTGS', 'IMPS', 'UPI', 'CHEQUE'];
+
+  if (!executionReference) {
+    throw new ApiError(
+      400,
+      'PAYMENT_EXECUTION_REFERENCE_REQUIRED',
+      'A real bank/payment execution reference is required.'
+    );
+  }
+  if (!allowedMethods.includes(paymentMethod)) {
+    throw new ApiError(
+      400,
+      'INVALID_PAYMENT_METHOD',
+      `paymentMethod must be one of: ${allowedMethods.join(', ')}.`
+    );
+  }
+
+  const result = await runFinanceAtomic(async (session) => {
+    let runQuery = PaymentRun.findOne({ organisationId, paymentRunId });
+    if (session && typeof runQuery.session === 'function') runQuery = runQuery.session(session);
+    const run = await runQuery;
+
+    if (!run) {
+      throw new ApiError(404, 'PAYMENT_RUN_NOT_FOUND', 'Payment run not found.');
+    }
+    if (run.status === 'EXECUTED') {
+      throw new ApiError(409, 'PAYMENT_RUN_ALREADY_EXECUTED', 'This payment run has already been executed.');
+    }
+    if (run.status !== 'APPROVED') {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_NOT_APPROVED',
+        `Payment run must be APPROVED before execution; current state is ${run.status}.`
+      );
+    }
+
+    let bankQuery = BankAccount.findOne({
+      organisationId,
+      bankAccountId: run.bankAccountId,
+      status: 'ACTIVE',
+    });
+    if (session && typeof bankQuery.session === 'function') bankQuery = bankQuery.session(session);
+    const bankAccount = await bankQuery;
+    if (!bankAccount) {
+      throw new ApiError(409, 'PAYMENT_BANK_ACCOUNT_UNAVAILABLE', 'The payment run bank account is not active.');
+    }
+
+    let invoicesQuery = APInvoice.find({
+      organisationId,
+      invoiceId: { $in: run.selectedInvoiceIds },
+    });
+    if (session && typeof invoicesQuery.session === 'function') invoicesQuery = invoicesQuery.session(session);
+    const invoices = await invoicesQuery;
+    const invoiceRows = Array.isArray(invoices) ? invoices : [];
+
+    if (invoiceRows.length !== run.selectedInvoiceIds.length) {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_INVOICE_SET_CHANGED',
+        'The payment run invoice set is incomplete. Execution is blocked.'
+      );
+    }
+
+    const payableTotalPaisa = invoiceRows.reduce((sum, invoice) => {
+      if (invoice.paymentStatus !== 'SCHEDULED') {
+        throw new ApiError(
+          409,
+          'PAYMENT_RUN_INVOICE_NOT_SCHEDULED',
+          `Invoice ${invoice.invoiceId} is no longer scheduled for this run.`
+        );
+      }
+      const outstanding = Number(invoice.outstandingPaisa || 0);
+      if (!Number.isSafeInteger(outstanding) || outstanding <= 0) {
+        throw new ApiError(
+          409,
+          'PAYMENT_RUN_INVOICE_BALANCE_INVALID',
+          `Invoice ${invoice.invoiceId} has an invalid outstanding balance.`
+        );
+      }
+      return sum + outstanding;
+    }, 0);
+
+    if (payableTotalPaisa !== Number(run.totalAmountPaisa || 0)) {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_AMOUNT_CHANGED',
+        'Invoice balances no longer equal the approved payment-run total.',
+        {
+          approvedTotalPaisa: Number(run.totalAmountPaisa || 0),
+          currentOutstandingPaisa: payableTotalPaisa,
+        }
+      );
+    }
+
+    const executionDateKey = getIstBusinessDate().replace(/-/g, '');
+    for (const invoice of invoiceRows) {
+      const paymentId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `AP_PAYMENT:${executionDateKey}`,
+        prefix: `AP-PAY-${executionDateKey}`,
+        minimumDigits: 4,
+        session,
+      });
+
+      const paidNowPaisa = Number(invoice.outstandingPaisa || 0);
+      invoice.paidPaisa = Number(invoice.paidPaisa || 0) + paidNowPaisa;
+      invoice.amountPaidPaisa = invoice.paidPaisa;
+      invoice.outstandingPaisa = 0;
+      invoice.outstandingPayableAmountPaisa = 0;
+      invoice.outstandingBalancePaisa = 0;
+      invoice.paymentStatus = 'PAID';
+      invoice.paymentHistory = Array.isArray(invoice.paymentHistory) ? invoice.paymentHistory : [];
+      invoice.paymentHistory.push({
+        paymentId,
+        paidPaisa: paidNowPaisa,
+        paidAt: new Date(),
+        paidByUserId: userId,
+        paymentMethod,
+        reference: executionReference,
+      });
+      await invoice.save(session ? { session } : undefined);
+    }
+
+    run.status = 'EXECUTED';
+    run.executedAt = new Date();
+    run.executedByUserId = userId;
+    run.executionReference = executionReference;
+    run.paymentMethod = paymentMethod;
+    await run.save(session ? { session } : undefined);
+
+    return {
+      run,
+      paidInvoiceIds: invoiceRows.map((invoice) => invoice.invoiceId),
+      totalPaidPaisa: payableTotalPaisa,
+    };
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Payment run executed and Accounts Payable balances updated.',
+    data: {
+      paymentRun: result.run,
+      paidInvoiceIds: result.paidInvoiceIds,
+      totalPaidPaisa: result.totalPaidPaisa,
+    },
+  });
 });
 
 // 7. Accounts Receivable (AR) & Collections
@@ -1662,6 +1940,7 @@ module.exports = {
   listPaymentRuns,
   createPaymentRun,
   decidePaymentRun,
+  executePaymentRun,
   listReceivables,
   recordCustomerReceipt,
   listMarketplaceSettlements,
