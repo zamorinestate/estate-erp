@@ -40,6 +40,7 @@ const {
   purgeSelfieEvidence,
   reconcileOrphanSelfieEvidence,
   auditAttendanceEvidence,
+  releaseAttendanceEvidenceQuarantine,
   getServerTime,
   getStaffPolicy,
   getStaffToday,
@@ -130,6 +131,7 @@ router.post('/periods/:periodId/reopen', reopenPeriod);
 
 // Privacy, Selfie Evidence Governance & Forensic Integrity (Primary Master)
 router.post('/evidence/integrity/audit', auditAttendanceEvidence);
+router.post('/evidence/integrity/release', releaseAttendanceEvidenceQuarantine);
 router.post('/evidence/orphans/reconcile', reconcileOrphanSelfieEvidence);
 router.post('/evidence/purge', purgeSelfieEvidence);
 
