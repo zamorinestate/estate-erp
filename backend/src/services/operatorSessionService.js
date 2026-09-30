@@ -312,8 +312,10 @@ class OperatorSessionService {
         throw new ApiError(401, 'INVALID_GATEWAY_CONTEXT', 'Cafe Operations access is unavailable or invalid.');
       }
 
-      // P0-01B: Expiration check (independent of MongoDB TTL monitor)
-      if (!gatewayContext.expiresAt || new Date(gatewayContext.expiresAt) <= new Date() || gatewayContext.status === 'EXPIRED') {
+      const now = new Date();
+
+      // Expiration is checked independently of MongoDB TTL cleanup.
+      if (!gatewayContext.expiresAt || new Date(gatewayContext.expiresAt) <= now || gatewayContext.status === 'EXPIRED') {
         throw new ApiError(401, 'GATEWAY_CONTEXT_EXPIRED', 'This access session has expired. Please start again.');
       }
 
@@ -325,43 +327,86 @@ class OperatorSessionService {
         throw new ApiError(403, 'GATEWAY_CONTEXT_INACTIVE', 'Cafe Operations access is currently unavailable.');
       }
 
-      // Check CafeAccess record & emergency lock
+      // Authoritative derivation from the server-issued Gateway Context.
+      orgId = gatewayContext.organisationId;
+      targetCafeId = gatewayContext.cafeId;
+      accessMethod = gatewayContext.accessMethod || 'GATEWAY';
+
+      if (cafeId && cafeId.trim().toUpperCase() !== targetCafeId) {
+        throw new ApiError(403, 'CAFE_MISMATCH', 'Selected cafe does not match the active gateway context.');
+      }
+
+      // Atomically consume the one-time context using its expected current
+      // state. Only one concurrent request can transition ACTIVE -> CONSUMED.
+      const consumedAt = new Date();
+      const claimedGatewayContext = await CafeGatewayContext.findOneAndUpdate(
+        {
+          _id: gatewayContext._id,
+          gatewayContextId: cleanGatewayToken,
+          organisationId: gatewayContext.organisationId,
+          cafeId: gatewayContext.cafeId,
+          status: 'ACTIVE',
+          consumed: { $ne: true },
+          expiresAt: { $gt: consumedAt },
+        },
+        {
+          $set: {
+            consumed: true,
+            status: 'CONSUMED',
+            consumedAt,
+            consumedByUserId: (effectiveOperatorUserId || '').toUpperCase(),
+          },
+        },
+        { new: true }
+      );
+
+      if (!claimedGatewayContext) {
+        const latestGatewayContext = await CafeGatewayContext.findOne({
+          gatewayContextId: cleanGatewayToken,
+        }).lean();
+
+        if (
+          latestGatewayContext?.consumed === true ||
+          latestGatewayContext?.status === 'CONSUMED'
+        ) {
+          throw new ApiError(401, 'GATEWAY_CONTEXT_CONSUMED', 'This access context has already been used. Please scan or enter PIN again.');
+        }
+
+        if (
+          !latestGatewayContext?.expiresAt ||
+          new Date(latestGatewayContext.expiresAt) <= new Date() ||
+          latestGatewayContext?.status === 'EXPIRED'
+        ) {
+          throw new ApiError(401, 'GATEWAY_CONTEXT_EXPIRED', 'This access session has expired. Please start again.');
+        }
+
+        throw new ApiError(
+          409,
+          'GATEWAY_CONTEXT_STATE_CONFLICT',
+          'This access context changed while sign-in was being processed. Please scan or open the café link again.'
+        );
+      }
+
+      // Re-read café access state AFTER the atomic claim so a concurrent café
+      // closure or suspension cannot be bypassed by a stale pre-claim read.
       const { CafeAccess } = require('../models/CafeAccess');
       const cafeAccessDoc = await CafeAccess.findOne({
-        organisationId: gatewayContext.organisationId,
-        cafeId: gatewayContext.cafeId,
+        organisationId: claimedGatewayContext.organisationId,
+        cafeId: claimedGatewayContext.cafeId,
       });
 
       if (!cafeAccessDoc || cafeAccessDoc.accessStatus !== 'ACTIVE') {
         throw new ApiError(403, 'CAFE_ACCESS_UNAVAILABLE', 'Café Operations access is currently unavailable.');
       }
 
-      // Check parent cafe status
       cafe = await Cafe.findOne({
-        organisationId: gatewayContext.organisationId,
-        cafeId: gatewayContext.cafeId,
+        organisationId: claimedGatewayContext.organisationId,
+        cafeId: claimedGatewayContext.cafeId,
       });
 
       if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
         throw new ApiError(403, 'CAFE_INACTIVE', 'Café Operations access is currently unavailable.');
       }
-
-      // Authoritative derivation from server Gateway Context (P0-01)
-      orgId = gatewayContext.organisationId;
-      targetCafeId = gatewayContext.cafeId;
-      accessMethod = gatewayContext.accessMethod || 'GATEWAY';
-
-      // Security Invariant: Client-supplied cafeId is NEVER authoritative; if supplied, reject tampering
-      if (cafeId && cafeId.trim().toUpperCase() !== targetCafeId) {
-        throw new ApiError(403, 'CAFE_MISMATCH', 'Selected cafe does not match the active gateway context.');
-      }
-
-      // Mark gateway context consumed
-      gatewayContext.consumed = true;
-      gatewayContext.status = 'CONSUMED';
-      gatewayContext.consumedAt = new Date();
-      gatewayContext.consumedByUserId = (effectiveOperatorUserId || '').toUpperCase();
-      await gatewayContext.save().catch(() => {});
     } else {
       // Direct registered device sign-in
       const resolvedDeviceId = deviceId;
