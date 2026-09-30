@@ -10,6 +10,18 @@ const { CompanyIdentityService } = require('../services/companyIdentityService')
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 
+function requireOrganisationId(request) {
+  const organisationId = String(request.auth?.organisationId || '').trim().toUpperCase();
+  if (!organisationId) {
+    throw new ApiError(
+      403,
+      'AUTHENTICATED_ORGANISATION_REQUIRED',
+      'Authenticated organisation context is required.'
+    );
+  }
+  return organisationId;
+}
+
 // ─── 1. GET /api/v1/settings/company-identity ────────────────────────────────
 const getCompanyIdentity = asyncHandler(async (request, response) => {
   const role = request.auth?.role;
@@ -28,14 +40,27 @@ const getCompanyIdentity = asyncHandler(async (request, response) => {
     );
   }
 
-  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN-01';
-  const identity = await CompanyIdentityService.getCurrentIdentity(organisationId);
-
-  return response.status(200).json({
-    success: true,
-    data: identity,
-    correlationId: request.correlationId || null,
-  });
+  const organisationId = requireOrganisationId(request);
+  try {
+    const identity = await CompanyIdentityService.getCurrentIdentity(organisationId);
+    return response.status(200).json({
+      success: true,
+      configured: true,
+      data: identity,
+      correlationId: request.correlationId || null,
+    });
+  } catch (error) {
+    if (error?.code === 'COMPANY_IDENTITY_NOT_CONFIGURED') {
+      return response.status(200).json({
+        success: true,
+        configured: false,
+        data: null,
+        message: 'Organisation Identity is not configured yet. Primary Master or Owner may create the initial version.',
+        correlationId: request.correlationId || null,
+      });
+    }
+    throw error;
+  }
 });
 
 // ─── 2. POST /api/v1/settings/company-identity/unlock ────────────────────────
@@ -85,12 +110,31 @@ const updateCompanyIdentity = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'CHANGE_REASON_REQUIRED', 'A detailed change reason (min 5 chars) is mandatory for statutory identity audit.');
   }
 
-  const userId = request.auth?.userId || 'MASTER-01';
-  const userName = request.auth?.name || 'Primary Master';
+  const organisationId = requireOrganisationId(request);
+  const requestedOrganisationId = String(updates.organisationId || '').trim().toUpperCase();
+  if (requestedOrganisationId && requestedOrganisationId !== organisationId) {
+    throw new ApiError(
+      403,
+      'CROSS_ORGANISATION_IDENTITY_DENIED',
+      'Organisation Identity cannot be changed outside the authenticated organisation.'
+    );
+  }
+
+  const userId = String(request.auth?.userId || '').trim().toUpperCase();
+  if (!userId) {
+    throw new ApiError(403, 'AUTHENTICATED_USER_REQUIRED', 'Authenticated user identity is required.');
+  }
+
+  const userName = request.auth?.name || request.auth?.email || userId;
 
   const newVersion = await CompanyIdentityService.createNewVersion({
-    updates,
+    organisationId,
+    updates: {
+      ...updates,
+      organisationId,
+    },
     userId,
+    actorRole: role,
     userName,
     changeReason: changeReason.trim(),
   });
@@ -121,7 +165,7 @@ const getCompanyIdentityHistory = asyncHandler(async (request, response) => {
     );
   }
 
-  const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN-01';
+  const organisationId = requireOrganisationId(request);
   const history = await CompanyIdentityService.getVersionHistory(organisationId);
 
   return response.status(200).json({
