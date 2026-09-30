@@ -3002,6 +3002,39 @@ const verifyPunchGeofence = asyncHandler(async (request, response) => {
  * POST /api/v1/attendance/evidence/upload
  * Securely uploads a live selfie capture to object storage and records PrivateFile.
  */
+function detectSelfieImageMime(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
+
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+
+  // WebP: RIFF....WEBP
+  if (
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+
+  return null;
+}
+
 const uploadPunchSelfie = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const {
@@ -3051,7 +3084,8 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
   }
 
   const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-  if (!allowedMimes.includes(String(extractedMime).toLowerCase())) {
+  const normalizedDeclaredMime = String(extractedMime || '').toLowerCase();
+  if (!allowedMimes.includes(normalizedDeclaredMime)) {
     throw new ApiError(400, 'INVALID_SELFIE_MIME', 'Only JPEG, PNG, or WebP selfie photographs are accepted.');
   }
 
@@ -3063,6 +3097,28 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
   if (!buffer || buffer.length === 0) {
     throw new ApiError(400, 'EMPTY_IMAGE_PAYLOAD', 'Decoded image payload contains 0 bytes.');
   }
+
+  const detectedMime = detectSelfieImageMime(buffer);
+  if (!detectedMime) {
+    throw new ApiError(
+      400,
+      'INVALID_SELFIE_IMAGE_SIGNATURE',
+      'Selfie payload does not contain a supported JPEG, PNG, or WebP image signature.'
+    );
+  }
+
+  const declaredComparable = normalizedDeclaredMime === 'image/jpg'
+    ? 'image/jpeg'
+    : normalizedDeclaredMime;
+  if (declaredComparable !== detectedMime) {
+    throw new ApiError(
+      400,
+      'SELFIE_MIME_SIGNATURE_MISMATCH',
+      'Selfie MIME type does not match the uploaded image bytes.'
+    );
+  }
+
+  extractedMime = detectedMime;
 
   const grantToken = String(scanGrant || uploadQrToken || '').trim();
   if (!grantToken) {
@@ -3097,10 +3153,17 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
     minimumDigits: 4,
   });
 
+  const extensionByMime = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  const fileExtension = extensionByMime[extractedMime];
+
   const uploadResult = await defaultStorageService.uploadObject({
     organisationId,
     fileType: 'ATTENDANCE_SELFIE',
-    fileName: `${fileId}.jpg`,
+    fileName: `${fileId}.${fileExtension}`,
     mimeType: extractedMime,
     buffer,
   });
@@ -3108,7 +3171,7 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
   const privateFile = await PrivateFile.create({
     fileId,
     organisationId,
-    originalName: `selfie_${punchType.toLowerCase()}_${Date.now()}.jpg`,
+    originalName: `selfie_${punchType.toLowerCase()}_${Date.now()}.${fileExtension}`,
     mimeType: extractedMime,
     sizeBytes: buffer.length,
     storagePath: uploadResult.fileKey || uploadResult.url,
