@@ -35,6 +35,8 @@ function createAttendance(overrides = {}) {
         qrChallengeId: 'CH-3001',
         qrVerified: true,
         geofenceVerified: true,
+        deviceId: 'OPS-CONSOLE-01',
+        serverTimestamp: new Date('2026-09-30T03:31:00Z'),
       },
       checkOut: null,
     },
@@ -55,6 +57,11 @@ function createPrivateFile(buffer, overrides = {}) {
       challengeId: 'CH-3001',
       cafeId: 'CAFE-KNR-01',
       punchType: 'CHECK_IN',
+      boundAt: new Date('2026-09-30T03:30:30Z'),
+      grantIssuedAt: new Date('2026-09-30T03:30:00Z'),
+      grantExpiresAt: new Date('2026-09-30T03:32:00Z'),
+      deviceId: 'OPS-CONSOLE-01',
+      proofPurpose: 'ATTENDANCE_PUNCH',
     },
     attendanceLink: {
       status: 'COMMITTED',
@@ -162,6 +169,51 @@ test('EVI-003: mismatched employee/cafe/challenge/link identity fails closed', a
       'challenge_binding',
       'link_attendance_id',
       'link_punch_type',
+    ]) {
+      assert.ok(result.failedChecks.includes(expected), expected);
+    }
+  } finally {
+    PrivateFile.findOne = originals.findOne;
+    attendanceEvidenceStorageService.readObjectBuffer = originals.read;
+  }
+});
+
+
+
+test('EVI-003A: durable QR proof snapshot fails on device, purpose, or temporal tampering', async () => {
+  const originals = {
+    findOne: PrivateFile.findOne,
+    read: attendanceEvidenceStorageService.readObjectBuffer,
+  };
+  const bytes = Buffer.from('proof-snapshot-evidence');
+
+  PrivateFile.findOne = async () => createPrivateFile(bytes, {
+    attendanceContext: {
+      challengeId: 'CH-3001',
+      cafeId: 'CAFE-KNR-01',
+      punchType: 'CHECK_IN',
+      boundAt: new Date('2026-09-30T03:35:00Z'),
+      grantIssuedAt: new Date('2026-09-30T03:36:00Z'),
+      grantExpiresAt: new Date('2026-09-30T03:34:00Z'),
+      deviceId: 'DIFFERENT-DEVICE',
+      proofPurpose: null,
+    },
+  });
+  attendanceEvidenceStorageService.readObjectBuffer = async () => bytes;
+
+  try {
+    const result = await verifyAttendanceEvidenceSlot({
+      organisationId: 'ORG-ZAMORIN',
+      attendance: createAttendance(),
+      punchType: 'CHECK_IN',
+    });
+
+    assert.equal(result.status, 'FAIL');
+    for (const expected of [
+      'proof_purpose',
+      'device_binding',
+      'grant_temporal_order',
+      'punch_after_evidence_binding',
     ]) {
       assert.ok(result.failedChecks.includes(expected), expected);
     }
