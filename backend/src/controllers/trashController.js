@@ -1098,6 +1098,7 @@ const executeDispositionPurge = asyncHandler(async (request, response) => {
           lifecycleStatus: 'DISPOSITION_PROCESSING',
           dispositionProcessingStartedAt: claimTime,
           dispositionProcessingStartedByUserId: userId,
+          dispositionExecutionAuthorizationAuditEventId: executionAudit.auditEventId,
           dispositionStorageStatus: hasAttachments ? 'PENDING' : 'NOT_REQUIRED',
           dispositionStorageVerifiedAt: null,
           dispositionStorageLastAttemptAt: hasAttachments ? claimTime : null,
@@ -1224,6 +1225,7 @@ const executeDispositionPurge = asyncHandler(async (request, response) => {
       lifecycleStatus: 'DISPOSITION_PROCESSING',
       dispositionProcessingStartedAt: item.dispositionProcessingStartedAt,
       dispositionStorageStatus: requiredStorageStatus,
+      dispositionExecutionAuthorizationAuditEventId: { $ne: null },
     }).session(session);
 
     if (!claimed) {
@@ -1301,7 +1303,8 @@ const executeDispositionPurge = asyncHandler(async (request, response) => {
       riskClassification: 'CRITICAL',
       reason: executionReason,
       metadata: {
-        authorizationAuditEventId: executionAudit?.auditEventId || null,
+        authorizationAuditEventId:
+          claimed.dispositionExecutionAuthorizationAuditEventId,
         certificateId: certId,
         trashId: claimed.trashId,
         recordReference: claimed.recordReference,
