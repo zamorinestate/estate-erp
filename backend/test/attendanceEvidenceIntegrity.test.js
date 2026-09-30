@@ -675,3 +675,32 @@ test('EVI-014: evidence media endpoint refuses quarantined evidence before byte 
   assert.match(controllerSource, /integrityState \|\| ''\)\.toUpperCase\(\) === 'QUARANTINED'/);
 });
 
+test('EVI-015: Primary Master integrity panel surfaces quarantine, audit-event, and security-alert counts', () => {
+  const frontend = fs.readFileSync(
+    path.join(__dirname, '../../frontend/src/js/modules/attendance/attendanceShifts.js'),
+    'utf8'
+  );
+
+  assert.match(frontend, /integrityQuarantined/);
+  assert.match(frontend, /integrityAuditEvents/);
+  assert.match(frontend, /integrityAlertsQueued/);
+  assert.match(frontend, />Quarantined</);
+  assert.match(frontend, />Audit Events</);
+  assert.match(frontend, />Security Alerts</);
+  assert.match(frontend, /Primary Master security alert\(s\) queued/);
+});
+
+test('EVI-016: quarantine incident payload never includes evidence image bytes or reusable QR credentials', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/services/attendanceEvidenceIncidentService.js'),
+    'utf8'
+  );
+
+  assert.equal(source.includes('readObjectBuffer'), false);
+  assert.equal(source.includes('qrToken'), false);
+  assert.equal(source.includes('scanGrant'), false);
+  assert.match(source, /failedChecks/);
+  assert.match(source, /correlationId/);
+  assert.match(source, /includePrimaryMaster:\s*true/);
+});
+
