@@ -20,6 +20,7 @@ const { BudgetPlan } = require('../models/BudgetPlan');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { TaxInvoice } = require('../models/TaxInvoice');
 const { PassbookTransaction } = require('../models/PassbookTransaction');
+const { PassbookAccount } = require('../models/PassbookAccount');
 const { StockMovement } = require('../models/StockMovement');
 const gstTaxService = require('../services/gstTaxService');
 const zReportService = require('../services/zReportService');
@@ -1216,8 +1217,42 @@ const decidePaymentRun = asyncHandler(async (request, response) => {
     );
   }
 
-  if (run.makerUserId === userId && request.auth.role === 'CAFE_ADMIN') {
-    throw new ApiError(403, 'MAKER_CHECKER_VIOLATION', 'Preparer cannot approve their own payment proposal.');
+  if (normalizeFinanceId(run.makerUserId) === normalizeFinanceId(userId)) {
+    throw new ApiError(
+      403,
+      'MAKER_CHECKER_VIOLATION',
+      'The payment-run preparer cannot approve or reject their own proposal.'
+    );
+  }
+
+  if (request.auth.role === 'CAFE_ADMIN') {
+    const invoiceScopeQuery = APInvoice.find({
+      organisationId,
+      invoiceId: { $in: run.selectedInvoiceIds },
+    }).select('invoiceId cafeId');
+    const invoiceScopeRows =
+      invoiceScopeQuery && typeof invoiceScopeQuery.lean === 'function'
+        ? await invoiceScopeQuery.lean()
+        : await invoiceScopeQuery;
+
+    const assignedCafeIds = new Set(
+      (request.auth.assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean)
+    );
+    const unauthorizedInvoiceIds = (invoiceScopeRows || [])
+      .filter((invoice) => !assignedCafeIds.has(normalizeFinanceId(invoice.cafeId)))
+      .map((invoice) => invoice.invoiceId);
+
+    if (
+      (invoiceScopeRows || []).length !== run.selectedInvoiceIds.length ||
+      unauthorizedInvoiceIds.length > 0
+    ) {
+      throw new ApiError(
+        403,
+        'PAYMENT_RUN_CAFE_SCOPE_DENIED',
+        'Café Admin may decide only payment runs whose entire invoice set belongs to assigned cafés.',
+        { unauthorizedInvoiceIds }
+      );
+    }
   }
 
   if (decision === 'APPROVE') {
@@ -1312,6 +1347,33 @@ const executePaymentRun = asyncHandler(async (request, response) => {
       throw new ApiError(409, 'PAYMENT_BANK_ACCOUNT_UNAVAILABLE', 'The payment run bank account is not active.');
     }
 
+    const glAccountCode = normalizeFinanceId(bankAccount.glAccountCode);
+    if (!glAccountCode) {
+      throw new ApiError(
+        409,
+        'PAYMENT_PASSBOOK_ACCOUNT_MAPPING_REQUIRED',
+        'The selected bank account is not mapped to an authoritative passbook account code.'
+      );
+    }
+
+    let passbookAccountQuery = PassbookAccount.findOne({
+      organisationId,
+      accountCode: glAccountCode,
+      status: 'ACTIVE',
+      accountType: 'BANK_OPERATING',
+    });
+    if (session && typeof passbookAccountQuery.session === 'function') {
+      passbookAccountQuery = passbookAccountQuery.session(session);
+    }
+    const passbookAccount = await passbookAccountQuery;
+    if (!passbookAccount) {
+      throw new ApiError(
+        409,
+        'PAYMENT_PASSBOOK_ACCOUNT_MAPPING_REQUIRED',
+        'No active authoritative bank passbook account matches the selected finance bank account.'
+      );
+    }
+
     let invoicesQuery = APInvoice.find({
       organisationId,
       invoiceId: { $in: run.selectedInvoiceIds },
@@ -1359,6 +1421,76 @@ const executePaymentRun = asyncHandler(async (request, response) => {
       );
     }
 
+    const normalizedExecutionReference = normalizeFinanceId(executionReference);
+    let bankTransactionQuery = PassbookTransaction.findOne({
+      organisationId,
+      accountId: passbookAccount.accountId,
+      direction: 'DEBIT',
+      status: { $in: ['POSTED', 'CLEARED'] },
+      amountPaisa: payableTotalPaisa,
+      $or: [
+        { transactionId: normalizedExecutionReference },
+        { externalReference: executionReference },
+        { externalReference: normalizedExecutionReference },
+      ],
+    });
+    if (session && typeof bankTransactionQuery.session === 'function') {
+      bankTransactionQuery = bankTransactionQuery.session(session);
+    }
+    const bankTransaction =
+      bankTransactionQuery && typeof bankTransactionQuery.lean === 'function'
+        ? await bankTransactionQuery.lean()
+        : await bankTransactionQuery;
+
+    if (!bankTransaction) {
+      throw new ApiError(
+        409,
+        'PAYMENT_BANK_DEBIT_NOT_VERIFIED',
+        'AP execution is blocked because the supplied payment reference does not resolve to a posted/cleared bank debit for the exact payment-run amount and account.'
+      );
+    }
+
+    const duplicateExecutionQuery = PaymentRun.findOne({
+      organisationId,
+      paymentRunId: { $ne: run.paymentRunId },
+      status: 'EXECUTED',
+      executionReference: {
+        $in: [
+          executionReference,
+          normalizedExecutionReference,
+          bankTransaction.transactionId,
+        ].filter(Boolean),
+      },
+    });
+    const duplicateExecution =
+      session && typeof duplicateExecutionQuery.session === 'function'
+        ? await duplicateExecutionQuery.session(session)
+        : await duplicateExecutionQuery;
+
+    if (duplicateExecution) {
+      throw new ApiError(
+        409,
+        'PAYMENT_BANK_DEBIT_ALREADY_APPLIED',
+        'The authoritative bank debit is already linked to another executed payment run.'
+      );
+    }
+
+    const invoiceCafeIds = [...new Set(
+      invoiceRows.map((invoice) => normalizeFinanceId(invoice.cafeId)).filter(Boolean)
+    )];
+    const economicCafeId = normalizeFinanceId(bankTransaction.economicCafeId || 'ALL');
+    if (
+      economicCafeId !== 'ALL' &&
+      (invoiceCafeIds.length !== 1 || invoiceCafeIds[0] !== economicCafeId)
+    ) {
+      throw new ApiError(
+        409,
+        'PAYMENT_BANK_DEBIT_CAFE_SCOPE_MISMATCH',
+        'The authoritative bank debit economic café scope does not match the payment-run invoice scope.',
+        { bankEconomicCafeId: economicCafeId, invoiceCafeIds }
+      );
+    }
+
     const executionDateKey = getIstBusinessDate().replace(/-/g, '');
     for (const invoice of invoiceRows) {
       const paymentId = await SequenceCounter.generateId({
@@ -1384,6 +1516,7 @@ const executePaymentRun = asyncHandler(async (request, response) => {
         paidByUserId: userId,
         paymentMethod,
         reference: executionReference,
+        bankTransactionId: bankTransaction.transactionId,
       });
       await invoice.save(session ? { session } : undefined);
     }
@@ -1391,12 +1524,14 @@ const executePaymentRun = asyncHandler(async (request, response) => {
     run.status = 'EXECUTED';
     run.executedAt = new Date();
     run.executedByUserId = userId;
-    run.executionReference = executionReference;
+    run.executionReference = bankTransaction.transactionId;
     run.paymentMethod = paymentMethod;
+    run.bankTransactionId = bankTransaction.transactionId;
     await run.save(session ? { session } : undefined);
 
     return {
       run,
+      bankTransactionId: bankTransaction.transactionId,
       paidInvoiceIds: invoiceRows.map((invoice) => invoice.invoiceId),
       totalPaidPaisa: payableTotalPaisa,
     };
@@ -1407,6 +1542,7 @@ const executePaymentRun = asyncHandler(async (request, response) => {
     message: 'Payment run executed and Accounts Payable balances updated.',
     data: {
       paymentRun: result.run,
+      bankTransactionId: result.bankTransactionId,
       paidInvoiceIds: result.paidInvoiceIds,
       totalPaidPaisa: result.totalPaidPaisa,
     },
