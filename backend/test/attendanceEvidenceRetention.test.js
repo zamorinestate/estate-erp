@@ -38,6 +38,91 @@ test('RET-001: attendance reference query covers every canonical selfie referenc
   }
 });
 
+
+test('RET-001A: orphan scan excludes evidence reserved or committed by a punch', async () => {
+  const originals = {
+    find: PrivateFile.find,
+    exists: Attendance.exists,
+  };
+
+  let capturedFilter = null;
+  PrivateFile.find = (filter) => {
+    capturedFilter = filter;
+    return {
+      sort() { return this; },
+      limit() { return this; },
+      lean: async () => [],
+    };
+  };
+  Attendance.exists = async () => null;
+
+  try {
+    await reconcileExpiredOrphanAttendanceEvidence({
+      organisationId: 'ORG-ZAMORIN',
+      now: new Date('2026-09-30T04:00:00Z'),
+      dryRun: true,
+    });
+
+    assert.deepEqual(
+      capturedFilter?.['attendanceLink.status'],
+      { $nin: ['RESERVED', 'COMMITTED'] },
+      'cleanup discovery must fail closed around in-flight and committed punch links'
+    );
+  } finally {
+    PrivateFile.find = originals.find;
+    Attendance.exists = originals.exists;
+  }
+});
+
+test('RET-001B: cleanup claim repeats the punch-link exclusion atomically', async () => {
+  const originals = {
+    find: PrivateFile.find,
+    exists: Attendance.exists,
+    findOneAndUpdate: PrivateFile.findOneAndUpdate,
+  };
+
+  installCandidateFind([
+    {
+      _id: 'PF-RACE-1',
+      fileId: 'FILE-1999',
+      organisationId: 'ORG-ZAMORIN',
+      storagePath: 'attendance/file-1999.jpg',
+      attendanceContext: {
+        challengeId: 'CH-RACE-1',
+        grantExpiresAt: new Date('2026-09-30T02:00:00Z'),
+      },
+    },
+  ]);
+  Attendance.exists = async () => null;
+
+  let capturedClaimFilter = null;
+  PrivateFile.findOneAndUpdate = async (filter) => {
+    capturedClaimFilter = filter;
+    return null;
+  };
+
+  try {
+    const result = await reconcileExpiredOrphanAttendanceEvidence({
+      organisationId: 'ORG-ZAMORIN',
+      actorUserId: 'MU-PRIMARY-01',
+      now: new Date('2026-09-30T04:00:00Z'),
+      dryRun: false,
+    });
+
+    assert.deepEqual(
+      capturedClaimFilter?.['attendanceLink.status'],
+      { $nin: ['RESERVED', 'COMMITTED'] },
+      'cleanup claim must compete with punch reservation on the same PrivateFile row'
+    );
+    assert.equal(result.claimConflicts, 1);
+    assert.equal(result.deleted, 0);
+  } finally {
+    PrivateFile.find = originals.find;
+    Attendance.exists = originals.exists;
+    PrivateFile.findOneAndUpdate = originals.findOneAndUpdate;
+  }
+});
+
 test('RET-002: dry-run protects linked evidence and reports only unlinked expired uploads', async () => {
   const originals = {
     find: PrivateFile.find,
