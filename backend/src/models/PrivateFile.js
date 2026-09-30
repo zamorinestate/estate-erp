@@ -48,6 +48,14 @@ const privateFileSchema = new mongoose.Schema(
       min: 0,
     },
 
+    sha256: {
+      type: String,
+      default: null,
+      trim: true,
+      lowercase: true,
+      match: /^[a-f0-9]{64}$/,
+    },
+
     storagePath: {
       type: String,
       required: true,
