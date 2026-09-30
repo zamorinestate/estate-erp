@@ -342,7 +342,7 @@ class OperatorSessionService {
         cafeId: gatewayContext.cafeId,
       });
 
-      if (!cafe || cafe.status !== 'ACTIVE') {
+      if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
         throw new ApiError(403, 'CAFE_INACTIVE', 'Café Operations access is currently unavailable.');
       }
 
@@ -424,7 +424,7 @@ class OperatorSessionService {
         throw new ApiError(404, 'CAFE_NOT_FOUND', `Cafe ${targetCafeId} was not found.`);
       }
 
-      if (cafe.status !== 'ACTIVE') {
+      if (!['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
         throw new ApiError(403, 'CAFE_INACTIVE', `Cafe ${targetCafeId} is currently ${cafe.status}. Operations access is blocked.`);
       }
 
