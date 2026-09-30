@@ -468,6 +468,10 @@ const login = asyncHandler(
       });
     }
 
+    // A valid password may intentionally continue to an MFA challenge (HTTP 403).
+    // Mark credential verification explicitly so brute-force limiters release this attempt.
+    request.authCredentialVerified = true;
+
     let requiresMfa = baseRequiresMfa;
     let isTrustedDevice = false;
 
