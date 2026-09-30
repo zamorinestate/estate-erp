@@ -20,6 +20,7 @@ const { BudgetPlan } = require('../models/BudgetPlan');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { TaxInvoice } = require('../models/TaxInvoice');
 const { PassbookTransaction } = require('../models/PassbookTransaction');
+const { StockMovement } = require('../models/StockMovement');
 const gstTaxService = require('../services/gstTaxService');
 const zReportService = require('../services/zReportService');
 const { ApiError } = require('../utils/ApiError');
@@ -1665,50 +1666,576 @@ const getTaxReview = asyncHandler(async (request, response) => {
   });
 });
 
+async function resolveFinancialPeriodForRead(organisationId, requestedPeriodId = null) {
+  if (requestedPeriodId) {
+    const query = FinancialPeriod.findOne({
+      organisationId,
+      periodId: normalizeFinanceId(requestedPeriodId),
+    });
+    return query && typeof query.lean === 'function' ? query.lean() : query;
+  }
+
+  const query = FinancialPeriod.findOne({
+    organisationId,
+    status: { $in: ['OPEN', 'CLOSING', 'REOPENED'] },
+  });
+  if (query && typeof query.sort === 'function') query.sort({ startDate: -1 });
+  return query && typeof query.lean === 'function' ? query.lean() : query;
+}
+
+function periodDateBounds(period) {
+  return {
+    startDate: period?.startDate || null,
+    endDate: period?.endDate || null,
+    startTimestamp: period?.startDate ? new Date(`${period.startDate}T00:00:00+05:30`) : null,
+    endTimestamp: period?.endDate ? new Date(`${period.endDate}T23:59:59.999+05:30`) : null,
+  };
+}
+
+async function buildPeriodCloseAssessment({ organisationId, period }) {
+  if (!period) {
+    return {
+      currentPeriod: null,
+      closeChecklist: [
+        {
+          task: 'Financial Period Configuration',
+          status: 'NOT_CONFIGURED',
+          blocker: true,
+          evidence: 'No OPEN/CLOSING/REOPENED financial period exists.',
+        },
+      ],
+      readyToClose: false,
+      blockerCount: 1,
+    };
+  }
+
+  const { startDate, endDate, startTimestamp, endTimestamp } = periodDateBounds(period);
+
+  const [
+    journals,
+    apInvoices,
+    bankAccounts,
+    storeDays,
+    settlements,
+    taxInvoices,
+    expenses,
+    stockMovements,
+    billCount,
+  ] = await Promise.all([
+    Journal.find({ organisationId, periodId: period.periodId }).lean(),
+    APInvoice.find({
+      organisationId,
+      invoiceDate: { $gte: startDate, $lte: endDate },
+      paymentStatus: { $ne: 'CANCELLED' },
+    }).lean(),
+    BankAccount.find({ organisationId, status: 'ACTIVE' }).lean(),
+    StoreDayAudit.find({
+      organisationId,
+      businessDate: { $gte: startDate, $lte: endDate },
+    }).lean(),
+    MarketplaceSettlement.find({
+      organisationId,
+      periodStart: { $lte: endDate },
+      periodEnd: { $gte: startDate },
+    }).lean(),
+    TaxInvoice.find({
+      organisationId,
+      invoiceDate: { $gte: startTimestamp, $lte: endTimestamp },
+      status: { $in: ['ISSUED', 'AMENDED'] },
+    }).lean(),
+    Expense.find({
+      organisationId,
+      createdAt: { $gte: startTimestamp, $lte: endTimestamp },
+      status: { $in: ['APPROVED', 'PAID', 'POSTED'] },
+    }).lean(),
+    StockMovement.find({
+      organisationId,
+      performedAt: { $gte: startTimestamp, $lte: endTimestamp },
+    }).lean(),
+    typeof Bill.countDocuments === 'function'
+      ? Bill.countDocuments({
+          organisationId,
+          businessDate: { $gte: startDate, $lte: endDate },
+          status: { $in: ['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
+          isTraining: { $ne: true },
+        })
+      : 0,
+  ]);
+
+  const journalRows = Array.isArray(journals) ? journals : [];
+  const apRows = Array.isArray(apInvoices) ? apInvoices : [];
+  const bankRows = Array.isArray(bankAccounts) ? bankAccounts : [];
+  const storeRows = Array.isArray(storeDays) ? storeDays : [];
+  const settlementRows = Array.isArray(settlements) ? settlements : [];
+  const taxRows = Array.isArray(taxInvoices) ? taxInvoices : [];
+  const expenseRows = Array.isArray(expenses) ? expenses : [];
+  const stockRows = Array.isArray(stockMovements) ? stockMovements : [];
+
+  const unbalancedJournals = journalRows.filter(
+    (journal) => Number(journal.totalDebitPaisa || 0) !== Number(journal.totalCreditPaisa || 0)
+  );
+  const unpostedJournals = journalRows.filter(
+    (journal) => !['POSTED', 'REVERSED'].includes(journal.status)
+  );
+
+  const posGaps = storeRows.filter(
+    (row) =>
+      Number(row.financeEventCount || 0) < Number(row.posEventCount || 0) ||
+      !['FINANCE_CLEARED', 'CLOSED'].includes(row.status)
+  );
+
+  const expensePostingGaps = expenseRows.filter(
+    (expense) => String(expense.financeHandoff?.postingStatus || '').toUpperCase() !== 'POSTED'
+  );
+
+  const apPostingGaps = apRows.filter(
+    (invoice) => String(invoice.accountingStatus || '').toUpperCase() !== 'POSTED'
+  );
+
+  const unreconciledBanks = bankRows.filter(
+    (account) => !account.lastReconciledDate || account.lastReconciledDate < endDate
+  );
+
+  const unsettledMarketplace = settlementRows.filter(
+    (row) => !['MATCHED', 'RECONCILED'].includes(row.status)
+  );
+
+  const hasInventoryActivity = stockRows.length > 0;
+  const inventoryJournalCount = journalRows.filter(
+    (journal) => journal.status === 'POSTED' && journal.sourceModule === 'INVENTORY'
+  ).length;
+
+  const closeChecklist = [
+    {
+      task: 'Journal Balance & Posting Completeness',
+      status:
+        unbalancedJournals.length === 0 && unpostedJournals.length === 0
+          ? 'COMPLETED'
+          : 'BLOCKED',
+      blocker: unbalancedJournals.length > 0 || unpostedJournals.length > 0,
+      evidence: {
+        journalCount: journalRows.length,
+        unbalancedJournalCount: unbalancedJournals.length,
+        unpostedJournalCount: unpostedJournals.length,
+      },
+    },
+    {
+      task: 'POS & Billing Completeness',
+      status:
+        Number(billCount || 0) === 0 && storeRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (posGaps.length === 0 && storeRows.length > 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker:
+        !(Number(billCount || 0) === 0 && storeRows.length === 0) &&
+        !(posGaps.length === 0 && storeRows.length > 0),
+      evidence: {
+        billCount: Number(billCount || 0),
+        storeDayCount: storeRows.length,
+        storeDayGapCount: posGaps.length,
+      },
+    },
+    {
+      task: 'Expenses & Credit Ledger Posted',
+      status:
+        expenseRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (expensePostingGaps.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: expensePostingGaps.length > 0,
+      evidence: {
+        expenseCount: expenseRows.length,
+        unpostedExpenseCount: expensePostingGaps.length,
+      },
+    },
+    {
+      task: 'Accounts Payable Invoices Accounted',
+      status:
+        apRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (apPostingGaps.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: apPostingGaps.length > 0,
+      evidence: {
+        invoiceCount: apRows.length,
+        unpostedInvoiceCount: apPostingGaps.length,
+      },
+    },
+    {
+      task: 'Bank Statements Reconciled',
+      status:
+        bankRows.length === 0
+          ? 'NOT_CONFIGURED'
+          : (unreconciledBanks.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: bankRows.length === 0 || unreconciledBanks.length > 0,
+      evidence: {
+        activeBankAccountCount: bankRows.length,
+        unreconciledBankAccountCount: unreconciledBanks.length,
+      },
+    },
+    {
+      task: 'Marketplace Settlements Matched',
+      status:
+        settlementRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (unsettledMarketplace.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: unsettledMarketplace.length > 0,
+      evidence: {
+        settlementCount: settlementRows.length,
+        unresolvedSettlementCount: unsettledMarketplace.length,
+      },
+    },
+    {
+      task: 'Inventory Valuation Control Reconciled',
+      status:
+        !hasInventoryActivity
+          ? 'NO_ACTIVITY'
+          : (inventoryJournalCount > 0 ? 'PARTIAL_EVIDENCE' : 'NOT_VERIFIED'),
+      blocker: hasInventoryActivity,
+      evidence: {
+        stockMovementCount: stockRows.length,
+        postedInventoryJournalCount: inventoryJournalCount,
+        reason:
+          hasInventoryActivity
+            ? 'No transaction-level inventory valuation-to-GL reconciliation proof is configured.'
+            : null,
+      },
+    },
+    {
+      task: 'GST & Statutory Review Completed',
+      status: taxRows.length === 0 ? 'NO_ACTIVITY' : 'NOT_VERIFIED',
+      blocker: taxRows.length > 0,
+      evidence: {
+        issuedTaxInvoiceCount: taxRows.length,
+        reason:
+          taxRows.length > 0
+            ? 'No durable GST filing/review sign-off record is configured.'
+            : null,
+      },
+    },
+  ];
+
+  const blockerCount = closeChecklist.filter((item) => item.blocker).length;
+
+  return {
+    currentPeriod: period,
+    closeChecklist,
+    readyToClose: blockerCount === 0,
+    blockerCount,
+  };
+}
+
+async function getPostedLedgerStatement({ organisationId, period, cafeIds = null }) {
+  if (!period) {
+    return {
+      sourceStatus: 'NOT_CONFIGURED',
+      pnl: null,
+      balanceSheet: null,
+      unmappedAccountCodes: [],
+    };
+  }
+
+  const periodJournalFilter = {
+    organisationId,
+    periodId: period.periodId,
+    status: 'POSTED',
+  };
+  if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+    periodJournalFilter.$or = [
+      { cafeId: { $in: cafeIds } },
+      { cafeId: null, 'lines.dimensionCafeId': { $in: cafeIds } },
+    ];
+  }
+
+  const cumulativeJournalFilter = {
+    organisationId,
+    status: 'POSTED',
+    journalDate: { $lte: period.endDate },
+  };
+  if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+    cumulativeJournalFilter.$or = [
+      { cafeId: { $in: cafeIds } },
+      { cafeId: null, 'lines.dimensionCafeId': { $in: cafeIds } },
+    ];
+  }
+
+  const [periodJournals, cumulativeJournals, accounts] = await Promise.all([
+    Journal.find(periodJournalFilter).lean(),
+    Journal.find(cumulativeJournalFilter).lean(),
+    ChartOfAccount.find({ organisationId, status: 'ACTIVE' }).lean(),
+  ]);
+
+  const accountMap = new Map(
+    (accounts || []).map((account) => [normalizeFinanceId(account.accountCode), account])
+  );
+  const allowedCafeSet =
+    Array.isArray(cafeIds) && cafeIds.length > 0 ? new Set(cafeIds) : null;
+
+  const lineAllowed = (journal, line) => {
+    if (!allowedCafeSet) return true;
+    const lineCafe = normalizeFinanceId(line?.dimensionCafeId || journal?.cafeId || '');
+    return Boolean(lineCafe && allowedCafeSet.has(lineCafe));
+  };
+
+  const unmapped = new Set();
+  let revenuePaisa = 0;
+  let cogsPaisa = 0;
+  let operatingExpensePaisa = 0;
+  let revenueLineCount = 0;
+  let cogsLineCount = 0;
+  let operatingExpenseLineCount = 0;
+
+  for (const journal of periodJournals || []) {
+    for (const line of journal.lines || []) {
+      if (!lineAllowed(journal, line)) continue;
+      const code = normalizeFinanceId(line.accountCode);
+      const account = accountMap.get(code);
+      if (!account) {
+        unmapped.add(code);
+        continue;
+      }
+
+      const debit = Number(line.debitPaisa || 0);
+      const credit = Number(line.creditPaisa || 0);
+
+      if (account.accountType === 'REVENUE') {
+        revenuePaisa += credit - debit;
+        revenueLineCount += 1;
+      } else if (account.accountType === 'EXPENSE') {
+        const value = debit - credit;
+        if (String(account.accountGroup || '').toUpperCase() === 'COST_OF_SALES') {
+          cogsPaisa += value;
+          cogsLineCount += 1;
+        } else {
+          operatingExpensePaisa += value;
+          operatingExpenseLineCount += 1;
+        }
+      }
+    }
+  }
+
+  const cumulative = {
+    assetsPaisa: 0,
+    liabilitiesPaisa: 0,
+    equityPaisa: 0,
+  };
+
+  for (const journal of cumulativeJournals || []) {
+    for (const line of journal.lines || []) {
+      if (!lineAllowed(journal, line)) continue;
+      const code = normalizeFinanceId(line.accountCode);
+      const account = accountMap.get(code);
+      if (!account) {
+        unmapped.add(code);
+        continue;
+      }
+
+      const debit = Number(line.debitPaisa || 0);
+      const credit = Number(line.creditPaisa || 0);
+
+      if (account.accountType === 'ASSET') {
+        cumulative.assetsPaisa += debit - credit;
+      } else if (account.accountType === 'LIABILITY') {
+        cumulative.liabilitiesPaisa += credit - debit;
+      } else if (account.accountType === 'EQUITY') {
+        cumulative.equityPaisa += credit - debit;
+      }
+    }
+  }
+
+  const revenueAvailable = revenueLineCount > 0;
+  const cogsAvailable = cogsLineCount > 0;
+  const operatingExpenseAvailable = operatingExpenseLineCount > 0;
+  const grossProfitPaisa =
+    revenueAvailable && cogsAvailable ? revenuePaisa - cogsPaisa : null;
+  const netOperatingProfitPaisa =
+    grossProfitPaisa !== null && operatingExpenseAvailable
+      ? grossProfitPaisa - operatingExpensePaisa
+      : null;
+
+  return {
+    sourceStatus:
+      unmapped.size > 0
+        ? 'PARTIAL_UNMAPPED_ACCOUNT_CODES'
+        : ((periodJournals || []).length > 0 ? 'POSTED_LEDGER' : 'NO_POSTED_JOURNALS'),
+    pnl: {
+      periodId: period.periodId,
+      periodName: period.periodName,
+      startDate: period.startDate,
+      endDate: period.endDate,
+      basis: 'POSTED_ACCOUNTING_JOURNALS',
+      revenue: {
+        totalRevenuePaisa: revenueAvailable ? revenuePaisa : null,
+        status: revenueAvailable ? 'AVAILABLE' : 'UNAVAILABLE_NO_POSTED_REVENUE',
+      },
+      costOfGoodsSold: {
+        totalCogsPaisa: cogsAvailable ? cogsPaisa : null,
+        status: cogsAvailable ? 'AVAILABLE' : 'UNAVAILABLE_NO_POSTED_COGS',
+      },
+      grossProfitPaisa,
+      grossProfitStatus:
+        grossProfitPaisa === null ? 'UNAVAILABLE' : 'AVAILABLE',
+      operatingExpenses: {
+        totalOpexPaisa: operatingExpenseAvailable ? operatingExpensePaisa : null,
+        status:
+          operatingExpenseAvailable ? 'AVAILABLE' : 'UNAVAILABLE_NO_POSTED_OPEX',
+      },
+      netOperatingProfitPaisa,
+      netOperatingProfitStatus:
+        netOperatingProfitPaisa === null ? 'UNAVAILABLE' : 'AVAILABLE',
+    },
+    balanceSheet: {
+      asOf: period.endDate,
+      basis: 'CUMULATIVE_POSTED_ACCOUNTING_JOURNALS',
+      assets: { totalAssetsPaisa: cumulative.assetsPaisa },
+      liabilities: { totalLiabilitiesPaisa: cumulative.liabilitiesPaisa },
+      equity: { totalEquityPaisa: cumulative.equityPaisa },
+      accountingEquationVariancePaisa:
+        cumulative.assetsPaisa -
+        (cumulative.liabilitiesPaisa + cumulative.equityPaisa),
+      status:
+        (cumulativeJournals || []).length > 0 ? 'AVAILABLE' : 'NO_POSTED_JOURNALS',
+    },
+    unmappedAccountCodes: [...unmapped].filter(Boolean).sort(),
+  };
+}
+
 // 12. Period Close Workflow
 const getPeriodCloseStatus = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const currentPeriod = await FinancialPeriod.findOne({ organisationId, status: 'OPEN' }).lean();
-
-  const closeChecklist = [
-    { task: 'POS & Billing Completeness', status: 'COMPLETED', blocker: false },
-    { task: 'Sales Audit & Revenue Assurance Cleared', status: 'COMPLETED', blocker: false },
-    { task: 'Expenses & Credit Ledger Posted', status: 'COMPLETED', blocker: false },
-    { task: 'Accounts Payable Invoices Accounted', status: 'COMPLETED', blocker: false },
-    { task: 'Bank Statements Reconciled', status: 'COMPLETED', blocker: false },
-    { task: 'Marketplace Settlements Matched', status: 'COMPLETED', blocker: false },
-    { task: 'Inventory Valuation Control Reconciled', status: 'COMPLETED', blocker: false },
-    { task: 'GST & Statutory Review Completed', status: 'COMPLETED', blocker: false },
-  ];
+  const requestedPeriodId = request.query?.periodId || null;
+  const period = await resolveFinancialPeriodForRead(organisationId, requestedPeriodId);
+  const assessment = await buildPeriodCloseAssessment({ organisationId, period });
 
   return response.status(200).json({
-    currentPeriod: currentPeriod || { periodId: 'FY2026-P05', periodName: 'August 2026', status: 'OPEN' },
-    closeChecklist,
-    readyToClose: true,
-    blockerCount: 0,
+    ...assessment,
+    correlationId: request.correlationId || null,
   });
 });
 
 const closeFinancialPeriod = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { periodId } = request.params;
-  const { signOffNotes = '' } = request.body;
+  const periodId = normalizeFinanceId(request.params.periodId);
+  const signOffNotes = String(request.body?.signOffNotes || '').trim();
 
-  const period = await FinancialPeriod.findOne({ organisationId, periodId });
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_REQUIRED',
+      'Only the Primary Master may close a financial accounting period.'
+    );
+  }
+
+  if (signOffNotes.length < 10) {
+    throw new ApiError(
+      400,
+      'PERIOD_CLOSE_SIGNOFF_REQUIRED',
+      'A specific financial close sign-off note of at least 10 characters is required.'
+    );
+  }
+
+  const periodQuery = FinancialPeriod.findOne({ organisationId, periodId });
+  const period =
+    periodQuery && typeof periodQuery.lean === 'function'
+      ? await periodQuery.lean()
+      : await periodQuery;
+
   if (!period) {
     throw new ApiError(404, 'PERIOD_NOT_FOUND', 'Financial period not found.');
   }
+  if (!['OPEN', 'CLOSING', 'REOPENED'].includes(period.status)) {
+    throw new ApiError(
+      409,
+      'PERIOD_NOT_CLOSABLE',
+      `Financial period ${periodId} is currently ${period.status} and cannot be closed.`
+    );
+  }
 
-  period.status = 'CLOSED';
-  period.closeSnapshot = {
-    closedAt: new Date(),
-    closedBy: userId,
-    trialBalanceHash: `TB-HASH-${Date.now()}`,
-    signOffNotes,
-  };
-  await period.save();
+  const assessment = await buildPeriodCloseAssessment({ organisationId, period });
+  if (!assessment.readyToClose) {
+    throw new ApiError(
+      409,
+      'PERIOD_CLOSE_CONTROLS_INCOMPLETE',
+      `Financial period cannot be closed because ${assessment.blockerCount} close control(s) are incomplete.`,
+      { closeChecklist: assessment.closeChecklist }
+    );
+  }
 
-  return response.status(200).json({ message: `Financial period ${periodId} successfully closed and locked.`, period });
+  const statement = await getPostedLedgerStatement({
+    organisationId,
+    period,
+    cafeIds: null,
+  });
+
+  const postedJournalQuery = Journal.find({
+    organisationId,
+    periodId,
+    status: 'POSTED',
+  }).sort({ journalId: 1 });
+  const postedJournals =
+    postedJournalQuery && typeof postedJournalQuery.lean === 'function'
+      ? await postedJournalQuery.lean()
+      : await postedJournalQuery;
+
+  const trialBalanceHash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify(
+        (postedJournals || []).map((journal) => ({
+          journalId: journal.journalId,
+          totalDebitPaisa: journal.totalDebitPaisa,
+          totalCreditPaisa: journal.totalCreditPaisa,
+          lines: (journal.lines || []).map((line) => ({
+            accountCode: line.accountCode,
+            debitPaisa: line.debitPaisa,
+            creditPaisa: line.creditPaisa,
+            dimensionCafeId: line.dimensionCafeId || null,
+          })),
+        }))
+      )
+    )
+    .digest('hex');
+
+  const changed = await FinancialPeriod.findOneAndUpdate(
+    {
+      organisationId,
+      periodId,
+      status: period.status,
+    },
+    {
+      $set: {
+        status: 'CLOSED',
+        closeSnapshot: {
+          closedAt: new Date(),
+          closedBy: userId,
+          trialBalanceHash,
+          totalRevenuePaisa: Number(statement.pnl?.revenue?.totalRevenuePaisa || 0),
+          totalExpensePaisa:
+            Number(statement.pnl?.costOfGoodsSold?.totalCogsPaisa || 0) +
+            Number(statement.pnl?.operatingExpenses?.totalOpexPaisa || 0),
+          netResultPaisa: Number(statement.pnl?.netOperatingProfitPaisa || 0),
+          signOffNotes,
+        },
+      },
+    },
+    { new: true }
+  );
+
+  if (!changed) {
+    throw new ApiError(
+      409,
+      'PERIOD_CLOSE_STATE_CONFLICT',
+      'Financial period status changed while closure was being committed.'
+    );
+  }
+
+  return response.status(200).json({
+    success: true,
+    message: `Financial period ${periodId} successfully closed and locked.`,
+    data: {
+      period: changed,
+      closeChecklist: assessment.closeChecklist,
+      trialBalanceHash,
+    },
+    correlationId: request.correlationId || null,
+  });
 });
 
 const reopenFinancialPeriod = asyncHandler(async (request, response) => {
@@ -1742,50 +2269,45 @@ const reopenFinancialPeriod = asyncHandler(async (request, response) => {
 
 // 13. Financial Statements
 const getFinancialStatements = asyncHandler(async (request, response) => {
-  const pnl = {
-    period: 'August 2026 (MTD)',
-    basis: 'Posted Accounting Ledger',
-    revenue: {
-      beverageSalesPaisa: 82000000,
-      foodSalesPaisa: 34000000,
-      retailMerchandisePaisa: 10000000,
-      totalRevenuePaisa: 126000000,
-    },
-    costOfGoodsSold: {
-      coffeeBeansPaisa: 22000000,
-      dairyFreshMilkPaisa: 11000000,
-      packagingPaisa: 7000000,
-      totalCogsPaisa: 40000000,
-    },
-    grossProfitPaisa: 86000000,
-    operatingExpenses: {
-      staffSalariesPaisa: 32000000,
-      storeRentUtilitiesPaisa: 18000000,
-      repairsMaintenancePaisa: 3500000,
-      marketingOpsPaisa: 4500000,
-      totalOpexPaisa: 58000000,
-    },
-    netOperatingProfitPaisa: 28000000,
-  };
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+  const requestedPeriodId = request.query?.periodId || null;
+  const requestedCafeId = normalizeFinanceId(request.query?.cafeId || '');
 
-  const balanceSheet = {
-    asOf: getIstBusinessDate(),
-    assets: {
-      currentAssets: { cashAndBankPaisa: 45000000, accountsReceivablePaisa: 14000000, inventoryValuationPaisa: 28000000 },
-      nonCurrentAssets: { cafeEquipmentPaisa: 85000000, leaseholdImprovementsPaisa: 42000000 },
-      totalAssetsPaisa: 214000000,
-    },
-    liabilities: {
-      currentLiabilities: { accountsPayablePaisa: 38000000, statutoryTaxPayablePaisa: 6300000 },
-      totalLiabilitiesPaisa: 44300000,
-    },
-    equity: {
-      retainedEarningsPaisa: 169700000,
-      totalEquityPaisa: 169700000,
-    },
-  };
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    ensureCafeAccess(request, requestedCafeId);
+  }
 
-  return response.status(200).json({ pnl, balanceSheet });
+  const period = await resolveFinancialPeriodForRead(organisationId, requestedPeriodId);
+
+  let cafeIds = null;
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    cafeIds = [requestedCafeId];
+  } else if (role !== 'MASTER') {
+    cafeIds = (assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean);
+    if (cafeIds.length === 0) {
+      return response.status(200).json({
+        success: true,
+        sourceStatus: 'NO_AUTHORIZED_CAFE_SCOPE',
+        pnl: null,
+        balanceSheet: null,
+        unmappedAccountCodes: [],
+        correlationId: request.correlationId || null,
+      });
+    }
+  }
+
+  const statement = await getPostedLedgerStatement({
+    organisationId,
+    period,
+    cafeIds,
+  });
+
+  return response.status(200).json({
+    success: true,
+    period: period || null,
+    ...statement,
+    correlationId: request.correlationId || null,
+  });
 });
 
 // 14. Finance Integrity Engine (18-point automated audit)
