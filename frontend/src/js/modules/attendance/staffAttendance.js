@@ -2326,7 +2326,7 @@ function openDayDrilldownModal(dateStr, record) {
 
       <!-- Controlled Evidence Preview Option -->
       <div style="padding:10px 12px; background:rgba(82,183,136,0.06); border:1px solid rgba(82,183,136,0.2); border-radius:var(--radius-sm); margin-bottom:16px; font-size:11.5px; color:var(--text-secondary);">
-        🔒 <strong>Evidence Status:</strong> Verified &amp; retained in secure storage. Retention active (valid for 90 days).
+        🔒 <strong>Evidence Status:</strong> Stored as private attendance evidence. Retention and purge are controlled by audited governance policy; no fixed retention period is implied here.
       </div>
 
       <div class="flex justify-between items-center" style="padding-top:12px; border-top:1px solid var(--border-subtle);">
