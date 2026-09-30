@@ -168,3 +168,24 @@ test('TRASH-DISP-012: TrashEntry stores canonical attachment locators and durabl
   assert.ok(modelSource.includes('dispositionStorageSummary'));
 });
 
+test('TRASH-DISP-013: preservation hold uses expected-state atomic claim and cannot overwrite PROCESSING', () => {
+  const source = read(controllerPath);
+  const start = source.indexOf('const placePreservationHold = asyncHandler');
+  const end = source.indexOf('const releasePreservationHold = asyncHandler', start);
+  const block = source.slice(start, end);
+  assert.ok(block.includes('TrashEntry.findOneAndUpdate'));
+  assert.ok(block.includes("$nin: ['DISPOSITION_PROCESSING', 'DISPOSED', 'RESTORED']"));
+  assert.ok(block.includes('PRESERVATION_HOLD_STATE_CONFLICT'));
+  assert.ok(block.includes('DISPOSITION_ALREADY_IRREVERSIBLE'));
+  assert.ok(block.includes('SequenceCounter.generateId'));
+});
+
+test('TRASH-DISP-014: resumable disposition retains immutable execution-authorization lineage', () => {
+  const controller = read(controllerPath);
+  const modelSource = read(path.join(__dirname, '../src/models/TrashEntry.js'));
+  assert.ok(modelSource.includes('dispositionExecutionAuthorizationAuditEventId'));
+  assert.ok(controller.includes('dispositionExecutionAuthorizationAuditEventId: executionAudit.auditEventId'));
+  assert.ok(controller.includes('dispositionExecutionAuthorizationAuditEventId: { $ne: null }'));
+  assert.ok(controller.includes('claimed.dispositionExecutionAuthorizationAuditEventId'));
+});
+
