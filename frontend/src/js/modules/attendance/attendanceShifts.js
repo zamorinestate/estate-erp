@@ -165,7 +165,7 @@ export function renderAttendance(subroute) {
 
             <div style="display:inline-flex; align-items:center; gap:5px; background:var(--surface-sunken); padding:4px 10px; border-radius:6px; border:1px solid var(--line); font-family:var(--font-mono); font-size:11.5px;">
               <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--color-success, #2E7D32);"></span>
-              <span>Server Time: <strong id="server-time-indicator">11:35 IST</strong> · Online · Synced</span>
+              <span>Server Time: <strong id="server-time-indicator">Loading…</strong></span>
             </div>
           </div>
         </div>
@@ -347,10 +347,10 @@ function renderOverviewSubpanel() {
     { id: "shifts", icon: "⏰", title: "Shift Master", subtitle: "Standard shift templates, timing & grace periods", badge: `${cachedShifts.length || 0} Templates`, badgeType: "accent" },
     { id: "calendar360", icon: "👤", title: isCafeAdmin ? "Attendance History" : "Employee Attendance (360)", subtitle: "Monthly punch cards, timesheets & individual attendance", badge: "360 History", badgeType: "" },
     { id: "exceptions", icon: "⚠️", title: "Exceptions & Overtime", subtitle: "Missing checkouts, late punches & overtime authorizations", badge: `${totalExceptions} Items`, badgeType: totalExceptions > 0 ? "warning" : "success" },
-    { id: "policies", icon: "📜", title: isCafeAdmin ? "Attendance Rules" : "Policies & Compliance", subtitle: "Grace periods, half-day deduction rules & OT formulas", badge: "Enforced", badgeType: "success" },
-    ...(!isCafeAdmin ? [{ id: "closure", icon: "🔒", title: "Period Closure", subtitle: "Month-end timesheet locks & payroll handover", badge: "Locked", badgeType: "" }] : []),
-    { id: "analytics", icon: "📈", title: "Punctuality & Labour Hours Analytics", subtitle: "Average shift adherence, OT trends & peak hour coverage", badge: "98% Rate", badgeType: "success" },
-    { id: "qrScanner", icon: "📱", title: "Attendance QR & Scanner", subtitle: "Live rotating QR, kiosk display & diagnostic verification scanner", badge: "Live Active", badgeType: "success" },
+    { id: "policies", icon: "📜", title: isCafeAdmin ? "Attendance Rules" : "Runtime Controls", subtitle: "QR, GPS, selfie evidence and configured attendance controls", badge: "Controls", badgeType: "" },
+    ...(!isCafeAdmin ? [{ id: "closure", icon: "🔒", title: "Period Closure", subtitle: "Primary-Master attendance period lock and controlled reopen", badge: "Governance", badgeType: "" }] : []),
+    { id: "analytics", icon: "📈", title: "Attendance Analytics", subtitle: "Metrics derived from the attendance records currently loaded", badge: "Live Data", badgeType: "" },
+    { id: "qrScanner", icon: "📱", title: "Attendance QR & Scanner", subtitle: "Rotating QR display and diagnostic verification scanner", badge: "Secure QR", badgeType: "" },
   ];
 
   return `
@@ -1495,441 +1495,197 @@ function renderPoliciesSubpanel() {
 // =============================================================================
 function renderClosureSubpanel() {
   const isPrimary = state.user?.isPrimaryMaster === true;
-
-  return `
-    <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
-      <!-- TOP EXECUTIVE PERIOD KPI STRIP -->
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Active Payroll Period</div>
-          <div style="font-size:22px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">${state.currentPeriodKey || "Current Period"}</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Accrual Open (Live)</div>
-        </div>
-
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Workforce Enrolled</div>
-          <div style="font-size:22px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">${(() => { const allStaff = Object.values(cafeRosterSchedules).flat(); return allStaff.length || '—'; })()} <span style="font-size:13px; font-weight:600; color:var(--muted);">Staff Members</span></div>
-          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Across ${Object.keys(cafeRosterSchedules).length || '—'} Operating Cafés</div>
-        </div>
-
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Total Logged Hours</div>
-          <div style="font-size:22px; font-weight:800; color:var(--bronze-600); font-family:var(--font-heading); margin-top:4px;">${cachedLiveAttendance.length > 0 ? (cachedLiveAttendance.reduce((s, r) => s + (r.regularMinutes || 0), 0) / 60).toFixed(1) : '—'} <span style="font-size:13px; font-weight:600; color:var(--muted);">Hrs</span></div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Logged from live attendance records</div>
-        </div>
-
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Payroll Readiness</div>
-          <div style="font-size:22px; font-weight:800; color:var(--warning); font-family:var(--font-heading); margin-top:4px;">98% Ready</div>
-          <div style="font-size:11.5px; color:var(--warning); font-weight:600; margin-top:2px;">⚠ 1 Overtime Review Pending</div>
-        </div>
-      </div>
-
-      <!-- MAIN 2-COLUMN OPERATIONAL WORKSPACE -->
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:16px;">
-        <!-- Column 1: Multi-Café Timesheet Rollup -->
-        <div class="card" style="padding:22px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <div>
-              <h3 style="font-size:16px; font-weight:800; margin:0 0 2px; color:var(--ink);">Multi-Café Period Summary</h3>
-              <p style="font-size:12.5px; color:var(--muted); margin:0;">Cycle timesheet aggregation &amp; payable hours validation</p>
-            </div>
-            <span class="status info" style="font-size:10.5px; font-weight:700;">ACTIVE ACCRUAL</span>
-          </div>
-
-          <div class="table-wrap" style="margin-bottom:16px; overflow-x:auto;">
-            <table class="data-table" style="width:100%; border-collapse:collapse; font-size:12.5px;">
-              <thead>
-                <tr style="text-align:left; border-bottom:1.5px solid var(--line); background:var(--surface-sunken);">
-                  <th style="padding:10px 12px; font-weight:700; white-space:nowrap;">Café Outlet</th>
-                  <th style="padding:10px 12px; font-weight:700; text-align:right; white-space:nowrap;">Staff</th>
-                  <th style="padding:10px 12px; font-weight:700; text-align:right; white-space:nowrap;">Logged Hours</th>
-                  <th style="padding:10px 12px; font-weight:700; text-align:center; white-space:nowrap;">Readiness</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${cachedCafes.length > 0 ? cachedCafes.map((c, i) => `
-                <tr style="border-bottom:1px solid var(--line);">
-                  <td style="padding:10px 12px; font-weight:700; color:var(--ink); white-space:nowrap;">
-                    ${c.cafeId || c.code || ''} · ${c.name || 'Outlet'}
-                  </td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono);">${12 + (i % 3)}</td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono); font-weight:700; color:var(--bronze-600);">${(2100 + i * 150).toLocaleString()}.0 hrs</td>
-                  <td style="padding:10px 12px; text-align:center;"><span class="status success" style="font-size:10px; font-weight:700;">READY</span></td>
-                </tr>
-                `).join('') : `
-                <tr style="border-bottom:1px solid var(--line);">
-                  <td style="padding:10px 12px; font-weight:700; color:var(--ink); white-space:nowrap;">
-                    ${state.currentCafeId || 'All'} · ${state.currentCafeName || 'Active Outlet'}
-                  </td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono);">12</td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono); font-weight:700; color:var(--bronze-600);">2,100.0 hrs</td>
-                  <td style="padding:10px 12px; text-align:center;"><span class="status success" style="font-size:10px; font-weight:700;">READY</span></td>
-                </tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Stepper Lifecycle -->
-          <div style="background:var(--surface-sunken); padding:12px 14px; border-radius:8px; border:1px solid var(--line); margin-bottom:18px;">
-            <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:6px;">Closure Pipeline Stage</div>
-            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11.5px; flex-wrap:wrap; gap:6px;">
-              <span style="color:#059669; font-weight:700;">✓ 1. Accrual</span>
-              <span>➔</span>
-              <span style="color:var(--bronze-600); font-weight:700;">● 2. Gate Verification</span>
-              <span>➔</span>
-              <span style="color:var(--muted);">3. Master Lock</span>
-              <span>➔</span>
-              <span style="color:var(--muted);">4. Payroll Engine Handoff</span>
-            </div>
-          </div>
-
-          <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
-            ${
-              isPrimary
-                ? `<button class="btn btn-secondary" id="reopen-period-btn" type="button" style="font-size:12.5px; font-weight:600;">Reopen Accrual</button>
-                   <button class="btn btn-primary" id="lock-period-btn" type="button" style="font-size:12.5px; font-weight:700;">🔒 Lock Period &amp; Export to Payroll</button>`
-                : `<span style="font-size:12px; color:var(--muted); text-align:center; width:100%; padding:8px; background:var(--surface-sunken); border-radius:6px;">Period lock and reopening is restricted to Primary Master authority.</span>`
-            }
-          </div>
-        </div>
-
-        <!-- Column 2: Pre-Closure Quality Gates & Verification Checklist -->
-        <div class="card" style="padding:22px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <div>
-              <h3 style="font-size:16px; font-weight:800; margin:0 0 2px; color:var(--ink);">Quality Gates &amp; Invariant Checks</h3>
-              <p style="font-size:12.5px; color:var(--muted); margin:0;">Automated blockers verification prior to payroll release</p>
-            </div>
-            <span class="status warning" style="font-size:10.5px; font-weight:700;">1 ACTION REQUIRED</span>
-          </div>
-
-          <div style="display:flex; flex-direction:column; gap:12px; font-size:12.5px; margin-bottom:20px;">
-            <div style="padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface-sunken); display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <strong style="color:var(--ink); display:block;">Biometric &amp; GPS Telemetry Proofs</strong>
-                <span style="color:var(--muted); font-size:11.5px;">1,420 total punches verified within 50m geofence</span>
-              </div>
-              <span class="status success" style="font-size:10.5px; font-weight:700;">PASS (100%)</span>
-            </div>
-
-            <div style="padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface-sunken); display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <strong style="color:var(--ink); display:block;">Missing Check-Out Resolution</strong>
-                <span style="color:var(--muted); font-size:11.5px;">0 unclosed punches across all active rosters</span>
-              </div>
-              <span class="status success" style="font-size:10.5px; font-weight:700;">CLEARED (0 PENDING)</span>
-            </div>
-
-            <div style="padding:12px; border:1px solid rgba(245,158,11,0.3); border-radius:8px; background:rgba(245,158,11,0.05); display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <strong style="color:var(--ink); display:block;">Overtime Claims Approval</strong>
-                <span style="color:var(--muted); font-size:11.5px;">Duty Barista (90 min) awaiting Primary Master decision</span>
-              </div>
-              <span class="status warning" style="font-size:10.5px; font-weight:700;">1 AWAITING SIGN-OFF</span>
-            </div>
-
-            <div style="padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface-sunken); display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <strong style="color:var(--ink); display:block;">Shift Roster vs Actual Variance</strong>
-                <span style="color:var(--muted); font-size:11.5px;">±0.8% variance within statutory threshold</span>
-              </div>
-              <span class="status success" style="font-size:10.5px; font-weight:700;">NORMAL</span>
-            </div>
-          </div>
-
-          <div style="padding:14px; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--line);">
-            <div style="font-size:12px; font-weight:700; color:var(--ink); margin-bottom:4px;">Payroll Handoff Invariant:</div>
-            <div style="font-size:11.5px; color:var(--muted); line-height:1.4;">
-              Once locked, total payable days and overtime minutes will be immutably transferred to <strong>Monthly Payroll Runs</strong> (<a href="#payroll/runs" style="color:var(--bronze-600); font-weight:600; text-decoration:none;">#payroll/runs</a>) for gross-to-net calculation.
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-// =============================================================================
-// 8. ANALYTICS / TRENDS SUBPANEL
-// =============================================================================
-function renderAnalyticsSubpanel() {
-  const role = state.role || state.user?.role || ROLES.MASTER;
-  const isCafeAdmin = role === ROLES.CAFE_ADMIN;
-
-  return `
-    <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
-      <!-- TOP EXECUTIVE ANALYTICS METRIC STRIP -->
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Punctuality &amp; On-Time Rate</div>
-          <div style="font-size:22px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:4px;">96.2%</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Target: &gt; 95% on-time arrivals</div>
-        </div>
-
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Total Shift Labour</div>
-          <div style="font-size:22px; font-weight:800; color:var(--bronze-600); font-family:var(--font-heading); margin-top:4px;">${cachedLiveAttendance.length > 0 ? (cachedLiveAttendance.reduce((s, r) => s + (r.regularMinutes || 0), 0) / 60).toFixed(1) : '—'} <span style="font-size:13px; font-weight:600; color:var(--muted);">Hrs</span></div>
-          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Across ${Object.keys(cafeRosterSchedules).length || '—'} Operating Outlets</div>
-        </div>
-
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Overtime Utilisation</div>
-          <div style="font-size:22px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">18.5 <span style="font-size:13px; font-weight:600; color:var(--muted);">Hrs</span></div>
-          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Approved: 16.0h · Rejected: 2.5h</div>
-        </div>
-
-        <div class="card" style="padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Manual Adjustment Rate</div>
-          <div style="font-size:22px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">2.1%</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Benchmark: &lt; 5% manual edits</div>
-        </div>
-      </div>
-
-      <!-- MAIN 2-COLUMN OPERATIONAL ANALYTICS WORKSPACE -->
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:16px;">
-        <!-- Card 1: Shift Adherence & Peak Hour Staffing -->
-        <div class="card" style="padding:22px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <div>
-              <h3 style="font-size:16px; font-weight:800; margin:0 0 2px; color:var(--ink);">Shift Adherence &amp; Peak Hour Staffing</h3>
-              <p style="font-size:12.5px; color:var(--muted); margin:0;">Shift arrival punctuality and peak station coverage</p>
-            </div>
-            <span class="status success" style="font-size:10.5px; font-weight:700;">OPTIMAL</span>
-          </div>
-
-          <div style="display:flex; flex-direction:column; gap:14px; font-size:12.5px; margin-bottom:16px;">
-            <!-- Shift 1 -->
-            <div>
-              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <strong style="color:var(--ink);">Morning Roastery Shift (06:30 – 15:00)</strong>
-                <span style="font-weight:700; color:#059669;">98.4% On-Time</span>
-              </div>
-              <div style="height:6px; background:var(--line); border-radius:3px; overflow:hidden;">
-                <div style="width:98.4%; height:100%; background:#059669; border-radius:3px;"></div>
-              </div>
-              <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">22 Staff Assigned · Peak Rush: 08:00 – 11:30</div>
-            </div>
-
-            <!-- Shift 2 -->
-            <div>
-              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <strong style="color:var(--ink);">Evening Rush &amp; Close (13:00 – 21:30)</strong>
-                <span style="font-weight:700; color:var(--bronze-600);">94.8% On-Time</span>
-              </div>
-              <div style="height:6px; background:var(--line); border-radius:3px; overflow:hidden;">
-                <div style="width:94.8%; height:100%; background:var(--bronze-600); border-radius:3px;"></div>
-              </div>
-              <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">18 Staff Assigned · Peak Rush: 17:00 – 20:30</div>
-            </div>
-          </div>
-
-          <div style="background:var(--surface-sunken); padding:12px 14px; border-radius:8px; border:1px solid var(--line);">
-            <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:4px;">Lateness Distribution</div>
-            <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--ink);">
-              <span>1–5 min: <strong>62%</strong></span>
-              <span>6–15 min: <strong>28%</strong></span>
-              <span>&gt;15 min: <strong style="color:var(--danger);">10%</strong></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card 2: Outlet-by-Outlet Workforce Performance Comparison Table -->
-        <div class="card" style="padding:22px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <div>
-              <h3 style="font-size:16px; font-weight:800; margin:0 0 2px; color:var(--ink);">Café Workforce Comparison</h3>
-              <p style="font-size:12.5px; color:var(--muted); margin:0;">Outlets performance, OT ratios and health audit</p>
-            </div>
-            <span class="status info" style="font-size:10.5px; font-weight:700;">3 CAFÉS</span>
-          </div>
-
-          <div class="table-wrap" style="overflow-x:auto;">
-            <table class="data-table" style="width:100%; border-collapse:collapse; font-size:12.5px;">
-              <thead>
-                <tr style="text-align:left; border-bottom:1.5px solid var(--line); background:var(--surface-sunken);">
-                  <th style="padding:10px 12px; font-weight:700; white-space:nowrap;">Café Outlet</th>
-                  <th style="padding:10px 12px; font-weight:700; text-align:right; white-space:nowrap;">Logged</th>
-                  <th style="padding:10px 12px; font-weight:700; text-align:right; white-space:nowrap;">Punctuality</th>
-                  <th style="padding:10px 12px; font-weight:700; text-align:center; white-space:nowrap;">Audit</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${cachedCafes.length > 0 ? cachedCafes.map((c, i) => `
-                <tr style="border-bottom:1px solid var(--line);">
-                  <td style="padding:10px 12px; font-weight:700; color:var(--ink); white-space:nowrap;">
-                    ${c.cafeId || c.code || ''} · ${c.name || 'Outlet'}
-                  </td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono); font-weight:700; color:var(--bronze-600);">${(2100 + i * 150).toLocaleString()}.0h</td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono); color:#059669; font-weight:700;">${(96.5 + (i % 2)).toFixed(1)}%</td>
-                  <td style="padding:10px 12px; text-align:center;"><span class="status success" style="font-size:10px; font-weight:700;">EXCELLENT</span></td>
-                </tr>
-                `).join('') : `
-                <tr style="border-bottom:1px solid var(--line);">
-                  <td style="padding:10px 12px; font-weight:700; color:var(--ink); white-space:nowrap;">
-                    ${state.currentCafeId || 'All'} · ${state.currentCafeName || 'Active Outlet'}
-                  </td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono); font-weight:700; color:var(--bronze-600);">2,100.0h</td>
-                  <td style="padding:10px 12px; text-align:right; font-family:var(--font-mono); color:#059669; font-weight:700;">96.5%</td>
-                  <td style="padding:10px 12px; text-align:center;"><span class="status success" style="font-size:10px; font-weight:700;">EXCELLENT</span></td>
-                </tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- BOTTOM CARD: ABSENTEEISM & ANOMALY DETECTION SUMMARY -->
-      <div class="card" style="padding:20px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); box-shadow:var(--shadow-xs);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
-          <div>
-            <h3 style="font-size:15.5px; font-weight:800; margin:0 0 2px; color:var(--ink);">Absenteeism, Telemetry &amp; Anomaly Detection</h3>
-            <p style="font-size:12px; color:var(--muted); margin:0;">Automated statistical anomaly detection across shifts</p>
-          </div>
-          <button class="btn btn-secondary btn-sm" id="export-analytics-btn" type="button" style="font-size:12px; font-weight:600;">
-            📊 Download Full Analytics CSV
-          </button>
-        </div>
-
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; font-size:12.5px;">
-          <div style="padding:12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
-            <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Unplanned Leave Rate</div>
-            <div style="font-size:18px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:2px;">1.4%</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">Industry benchmark: 3.5%</div>
-          </div>
-
-          <div style="padding:12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
-            <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Geofence GPS Pass Rate</div>
-            <div style="font-size:18px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:2px;">99.8%</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">Zero spoofed locations detected</div>
-          </div>
-
-          <div style="padding:12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
-            <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Overtime Budget Adherence</div>
-            <div style="font-size:18px; font-weight:800; color:var(--bronze-600); font-family:var(--font-heading); margin-top:2px;">0.27% of Hours</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">Target: &lt; 1.0% OT ratio</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-// =============================================================================
-// EVENT WIRING & STATE BINDING
-// =============================================================================
-export function wireAttendance(root, subroute) {
-  if (subroute !== undefined) {
-    activeSubTab = subroute || "overview";
-  }
-
-  // Attendance Hub Tiles
-  root.querySelectorAll("[data-attendance-hub-tile]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const tileId = e.currentTarget.dataset.attendanceHubTile;
-      navigate("attendance/" + tileId);
-    });
-  });
-
-  // Dedicated Attendance QR & Scanner button wiring
-  root.querySelectorAll("#btn-attendance-qr-scanner, #btn-show-attendance-qr, #btn-live-show-attendance-qr, #btn-analytics-attendance-qr-scanner").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      navigate("attendance/qr-scanner");
-    });
-  });
-
-  // Back to Attendance Hub Button
-  root.querySelector("#attendance-back-to-hub-btn")?.addEventListener("click", () => {
-    navigate("attendance");
-  });
-
-  // Navigation tabs (legacy)
-  root.querySelectorAll(".attendance-nav-tab").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      activeSubTab = e.currentTarget.dataset.tab;
-      rerender(root);
-    });
-  });
-
-  // Refresh button
-  const refreshBtn = root.querySelector("#refresh-attendance-btn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", async () => {
-      await loadLiveAttendanceData();
-      rerender(root);
-      showToast("Workforce attendance refreshed.", "info");
-    });
-  }
-
-  // Open Manual Attendance Modal
-  const manualBtn = root.querySelector("#open-manual-attendance-btn");
-  if (manualBtn) {
-    manualBtn.addEventListener("click", () => {
-      openScopedManualAttendanceModal(root);
-    });
-  }
-
-  // Wire subpanel actions
-  wireAttendanceSubpanelActions(root);
-
-  // Initial fetch
-  if (!cachedOverview) {
-    loadLiveAttendanceData().then(() => {
-      if (state.route?.startsWith("attendance") || state.route === "staff-attendance") {
-        rerender(root);
-      }
-    });
-  }
-}
-
-async function loadLiveAttendanceData() {
-  try {
-    const role = state.role || state.user?.role || ROLES.MASTER;
-    const isCafeAdmin = role === ROLES.CAFE_ADMIN;
-    const cafeQuery = isCafeAdmin ? `?cafeId=${state.user?.assignedCafeIds?.[0] || state.currentCafeId || ""}` : "";
-
-    const [ovRes, liveRes, timeRes, shiftsRes, otRes, excRes] = await Promise.all([
-      apiGet(`/api/v1/attendance/overview${cafeQuery}`).catch(() => null),
-      apiGet(`/api/v1/attendance/live${cafeQuery}`).catch(() => null),
-      apiGet("/api/v1/attendance/server-time").catch(() => null),
-      apiGet(`/api/v1/shifts${cafeQuery}`).catch(() => null),
-      apiGet(`/api/v1/attendance/overtime${cafeQuery}`).catch(() => null),
-      apiGet(`/api/v1/attendance/exceptions${cafeQuery}`).catch(() => null),
-    ]);
-
-    if (ovRes?.data) cachedOverview = ovRes.data;
-    if (liveRes?.data?.attendance) cachedLiveAttendance = liveRes.data.attendance;
-    if (timeRes?.data) cachedServerTime = timeRes.data;
-    if (shiftsRes?.data?.shifts) cachedShifts = shiftsRes.data.shifts;
-    else if (Array.isArray(shiftsRes?.data)) cachedShifts = shiftsRes.data;
-    if (otRes?.data?.records) cachedOvertime = otRes.data.records;
-    if (excRes?.data?.exceptions) cachedExceptions = excRes.data.exceptions;
-  } catch (err) {
-    console.warn("Attendance data load notice:", err);
-  }
-}
-
-async function loadCalendar360Data() {
-  if (!selectedUserId || !selectedCalendarMonth) {
-    cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
-    return;
-  }
-
-  const [year, month] = selectedCalendarMonth.split("-").map(Number);
-  const res = await apiGet(
-    `/api/v1/attendance/calendar-360/${encodeURIComponent(selectedUserId)}?year=${year}&month=${month}`
+  const periodKey = state.currentPeriodKey || new Date().toISOString().slice(0, 7);
+  const totalLoggedMinutes = (cachedLiveAttendance || []).reduce(
+    (sum, record) => sum + (Number(record.regularMinutes) || 0),
+    0
   );
+  const pendingOvertime = (cachedOvertime || []).filter(
+    (record) => !["APPROVED_BY_PRIMARY", "REJECTED"].includes(String(record.overtimeStatus || "").toUpperCase())
+  ).length;
+  const openExceptions = (cachedExceptions || []).filter(
+    (record) => !["RESOLVED", "DISMISSED", "CLOSED"].includes(String(record.status || "").toUpperCase())
+  ).length;
+  const workforce = cachedOverview?.cafeWorkforce || [];
 
-  cachedCalendar360 = {
-    userId: selectedUserId,
-    month: selectedCalendarMonth,
-    records: res?.data?.records || [],
-    summary: res?.data?.summary || null,
-  };
+  return `
+    <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Target Period</div>
+          <div style="font-size:22px; font-weight:800; color:var(--ink); margin-top:4px;">${periodKey}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">Status is server-authoritative and changes only through the lock/reopen APIs.</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Loaded Regular Hours</div>
+          <div style="font-size:22px; font-weight:800; color:var(--ink); margin-top:4px;">${(totalLoggedMinutes / 60).toFixed(1)} h</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">From the attendance records currently loaded in this workspace.</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Open Exceptions</div>
+          <div style="font-size:22px; font-weight:800; color:${openExceptions ? "var(--warning)" : "var(--ink)"}; margin-top:4px;">${openExceptions}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">Review before locking where operationally required.</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Pending Overtime</div>
+          <div style="font-size:22px; font-weight:800; color:${pendingOvertime ? "var(--warning)" : "var(--ink)"}; margin-top:4px;">${pendingOvertime}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">No readiness percentage is inferred from this count.</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+          <div>
+            <h3 style="font-size:16px; font-weight:800; margin:0 0 3px; color:var(--ink);">Published-Roster Coverage</h3>
+            <p style="font-size:12px; color:var(--muted); margin:0;">Scheduled and currently present counts reported by the attendance overview endpoint.</p>
+          </div>
+          <span class="status info" style="font-size:10.5px;">AUTHORITATIVE COUNTS</span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table" style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--line); text-align:left;">
+                <th style="padding:9px;">Café</th>
+                <th style="padding:9px; text-align:right;">Scheduled</th>
+                <th style="padding:9px; text-align:right;">Present</th>
+                <th style="padding:9px; text-align:right;">Coverage State</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${workforce.length ? workforce.map((row) => `
+                <tr style="border-bottom:1px solid var(--line);">
+                  <td style="padding:9px; font-weight:700;">${row.cafeId || "—"} · ${row.cafeName || "Outlet"}</td>
+                  <td style="padding:9px; text-align:right;">${Number(row.scheduled) || 0}</td>
+                  <td style="padding:9px; text-align:right;">${Number(row.present) || 0}</td>
+                  <td style="padding:9px; text-align:right;">${row.adequacyStatus || "NO_DATA"}</td>
+                </tr>
+              `).join("") : `
+                <tr><td colspan="4" style="padding:20px; text-align:center; color:var(--muted);">No published-roster coverage data is loaded for this scope.</td></tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="padding:20px;">
+        <h3 style="font-size:16px; font-weight:800; margin:0 0 6px; color:var(--ink);">Period Governance</h3>
+        <p style="font-size:12.5px; color:var(--muted); margin:0 0 14px; line-height:1.5;">
+          Locking makes the attendance period immutable for ordinary corrections. Reopening requires Primary Master authority and a recorded reason.
+          Payroll processing is a separate downstream workflow; this screen does not claim that payroll has been transferred or completed.
+        </p>
+        ${isPrimary ? `
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btn-primary" id="lock-period-btn" type="button">🔒 Lock Attendance Period</button>
+            <button class="btn btn-secondary" id="reopen-period-btn" type="button">Reopen Locked Period</button>
+          </div>
+        ` : `
+          <div style="font-size:12px; color:var(--muted); padding:10px; background:var(--surface-sunken); border-radius:6px;">
+            Period lock and reopen actions require Primary Master authority.
+          </div>
+        `}
+      </div>
+    </div>
+  `;
 }
+function renderAnalyticsSubpanel() {
+  const records = cachedLiveAttendance || [];
+  const checkInRecords = records.filter((r) => r.checkInAt || ["CHECKED_IN", "CHECKED_OUT", "ON_BREAK"].includes(r.status));
+  const lateCount = checkInRecords.filter((r) => Boolean(r.isLate)).length;
+  const onTimeCount = checkInRecords.length - lateCount;
+  const onTimeRate = checkInRecords.length ? (onTimeCount / checkInRecords.length) * 100 : null;
+  const totalRegularMinutes = records.reduce((sum, r) => sum + (Number(r.regularMinutes) || 0), 0);
+  const approvedOvertimeMinutes = records.reduce(
+    (sum, r) => sum + (Number(r.approvedOvertimeMinutes) || 0),
+    0
+  );
+  const manualEntries = records.filter((r) => Boolean(r.isManualEntry)).length;
+  const manualRate = records.length ? (manualEntries / records.length) * 100 : null;
 
+  const cafeIds = [...new Set(records.map((r) => r.cafeId).filter(Boolean))];
+  const cafeRows = cafeIds.map((cafeId) => {
+    const cafeRecords = records.filter((r) => r.cafeId === cafeId);
+    const cafeCheckIns = cafeRecords.filter((r) => r.checkInAt || ["CHECKED_IN", "CHECKED_OUT", "ON_BREAK"].includes(r.status));
+    const cafeLate = cafeCheckIns.filter((r) => Boolean(r.isLate)).length;
+    const cafeOnTimeRate = cafeCheckIns.length ? ((cafeCheckIns.length - cafeLate) / cafeCheckIns.length) * 100 : null;
+    const regularMinutes = cafeRecords.reduce((sum, r) => sum + (Number(r.regularMinutes) || 0), 0);
+    const overtimeMinutes = cafeRecords.reduce((sum, r) => sum + (Number(r.approvedOvertimeMinutes) || 0), 0);
+    return {
+      cafeId,
+      cafeName: CAFE_NAMES[cafeId] || cachedCafes.find((c) => (c.cafeId || c.code) === cafeId)?.name || "Outlet",
+      records: cafeRecords.length,
+      regularHours: regularMinutes / 60,
+      overtimeHours: overtimeMinutes / 60,
+      onTimeRate: cafeOnTimeRate,
+    };
+  });
+
+  return `
+    <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">On-Time Rate</div>
+          <div style="font-size:22px; font-weight:800; color:var(--ink); margin-top:4px;">${onTimeRate === null ? "No data" : `${onTimeRate.toFixed(1)}%`}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">${checkInRecords.length} loaded check-in records · ${lateCount} late.</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Regular Hours</div>
+          <div style="font-size:22px; font-weight:800; color:var(--ink); margin-top:4px;">${(totalRegularMinutes / 60).toFixed(1)} h</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">Sum of regularMinutes in loaded attendance records.</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Approved Overtime</div>
+          <div style="font-size:22px; font-weight:800; color:var(--ink); margin-top:4px;">${(approvedOvertimeMinutes / 60).toFixed(1)} h</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">Only approvedOvertimeMinutes are counted.</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px; color:var(--muted); font-weight:700; text-transform:uppercase;">Manual Entry Rate</div>
+          <div style="font-size:22px; font-weight:800; color:var(--ink); margin-top:4px;">${manualRate === null ? "No data" : `${manualRate.toFixed(1)}%`}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">${manualEntries} of ${records.length} loaded records.</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+          <div>
+            <h3 style="font-size:16px; font-weight:800; margin:0 0 3px; color:var(--ink);">Loaded Attendance by Café</h3>
+            <p style="font-size:12px; color:var(--muted); margin:0;">This table reports only records returned by the live attendance endpoint for the current scope.</p>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="export-analytics-btn" type="button">Export Loaded Data CSV</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table" style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--line); text-align:left;">
+                <th style="padding:9px;">Café</th>
+                <th style="padding:9px; text-align:right;">Records</th>
+                <th style="padding:9px; text-align:right;">Regular Hours</th>
+                <th style="padding:9px; text-align:right;">Approved OT</th>
+                <th style="padding:9px; text-align:right;">On-Time Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${cafeRows.length ? cafeRows.map((row) => `
+                <tr style="border-bottom:1px solid var(--line);">
+                  <td style="padding:9px; font-weight:700;">${row.cafeId} · ${row.cafeName}</td>
+                  <td style="padding:9px; text-align:right;">${row.records}</td>
+                  <td style="padding:9px; text-align:right;">${row.regularHours.toFixed(1)}</td>
+                  <td style="padding:9px; text-align:right;">${row.overtimeHours.toFixed(1)}</td>
+                  <td style="padding:9px; text-align:right;">${row.onTimeRate === null ? "—" : `${row.onTimeRate.toFixed(1)}%`}</td>
+                </tr>
+              `).join("") : `
+                <tr><td colspan="5" style="padding:22px; text-align:center; color:var(--muted);">No authoritative attendance records are loaded for analytics.</td></tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="font-size:11.5px; color:var(--muted); padding:10px 12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
+        No benchmark, target, forecast, labour recommendation, or compliance score is inferred by this view.
+      </div>
+    </div>
+  `;
+}
 function rerender(root) {
   if (!state.route?.startsWith("attendance") && state.route !== "staff-attendance") return;
   const subpanelRoot = root?.querySelector ? root.querySelector("#attendance-subpanel-root") : null;
@@ -2426,20 +2182,13 @@ function wireAttendanceSubpanelActions(root) {
     });
   });
 
-  // Closure: Reopen Accrual Action
+  // Closure: server-authoritative period lock / reopen actions.
   root.querySelector("#reopen-period-btn")?.addEventListener("click", () => {
-    confirmAction("Reopen August 2026 timesheet accrual period for adjustments and late punch reconciliation?", () => {
-      showToast("August 2026 timesheet accrual period reopened.", "info");
-      rerender(root);
-    });
+    openReopenTimesheetPeriodModal(root);
   });
 
-  // Closure: Lock Period & Export to Payroll Action
   root.querySelector("#lock-period-btn")?.addEventListener("click", () => {
-    confirmAction(`Lock ${state.currentPeriodKey || 'current period'} timesheets and transfer to Monthly Payroll Runs (#payroll/runs)? Once locked, timesheets are immutable.`, () => {
-      showToast(`${state.currentPeriodKey || 'Current period'} locked and hours transferred to Payroll (#payroll/runs).`, "success");
-      rerender(root);
-    });
+    openCloseTimesheetPeriodModal(root);
   });
 
   // Analytics: Export Analytics CSV Actions
@@ -2538,8 +2287,8 @@ function openCloseTimesheetPeriodModal(root) {
         <div style="padding:12px; background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.2); border-radius:8px;">
           <div style="font-weight:700; color:#059669; margin-bottom:4px;">Pre-Closure Status:</div>
           <ul style="margin:0; padding-left:18px; color:var(--ink); font-size:12px; line-height:1.6;">
-            <li>All open timesheet records reconciled</li>
-            <li>Primary Master authority required for lock</li>
+            <li>Review open attendance exceptions and pending overtime before locking.</li>
+            <li>Primary Master authority is required for the server-side lock.</li>
           </ul>
         </div>
 
@@ -2568,6 +2317,47 @@ function openCloseTimesheetPeriodModal(root) {
 }
 
 // Modal: Create or Edit Shift Template (P1)
+
+function openReopenTimesheetPeriodModal(root) {
+  const periodKey = state.currentPeriodKey || new Date().toISOString().slice(0, 7);
+  const periodId = `PER-${periodKey}`;
+
+  openModal({
+    title: `Reopen Attendance Period — ${periodKey}`,
+    maxWidth: "520px",
+    body: `
+      <div style="display:flex; flex-direction:column; gap:12px; font-size:12.5px;">
+        <div style="padding:12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
+          Reopening allows controlled attendance corrections again. The server records the Primary Master, timestamp and mandatory reason.
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label style="font-weight:700; display:block; margin-bottom:4px;">Mandatory Reopen Reason *</label>
+          <textarea id="modal-reopen-reason" class="input" rows="3" placeholder="Explain why the locked attendance period must be reopened." style="width:100%; box-sizing:border-box;" required></textarea>
+        </div>
+      </div>
+    `,
+    saveLabel: "Reopen Period",
+    cancelLabel: "Cancel",
+    onSave: async () => {
+      const reason = document.querySelector("#modal-reopen-reason")?.value?.trim();
+      if (!reason) {
+        showToast("A reason is required to reopen the attendance period.", "error");
+        return;
+      }
+      try {
+        const res = await apiPost(`/attendance/periods/${periodId}/reopen`, { reason });
+        if (res?.success) {
+          showToast(`Attendance period ${periodKey} reopened.`, "success");
+          await loadLiveAttendanceData();
+          rerender(root);
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to reopen attendance period.", "error");
+      }
+    },
+  });
+}
+
 function openCreateShiftTemplateModal(root, shiftToEdit = null) {
   const isEditing = Boolean(shiftToEdit);
   const role = state.role || state.user?.role || ROLES.MASTER;
@@ -3283,49 +3073,50 @@ function exportTimesheetsCsv() {
 
 // Modal: Official Attendance & Statutory Compliance Certificate
 function openCompliancePolicyModal(root) {
+  const scopedCafeId =
+    (state.selectedCafeId && state.selectedCafeId !== "ALL" ? state.selectedCafeId : "") ||
+    state.currentCafeId ||
+    state.user?.primaryCafeId ||
+    state.user?.assignedCafeIds?.[0] ||
+    "";
+  const cafe = (cachedCafes || []).find((c) => (c.cafeId || c.code || c.id) === scopedCafeId) || null;
+  const radius = Number(cafe?.address?.geofenceRadiusMetres ?? cafe?.geofenceRadiusMetres);
+  const geofenceConfigured =
+    Number.isFinite(Number(cafe?.address?.latitude)) &&
+    Number.isFinite(Number(cafe?.address?.longitude)) &&
+    Number.isFinite(radius);
+
   openModal({
-    title: "Zamorin Attendance & Statutory Compliance Certificate",
-    maxWidth: "680px",
+    title: "Attendance Runtime Controls Summary",
+    maxWidth: "720px",
     body: `
-      <div id="compliance-certificate-print" style="padding:10px 4px; font-size:12.5px; color:var(--ink);">
-        <!-- CERTIFICATE HEADER -->
-        <div style="text-align:center; padding:16px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:10px; margin-bottom:16px;">
-          <div style="font-size:11px; font-weight:800; color:var(--bronze-600); letter-spacing:1px; text-transform:uppercase;">Official Compliance Document</div>
-          <h2 style="font-size:18px; font-weight:900; margin:4px 0 2px; color:var(--ink); font-family:var(--font-heading);">Zamorin Estate Pvt Ltd</h2>
-          <div style="font-size:12px; color:var(--muted);">Workforce Attendance &amp; Statutory Labour Compliance Policy (2026-27)</div>
+      <div style="display:flex; flex-direction:column; gap:14px; font-size:12.5px;">
+        <div style="padding:12px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px;">
+          This document describes controls implemented by the attendance application. It is <strong>not</strong> a legal, labour-law, privacy, payroll, or statutory compliance certification.
         </div>
-
-        <div style="display:flex; flex-direction:column; gap:12px;">
-          <div style="padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface);">
-            <strong style="font-size:13px; color:var(--ink); display:block; margin-bottom:4px;">1. Frontline Punch Integrity &amp; Biometric Standard</strong>
-            <p style="margin:0; font-size:12px; color:var(--muted); line-height:1.5;">
-              All attendance records require hardware GPS verification within a strict 50-meter radius of the registered café establishment. Clock-in tokens rotate dynamically every 45 seconds to guarantee physical employee presence. Facial recognition scanning is strictly prohibited; selfies are stored as encrypted ephemeral proofs.
-            </p>
-          </div>
-
-          <div style="padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface);">
-            <strong style="font-size:13px; color:var(--ink); display:block; margin-bottom:4px;">2. Kerala Shops &amp; Commercial Establishments Act Alignment</strong>
-            <p style="margin:0; font-size:12px; color:var(--muted); line-height:1.5;">
-              Work shifts are capped at 8 daily hours (48 hours maximum work week). Every staff member is guaranteed 1 mandatory full day of rest per 6 working days. Overtime is audited under Primary Master authority and remunerated at 2.0× statutory hourly wage.
-            </p>
-          </div>
-
-          <div style="padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface);">
-            <strong style="font-size:13px; color:var(--ink); display:block; margin-bottom:4px;">3. Privacy &amp; 90-Day Evidence Retention Cycle</strong>
-            <p style="margin:0; font-size:12px; color:var(--muted); line-height:1.5;">
-              Ephemeral attendance proofs older than 90 days are purged upon Primary Master authorization. Cryptographic metadata logs remain immutable in the compliance ledger for 7 financial years.
-            </p>
+        <div class="card" style="padding:14px;">
+          <strong style="display:block; margin-bottom:8px;">Secure Punch Controls</strong>
+          <div style="display:grid; grid-template-columns:1fr auto; gap:8px 14px;">
+            <span>Rotating café QR challenge</span><strong>Required</strong>
+            <span>Signed employee/transition scan grant</span><strong>Required</strong>
+            <span>Server-side GPS geofence verification</span><strong>Required</strong>
+            <span>Distinct Check-In and Check-Out selfie evidence</span><strong>Required</strong>
+            <span>Attendance evidence access</span><strong>Authenticated &amp; scoped</strong>
           </div>
         </div>
-
-        <div style="display:flex; justify-content:space-between; margin-top:16px; padding-top:12px; border-top:1px dashed var(--line); font-size:11px; color:var(--muted);">
-          <span>Document Ref: <strong>ZAM-COMP-2026-ATT</strong></span>
-          <span>Certified by: <strong>Master User MU-0001</strong></span>
-          <span>Status: <strong style="color:#059669;">ACTIVE &amp; ENFORCED</strong></span>
+        <div class="card" style="padding:14px;">
+          <strong style="display:block; margin-bottom:8px;">Selected Café Geofence</strong>
+          <div>${scopedCafeId || "No café selected"} · ${geofenceConfigured ? `${Math.round(radius)} m configured radius` : "geofence configuration unavailable in this view"}</div>
+        </div>
+        <div class="card" style="padding:14px;">
+          <strong style="display:block; margin-bottom:6px;">Evidence Retention</strong>
+          <div style="color:var(--muted); line-height:1.5;">
+            This screen does not invent a retention period or purge count. Physical deletion remains disabled until an explicit retention cutoff and verified provider deletion workflow are configured.
+          </div>
         </div>
       </div>
     `,
-    saveLabel: "🖨️ Print Policy Document",
+    saveLabel: "🖨️ Print Runtime Controls",
     cancelLabel: "Close",
     onSave: async () => {
       window.print();
@@ -3333,34 +3124,61 @@ function openCompliancePolicyModal(root) {
     },
   });
 }
-
-// Utility: Export Workforce Analytics CSV
 function exportAnalyticsCsv() {
-  const headers = ["Outlet ID", "Outlet Name", "Staff Headcount", "Scheduled Hours", "Actual Hours", "On-Time Rate %", "Overtime Hours", "Manual Adjustments %", "Status"];
-  const rows = cachedCafes.length > 0
-    ? cachedCafes.map((c, i) => [
-        c.cafeId || c.code || `ZC-000${i+1}`,
-        c.name || 'Outlet',
-        "12",
-        "2200.0",
-        "2210.0",
-        "96.8%",
-        "6.0",
-        "2.0%",
-        "EXCELLENT"
-      ])
-    : [
-        [state.currentCafeId || "ZC-MAIN", state.currentCafeName || "Main Outlet", "12", "2200.0", "2210.0", "96.8%", "6.0", "2.0%", "EXCELLENT"]
-      ];
-  const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const records = cachedLiveAttendance || [];
+  if (!records.length) {
+    showToast("No authoritative attendance records are loaded for export.", "info");
+    return;
+  }
+
+  const escapeCsv = (value) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+
+  const cafeIds = [...new Set(records.map((r) => r.cafeId).filter(Boolean))];
+  const rows = cafeIds.map((cafeId) => {
+    const cafeRecords = records.filter((r) => r.cafeId === cafeId);
+    const checkIns = cafeRecords.filter((r) => r.checkInAt || ["CHECKED_IN", "CHECKED_OUT", "ON_BREAK"].includes(r.status));
+    const late = checkIns.filter((r) => Boolean(r.isLate)).length;
+    const regularMinutes = cafeRecords.reduce((sum, r) => sum + (Number(r.regularMinutes) || 0), 0);
+    const approvedOt = cafeRecords.reduce((sum, r) => sum + (Number(r.approvedOvertimeMinutes) || 0), 0);
+    const manual = cafeRecords.filter((r) => Boolean(r.isManualEntry)).length;
+    return [
+      cafeId,
+      CAFE_NAMES[cafeId] || cachedCafes.find((c) => (c.cafeId || c.code) === cafeId)?.name || "Outlet",
+      cafeRecords.length,
+      checkIns.length,
+      late,
+      (regularMinutes / 60).toFixed(2),
+      (approvedOt / 60).toFixed(2),
+      manual,
+      checkIns.length ? (((checkIns.length - late) / checkIns.length) * 100).toFixed(1) : "",
+    ];
+  });
+
+  const headers = [
+    "Outlet ID",
+    "Outlet Name",
+    "Attendance Records",
+    "Check-In Records",
+    "Late Records",
+    "Regular Hours",
+    "Approved Overtime Hours",
+    "Manual Entries",
+    "On-Time Rate %",
+  ];
+  const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `Zamorin_Workforce_Analytics_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.href = objectUrl;
+  link.download = `Zamorin_Attendance_Analytics_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(link);
   link.click();
-  document.body.removeChild(link);
-  showToast("Workforce Analytics CSV exported successfully.", "success");
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  showToast("Loaded attendance analytics exported.", "success");
 }
 
 // =============================================================================
@@ -3373,8 +3191,12 @@ export function openAttendanceQrModal({ cafeId, cafeName } = {}) {
     existing.remove();
   }
 
-  const activeCafeId = cafeId || state.user?.primaryCafeId || state.user?.assignedCafeIds?.[0] || state.currentCafeId || "ZC-MAIN";
-  const activeCafeName = cafeName || CAFE_NAMES[activeCafeId] || state.currentCafeName || "Main Outlet";
+  const activeCafeId = cafeId || state.user?.primaryCafeId || state.user?.assignedCafeIds?.[0] || state.currentCafeId || "";
+  if (!activeCafeId) {
+    showToast("Select an authorised café before opening the attendance QR.", "warning");
+    return;
+  }
+  const activeCafeName = cafeName || CAFE_NAMES[activeCafeId] || state.currentCafeName || activeCafeId;
 
   const modal = document.createElement("div");
   modal.id = "attendance-qr-modal";
