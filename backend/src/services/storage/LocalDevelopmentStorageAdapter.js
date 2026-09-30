@@ -127,11 +127,11 @@ class LocalDevelopmentStorageAdapter extends DocumentStorageProvider {
   async deleteObject({ objectKey }) {
     if (!objectKey) return false;
     const fullPath = path.join(this.getResolvedRoot(), objectKey);
-    if (fs.existsSync(fullPath)) {
-      await fs.promises.unlink(fullPath).catch(() => {});
-      return true;
-    }
-    return false;
+    if (!fs.existsSync(fullPath)) return false;
+
+    // Never report successful deletion after a filesystem error.
+    await fs.promises.unlink(fullPath);
+    return !fs.existsSync(fullPath);
   }
 
   async copyObject({ sourceKey, destinationKey }) {
