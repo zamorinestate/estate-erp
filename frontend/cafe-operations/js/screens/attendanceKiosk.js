@@ -13,10 +13,12 @@
   'use strict';
   const UI = global.CafeOpsUI;
 
-  const QR_ROTATE_SECONDS = 30;
+  const DEFAULT_QR_ROTATE_SECONDS = 45;
   let clockTimer = null;
   let qrTimer = null;
   let serverOffsetMs = 0;
+  let qrCycleDurationSeconds = DEFAULT_QR_ROTATE_SECONDS;
+  let qrExpiresAtMs = 0;
 
   function istFormatter(opts) {
     return new Intl.DateTimeFormat('en-IN', Object.assign({ timeZone: 'Asia/Kolkata' }, opts));
@@ -59,7 +61,6 @@
 
     startClock();
     refreshQr(root);
-    qrTimer = setInterval(() => refreshQr(root), QR_ROTATE_SECONDS * 1000);
     tickRing(root);
 
     global.CafeOpsApi.deviceStatus()
@@ -97,11 +98,26 @@
   function tickRing(root) {
     const ring = root.querySelector('#qrRingProgress');
     if (!ring) return; // navigated away
-    qrElapsed = (qrElapsed + 1) % QR_ROTATE_SECONDS;
+
     const circumference = 2 * Math.PI * 98;
-    const fraction = qrElapsed / QR_ROTATE_SECONDS;
-    ring.style.strokeDashoffset = String(circumference * fraction);
+    let fraction = 0;
+
+    if (qrExpiresAtMs > 0) {
+      const remainingMs = Math.max(0, qrExpiresAtMs - Date.now());
+      const cycleMs = Math.max(1000, qrCycleDurationSeconds * 1000);
+      fraction = 1 - Math.min(1, remainingMs / cycleMs);
+    } else {
+      qrElapsed = (qrElapsed + 1) % DEFAULT_QR_ROTATE_SECONDS;
+      fraction = qrElapsed / DEFAULT_QR_ROTATE_SECONDS;
+    }
+
+    ring.style.strokeDashoffset = String(circumference * Math.max(0, Math.min(1, fraction)));
     requestAnimationFrame(() => setTimeout(() => tickRing(root), 1000));
+  }
+
+  function scheduleQrRefresh(root, delayMs) {
+    if (qrTimer) clearTimeout(qrTimer);
+    qrTimer = setTimeout(() => refreshQr(root), Math.max(1000, Number(delayMs) || 1000));
   }
 
   async function refreshQr(root) {
@@ -131,15 +147,30 @@
       });
 
       surface.innerHTML = `<img src="${imageUrl}" alt="Attendance check-in and check-out QR code" style="width:100%;height:100%;object-fit:contain;" />`;
+
+      const serverRemainingSeconds = Number(body.remainingSeconds);
+      const parsedExpiry = Date.parse(body.expiresAt || '');
+      qrCycleDurationSeconds = Number.isFinite(serverRemainingSeconds) && serverRemainingSeconds > 0
+        ? Math.max(1, Math.ceil(serverRemainingSeconds))
+        : DEFAULT_QR_ROTATE_SECONDS;
+      qrExpiresAtMs = Number.isFinite(parsedExpiry) && parsedExpiry > Date.now()
+        ? parsedExpiry
+        : Date.now() + qrCycleDurationSeconds * 1000;
+
+      scheduleQrRefresh(root, qrExpiresAtMs - Date.now() + 250);
     } catch (e) {
+      qrExpiresAtMs = 0;
       surface.innerHTML = '<span class="cafeops-qr-refreshing">Unable to load secure attendance code</span>';
+      scheduleQrRefresh(root, 5000);
     }
   }
 
   function stopTimers() {
     stopClock();
-    if (qrTimer) clearInterval(qrTimer);
+    if (qrTimer) clearTimeout(qrTimer);
     qrTimer = null;
+    qrExpiresAtMs = 0;
+    qrCycleDurationSeconds = DEFAULT_QR_ROTATE_SECONDS;
   }
 
   global.CafeOpsScreens = global.CafeOpsScreens || {};
