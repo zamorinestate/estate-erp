@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const { ChartOfAccount } = require('../models/ChartOfAccount');
 const { Journal } = require('../models/Journal');
 const { FinancialPeriod } = require('../models/FinancialPeriod');
@@ -15,6 +16,7 @@ const { RegisterSession } = require('../models/RegisterSession');
 const { Payslip } = require('../models/Payslip');
 const { PersonalLedger } = require('../models/PersonalLedger');
 const { DashboardTarget } = require('../models/DashboardTarget');
+const { BudgetPlan } = require('../models/BudgetPlan');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { TaxInvoice } = require('../models/TaxInvoice');
 const { PassbookTransaction } = require('../models/PassbookTransaction');
@@ -1535,22 +1537,131 @@ const listBankAccounts = asyncHandler(async (request, response) => {
 
 // 10. Budgets & Allocations
 const getBudgetsAndAllocations = asyncHandler(async (request, response) => {
-  const budgets = [
-    { category: 'COFFEE_RAW_BEANS', monthlyBudgetPaisa: 50000000, committedPaisa: 38000000, actualPaisa: 32000000, variancePaisa: 18000000 },
-    { category: 'DAIRY_AND_MILK', monthlyBudgetPaisa: 25000000, committedPaisa: 21000000, actualPaisa: 19500000, variancePaisa: 5500000 },
-    { category: 'PACKAGING_DISPOSABLES', monthlyBudgetPaisa: 15000000, committedPaisa: 14200000, actualPaisa: 11000000, variancePaisa: 4000000 },
-    { category: 'UTILITIES_ELECTRICITY', monthlyBudgetPaisa: 12000000, committedPaisa: 12000000, actualPaisa: 11800000, variancePaisa: 200000 },
-  ];
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+  const requestedCafeId = normalizeFinanceId(request.query?.cafeId || '');
+  const fiscalYear = String(request.query?.fiscalYear || '').trim().toUpperCase();
 
-  return response.status(200).json({ budgets });
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    ensureCafeAccess(request, requestedCafeId);
+  }
+
+  const filter = {
+    organisationId,
+    status: { $in: ['APPROVED', 'LOCKED'] },
+  };
+
+  if (fiscalYear) filter.fiscalYear = fiscalYear;
+
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    filter.cafeId = requestedCafeId;
+  } else if (role !== 'MASTER') {
+    const cafes = (assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean);
+    filter.cafeId = cafes.length > 0 ? { $in: cafes } : '__NO_AUTHORIZED_CAFE__';
+  }
+
+  const query = BudgetPlan.find(filter).sort({ fiscalYear: -1, month: 1, version: -1 });
+  const plans = query && typeof query.lean === 'function' ? await query.lean() : await query;
+  const rows = Array.isArray(plans) ? plans : [];
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      budgets: rows.map((plan) => ({
+        budgetId: plan.budgetId,
+        cafeId: plan.cafeId || null,
+        fiscalYear: plan.fiscalYear,
+        periodType: plan.periodType,
+        month: plan.month,
+        version: plan.version,
+        status: plan.status,
+        totalPlannedPaisa: Number(plan.totalPlannedPaisa || 0),
+        lines: plan.lines || [],
+        actualsStatus: 'UNAVAILABLE_UNTIL_POSTED_LEDGER_MAPPING',
+        committedStatus: 'UNAVAILABLE_UNTIL_COMMITMENT_LEDGER_MAPPING',
+      })),
+      sourceStatus: rows.length > 0 ? 'AUTHORITATIVE_BUDGET_PLAN' : 'NOT_CONFIGURED',
+    },
+    correlationId: request.correlationId || null,
+  });
 });
 
 // 11. Tax & Statutory Review (GST & TDS)
 const getTaxReview = asyncHandler(async (request, response) => {
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+  const requestedCafeId = normalizeFinanceId(request.query?.cafeId || '');
+  const from = String(request.query?.from || '').trim();
+  const to = String(request.query?.to || '').trim();
+
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    ensureCafeAccess(request, requestedCafeId);
+  }
+
+  const invoiceFilter = {
+    organisationId,
+    status: { $in: ['ISSUED', 'AMENDED'] },
+  };
+
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    invoiceFilter.cafeId = requestedCafeId;
+  } else if (role !== 'MASTER') {
+    const cafes = (assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean);
+    invoiceFilter.cafeId = cafes.length > 0 ? { $in: cafes } : '__NO_AUTHORIZED_CAFE__';
+  }
+
+  if (from || to) {
+    invoiceFilter.invoiceDate = {};
+    if (from) invoiceFilter.invoiceDate.$gte = new Date(`${from}T00:00:00+05:30`);
+    if (to) invoiceFilter.invoiceDate.$lte = new Date(`${to}T23:59:59.999+05:30`);
+  }
+
+  const invoiceQuery = TaxInvoice.find(invoiceFilter);
+  const invoices = invoiceQuery && typeof invoiceQuery.lean === 'function'
+    ? await invoiceQuery.lean()
+    : await invoiceQuery;
+  const rows = Array.isArray(invoices) ? invoices : [];
+
+  const outward = rows.reduce(
+    (acc, invoice) => {
+      acc.invoiceCount += 1;
+      acc.taxablePaisa += Number(invoice.taxSummary?.totalTaxablePaisa || 0);
+      acc.cgstPaisa += Number(invoice.taxSummary?.totalCgstPaisa || 0);
+      acc.sgstPaisa += Number(invoice.taxSummary?.totalSgstPaisa || 0);
+      acc.igstPaisa += Number(invoice.taxSummary?.totalIgstPaisa || 0);
+      acc.totalTaxPaisa += Number(invoice.taxSummary?.totalTaxPaisa || 0);
+      acc.grandTotalPaisa += Number(invoice.taxSummary?.grandTotalPaisa || 0);
+      return acc;
+    },
+    {
+      invoiceCount: 0,
+      taxablePaisa: 0,
+      cgstPaisa: 0,
+      sgstPaisa: 0,
+      igstPaisa: 0,
+      totalTaxPaisa: 0,
+      grandTotalPaisa: 0,
+    }
+  );
+
   return response.status(200).json({
-    gstr1Readiness: { status: 'READY', outwardTaxablePaisa: 126000000, cgstPaisa: 3150000, sgstPaisa: 3150000, totalTaxPaisa: 6300000 },
-    gstr2bReconciliation: { totalInwardInvoices: 48, matchedCount: 46, mismatchCount: 2, itcEligiblePaisa: 4200000 },
-    tdsRegister: { totalDeductedPaisa: 380000, depositedPaisa: 380000, status: 'CURRENT' },
+    success: true,
+    data: {
+      gstr1Readiness: {
+        status: rows.length > 0 ? 'OUTWARD_REGISTER_AVAILABLE' : 'NO_ISSUED_TAX_INVOICES',
+        ...outward,
+        filingReadiness: 'NOT_VERIFIED',
+        filingReadinessReason:
+          'The application can derive the outward invoice register, but no durable GST filing/review sign-off record is configured.',
+      },
+      gstr2bReconciliation: {
+        status: 'UNAVAILABLE',
+        reason: 'No authoritative GSTR-2B inward statement ingestion and reconciliation source is configured.',
+      },
+      tdsRegister: {
+        status: 'UNAVAILABLE',
+        reason: 'No authoritative TDS deduction/deposit register is configured.',
+      },
+    },
+    correlationId: request.correlationId || null,
   });
 });
 
