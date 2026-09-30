@@ -9,8 +9,11 @@ const { DeviceSecurityEvent } = require('../models/DeviceSecurityEvent');
 const { Cafe } = require('../models/Cafe');
 const ApiError = require('../utils/ApiError');
 const { getPublicAppOrigin } = require('./cafeAccessCryptoService');
+const {
+  getQrSigningSecret,
+  getAttendanceTokenSecret,
+} = require('../config/attendanceSecurityConfig');
 
-const QR_SIGNING_SECRET = process.env.QR_SIGNING_SECRET || 'zamorin_qr_master_signing_secret_key_2026_dsec';
 const ATTENDANCE_SCAN_GRANT_TTL_SECONDS = 180;
 
 function calculateDistanceMetres(lat1, lon1, lat2, lon2) {
@@ -51,7 +54,7 @@ class AttendanceQrService {
    */
   signPayload(payload) {
     const serialized = JSON.stringify(payload);
-    return crypto.createHmac('sha256', QR_SIGNING_SECRET).update(serialized).digest('hex');
+    return crypto.createHmac('sha256', getQrSigningSecret()).update(serialized).digest('hex');
   }
 
   /**
@@ -181,7 +184,7 @@ class AttendanceQrService {
       sig: challenge.signature,
     };
 
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceTokenSecret();
     const expiresAtSec = Math.floor(challenge.expiresAt.getTime() / 1000);
     const issuedAtSec = Math.floor(challenge.issuedAt.getTime() / 1000);
     const dotPayload = `${challenge.challengeId}.${challenge.organisationId}.${challenge.cafeId}.${issuedAtSec}.${expiresAtSec}`;
@@ -299,7 +302,7 @@ class AttendanceQrService {
       };
     }
 
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceTokenSecret();
 
     // Branch A: Dot-separated compact token (challengeId.orgId.cafeId.expiresAt.signature)
     if (trimmedToken && !trimmedToken.startsWith('{')) {
@@ -475,7 +478,7 @@ class AttendanceQrService {
     };
 
     const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceTokenSecret();
     const signature = crypto.createHmac('sha256', secret).update(encodedPayload).digest('hex');
 
     return {
@@ -499,7 +502,7 @@ class AttendanceQrService {
 
     const encodedPayload = serialized.slice(0, separator);
     const suppliedSignature = serialized.slice(separator + 1);
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceTokenSecret();
     const expectedSignature = crypto.createHmac('sha256', secret).update(encodedPayload).digest('hex');
 
     const suppliedBuffer = Buffer.from(suppliedSignature, 'hex');
