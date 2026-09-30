@@ -341,6 +341,19 @@ test('EVI-003D: forensic audit detects MIME metadata that disagrees with image b
   }
 });
 
+
+
+test('EVI-003E: media retrieval verifies MIME signature and disables content sniffing', () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceController.js'),
+    'utf8'
+  );
+
+  assert.match(controllerSource, /ATTENDANCE_EVIDENCE_MIME_INTEGRITY_FAILURE/);
+  assert.match(controllerSource, /setHeader\('Content-Type', detectedMime\)/);
+  assert.match(controllerSource, /setHeader\('X-Content-Type-Options', 'nosniff'\)/);
+});
+
 test('EVI-004: audit filter is organisation scoped and optionally attendance/cafe scoped', () => {
   const filter = buildAuditAttendanceFilter({
     organisationId: 'org-zamorin',
