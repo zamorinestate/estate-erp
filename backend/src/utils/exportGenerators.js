@@ -14,6 +14,7 @@
 
 const zlib = require('zlib');
 const crypto = require('crypto');
+const { ApiError } = require('./ApiError');
 
 // ─── 1. CSV SANITIZATION & GENERATOR ──────────────────────────────────────────
 
@@ -219,8 +220,8 @@ function generateXlsx({ sheetName = 'Report', reportTitle = 'Export', columns = 
     metadataRows.push({ property: 'Official Document ID', value: String(resolvedOfficialDocId) });
   }
   metadataRows.push(
-    { property: 'Company Legal Name', value: branding.legalName || 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.' },
-    { property: 'Company GSTIN', value: branding.gstin || '32AAACZ1234K1Z5' },
+    { property: 'Company Legal Name', value: branding.legalName || 'NOT_CONFIGURED' },
+    { property: 'Company GSTIN', value: branding.gstin || 'NOT_CONFIGURED' },
     { property: 'Export Date & Time (UTC)', value: new Date().toISOString() },
     { property: 'Period Scope', value: branding.period || 'All Active Dates' },
     { property: 'Data Classification', value: 'CONFIDENTIAL CORPORATE REPORT' },
@@ -638,16 +639,53 @@ function generatePdf(opts) {
 }
 
 function generateTaxInvoicePdf(bill, cafeBranding = {}) {
-  const invoiceNum = bill.invoiceNumber || bill.billId || `INV-${Date.now()}`;
-  const dateStr = bill.businessDate || new Date().toISOString().slice(0, 10);
-  const timeStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-  const cafeName = cafeBranding.legalName || bill.cafeName || 'Zamorin Café';
-  const gstin = cafeBranding.gstin || bill.sellerGstin || '32AABCT1332L1ZV';
-  const address = cafeBranding.address || 'Koramangala, Bengaluru, Karnataka — 560095';
+  const invoiceNum = String(bill.invoiceNumber || '').trim();
+  const dateStr = String(bill.businessDate || '').trim();
+  const cafeName = String(cafeBranding.legalName || bill.sellerLegalName || '').trim();
+  const gstin = String(
+    cafeBranding.gstin ||
+    bill.sellerGstin ||
+    bill.gstRegistrationNumber ||
+    ''
+  ).trim().toUpperCase();
+  const address = String(cafeBranding.address || bill.sellerAddress || '').trim();
 
-  const subtotal = bill.subtotalPaisa ? bill.subtotalPaisa / 100 : (bill.totalPaisa ? bill.totalPaisa / 100 : 0);
-  const gst = bill.taxPaisa ? bill.taxPaisa / 100 : Math.round(subtotal * 0.05);
-  const grandTotal = bill.totalPaisa ? bill.totalPaisa / 100 : subtotal + gst;
+  const missingIdentity = [];
+  if (!invoiceNum) missingIdentity.push('invoiceNumber');
+  if (!dateStr) missingIdentity.push('businessDate');
+  if (!cafeName) missingIdentity.push('sellerLegalName');
+  if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(gstin)) {
+    missingIdentity.push('sellerGstin');
+  }
+  if (!address) missingIdentity.push('sellerAddress');
+
+  const subtotalPaisa = Number(bill.subtotalPaisa);
+  const taxPaisa = Number(bill.taxPaisa);
+  const totalPaisa = Number(bill.totalPaisa);
+  if (!Number.isFinite(subtotalPaisa)) missingIdentity.push('subtotalPaisa');
+  if (!Number.isFinite(taxPaisa)) missingIdentity.push('taxPaisa');
+  if (!Number.isFinite(totalPaisa)) missingIdentity.push('totalPaisa');
+
+  if (missingIdentity.length > 0) {
+    throw new ApiError(
+      409,
+      'TAX_INVOICE_SOURCE_INCOMPLETE',
+      `Tax-invoice PDF generation is blocked because authoritative finalized data is incomplete: ${missingIdentity.join(', ')}.`,
+      { missingFields: missingIdentity }
+    );
+  }
+
+  const timeStr = bill.completedAt || bill.createdAt
+    ? new Date(bill.completedAt || bill.createdAt).toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : '';
+
+  const subtotal = subtotalPaisa / 100;
+  const gst = taxPaisa / 100;
+  const grandTotal = totalPaisa / 100;
 
   const isVoid = bill.status === 'VOID' || bill.status === 'CANCELLED';
   const isReprint = (bill.reprints && bill.reprints.length > 0) || bill.isReprint;
@@ -666,7 +704,7 @@ function generateTaxInvoicePdf(bill, cafeBranding = {}) {
   } else if (isReprint) {
     streamOps += `BT\n/F2 42 Tf\n1 0 0 1 120 420 Tm\n(REPRINT #${reprintCount}) Tj\nET\n`;
   } else {
-    streamOps += `BT\n/F2 44 Tf\n1 0 0 1 110 420 Tm\n(ZAMORIN CAFE) Tj\nET\n`;
+    streamOps += `BT\n/F2 44 Tf\n1 0 0 1 110 420 Tm\n(${escapePdf(cafeName.toUpperCase())}) Tj\nET\n`;
   }
   streamOps += `Q\n`;
 
@@ -728,7 +766,7 @@ function generateTaxInvoicePdf(bill, cafeBranding = {}) {
   streamOps += `BT\n/F1 9 Tf\n0.2 0.25 0.35 rg\n`;
   streamOps += `1 0 0 1 360 ${currentY - 16} Tm\n(Subtotal: ) Tj\n`;
   streamOps += `1 0 0 1 490 ${currentY - 16} Tm\n(INR ${subtotal.toFixed(2)}) Tj\n`;
-  streamOps += `1 0 0 1 360 ${currentY - 32} Tm\n(Tax (GST 5%): ) Tj\n`;
+  streamOps += `1 0 0 1 360 ${currentY - 32} Tm\n(Total GST: ) Tj\n`;
   streamOps += `1 0 0 1 490 ${currentY - 32} Tm\n(INR ${gst.toFixed(2)}) Tj\n`;
   streamOps += `ET\n`;
 
