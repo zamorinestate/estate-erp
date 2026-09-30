@@ -199,6 +199,33 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
                 : ''
             }
 
+            ${data.canManageRetentionHold && evidence?.selfieMediaId ? `
+              <div style="background:${evidence?.retentionHoldStatus === 'HELD' ? 'rgba(59,130,246,0.12)' : 'rgba(148,163,184,0.08)'};border:1px solid ${evidence?.retentionHoldStatus === 'HELD' ? '#3b82f6' : 'var(--border-subtle, #3d3935)'};border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;">
+                <div style="font-weight:800;color:${evidence?.retentionHoldStatus === 'HELD' ? '#93c5fd' : 'var(--ink)'};">
+                  ${evidence?.retentionHoldStatus === 'HELD' ? '🛡️ Retention Hold Active' : '🗂️ Retention Hold'}
+                </div>
+                <div style="margin-top:4px;color:var(--muted);">
+                  ${evidence?.retentionHoldStatus === 'HELD'
+                    ? 'This committed selfie is explicitly protected from any future retention purge until the hold is released.'
+                    : 'No retention hold is active. Committed-evidence purge is still disabled until a formal retention policy is approved.'}
+                </div>
+                ${evidence?.retentionHoldStatus === 'HELD' && evidence?.retentionHoldReason
+                  ? `<div style="margin-top:6px;color:var(--muted);">Reason: ${escHtml(evidence.retentionHoldReason)}</div>`
+                  : ''}
+                ${evidence?.retentionHoldStatus === 'HELD' && evidence?.retentionHoldPlacedByUserId
+                  ? `<div style="margin-top:4px;color:var(--muted);">Placed by: ${escHtml(evidence.retentionHoldPlacedByUserId)}</div>`
+                  : ''}
+                <button
+                  class="btn btn-sm ${evidence?.retentionHoldStatus === 'HELD' ? 'btn-secondary' : 'btn-primary'}"
+                  id="evidence-retention-hold-btn"
+                  type="button"
+                  style="margin-top:10px;"
+                >
+                  ${evidence?.retentionHoldStatus === 'HELD' ? 'Release Retention Hold' : 'Place Retention Hold'}
+                </button>
+              </div>
+            ` : ''}
+
             <!-- Management Correction Warning -->
             ${
               data.isCorrection
@@ -234,6 +261,54 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
       // Event handlers
       modalMount.querySelector('#evidence-close-x')?.addEventListener('click', cleanup);
       modalMount.querySelector('#evidence-close-btn')?.addEventListener('click', cleanup);
+
+      modalMount.querySelector('#evidence-retention-hold-btn')?.addEventListener('click', async () => {
+        const currentlyHeld = evidence?.retentionHoldStatus === 'HELD';
+        const action = currentlyHeld ? 'RELEASE' : 'HOLD';
+        const reason = String(
+          window.prompt(
+            currentlyHeld
+              ? 'Enter the reason for releasing this retention hold (minimum 10 characters):'
+              : 'Enter the legal/administrative reason for placing this retention hold (minimum 10 characters):',
+            ''
+          ) || ''
+        ).trim();
+
+        if (reason.length < 10) {
+          showToast('A specific hold reason of at least 10 characters is required.', 'warning');
+          return;
+        }
+
+        const confirmationMessage = currentlyHeld
+          ? 'Release this retention hold? This does not delete the selfie or enable purge.'
+          : 'Place a retention hold on this committed selfie?';
+        if (!window.confirm(confirmationMessage)) {
+          return;
+        }
+
+        try {
+          await apiPost('/attendance/evidence/retention/hold', {
+            attendanceId,
+            punchType: currentPunch,
+            action,
+            reason,
+            confirmation: currentlyHeld
+              ? 'RELEASE_ATTENDANCE_EVIDENCE_HOLD'
+              : 'PLACE_ATTENDANCE_EVIDENCE_HOLD',
+          });
+          showToast(
+            currentlyHeld
+              ? 'Retention hold released. Evidence remains stored; committed purge is still disabled.'
+              : 'Retention hold placed. Evidence is protected from future purge.',
+            'success'
+          );
+          const reopenType = currentPunch;
+          cleanup();
+          await openAttendanceEvidenceViewer({ attendanceId, initialType: reopenType });
+        } catch (err) {
+          showToast(err?.message || 'Retention hold change failed.', 'error');
+        }
+      });
 
       modalMount.querySelector('#release-evidence-quarantine-btn')?.addEventListener('click', async () => {
         const reason = String(
