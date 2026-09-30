@@ -114,11 +114,13 @@ const dispositionCertificateSchema = new mongoose.Schema(
     },
 
     propagationStages: {
-      primaryDatabase: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'COMPLETED' },
-      searchIndex: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'COMPLETED' },
-      fileStorage: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'COMPLETED' },
-      cacheLayer: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'COMPLETED' },
-      analyticsReadModel: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'COMPLETED' },
+      // Fail closed: a stage is never certified COMPLETED merely because no
+      // explicit value was supplied. Only verified execution may set COMPLETED.
+      primaryDatabase: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'NOT_APPLICABLE' },
+      searchIndex: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'NOT_APPLICABLE' },
+      fileStorage: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'NOT_APPLICABLE' },
+      cacheLayer: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'NOT_APPLICABLE' },
+      analyticsReadModel: { type: String, enum: ['COMPLETED', 'FAILED', 'NOT_APPLICABLE'], default: 'NOT_APPLICABLE' },
     },
 
     integrityHash: {
