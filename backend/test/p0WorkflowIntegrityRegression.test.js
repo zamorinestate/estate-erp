@@ -29,6 +29,7 @@ const attendanceShiftsPage = read('frontend/src/js/modules/attendance/attendance
 const staffHomePage = read('frontend/src/js/pages/staffHome.js');
 const attendanceRoutes = read('backend/src/modules/attendance/attendanceRoutes.js');
 const correctionModel = read('backend/src/models/AttendanceCorrectionRequest.js');
+const privateFileModel = read('backend/src/models/PrivateFile.js');
 const errorHandlerSource = read('backend/src/middleware/errorHandler.js');
 const attendanceQrService = read('backend/src/services/attendanceQrService.js');
 const mainFrontend = read('frontend/src/js/main.js');
@@ -379,4 +380,20 @@ test('P0-WF-028: attendance selfie purge fails closed without retention cutoff a
   assert.ok(purgeBlock.includes("'EVIDENCE_PURGE_NOT_CONFIGURED'"));
   assert.equal(purgeBlock.includes('Attendance.updateMany('), false);
   assert.equal(purgeBlock.includes('selfieFileId: null'), false);
+});
+
+
+test('P0-WF-029: attendance selfies are cryptographically scoped to QR challenge and punch transition', () => {
+  assert.ok(privateFileModel.includes('attendanceContext'));
+  assert.ok(privateFileModel.includes('challengeId'));
+  assert.ok(privateFileModel.includes("enum: ['CHECK_IN', 'CHECK_OUT', null]"));
+
+  assert.ok(attendanceController.includes("'ATTENDANCE_SCAN_GRANT_REQUIRED'"));
+  assert.ok(attendanceController.includes('attendanceQrService.validatePunchQrProof(grantToken'));
+  assert.ok(attendanceController.includes("'attendanceContext.challengeId': qrValidation.challengeId"));
+  assert.ok(attendanceController.includes("'attendanceContext.punchType': 'CHECK_IN'"));
+  assert.ok(attendanceController.includes("'attendanceContext.punchType': 'CHECK_OUT'"));
+  assert.ok(attendanceController.includes("'SELFIE_CHALLENGE_BINDING_MISMATCH'"));
+
+  assert.ok(staffAttendancePage.includes('formData.append("scanGrant", scannedQrToken)'));
 });
