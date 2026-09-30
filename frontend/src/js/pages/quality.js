@@ -114,13 +114,13 @@ export function renderQuality(subroute) {
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:12px;">
         <div class="card" style="padding:14px 16px;background:var(--surface);">
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Checks Due Today</div>
-          <div id="kpi-checks-due" style="font-size:22px;font-weight:800;color:var(--ink);margin-top:4px;">18</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Scheduled shift inspections</div>
+          <div id="kpi-checks-due" style="font-size:22px;font-weight:800;color:var(--ink);margin-top:4px;">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Authoritative schedule status</div>
         </div>
         <div class="card" style="padding:14px 16px;background:var(--surface);">
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Overdue Actions</div>
-          <div id="kpi-overdue-actions" style="font-size:22px;font-weight:800;color:var(--mint, #10b981);margin-top:4px;">0</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">All hygiene tasks on schedule</div>
+          <div id="kpi-overdue-actions" style="font-size:22px;font-weight:800;color:var(--ink);margin-top:4px;">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Authoritative overdue-action status</div>
         </div>
         <div class="card" style="padding:14px 16px;background:var(--surface);">
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Open Non-Conformances</div>
@@ -129,8 +129,8 @@ export function renderQuality(subroute) {
         </div>
         <div class="card" style="padding:14px 16px;background:var(--surface);">
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Compliance Items Due Soon</div>
-          <div id="kpi-compliance-due" style="font-size:22px;font-weight:800;color:var(--amber, #f59e0b);margin-top:4px;">2</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Licence &amp; calibration renewals</div>
+          <div id="kpi-compliance-due" style="font-size:22px;font-weight:800;color:var(--ink);margin-top:4px;">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Load compliance register for due count</div>
         </div>
       </div>
 
@@ -200,18 +200,22 @@ async function loadQualityOverview(root) {
     if (res?.data) {
       cachedOverview = res.data;
       const kpis = res.data.kpis || {};
-      const actionCentreItems = res.data.actionCentre || [];
+      const actionCentreItems = res.data.actionCentreItems || [];
+      const displayMetric = (value) =>
+        value === null || value === undefined || Number.isNaN(value)
+          ? '—'
+          : String(value);
 
-      // Update KPI figures safely
+      // Update KPI figures only from the authoritative API payload.
       const elDue = root.querySelector('#kpi-checks-due');
       const elOverdue = root.querySelector('#kpi-overdue-actions');
       const elNcrs = root.querySelector('#kpi-open-ncrs');
       const elComp = root.querySelector('#kpi-compliance-due');
 
-      if (elDue && kpis.checksDueToday !== undefined) elDue.textContent = kpis.checksDueToday;
-      if (elOverdue && kpis.overdueActions !== undefined) elOverdue.textContent = kpis.overdueActions;
-      if (elNcrs && kpis.openNcrs !== undefined) elNcrs.textContent = kpis.openNcrs;
-      if (elComp && kpis.complianceDueSoon !== undefined) elComp.textContent = kpis.complianceDueSoon;
+      if (elDue) elDue.textContent = displayMetric(kpis.checksDueToday);
+      if (elOverdue) elOverdue.textContent = displayMetric(kpis.overdueActions);
+      if (elNcrs) elNcrs.textContent = displayMetric(kpis.openNcrs);
+      if (elComp) elComp.textContent = displayMetric(kpis.complianceDueSoon);
 
       // Render Action Centre if items exist
       const actionWrap = root.querySelector('#quality-action-centre');
@@ -299,21 +303,19 @@ async function renderActiveTab(root) {
         title: 'Traceability & Batch Recall',
         icon: '🔍',
         desc: 'Forward and backward batch tracking from supplier PO to guest bill.',
-        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-mock-recall" type="button">Run Mock Recall</button>`
+        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-mock-recall" type="button">Trace Lot Evidence</button>`
       },
       'audits': {
         title: 'Audits & Inspections',
         icon: '📋',
         desc: 'Internal hygiene scoring, third-party audits and FSSAI inspections.',
-        actionsHtml: `<button class="btn btn-sm btn-primary" id="btn-child-record-audit" type="button">+ Record Audit</button>
-                      <button class="btn btn-sm btn-secondary" id="btn-child-upload-lab-cert" type="button">📤 Upload Audit / Lab Cert</button>`
+        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-upload-lab-cert" type="button">📤 Upload Audit / Lab Cert</button>`
       },
       'compliance': {
         title: 'Compliance & Licenses Register',
         icon: '📜',
         desc: 'FSSAI licenses, water test certs, medical fitness and calibration certs.',
-        actionsHtml: `<button class="btn btn-sm btn-primary" id="btn-child-add-license" type="button">+ Add License</button>
-                      <button class="btn btn-sm btn-secondary" id="btn-child-upload-license-doc" type="button">📤 Upload License Document</button>`
+        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-upload-license-doc" type="button">📤 Upload License Document</button>`
       },
       'history': {
         title: 'Quality History & Analytics',
@@ -361,8 +363,6 @@ async function renderActiveTab(root) {
     root.querySelector('#btn-child-report-ncr')?.addEventListener('click', () => openReportNcrModal(root));
     root.querySelector('#btn-child-new-capa')?.addEventListener('click', () => openCreateCapaModal(root));
     root.querySelector('#btn-child-mock-recall')?.addEventListener('click', () => openMockRecallModal(root));
-    root.querySelector('#btn-child-record-audit')?.addEventListener('click', () => openRecordAuditModal(root));
-    root.querySelector('#btn-child-add-license')?.addEventListener('click', () => openAddLicenseModal(root));
     root.querySelector('#btn-child-export-quality')?.addEventListener('click', () => exportQualityCsv());
     root.querySelector('#btn-child-upload-lab-cert')?.addEventListener('click', () => {
       openUniversalDocumentModal({
@@ -400,17 +400,22 @@ async function renderActiveTab(root) {
 }
 
 function renderOverviewSubtab(root, container) {
+  const kpis = cachedOverview?.kpis || {};
+  const metricBadge = (value, suffix = '') =>
+    value === null || value === undefined
+      ? ''
+      : `${value}${suffix}`;
   const qualityTiles = [
-    { id: 'my-checks', icon: '📝', title: 'My Checks', subtitle: 'Execute daily shift, opening & closing food safety checklists', badge: '18 Due', badgeType: 'accent' },
-    { id: 'prp-fsms', icon: '🛡️', title: 'PRP & Food Safety', subtitle: 'Prerequisite programs, sanitation & CCP limits', badge: 'Active', badgeType: 'success' },
-    { id: 'temperatures', icon: '🌡️', title: 'Temperature & Monitoring', subtitle: 'Chiller, freezer & Bain-Marie cold chain logs', badge: '2 Critical', badgeType: 'danger' },
-    { id: 'holds', icon: '🔒', title: 'Quality Holds', subtitle: 'Quarantined ingredients & isolated stock batches', badge: '0 Held', badgeType: '' },
-    { id: 'ncrs', icon: '⚠️', title: 'NCR & Non-Conformance', subtitle: 'Log deviations, supplier rejects & food safety alerts', badge: 'Open', badgeType: 'accent' },
-    { id: 'capas', icon: '🔄', title: 'CAPA Engine', subtitle: 'Root cause analysis, corrective & preventive actions', badge: '3 Active', badgeType: '' },
-    { id: 'traceability', icon: '🔍', title: 'Traceability & Recall', subtitle: 'Batch forward/backward tracking & recall mock runs', badge: 'Ready', badgeType: 'success' },
-    { id: 'audits', icon: '📋', title: 'Audits & Inspections', subtitle: 'Internal hygiene scoring & FSSAI audit records', badge: '98% Pass', badgeType: 'success' },
-    { id: 'compliance', icon: '📜', title: 'Compliance Register', subtitle: 'FSSAI licenses, water test reports & calibration certs', badge: '2 Due', badgeType: 'accent' },
-    { id: 'history', icon: '📈', title: 'Quality History', subtitle: 'Historical compliance analytics & audit export reports', badge: 'Live', badgeType: '' },
+    { id: 'my-checks', icon: '📝', title: 'My Checks', subtitle: 'Execute daily shift, opening & closing food safety checklists', badge: metricBadge(kpis.checksDueToday, ' Due'), badgeType: 'accent' },
+    { id: 'prp-fsms', icon: '🛡️', title: 'PRP & Food Safety', subtitle: 'Prerequisite programs, sanitation & CCP limits', badge: '', badgeType: '' },
+    { id: 'temperatures', icon: '🌡️', title: 'Temperature & Monitoring', subtitle: 'Chiller, freezer & Bain-Marie cold chain logs', badge: '', badgeType: '' },
+    { id: 'holds', icon: '🔒', title: 'Quality Holds', subtitle: 'Quarantined ingredients & isolated stock batches', badge: metricBadge(kpis.activeHoldsCount, ' Held'), badgeType: kpis.activeHoldsCount > 0 ? 'danger' : '' },
+    { id: 'ncrs', icon: '⚠️', title: 'NCR & Non-Conformance', subtitle: 'Log deviations, supplier rejects & food safety alerts', badge: metricBadge(kpis.openNcrs, ' Open'), badgeType: 'accent' },
+    { id: 'capas', icon: '🔄', title: 'CAPA Engine', subtitle: 'Root cause analysis, corrective & preventive actions', badge: metricBadge(kpis.openCapasCount, ' Open'), badgeType: '' },
+    { id: 'traceability', icon: '🔍', title: 'Traceability & Recall', subtitle: 'Evidence-based batch forward/backward tracking', badge: '', badgeType: '' },
+    { id: 'audits', icon: '📋', title: 'Audits & Inspections', subtitle: 'Uploaded audit evidence; durable audit register pending', badge: '', badgeType: '' },
+    { id: 'compliance', icon: '📜', title: 'Compliance Register', subtitle: 'Authoritative café registrations, training and calibration records', badge: metricBadge(kpis.complianceDueSoon, ' Due'), badgeType: 'accent' },
+    { id: 'history', icon: '📈', title: 'Quality History', subtitle: 'Historical compliance analytics & evidence export', badge: '', badgeType: '' },
   ];
 
   container.innerHTML = `
