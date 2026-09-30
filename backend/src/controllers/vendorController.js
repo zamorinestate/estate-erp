@@ -675,8 +675,14 @@ const recordGoodsReceipt = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_STATE', `Cannot receive items against ${po.status} purchase order.`);
   }
 
-  const grnId = `GRN-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
   const now = new Date();
+  const grnDate = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const grnId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `PROCUREMENT_GRN_${grnDate}`,
+    prefix: `GRN-${grnDate}`,
+    minimumDigits: 5,
+  });
 
   // Validate items and record delivered/accepted counts on PO line items
   const grnItems = [];
@@ -816,8 +822,15 @@ const captureSupplierInvoice = asyncHandler(async (request, response) => {
       );
     }
 
-    const invoiceId = `INV-${Date.now().toString(36).toUpperCase()}`;
     const now = new Date();
+    const invoiceDatePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const invoiceId = await SequenceCounter.generateId({
+      organisationId: request.auth.organisationId,
+      sequenceKey: `SUPPLIER_INVOICE_${invoiceDatePart}`,
+      prefix: `INV-${invoiceDatePart}`,
+      minimumDigits: 5,
+      session,
+    });
 
     const newInvoiceRecord = {
       invoiceId,
@@ -1086,7 +1099,14 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
     }
 
     const now = new Date();
-    const postingId = `POST-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
+    const postingDate = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const postingId = await SequenceCounter.generateId({
+      organisationId: po.organisationId,
+      sequenceKey: `INVENTORY_POSTING_${postingDate}`,
+      prefix: `POST-${postingDate}`,
+      minimumDigits: 5,
+      session,
+    });
     const stockMovementIds = [];
 
     // Atomic Inventory Posting for GOODS lines (Service lines NEVER post stock)
@@ -1131,7 +1151,13 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
         }
       }
 
-      const movementId = `MOV-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
+      const movementId = await SequenceCounter.generateId({
+        organisationId: po.organisationId,
+        sequenceKey: `STOCK_MOVEMENT_${postingDate}`,
+        prefix: `MOV-${postingDate}`,
+        minimumDigits: 6,
+        session,
+      });
       const movementDoc = {
         organisationId: po.organisationId,
         movementId,
@@ -1170,7 +1196,13 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
     );
 
     if (!existingApInvoice) {
-      const apInvoiceId = `AP-${Date.now().toString(36).toUpperCase()}`;
+      const apInvoiceId = await SequenceCounter.generateId({
+        organisationId: po.organisationId,
+        sequenceKey: `AP_INVOICE_${postingDate}`,
+        prefix: `AP-${postingDate}`,
+        minimumDigits: 5,
+        session,
+      });
       const apDoc = {
         organisationId: po.organisationId,
         invoiceId: apInvoiceId,
