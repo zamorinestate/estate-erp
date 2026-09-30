@@ -355,3 +355,104 @@ test('RET-006: punch controller acquires selfie linkage reservation before atten
     /'attendanceCleanup\.status': \{ \$ne: 'CLAIMED' \}/
   );
 });
+
+
+test('RET-007: stale reserved evidence is promoted only when Attendance already links it', async () => {
+  const originals = {
+    find: PrivateFile.find,
+    exists: Attendance.exists,
+    updateOne: PrivateFile.updateOne,
+    objectExists: attendanceEvidenceStorageService.objectExists,
+    deleteObject: attendanceEvidenceStorageService.deleteObject,
+  };
+
+  const staleReservations = [
+    {
+      _id: 'PF-7',
+      fileId: 'FILE-1007',
+      organisationId: 'ORG-ZAMORIN',
+      attendanceContext: {
+        challengeId: 'CH-7',
+        grantExpiresAt: new Date('2026-09-30T02:00:00Z'),
+      },
+      attendanceLink: {
+        status: 'RESERVED',
+        claimId: 'CLAIM-LINKED',
+        reservedAt: new Date('2026-09-30T02:30:00Z'),
+      },
+    },
+    {
+      _id: 'PF-8',
+      fileId: 'FILE-1008',
+      organisationId: 'ORG-ZAMORIN',
+      attendanceContext: {
+        challengeId: 'CH-8',
+        grantExpiresAt: new Date('2026-09-30T02:00:00Z'),
+      },
+      attendanceLink: {
+        status: 'RESERVED',
+        claimId: 'CLAIM-UNLINKED',
+        reservedAt: new Date('2026-09-30T02:30:00Z'),
+      },
+    },
+  ];
+
+  PrivateFile.find = (filter) => ({
+    sort() { return this; },
+    limit() { return this; },
+    lean: async () =>
+      filter?.['attendanceLink.status'] === 'RESERVED'
+        ? staleReservations
+        : [],
+  });
+
+  Attendance.exists = async (query) =>
+    JSON.stringify(query).includes('FILE-1007')
+      ? { _id: 'AT-LINKED-1007' }
+      : null;
+
+  const updates = [];
+  PrivateFile.updateOne = async (filter, update) => {
+    updates.push({ filter, update });
+    return { matchedCount: 1, modifiedCount: 1 };
+  };
+
+  let storageTouched = false;
+  attendanceEvidenceStorageService.objectExists = async () => {
+    storageTouched = true;
+    return true;
+  };
+  attendanceEvidenceStorageService.deleteObject = async () => {
+    storageTouched = true;
+    return true;
+  };
+
+  try {
+    const result = await reconcileExpiredOrphanAttendanceEvidence({
+      organisationId: 'ORG-ZAMORIN',
+      actorUserId: 'MU-PRIMARY-01',
+      now: new Date('2026-09-30T04:00:00Z'),
+      dryRun: false,
+    });
+
+    assert.equal(result.staleReservationsScanned, 2);
+    assert.equal(result.staleReservationsLinked, 1);
+    assert.equal(result.staleReservationsCommitted, 1);
+    assert.equal(result.staleReservationsQuarantined, 1);
+    assert.equal(result.staleReservationConflicts, 0);
+    assert.equal(result.scanned, 0);
+    assert.equal(result.deleted, 0);
+    assert.equal(storageTouched, false);
+
+    assert.equal(updates.length, 1, 'unlinked stale reservation must not be mutated');
+    assert.equal(updates[0].filter._id, 'PF-7');
+    assert.equal(updates[0].filter['attendanceLink.claimId'], 'CLAIM-LINKED');
+    assert.equal(updates[0].update.$set['attendanceLink.status'], 'COMMITTED');
+  } finally {
+    PrivateFile.find = originals.find;
+    Attendance.exists = originals.exists;
+    PrivateFile.updateOne = originals.updateOne;
+    attendanceEvidenceStorageService.objectExists = originals.objectExists;
+    attendanceEvidenceStorageService.deleteObject = originals.deleteObject;
+  }
+});
