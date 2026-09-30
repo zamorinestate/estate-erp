@@ -682,3 +682,17 @@ test('P0-WF-045: production declares an explicit orphan-evidence grace window', 
   assert.ok(attendanceEvidenceRetentionSource.includes('const DEFAULT_ORPHAN_GRACE_MINUTES = 60;'));
   assert.ok(privateFileModel.includes("name: 'attendance_orphan_reconciliation_scan'"));
 });
+
+
+test('P0-WF-046: Primary Master attendance UI previews before orphan deletion and never invokes committed-evidence purge', () => {
+  assert.ok(attendanceShiftsPage.includes('id="preview-orphan-evidence-btn"'));
+  assert.ok(attendanceShiftsPage.includes('id="execute-orphan-evidence-btn"'));
+  assert.ok(attendanceShiftsPage.includes('apiPost("/attendance/evidence/orphans/reconcile", { execute: false })'));
+  assert.ok(attendanceShiftsPage.includes('confirmation: "DELETE_EXPIRED_UNLINKED_ATTENDANCE_SELFIES"'));
+  assert.ok(attendanceShiftsPage.includes('cachedOrphanReconciliation?.dryRun === true && orphanEligible > 0'));
+  assert.equal(
+    attendanceShiftsPage.includes('apiPost("/attendance/evidence/purge"'),
+    false,
+    'Attendance UI must not invoke the fail-closed committed-evidence purge endpoint'
+  );
+});
