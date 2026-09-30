@@ -27,6 +27,28 @@ const loanAdvanceController = require('../src/controllers/loanAdvanceController'
 const shiftChangeController = require('../src/controllers/shiftChangeController');
 const { authorize } = require('../src/middleware/authorize');
 
+async function ensureRosterStaffFixture({ orgId, staffId, cafeId }) {
+  await User.updateOne(
+    { organisationId: orgId, userId: staffId },
+    {
+      $set: {
+        name: `Roster Staff ${staffId}`,
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        employmentStatus: 'ACTIVE',
+        primaryCafeId: cafeId,
+        assignedCafeIds: [cafeId],
+      },
+      $setOnInsert: {
+        email: `${String(staffId).toLowerCase()}@roster-test.zamorin.local`,
+        passwordHash: 'test_password_hash',
+        createdBy: 'SYSTEM',
+      },
+    },
+    { upsert: true }
+  );
+}
+
 function createMockRes() {
   return {
     statusCode: 200,
@@ -419,6 +441,8 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
     const staffId = 'ST-0001';
     const rosterId = 'ROSTER-20260907-001';
 
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-01' });
+
     await ShiftRoster.create({
       rosterId,
       employeeId: staffId,
@@ -475,6 +499,8 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
     const staffId = 'ST-0002';
     const rosterId = 'ROSTER-20260914-002';
 
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-02' });
+
     await ShiftRoster.create({
       rosterId,
       employeeId: staffId,
@@ -529,6 +555,8 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
     const managerId = 'MU-0001';
     const staffId = 'ST-0003';
     const rosterId = 'ROSTER-20260921-003';
+
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-03' });
 
     await ShiftRoster.create({
       rosterId,
