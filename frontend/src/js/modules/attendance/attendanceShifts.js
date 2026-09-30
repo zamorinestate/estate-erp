@@ -2990,8 +2990,6 @@ async function openScopedManualAttendanceModal(root) {
             <select id="modal-man-event" class="input" style="font-size:12.5px; width:100%;">
               <option value="CHECK_OUT">Record Check-Out</option>
               <option value="CHECK_IN">Record Check-In</option>
-              <option value="FULL_DAY">Full Day (Check-In &amp; Check-Out)</option>
-              <option value="ON_LEAVE">Mark Approved Leave</option>
             </select>
           </div>
 
@@ -3001,14 +2999,8 @@ async function openScopedManualAttendanceModal(root) {
           </div>
         </div>
 
-        <!-- Before vs Proposed State Preview -->
-        <div style="background:var(--surface-sunken); padding:12px; border-radius:6px; border:1px solid var(--line);">
-          <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:6px;">Current vs Proposed State Preview</div>
-          <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;">
-            <span>Current: <strong style="color:var(--color-warning);">Pending Punch</strong></span>
-            <span>➔</span>
-            <span>Proposed: <strong style="color:var(--color-success);">Audited Record (IST)</strong></span>
-          </div>
+        <div style="background:var(--surface-sunken); padding:12px; border-radius:6px; border:1px solid var(--line); font-size:12px; color:var(--muted);">
+          The server will validate the employee's current attendance state and café assignment before committing this manual punch. Leave and full-day corrections use their dedicated workflows.
         </div>
 
         <div class="form-group" style="margin:0;">
@@ -3023,6 +3015,7 @@ async function openScopedManualAttendanceModal(root) {
       const selectedCafe = document.querySelector("#modal-man-cafe")?.value || assignedCafe;
       const userId = document.querySelector("#modal-man-user")?.value;
       const eventType = document.querySelector("#modal-man-event")?.value;
+      const effectiveTime = document.querySelector("#modal-man-time")?.value;
       const reason = document.querySelector("#modal-man-reason")?.value;
 
       if (!userId) {
@@ -3036,10 +3029,17 @@ async function openScopedManualAttendanceModal(root) {
       }
 
       try {
+        const effectiveTimestamp = istDateTimeToIso(getCurrentIstDateKey(), effectiveTime);
+        if (!effectiveTimestamp) {
+          showToast("Enter a valid effective time in HH:MM format.", "error");
+          return false;
+        }
+
         await apiPost("/attendance/master-manual", {
           userId,
           cafeId: selectedCafe,
           eventType,
+          time: effectiveTimestamp,
           reason: reason.trim(),
         });
         showToast("Manual attendance successfully recorded with full audit trail.", "success");
