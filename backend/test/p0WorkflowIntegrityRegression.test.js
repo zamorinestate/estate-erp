@@ -368,3 +368,15 @@ test('P0-WF-027: multipart limit failures are translated to controlled client er
   assert.ok(errorHandlerSource.includes("statusCode = 413"));
   assert.ok(errorHandlerSource.includes("code = 'MULTIPART_UPLOAD_INVALID'"));
 });
+
+
+test('P0-WF-028: attendance selfie purge fails closed without retention cutoff and physical storage deletion', () => {
+  const purgeStart = attendanceController.indexOf('const purgeSelfieEvidence = asyncHandler');
+  const purgeEnd = attendanceController.indexOf('// 9. GET /api/v1/attendance/server-time', purgeStart);
+  const purgeBlock = attendanceController.slice(purgeStart, purgeEnd);
+
+  assert.ok(purgeBlock.includes("request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true"));
+  assert.ok(purgeBlock.includes("'EVIDENCE_PURGE_NOT_CONFIGURED'"));
+  assert.equal(purgeBlock.includes('Attendance.updateMany('), false);
+  assert.equal(purgeBlock.includes('selfieFileId: null'), false);
+});
