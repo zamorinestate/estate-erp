@@ -45,8 +45,12 @@ function statusPill(status, isHoldActive) {
       return `<span class="pill pill-mint" style="font-size:10px;">Recoverable</span>`;
     case 'EXPIRING_SOON':
       return `<span class="pill pill-coral" style="font-size:10px;">Expiring Soon</span>`;
+    case 'RETENTION_COMPLETE':
+      return `<span class="pill pill-amber" style="font-size:10px;">Retention Complete</span>`;
     case 'DISPOSITION_REVIEW':
       return `<span class="pill pill-amber" style="font-size:10px;">Review Queue</span>`;
+    case 'DISPOSITION_PROCESSING':
+      return `<span class="pill pill-amber" style="font-size:10px;">Disposition Processing</span>`;
     case 'DISPOSITION_APPROVED':
       return `<span class="pill pill-mint" style="font-size:10px;">Ready for Purge</span>`;
     case 'DISPOSED':
@@ -384,8 +388,14 @@ async function _renderTrashListTab(root, container) {
                   ${i.isHoldActive ? `
                     <button class="btn btn-ghost btn-sm" data-trash-action="release-hold" data-trash-id="${escHtml(i.trashId)}" data-hold-id="${escHtml(i.holds?.[0]?.holdId || '')}" type="button" style="padding:4px 8px; font-size:11px;">Release</button>
                   ` : ''}
+                  ${!i.isHoldActive && i.lifecycleStatus === 'RETENTION_COMPLETE' ? `
+                    <button class="btn btn-secondary btn-sm" data-trash-action="request-disposition" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px;font-size:11px;">Submit for Review</button>
+                  ` : ''}
+                  ${!i.isHoldActive && i.lifecycleStatus === 'DISPOSITION_REVIEW' ? `
+                    <button class="btn btn-secondary btn-sm" data-trash-action="approve-disposition" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px;font-size:11px;">Approve</button>
+                  ` : ''}
                   ${i.lifecycleStatus === 'DISPOSITION_APPROVED' ? `
-                    <button class="btn btn-ghost btn-sm" data-trash-action="purge" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px; font-size:11px; border-color:var(--color-accent-coral); color:var(--color-accent-coral);">Purge</button>
+                    <button class="btn btn-ghost btn-sm" data-trash-action="purge" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px; font-size:11px; border-color:var(--color-accent-coral); color:var(--color-accent-coral);">Execute Disposition</button>
                   ` : ''}
                 </div>
               </td>
@@ -456,6 +466,55 @@ function _wireRowActions(root) {
         _loadTabContent(root);
       } catch (err) {
         showToast(err?.message || 'Could not release hold.', 'coral');
+      }
+    });
+  });
+
+  // Submit retention-complete record for governed disposition review.
+  root.querySelectorAll('[data-trash-action="request-disposition"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const trashId = btn.dataset.trashId;
+      const justification = String(
+        window.prompt('Enter the disposition-review justification (minimum 10 characters):', '') || ''
+      ).trim();
+      if (justification.length < 10) {
+        showToast('A specific disposition justification of at least 10 characters is required.', 'coral');
+        return;
+      }
+      try {
+        const res = await apiPost(`/trash/${trashId}/disposition-request`, { justification });
+        showToast(res?.message || 'Disposition review requested.', 'mint');
+        _loadTabContent(root);
+      } catch (err) {
+        showToast(err?.message || 'Could not submit disposition review.', 'coral');
+      }
+    });
+  });
+
+  // Approve only an already-reviewed record. Policies requiring a distinct
+  // maker/checker will remain blocked until a distinct checker workflow exists.
+  root.querySelectorAll('[data-trash-action="approve-disposition"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const trashId = btn.dataset.trashId;
+      const reason = String(
+        window.prompt('Enter the disposition approval reason (minimum 10 characters):', '') || ''
+      ).trim();
+      if (reason.length < 10) {
+        showToast('A specific approval reason of at least 10 characters is required.', 'coral');
+        return;
+      }
+      if (!window.confirm('Approve this reviewed record for permanent disposition? Final execution will still re-check retention, holds, policy and transaction safety.')) {
+        return;
+      }
+      try {
+        const res = await apiPost(`/trash/${trashId}/approve-disposition`, {
+          reason,
+          confirmation: 'APPROVE_PERMANENT_DISPOSITION',
+        });
+        showToast(res?.message || 'Disposition approved.', 'mint');
+        _loadTabContent(root);
+      } catch (err) {
+        showToast(err?.message || 'Could not approve disposition.', 'coral');
       }
     });
   });
