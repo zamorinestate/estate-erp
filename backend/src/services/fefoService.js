@@ -13,7 +13,7 @@
 
 const { InventoryLot } = require('../models/InventoryLot');
 const { StockMovement } = require('../models/StockMovement');
-const { SequenceCounter } = require('../models/SequenceCounter');
+const crypto = require('node:crypto');
 const { ApiError } = require('../utils/ApiError');
 
 function getIstDateStr(date = new Date()) {
@@ -175,14 +175,7 @@ class FefoService {
         );
       }
 
-      const movementDate = getIstDateStr();
-      const movementId = await SequenceCounter.generateId({
-        organisationId,
-        sequenceKey: `STOCK_MOVEMENT:${movementDate.replace(/-/g, '')}`,
-        prefix: `SM-${movementDate.replace(/-/g, '')}`,
-        minimumDigits: 6,
-        session,
-      });
+      const movementId = `SM-${crypto.randomUUID().toUpperCase()}`;
 
       await StockMovement.create(
         [
