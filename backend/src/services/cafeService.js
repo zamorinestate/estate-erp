@@ -2524,8 +2524,8 @@ class CafeService {
   }
 
   /**
-   * Gateway Credential Resolver: exchanges Permanent PIN, QR Token, or Link Token
-   * for a short-lived server-side CafeGatewayContext.
+   * Gateway Credential Resolver: exchanges the canonical Café QR or official
+   * Café login-link token for a short-lived server-side CafeGatewayContext.
    */
   async resolveGatewayCredential({
     method,
@@ -2534,27 +2534,33 @@ class CafeService {
     userAgent = null,
     correlationId = null,
   }) {
-    if (!method || !['PIN', 'QR', 'LINK'].includes(method.toUpperCase())) {
-      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be PIN, QR, or LINK.');
+    if (!method || typeof method !== 'string') {
+      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be QR or LINK.');
+    }
+
+    const cleanMethod = method.trim().toUpperCase();
+
+    if (cleanMethod === 'PIN') {
+      throw new ApiError(
+        400,
+        'PIN_AUTH_DISALLOWED',
+        'Permanent PIN authentication is disallowed. Café context must be securely resolved via unique Café QR or official login URL.'
+      );
+    }
+
+    if (!['QR', 'LINK'].includes(cleanMethod)) {
+      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be QR or LINK.');
     }
 
     if (!credential || typeof credential !== 'string' || !credential.trim()) {
       throw new ApiError(400, 'CREDENTIAL_REQUIRED', 'Access credential is required.');
     }
 
-    const cleanMethod = method.toUpperCase();
     const cleanCred = credential.trim();
 
     let access = null;
 
-    if (cleanMethod === 'PIN') {
-      // Disallow permanent PIN authentication bypass per architectural specification
-      throw new ApiError(
-        400,
-        'PIN_AUTH_DISALLOWED',
-        'Permanent PIN authentication is disallowed. Café context must be securely resolved via unique Café QR or official login URL.'
-      );
-    } else if (cleanMethod === 'QR') {
+    if (cleanMethod === 'QR') {
       const hash = hashOpaqueToken(cleanCred);
       access = await CafeAccess.findOne({
         qrCredentialHash: hash,
@@ -2566,20 +2572,8 @@ class CafeService {
         linkCredentialHash: hash,
         linkEnabled: true,
       });
-    } else if (cleanMethod === 'SETUP_CODE') {
-      // Internal initial store commissioning: one-time short-lived setup code
-      const hash = hashOpaqueToken(cleanCred);
-      access = await CafeAccess.findOne({
-        oneTimeSetupCodeHash: hash,
-        setupCodeExpiresAt: { $gt: new Date() },
-        setupCodeUsed: false,
-      });
-      if (access) {
-        // Invalidate immediately upon successful use
-        await CafeAccess.updateOne({ _id: access._id }, { setupCodeUsed: true });
-      }
     } else {
-      throw new ApiError(400, 'INVALID_ACCESS_METHOD', 'Supported access methods are QR, LINK, or SETUP_CODE.');
+      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be QR or LINK.');
     }
 
     if (!access) {
