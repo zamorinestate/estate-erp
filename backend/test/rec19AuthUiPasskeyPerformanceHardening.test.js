@@ -753,9 +753,13 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
     assert.ok(!loginJs.includes('JSON.stringify({ email, password'), 'Zero password storage in remember device');
   });
 
-  await t.test('71. Login rate limiting: express-rate-limit protects login endpoint from brute force', () => {
+  await t.test('71. Login rate limiting: failed attempts are throttled without locking out successful sign-ins', () => {
     const authRoutes = fs.readFileSync(path.resolve(__dirname, '../src/routes/authRoutes.js'), 'utf-8');
     assert.match(authRoutes, /rateLimit|loginLimiter|authLimiter/, 'Rate limiter applied on auth routes');
+    assert.match(authRoutes, /skipSuccessfulRequests:\s*true/, 'Successful password sign-ins must not consume local brute-force quota');
+    assert.match(authRoutes, /requestWasSuccessful:\s*isSuccessfulAuthenticationAttempt/, 'MFA challenge success must use explicit credential-verification semantics');
+    assert.match(authRoutes, /AUTH_LOGIN_FAILURES_V2/, 'Distributed limiter namespace must rotate away from stale success-counting buckets');
+    assert.match(authRoutes, /releaseSuccessfulRequests:\s*true/, 'Distributed login reservations must be released after successful authentication');
   });
 
   await t.test('72. Session creation: valid access token generated with role and org claims', async () => {
