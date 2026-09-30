@@ -16,6 +16,17 @@ const RISK_CLASSIFICATIONS = [
   'CRITICAL',
 ];
 
+const AUDIT_ACTOR_ROLES = [
+  'MASTER',
+  'OWNER',
+  'CAFE_ADMIN',
+  'CAFE_OPS',
+  'STAFF',
+  'VENDOR',
+  'DEVICE',
+  'SYSTEM',
+];
+
 const auditEventSchema = new mongoose.Schema(
   {
     auditEventId: {
@@ -59,7 +70,7 @@ const auditEventSchema = new mongoose.Schema(
       type: String,
       required: true,
       immutable: true,
-      enum: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF', 'SYSTEM'],
+      enum: AUDIT_ACTOR_ROLES,
       index: true,
     },
 
@@ -375,4 +386,5 @@ module.exports = {
   AuditEvent,
   AUDIT_RESULTS,
   RISK_CLASSIFICATIONS,
+  AUDIT_ACTOR_ROLES,
 };
