@@ -197,8 +197,11 @@ test('DOC-RET-001: legal-hold release and retention shortening require immutable
 
 test('DOC-RET-002: protective retention changes stay active if post-write audit reporting fails', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/documentAttachmentService.js'), 'utf8');
-  assert.ok(source.includes('Protective changes (placing a hold or extending retention) stay in'));
-  assert.ok(source.includes('Protective retention change is active, but its post-write audit event could not be confirmed.'));
-  assert.equal(source.includes("await auditService.recordAuditEvent({\n      organisationId,\n      cafeId: doc.cafeId || 'GLOBAL',\n      actorUserId: auth.userId,\n      actorRole: auth.role,\n      module: 'DOCUMENT_ATTACHMENT',\n      action: 'RETENTION_POLICY_UPDATED'") && source.includes('.catch(() => {})'), false);
+  const start = source.indexOf('static async updateRetentionPolicy');
+  const end = source.indexOf('Rescans a quarantined', start);
+  const block = source.slice(start, end);
+  assert.ok(block.includes('Protective changes (placing a hold or extending retention) stay in'));
+  assert.ok(block.includes('Protective retention change is active, but its post-write audit event could not be confirmed.'));
+  assert.equal(block.includes('.catch(() => {})'), false);
 });
 
