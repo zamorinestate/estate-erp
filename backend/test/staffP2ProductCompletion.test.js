@@ -445,6 +445,7 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
       auth: {
         userId: managerId,
         role: 'MASTER',
+        isPrimaryMaster: true,
         organisationId: orgId,
       },
       headers: {},
@@ -500,6 +501,7 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
       auth: {
         userId: managerId,
         role: 'MASTER',
+        isPrimaryMaster: true,
         organisationId: orgId,
       },
       headers: {},
@@ -562,6 +564,7 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
       auth: {
         userId: managerId,
         role: 'MASTER',
+        isPrimaryMaster: true,
         organisationId: orgId,
       },
       headers: {},
