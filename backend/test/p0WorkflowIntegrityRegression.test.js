@@ -310,3 +310,22 @@ test('P0-WF-024: both management and Café Operations QR displays use the canoni
   assert.ok(cafeOpsDeviceRoutes.includes('attendanceQrService.getActiveOrNewChallenge'));
   assert.ok(cafeOpsDeviceRoutes.includes('attendanceUrl: challenge.attendanceUrl'));
 });
+
+
+test('P0-WF-025: attendance media streaming cannot expose unlinked private files or retired Master authority', () => {
+  const mediaStart = attendanceController.indexOf('const getEvidenceMedia = asyncHandler');
+  const mediaEnd = attendanceController.indexOf('/**\n * GET /api/v1/attendance/evidence/record', mediaStart);
+  const mediaBlock = attendanceController.slice(mediaStart, mediaEnd);
+
+  assert.ok(mediaBlock.includes('fileId: mediaId.trim().toUpperCase(),'));
+  assert.ok(mediaBlock.includes('organisationId,'));
+  assert.ok(mediaBlock.includes("if (!attendance)"));
+  assert.ok(mediaBlock.includes("'ATTENDANCE_EVIDENCE_NOT_FOUND'"));
+  assert.ok(mediaBlock.includes("role === 'MASTER' && request.auth.isPrimaryMaster !== true"));
+  assert.ok(mediaBlock.includes("'PRIMARY_MASTER_AUTHORITY_REQUIRED'"));
+
+  const recordStart = attendanceController.indexOf('const getAttendanceEvidenceRecord = asyncHandler');
+  const recordBlock = attendanceController.slice(recordStart);
+  assert.ok(recordBlock.includes("role === 'MASTER' && request.auth.isPrimaryMaster !== true"));
+  assert.ok(recordBlock.includes("'PRIMARY_MASTER_AUTHORITY_REQUIRED'"));
+});
