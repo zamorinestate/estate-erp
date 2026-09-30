@@ -790,3 +790,15 @@ test('EVI-020: evidence viewer explains quarantine and does not request quaranti
   assert.ok(fetchBranch > quarantineBranch);
 });
 
+test('EVI-021: immutable audit schema accepts every canonical evidence actor class', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/models/AuditEvent.js'),
+    'utf8'
+  );
+
+  for (const role of ['MASTER', 'OWNER', 'CAFE_ADMIN', 'CAFE_OPS', 'STAFF', 'VENDOR', 'DEVICE', 'SYSTEM']) {
+    assert.ok(source.includes(`'${role}'`), `AuditEvent actor roles must include ${role}`);
+  }
+  assert.match(source, /enum:\s*AUDIT_ACTOR_ROLES/);
+});
+
