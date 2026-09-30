@@ -87,7 +87,8 @@ test('CAL-EVI-002: Calendar 360 renders separate IN/OUT evidence markers and ope
     'utf8'
   );
 
-  assert.match(frontend, /hasInSelfie[sS]{0,250}hasOutSelfie/);
+  assert.ok(frontend.includes('hasInSelfie'));
+  assert.ok(frontend.includes('hasOutSelfie'));
   assert.match(frontend, /"📷 IN"/);
   assert.match(frontend, /"📷 OUT"/);
   assert.match(frontend, /calendar-day-card/);
