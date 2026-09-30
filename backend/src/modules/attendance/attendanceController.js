@@ -2800,7 +2800,7 @@ const uploadPunchSelfie = asyncHandler(async (request, response) => {
   const fileId = await SequenceCounter.generateId({
     organisationId,
     sequenceKey: 'PRIVATE_FILE',
-    prefix: 'FILE-',
+    prefix: 'FILE',
     minimumDigits: 4,
   });
 
