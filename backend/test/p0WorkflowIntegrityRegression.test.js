@@ -308,6 +308,10 @@ test('P0-WF-024: both management and Café Operations QR displays use the canoni
   assert.ok(cafeOpsApi.includes("attendanceQr: () => apiRequest('/devices/attendance/qr', { method: 'GET' })"));
   assert.ok(cafeOpsAttendanceKiosk.includes('global.CafeOpsApi.attendanceQr()'));
   assert.ok(cafeOpsAttendanceKiosk.includes('body.attendanceUrl'));
+  assert.equal(cafeOpsAttendanceKiosk.includes('const QR_ROTATE_SECONDS = 30'), false);
+  assert.ok(cafeOpsAttendanceKiosk.includes('body.remainingSeconds'));
+  assert.ok(cafeOpsAttendanceKiosk.includes("Date.parse(body.expiresAt || '')"));
+  assert.ok(cafeOpsAttendanceKiosk.includes('scheduleQrRefresh(root, qrExpiresAtMs - Date.now() + 250)'));
   assert.ok(cafeOpsDeviceRoutes.includes("router.get('/attendance/qr', deviceContext"));
   assert.ok(cafeOpsDeviceRoutes.includes('attendanceQrService.getActiveOrNewChallenge'));
   assert.ok(cafeOpsDeviceRoutes.includes('attendanceUrl: challenge.attendanceUrl'));
