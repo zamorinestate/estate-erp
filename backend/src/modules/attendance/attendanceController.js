@@ -230,8 +230,6 @@ const getAttendanceOverview = asyncHandler(async (request, response) => {
     }
   }
 
-  const scheduledToday = attendanceRecords.length || 12;
-
   const cafeWorkforce = await Promise.all(allCafes.map(async (cafe) => {
     const cafeRecords = attendanceRecords.filter((r) => r.cafeId === cafe.cafeId);
     const checkedIn = cafeRecords.filter((r) => r.status === 'CHECKED_IN' || r.status === 'ON_BREAK').length;
@@ -259,6 +257,11 @@ const getAttendanceOverview = asyncHandler(async (request, response) => {
       adequacyStatus: scheduledCount > 0 ? (checkedIn >= scheduledCount ? 'ADEQUATE' : 'UNDERSTAFFED') : 'NO_ROSTER',
     };
   }));
+
+  const scheduledToday = cafeWorkforce.reduce(
+    (sum, cafe) => sum + (Number.isFinite(Number(cafe.scheduled)) ? Number(cafe.scheduled) : 0),
+    0
+  );
 
   return response.status(200).json({
     success: true,
