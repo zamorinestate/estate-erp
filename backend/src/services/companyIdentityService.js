@@ -116,12 +116,63 @@ function formatOutletAddress(outlet = {}) {
     .filter(Boolean)
     .join(', ');
 }
+const LEGACY_SYNTHETIC_IDENTITY_MARKERS = Object.freeze({
+  createdBy: 'System Provisioner',
+  changeReason: 'Initial Canonical Company Identity Provisioning',
+  legalName: 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.',
+  pan: 'AABCT1332L',
+  cin: 'U55101KA2024PTC189201',
+  udyamNumber: 'UDYAM-KR-03-0019284',
+  gstins: new Set(['29AABCT1332L1ZV', '32AABCZ1234M1Z8']),
+  fssai: '10024043000192',
+  bankingIfsc: 'HDFC0001742',
+  bankingMaskedAccount: 'XXXX-XXXX-8921',
+});
+
+function detectLegacySyntheticIdentity(identity = {}) {
+  const createdBy = String(identity.createdBy || '').trim();
+  const changeReason = String(identity.changeReason || '').trim();
+  if (
+    createdBy !== LEGACY_SYNTHETIC_IDENTITY_MARKERS.createdBy ||
+    changeReason !== LEGACY_SYNTHETIC_IDENTITY_MARKERS.changeReason
+  ) {
+    return { isLegacySynthetic: false, markers: [] };
+  }
+
+  const markers = [];
+  if (String(identity.legalName || '').trim() === LEGACY_SYNTHETIC_IDENTITY_MARKERS.legalName) markers.push('legalName');
+  if (String(identity.pan || '').trim().toUpperCase() === LEGACY_SYNTHETIC_IDENTITY_MARKERS.pan) markers.push('pan');
+  if (String(identity.cin || '').trim().toUpperCase() === LEGACY_SYNTHETIC_IDENTITY_MARKERS.cin) markers.push('cin');
+  if (String(identity.udyamNumber || '').trim().toUpperCase() === LEGACY_SYNTHETIC_IDENTITY_MARKERS.udyamNumber) markers.push('udyamNumber');
+
+  const gstins = Array.isArray(identity.gstin)
+    ? identity.gstin.map((entry) => String(entry?.number || '').trim().toUpperCase())
+    : [];
+  if (gstins.some((value) => LEGACY_SYNTHETIC_IDENTITY_MARKERS.gstins.has(value))) markers.push('gstin');
+
+  const licences = Array.isArray(identity.licences)
+    ? identity.licences.map((entry) => String(entry?.number || '').trim())
+    : [];
+  if (licences.includes(LEGACY_SYNTHETIC_IDENTITY_MARKERS.fssai)) markers.push('fssai');
+
+  if (String(identity.banking?.ifsc || '').trim().toUpperCase() === LEGACY_SYNTHETIC_IDENTITY_MARKERS.bankingIfsc) {
+    markers.push('banking.ifsc');
+  }
+  if (String(identity.banking?.accountNumberMasked || '').trim().toUpperCase() === LEGACY_SYNTHETIC_IDENTITY_MARKERS.bankingMaskedAccount) {
+    markers.push('banking.accountNumberMasked');
+  }
+
+  return {
+    isLegacySynthetic: markers.length >= 2,
+    markers,
+  };
+}
 class CompanyIdentityService {
   /**
    * Retrieves the current authoritative Company Identity.
    * Auto-provisions baseline version 1 if none exists.
    */
-  static async getCurrentIdentity(organisationId) {
+  static async getCurrentIdentity(organisationId, { allowLegacyUnverified = false } = {}) {
     const normalizedOrganisationId = String(organisationId || '').trim().toUpperCase();
     if (!normalizedOrganisationId) {
       throw new ApiError(400, 'ORGANISATION_REQUIRED', 'organisationId is required to resolve company identity.');
@@ -153,7 +204,30 @@ class CompanyIdentityService {
         );
       }
 
-      return identity;
+      const legacyDetection = detectLegacySyntheticIdentity(identity);
+      if (legacyDetection.isLegacySynthetic && !allowLegacyUnverified) {
+        throw new ApiError(
+          409,
+          'COMPANY_IDENTITY_REQUIRES_VERIFICATION',
+          'The current Organisation Identity was created by the retired sample-data provisioner and must be reviewed and saved as a verified version before use in exports.',
+          { markers: legacyDetection.markers }
+        );
+      }
+
+      if (legacyDetection.isLegacySynthetic) {
+        return {
+          ...identity,
+          identityVerificationStatus: 'LEGACY_SYNTHETIC_UNVERIFIED',
+          verificationRequired: true,
+          legacySyntheticMarkers: legacyDetection.markers,
+        };
+      }
+
+      return {
+        ...identity,
+        identityVerificationStatus: 'VERIFIED_CONFIGURED',
+        verificationRequired: false,
+      };
     } catch (error) {
       if (error instanceof ApiError) throw error;
       const wrapped = new ApiError(
@@ -449,24 +523,32 @@ class CompanyIdentityService {
         ? await currentQuery.lean()
         : await currentQuery;
 
+      const legacyCurrent = detectLegacySyntheticIdentity(current || {});
+      const safeCurrent = legacyCurrent.isLegacySynthetic
+        ? {
+            organisationId: normalizedOrganisationId,
+            logo: current?.logo || undefined,
+          }
+        : (current || {});
+
       const merged = {
-        ...(current || {}),
+        ...safeCurrent,
         ...cleanUpdates,
         organisationId: normalizedOrganisationId,
         registeredAddress: {
-          ...(current?.registeredAddress || {}),
+          ...(safeCurrent?.registeredAddress || {}),
           ...(cleanUpdates.registeredAddress || {}),
         },
         contact: {
-          ...(current?.contact || {}),
+          ...(safeCurrent?.contact || {}),
           ...(cleanUpdates.contact || {}),
         },
         banking: {
-          ...(current?.banking || {}),
+          ...(safeCurrent?.banking || {}),
           ...(cleanUpdates.banking || {}),
         },
         authorisedSignatory: {
-          ...(current?.authorisedSignatory || {}),
+          ...(safeCurrent?.authorisedSignatory || {}),
           ...(cleanUpdates.authorisedSignatory || {}),
         },
       };
@@ -641,4 +723,5 @@ class CompanyIdentityService {
 module.exports = {
   CompanyIdentityService,
   loadOfficialAppLogos,
+  detectLegacySyntheticIdentity,
 };
