@@ -57,6 +57,65 @@ async function isEvidenceLinked(organisationId, fileId) {
   return Boolean(result);
 }
 
+function buildReservationAttendanceReferenceQuery({
+  organisationId,
+  fileId,
+  attendanceId,
+  punchType,
+}) {
+  const normalizedPunchType = String(punchType || '').trim().toUpperCase();
+  const normalizedAttendanceId = String(attendanceId || '').trim().toUpperCase();
+
+  if (!normalizedAttendanceId || !['CHECK_IN', 'CHECK_OUT'].includes(normalizedPunchType)) {
+    return null;
+  }
+
+  const evidencePaths = normalizedPunchType === 'CHECK_IN'
+    ? [
+        { 'attendanceEvidence.checkIn.selfieMediaId': fileId },
+        { 'attendanceEvidence.checkIn.photoFileId': fileId },
+        { selfieFileId: fileId },
+        {
+          rawTimeEvents: {
+            $elemMatch: {
+              eventType: 'CHECK_IN',
+              selfieFileId: fileId,
+            },
+          },
+        },
+      ]
+    : [
+        { 'attendanceEvidence.checkOut.selfieMediaId': fileId },
+        { 'attendanceEvidence.checkOut.photoFileId': fileId },
+        {
+          rawTimeEvents: {
+            $elemMatch: {
+              eventType: 'CHECK_OUT',
+              selfieFileId: fileId,
+            },
+          },
+        },
+      ];
+
+  return {
+    organisationId,
+    attendanceId: normalizedAttendanceId,
+    $or: evidencePaths,
+  };
+}
+
+async function isReservationBackedByAttendance(organisationId, reservation) {
+  const query = buildReservationAttendanceReferenceQuery({
+    organisationId,
+    fileId: String(reservation?.fileId || '').trim().toUpperCase(),
+    attendanceId: reservation?.attendanceLink?.attendanceId,
+    punchType: reservation?.attendanceLink?.punchType,
+  });
+
+  if (!query) return false;
+  return Boolean(await Attendance.exists(query));
+}
+
 async function queryCandidates(filter, batchSize) {
   const query = PrivateFile.find(filter)
     .sort({ 'attendanceContext.grantExpiresAt': 1, createdAt: 1 })
@@ -104,11 +163,14 @@ async function reconcileStaleAttendanceEvidenceReservations({
       continue;
     }
 
-    const linked = await isEvidenceLinked(organisationId, fileId);
+    const linked = await isReservationBackedByAttendance(
+      organisationId,
+      reservation
+    );
     if (!linked) {
-      // Fail closed: a delayed request that already owns this reservation could
-      // still resume. Never release or delete it automatically merely because
-      // no Attendance reference is visible at this instant.
+      // Fail closed: only the exact reserved attendance ID + transition may
+      // prove this reservation committed. Any missing, mismatched, or corrupted
+      // linkage remains quarantined and undeletable for manual investigation.
       result.quarantinedUnlinked += 1;
       continue;
     }
@@ -367,6 +429,7 @@ module.exports = {
   CLAIM_STALE_MINUTES,
   resolveOrphanGraceMinutes,
   buildAttendanceEvidenceReferenceQuery,
+  buildReservationAttendanceReferenceQuery,
   reconcileStaleAttendanceEvidenceReservations,
   reconcileExpiredOrphanAttendanceEvidence,
 };
