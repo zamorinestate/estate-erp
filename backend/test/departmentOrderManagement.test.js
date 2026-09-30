@@ -394,6 +394,7 @@ test('Institutional & Department Orders — Screen 007 Integration Test Suite', 
       path: '/api/v1/department-orders/quotes',
       headers: { Authorization: 'Bearer token_primary_master' },
       body: {
+        cafeId: 'ZC-0001',
         institutionName: 'Farook College',
         departmentName: 'Commerce',
         contactName: 'Dr. Basheer',
