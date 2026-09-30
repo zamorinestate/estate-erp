@@ -90,6 +90,67 @@ function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
+function formatAuthoritativeCafeAddress(address = {}, gstDetails = {}) {
+  const principalPlace = String(gstDetails?.principalPlace || '').trim();
+  if (principalPlace) return principalPlace;
+
+  const parts = [
+    address?.building,
+    address?.unit,
+    address?.floor,
+    address?.street,
+    address?.area,
+    address?.city,
+    address?.district,
+    address?.state,
+    address?.pinCode,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  return parts.join(', ');
+}
+
+function assertReceiptCafeIdentity(cafeInfo = {}, billData = {}) {
+  const brandName = String(cafeInfo.brandName || '').trim();
+  const legalName = String(cafeInfo.legalName || '').trim();
+  const address = String(cafeInfo.address || '').trim();
+  const gstin = String(cafeInfo.gstin || '').trim().toUpperCase();
+  const fssai = String(cafeInfo.fssai || '').trim();
+  const gstRegistered = cafeInfo.gstRegistered === true;
+  const fssaiApplicable = cafeInfo.fssaiApplicable !== false;
+  const hasTax =
+    Number(billData.taxPaisa || 0) !== 0 ||
+    Number(billData.cgstPaisa || 0) !== 0 ||
+    Number(billData.sgstPaisa || 0) !== 0 ||
+    Number(billData.igstPaisa || 0) !== 0;
+
+  const missing = [];
+  if (!brandName) missing.push('brandName');
+  if (!legalName) missing.push('legalName');
+  if (!address) missing.push('address');
+  if ((gstRegistered || hasTax) && !/^[0-9A-Z]{15}$/.test(gstin)) missing.push('gstin');
+  if (fssaiApplicable && !/^\d{14}$/.test(fssai)) missing.push('fssai');
+
+  if (missing.length > 0) {
+    throw new ApiError(
+      409,
+      'POS_RECEIPT_LEGAL_IDENTITY_INCOMPLETE',
+      `Receipt generation is blocked because authoritative café identity is incomplete: ${missing.join(', ')}.`,
+      { missingFields: missing }
+    );
+  }
+
+  return {
+    brandName,
+    legalName,
+    address,
+    gstin: gstin || '',
+    fssai: fssai || '',
+    phone: String(cafeInfo.phone || '').trim(),
+  };
+}
+
 function assertCafeAccess(authContext = {}, cafeId) {
   const normCafeId = normalizeId(cafeId);
   if (!normCafeId) return;
@@ -1597,39 +1658,69 @@ class PosOrderService {
    * Helper to compile ESC/POS binary buffer, drawer kick, and HTML preview.
    */
   static async generatePrintArtifacts(billData = {}, options = {}) {
-    let cafeInfo = options.cafeInfo;
-    if (!cafeInfo && billData.cafeId) {
-      try {
-        const foundCafe = await Cafe.findOne({
-          organisationId: billData.organisationId,
-          cafeId: billData.cafeId,
-        });
-        if (foundCafe) {
-          const cafeObj = typeof foundCafe.toObject === 'function' ? foundCafe.toObject() : foundCafe;
-          cafeInfo = {
-            brandName: cafeObj.name || 'ZAMORIN CAFE',
-            legalName: cafeObj.legalName || 'Zamorin Hospitality Private Limited',
-            gstin: cafeObj.gstin || '29AABCT1332L1ZV',
-            fssai: cafeObj.fssaiLicenseNumber || cafeObj.fssai || '11223344556677',
-            address: cafeObj.address?.line1 ? `${cafeObj.address.line1}, ${cafeObj.address.city || ''} - ${cafeObj.address.pincode || ''}` : 'Koramangala, Bengaluru',
-            phone: cafeObj.contactPhone || '+91 80 2555 1234',
-          };
-        }
-      } catch {
-        // Fallback default info
-      }
-    }
+    let cafeInfo = options.cafeInfo || null;
 
-    if (!cafeInfo) {
+    if (!cafeInfo && billData.cafeId) {
+      const cafeSourceAvailable = Boolean(
+        Cafe.db?.readyState === 1 ||
+        Cafe.findOne?.mock ||
+        typeof Cafe.findOne?.restore === 'function'
+      );
+
+      if (!cafeSourceAvailable) {
+        throw new ApiError(
+          503,
+          'POS_RECEIPT_CAFE_IDENTITY_UNAVAILABLE',
+          'Receipt generation requires the authoritative café master, which is unavailable in the current runtime.'
+        );
+      }
+
+      const foundCafeQuery = Cafe.findOne({
+        organisationId: billData.organisationId,
+        cafeId: billData.cafeId,
+      });
+      const foundCafe = foundCafeQuery && typeof foundCafeQuery.lean === 'function'
+        ? await foundCafeQuery.lean()
+        : await foundCafeQuery;
+
+      if (!foundCafe) {
+        throw new ApiError(
+          404,
+          'POS_RECEIPT_CAFE_NOT_FOUND',
+          'Receipt generation is blocked because the café master record was not found.'
+        );
+      }
+
+      const gstDetails = foundCafe.registrations?.gstDetails || {};
+      const fssai = foundCafe.registrations?.fssai || {};
       cafeInfo = {
-        brandName: 'ZAMORIN CAFE',
-        legalName: 'Zamorin Hospitality Private Limited',
-        gstin: '29AABCT1332L1ZV',
-        fssai: '11223344556677',
-        address: 'Koramangala, Bengaluru - 560095',
-        phone: '+91 80 2555 1234',
+        brandName:
+          gstDetails.tradeName ||
+          foundCafe.displayName ||
+          foundCafe.name ||
+          '',
+        legalName:
+          gstDetails.legalName ||
+          foundCafe.legalName ||
+          '',
+        gstin:
+          gstDetails.gstin ||
+          foundCafe.registrations?.gstin ||
+          '',
+        gstRegistered:
+          gstDetails.isRegistered === true ||
+          Boolean(gstDetails.gstin || foundCafe.registrations?.gstin),
+        fssai: fssai.number || '',
+        fssaiApplicable: fssai.isApplicable !== false,
+        address: formatAuthoritativeCafeAddress(foundCafe.address, gstDetails),
+        phone:
+          foundCafe.contacts?.primaryPhone ||
+          foundCafe.contactProfile?.primaryContact?.mobile ||
+          '',
       };
     }
+
+    cafeInfo = assertReceiptCafeIdentity(cafeInfo || {}, billData);
 
     const items = (billData.lineItems || []).map((li) => ({
       name: li.itemNameSnapshot || li.name || 'Item',
@@ -1660,7 +1751,7 @@ class PosOrderService {
       reprintCount: options.reprintCount || (billData.reprints ? billData.reprints.length : 0),
       isVoid: billData.status === 'VOIDED',
       triggerDrawerKick: options.allowDrawerKick === true && hasCashTender(billData),
-      upiQrString: billData.upiPaymentIntent?.upiString || `upi://pay?pa=zamorin@icici&pn=Zamorin%20Cafe&am=${((billData.totalPaisa || 0) / 100).toFixed(2)}&tr=${billData.billId}`,
+      upiQrString: billData.upiPaymentIntent?.upiString || '',
     };
 
     const terminalConfig = options.terminalConfig || {
