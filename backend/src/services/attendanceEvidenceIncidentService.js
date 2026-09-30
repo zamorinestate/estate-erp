@@ -147,52 +147,58 @@ async function quarantineAttendanceEvidenceFailures({
 
       if (!slot || !exactFileMatches) {
         summary.notQuarantinable += 1;
-      } else if (
+        continue;
+      }
+
+      const wasAlreadyQuarantined =
         String(slot.verificationStatus || '').toUpperCase() === 'FLAGGED' &&
-        String(slot.integrityState || '').toUpperCase() === 'QUARANTINED'
-      ) {
+        String(slot.integrityState || '').toUpperCase() === 'QUARANTINED';
+      const slotPath = punchType === 'CHECK_IN'
+        ? 'attendanceEvidence.checkIn'
+        : 'attendanceEvidence.checkOut';
+
+      // Refresh the quarantine on every newly observed integrity failure.
+      // integrityLastCheckedAt is also the compare-and-swap token used by the
+      // release path, so a concurrent failure prevents a stale release.
+      const update = await Attendance.updateOne(
+        {
+          _id: attendance._id,
+          organisationId,
+          attendanceId,
+        },
+        {
+          $set: {
+            [`${slotPath}.verificationStatus`]: 'FLAGGED',
+            [`${slotPath}.integrityState`]: 'QUARANTINED',
+            [`${slotPath}.integrityLastCheckedAt`]: now,
+            [`${slotPath}.integrityFailedChecks`]: failedChecks,
+          },
+        }
+      );
+
+      const matched = Boolean(
+        update &&
+        (
+          update.modifiedCount === 1 ||
+          update.matchedCount === 1 ||
+          update.nModified === 1 ||
+          update.n === 1
+        )
+      );
+
+      if (!matched) {
+        summary.processingFailures.push({
+          attendanceId,
+          punchType,
+          fileId: fileId || null,
+          code: 'ATTENDANCE_QUARANTINE_UPDATE_CONFLICT',
+        });
+        continue;
+      }
+
+      if (wasAlreadyQuarantined) {
         summary.alreadyQuarantined += 1;
       } else {
-        const slotPath = punchType === 'CHECK_IN'
-          ? 'attendanceEvidence.checkIn'
-          : 'attendanceEvidence.checkOut';
-
-        const update = await Attendance.updateOne(
-          {
-            _id: attendance._id,
-            organisationId,
-            attendanceId,
-          },
-          {
-            $set: {
-              [`${slotPath}.verificationStatus`]: 'FLAGGED',
-              [`${slotPath}.integrityState`]: 'QUARANTINED',
-              [`${slotPath}.integrityLastCheckedAt`]: now,
-              [`${slotPath}.integrityFailedChecks`]: failedChecks,
-            },
-          }
-        );
-
-        const matched = Boolean(
-          update &&
-          (
-            update.modifiedCount === 1 ||
-            update.matchedCount === 1 ||
-            update.nModified === 1 ||
-            update.n === 1
-          )
-        );
-
-        if (!matched) {
-          summary.processingFailures.push({
-            attendanceId,
-            punchType,
-            fileId: fileId || null,
-            code: 'ATTENDANCE_QUARANTINE_UPDATE_CONFLICT',
-          });
-          continue;
-        }
-
         summary.quarantined += 1;
       }
 
@@ -439,6 +445,7 @@ async function releaseQuarantinedAttendanceEvidence({
       attendanceId: normalizedAttendanceId,
       [`${slotPath}.integrityState`]: 'QUARANTINED',
       [`${slotPath}.verificationStatus`]: 'FLAGGED',
+      [`${slotPath}.integrityLastCheckedAt`]: slot.integrityLastCheckedAt || null,
     },
     {
       $set: {
