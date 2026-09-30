@@ -83,6 +83,7 @@ const { attendanceEvidenceStorageService } = require('../../services/attendanceE
 const {
   reconcileExpiredOrphanAttendanceEvidence,
   setCommittedAttendanceEvidenceHold,
+  getAttendanceEvidenceRetentionReadiness,
 } = require('../../services/attendanceEvidenceRetentionService');
 const {
   auditAttendanceEvidenceIntegrity,
@@ -1370,6 +1371,45 @@ const purgeSelfieEvidence = asyncHandler(async (request, response) => {
     'EVIDENCE_PURGE_NOT_CONFIGURED',
     'Committed attendance selfie purge remains disabled until a formal retention policy is approved. Use orphan reconciliation only for expired, unlinked uploads.'
   );
+});
+
+const getAttendanceEvidenceRetentionReadinessStatus = asyncHandler(async (request, response) => {
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may view attendance evidence retention readiness.'
+    );
+  }
+
+  const result = await getAttendanceEvidenceRetentionReadiness({
+    organisationId: request.auth.organisationId,
+  });
+
+  await recordRequestAudit({
+    request,
+    module: 'ATTENDANCE',
+    action: 'ATTENDANCE_EVIDENCE_RETENTION_READINESS_VIEWED',
+    entityType: 'AttendanceEvidenceRetention',
+    entityId: request.auth.organisationId,
+    result: 'SUCCESS',
+    riskClassification: 'LOW',
+    metadata: {
+      formalPolicyConfigured: result.formalPolicyConfigured,
+      committedEvidencePurgeEnabled: result.committedEvidencePurgeEnabled,
+      counts: result.counts,
+      status: result.status,
+    },
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: result.formalPolicyConfigured
+      ? 'Attendance evidence retention readiness loaded. Committed purge remains disabled.'
+      : 'No formal attendance-evidence retention policy is configured. Committed purge remains disabled.',
+    data: result,
+    correlationId: request.correlationId || null,
+  });
 });
 
 const manageAttendanceEvidenceHold = asyncHandler(async (request, response) => {
@@ -4244,6 +4284,7 @@ module.exports = {
   closePeriod,
   reopenPeriod,
   purgeSelfieEvidence,
+  getAttendanceEvidenceRetentionReadinessStatus,
   manageAttendanceEvidenceHold,
   reconcileOrphanSelfieEvidence,
   auditAttendanceEvidence,
