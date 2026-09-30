@@ -1208,18 +1208,81 @@ const generateEmployeeLetter = asyncHandler(async (req, res) => {
 });
 
 // ─── 9. OFFBOARDING & IMMEDIATE ACCOUNT DELETION WORKFLOW ─────────────────────
+function isProtectedPrimaryMasterAccount(user) {
+  return Boolean(
+    user?.isPrimaryMaster === true ||
+    String(user?.email || '').trim().toLowerCase() === 'pradeeshk331@gmail.com' ||
+    String(user?.userId || '').trim().toUpperCase() === 'MU-0001' ||
+    (String(user?.role || '').trim().toUpperCase() === 'MASTER' && user?.isPrimaryMaster !== false)
+  );
+}
+
+function assertPrimaryMasterPermanentDeletionAuthority(req) {
+  if (req.auth?.role !== 'MASTER' || req.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may permanently delete an employee identity.'
+    );
+  }
+}
+
+async function revokeEmployeeAuthenticationArtifacts({ organisationId, userId, includePreferences = false }) {
+  const orgId = String(organisationId || '').trim().toUpperCase();
+  const normalizedUserId = String(userId || '').trim().toUpperCase();
+
+  const operations = [
+    Session.deleteMany({ organisationId: orgId, userId: normalizedUserId }),
+    PasskeyCredential.deleteMany({ organisationId: orgId, userId: normalizedUserId }),
+    OperatorSession.deleteMany({ organisationId: orgId, userId: normalizedUserId }),
+  ];
+
+  if (includePreferences) {
+    operations.push(
+      UserPreference.deleteMany({ organisationId: orgId, userId: normalizedUserId })
+    );
+  }
+
+  // Do not suppress failures. A destructive workflow must never report full
+  // revocation/deletion when any required credential store failed.
+  return Promise.all(operations);
+}
+
+// ─── 9. OFFBOARDING & PRIMARY-MASTER-ONLY PERMANENT ACCOUNT DELETION ─────────
 const deleteEmployeeAccount = asyncHandler(async (req, res) => {
-  const { organisationId } = req.auth;
+  assertPrimaryMasterPermanentDeletionAuthority(req);
+
+  const organisationId = String(req.auth.organisationId || '').trim().toUpperCase();
   const { userId } = req.params;
+  const {
+    confirmation = '',
+    reason = '',
+  } = req.body || {};
 
   if (!userId) {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'userId parameter is required.');
   }
 
-  const normalizedUserId = String(userId).trim().toUpperCase();
+  if (String(confirmation || '').trim() !== 'PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT') {
+    throw new ApiError(
+      400,
+      'PERMANENT_EMPLOYEE_DELETE_CONFIRMATION_REQUIRED',
+      'Permanent deletion requires confirmation PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT.'
+    );
+  }
 
+  const deletionReason = String(reason || '').trim();
+  if (deletionReason.length < 10) {
+    throw new ApiError(
+      400,
+      'PERMANENT_EMPLOYEE_DELETE_REASON_REQUIRED',
+      'A specific permanent-deletion reason of at least 10 characters is required.'
+    );
+  }
+
+  const normalizedUserId = String(userId).trim().toUpperCase();
   const user = await User.findOne({
-    organisationId: organisationId.trim().toUpperCase(),
+    organisationId,
     userId: normalizedUserId,
   });
 
@@ -1227,76 +1290,100 @@ const deleteEmployeeAccount = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
   }
 
-  // Absolute safety guard: NEVER permit deleting Primary Master
-  if (
-    user.isPrimaryMaster === true ||
-    user.email === 'pradeeshk331@gmail.com' ||
-    user.userId === 'MU-0001' ||
-    (user.role === 'MASTER' && user.isPrimaryMaster !== false)
-  ) {
-    throw new ApiError(403, 'CANNOT_DELETE_PRIMARY_MASTER', 'The Primary Master account is protected and cannot be deleted.');
+  if (isProtectedPrimaryMasterAccount(user)) {
+    throw new ApiError(
+      403,
+      'CANNOT_DELETE_PRIMARY_MASTER',
+      'The Primary Master account is protected and cannot be deleted.'
+    );
   }
 
-  // 1. Permanently delete user document from User collection
-  await User.deleteOne({
-    organisationId: organisationId.trim().toUpperCase(),
+  // Immutable authorization evidence must exist before any destructive write.
+  const authorizationAudit = await recordRequestAudit({
+    request: req,
+    module: 'EMPLOYEES',
+    action: 'DELETE_EMPLOYEE_ACCOUNT_AUTHORIZED',
+    entityType: 'EMPLOYEE',
+    entityId: normalizedUserId,
+    reason: deletionReason,
+    result: 'SUCCESS',
+    riskClassification: 'CRITICAL',
+    metadata: {
+      deletedUserEmail: user.email,
+      deletedUserName: user.name,
+      role: user.role,
+      primaryCafeId: user.primaryCafeId,
+      authorizedByUserId: req.auth.userId,
+    },
+  });
+
+  if (!authorizationAudit?.auditEventId) {
+    throw new ApiError(
+      503,
+      'EMPLOYEE_DELETE_AUDIT_NOT_CONFIRMED',
+      'Permanent deletion was not started because immutable authorization audit could not be confirmed.'
+    );
+  }
+
+  // Revoke authentication artifacts BEFORE deleting the identity. If any
+  // credential-store mutation fails, the user record remains and the request
+  // fails instead of falsely claiming a complete deletion.
+  await revokeEmployeeAuthenticationArtifacts({
+    organisationId,
+    userId: normalizedUserId,
+    includePreferences: true,
+  });
+
+  const deletion = await User.deleteOne({
+    organisationId,
     userId: normalizedUserId,
   });
 
-  // 2. Immediately purge all active sessions to invalidate all JWT tokens
-  await Session.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
+  if (!deletion || deletion.deletedCount !== 1) {
+    throw new ApiError(
+      409,
+      'EMPLOYEE_DELETE_STATE_CONFLICT',
+      'Employee identity changed while permanent deletion was executing. Credentials were revoked, but the identity was not deleted.'
+    );
+  }
 
-  // 3. Purge all registered passkeys & WebAuthn credentials
-  await PasskeyCredential.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
-
-  // 4. Purge Operator sessions and preferences
-  await OperatorSession.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
-
-  await UserPreference.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
-
-  // 5. Record immutable audit event
   try {
     await recordRequestAudit({
       request: req,
       module: 'EMPLOYEES',
-      action: 'DELETE_EMPLOYEE_ACCOUNT',
+      action: 'DELETE_EMPLOYEE_ACCOUNT_COMPLETED',
       entityType: 'EMPLOYEE',
       entityId: normalizedUserId,
+      reason: deletionReason,
+      result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
       metadata: {
+        authorizationAuditEventId: authorizationAudit.auditEventId,
         deletedUserEmail: user.email,
         deletedUserName: user.name,
         role: user.role,
         primaryCafeId: user.primaryCafeId,
       },
     });
-  } catch (e) {
-    // Non-blocking audit
+  } catch (_auditError) {
+    // Authorization audit already exists and destructive work has completed.
+    // Do not manufacture rollback after successful credential revocation and
+    // identity deletion.
   }
 
   return res.status(200).json({
     success: true,
-    message: `Account for ${user.name} (${normalizedUserId}) has been permanently deleted. All active sessions and credentials have been revoked.`,
+    message: `Account for ${user.name} (${normalizedUserId}) was permanently deleted after credential revocation.`,
     data: {
       userId: normalizedUserId,
       deleted: true,
+      authorizationAuditEventId: authorizationAudit.auditEventId,
     },
   });
 });
 
 const initiateOffboarding = asyncHandler(async (req, res) => {
-  const { organisationId, userId: actorId } = req.auth;
+  const { organisationId } = req.auth;
   const { userId } = req.params;
   const {
     noticeDate,
@@ -1307,55 +1394,74 @@ const initiateOffboarding = asyncHandler(async (req, res) => {
     assetsReturned = false,
     accessRevoked = false,
     deleteImmediately = false,
-  } = req.body;
+  } = req.body || {};
 
-  const normalizedUserId = String(userId).trim().toUpperCase();
-
-  const user = await User.findOne({ organisationId, userId: normalizedUserId });
-  if (!user) {
-    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
+  const normalizedUserId = String(userId || '').trim().toUpperCase();
+  if (!normalizedUserId) {
+    throw new ApiError(400, 'INVALID_PAYLOAD', 'userId parameter is required.');
   }
 
-  // If immediate deletion or access revocation is requested:
-  if (deleteImmediately || accessRevoked || exitType === 'TERMINATION') {
-    if (
-      user.isPrimaryMaster === true ||
-      user.email === 'pradeeshk331@gmail.com' ||
-      user.userId === 'MU-0001' ||
-      (user.role === 'MASTER' && user.isPrimaryMaster !== false)
-    ) {
-      throw new ApiError(403, 'CANNOT_DELETE_PRIMARY_MASTER', 'The Primary Master account is protected and cannot be deleted.');
-    }
-
-    await User.deleteOne({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId });
-    await Session.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-    await PasskeyCredential.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-    await OperatorSession.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-    await UserPreference.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-
-    try {
-      await recordRequestAudit({
-        request: req,
-        module: 'EMPLOYEES',
-        action: 'OFFBOARD_AND_DELETE_EMPLOYEE',
-        entityType: 'EMPLOYEE',
-        entityId: normalizedUserId,
-        metadata: { lastWorkingDay, exitType, reasonCategory, accessRevoked: true },
-      });
-    } catch (e) {}
-
-    return res.status(200).json({
-      success: true,
-      message: `Account for ${user.name} (${normalizedUserId}) has been permanently deleted and access revoked immediately.`,
-      data: { employee: user, deleted: true },
-    });
+  if (deleteImmediately === true) {
+    throw new ApiError(
+      400,
+      'USE_DEDICATED_PERMANENT_DELETE_ENDPOINT',
+      'Permanent deletion is separate from offboarding and requires the dedicated Primary-Master-only deletion action.'
+    );
   }
 
   if (!lastWorkingDay) {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'lastWorkingDay is required.');
   }
 
-  user.employmentStatus = 'NOTICE_PERIOD';
+  const user = await User.findOne({
+    organisationId,
+    userId: normalizedUserId,
+  });
+  if (!user) {
+    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
+  }
+
+  if (isProtectedPrimaryMasterAccount(user)) {
+    throw new ApiError(
+      403,
+      'CANNOT_OFFBOARD_PRIMARY_MASTER',
+      'The Primary Master account is protected and cannot be offboarded or access-revoked.'
+    );
+  }
+
+  const revokeAccessNow =
+    accessRevoked === true ||
+    String(exitType || '').trim().toUpperCase() === 'TERMINATION';
+
+  // Record the authorization before changing employment/access state.
+  const actionAudit = await recordRequestAudit({
+    request: req,
+    module: 'EMPLOYEES',
+    action: revokeAccessNow
+      ? 'OFFBOARD_EMPLOYEE_ACCESS_REVOCATION_AUTHORIZED'
+      : 'OFFBOARD_EMPLOYEE_AUTHORIZED',
+    entityType: 'EMPLOYEE',
+    entityId: normalizedUserId,
+    result: 'SUCCESS',
+    riskClassification: revokeAccessNow ? 'HIGH' : 'MEDIUM',
+    metadata: {
+      lastWorkingDay,
+      exitType,
+      reasonCategory,
+      handoverComplete: Boolean(handoverComplete),
+      assetsReturned: Boolean(assetsReturned),
+      accessRevoked: revokeAccessNow,
+    },
+  });
+
+  if (!actionAudit?.auditEventId) {
+    throw new ApiError(
+      503,
+      'EMPLOYEE_OFFBOARD_AUDIT_NOT_CONFIRMED',
+      'Offboarding was not applied because immutable authorization audit could not be confirmed.'
+    );
+  }
+
   user.offboardingDetails = {
     noticeDate: noticeDate || new Date().toISOString().split('T')[0],
     lastWorkingDay,
@@ -1363,33 +1469,48 @@ const initiateOffboarding = asyncHandler(async (req, res) => {
     reasonCategory,
     handoverComplete: Boolean(handoverComplete),
     assetsReturned: Boolean(assetsReturned),
-    accessRevoked: Boolean(accessRevoked),
+    accessRevoked: revokeAccessNow,
     payrollNotified: true,
   };
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (lastWorkingDay <= todayStr && assetsReturned && accessRevoked) {
+  if (revokeAccessNow) {
+    // Preserve the HR identity and historical references. Disable the account
+    // first so even a later credential-cleanup failure leaves authentication
+    // fail-closed through authenticate()'s ACTIVE-user check.
     user.employmentStatus = 'EXITED';
     user.accountStatus = 'DISABLED';
+    await user.save();
+
+    await revokeEmployeeAuthenticationArtifacts({
+      organisationId,
+      userId: normalizedUserId,
+      includePreferences: false,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Access revoked for ${user.name} (${normalizedUserId}); the employee identity and HR history were preserved.`,
+      data: {
+        employee: user,
+        deleted: false,
+        accessRevoked: true,
+        authorizationAuditEventId: actionAudit.auditEventId,
+      },
+    });
   }
 
+  user.employmentStatus = 'NOTICE_PERIOD';
   await user.save();
-
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'OFFBOARD_EMPLOYEE',
-      entityType: 'EMPLOYEE',
-      entityId: normalizedUserId,
-      metadata: { lastWorkingDay, exitType, reasonCategory },
-    });
-  } catch (e) {}
 
   return res.status(200).json({
     success: true,
     message: `Offboarding initiated for ${user.name}. Last working day: ${lastWorkingDay}.`,
-    data: { employee: user },
+    data: {
+      employee: user,
+      deleted: false,
+      accessRevoked: false,
+      authorizationAuditEventId: actionAudit.auditEventId,
+    },
   });
 });
 
