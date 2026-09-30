@@ -7,6 +7,7 @@ const { User } = require('../models/User');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { recordRequestAudit } = require('../services/auditService');
+const { SequenceCounter } = require('../models/SequenceCounter');
 
 // 1. Employee Self-Service: Submit Payroll Query
 const createSelfPayrollQuery = asyncHandler(async (request, response) => {
@@ -32,8 +33,12 @@ const createSelfPayrollQuery = asyncHandler(async (request, response) => {
   }
 
   const dateStr = new Date().getFullYear();
-  const randSeq = Math.floor(1000 + Math.random() * 9000);
-  const queryId = `PQ-${dateStr}-${randSeq}`;
+  const queryId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `PAYROLL_QUERY_${dateStr}`,
+    prefix: `PQ-${dateStr}`,
+    minimumDigits: 4,
+  });
 
   const query = await PayrollQuery.create({
     queryId,
@@ -167,7 +172,13 @@ const reviewPayrollQuery = asyncHandler(async (request, response) => {
   try {
     const user = await User.findOne({ organisationId, userId: query.employeeUserId }).select('email name').lean();
     if (user) {
-      const outboxId = `OUT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const outboxDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const outboxId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_OUTBOX_${outboxDate}`,
+        prefix: `OUT-${outboxDate}`,
+        minimumDigits: 5,
+      });
       await NotificationOutbox.create({
         outboxId,
         organisationId,
@@ -184,7 +195,13 @@ const reviewPayrollQuery = asyncHandler(async (request, response) => {
         nextAttemptAt: new Date(),
       });
 
-      const inAppId = `NT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const inAppDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const inAppId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${inAppDate}`,
+        prefix: `NT-${inAppDate}`,
+        minimumDigits: 5,
+      });
       await Notification.create({
         notificationId: inAppId,
         organisationId,
