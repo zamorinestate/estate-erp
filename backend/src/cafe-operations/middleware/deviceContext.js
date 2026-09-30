@@ -47,21 +47,40 @@ async function deviceContext(req, res, next) {
       return fail(res, 403, `DEVICE_${device.lifecycleStatus}`, LIFECYCLE_MESSAGE[device.lifecycleStatus] || 'This device cannot access Cafe Operations.');
     }
 
-    // Cross-reference canonical DeviceRegistration trust if available and database is connected
+    // Canonical DeviceRegistration is mandatory for enrolled Café Operations
+    // devices. Enrollment is compensated if canonical registration fails, so
+    // a missing/erroring canonical lookup must fail closed rather than trust a
+    // stale secondary repository lifecycle.
     const mongoose = require('mongoose');
-    if (DeviceRegistration && mongoose.connection && mongoose.connection.readyState === 1 && typeof DeviceRegistration.findOne === 'function') {
-      try {
-        const canonical = await DeviceRegistration.findOne({
-          $or: [
-            { deviceId: String(device.id) },
-            { deviceId: String(device.deviceId || '') },
-          ],
-        }).lean();
-        if (canonical && canonical.status !== 'ACTIVE') {
-          return fail(res, 403, `DEVICE_${canonical.status}`, LIFECYCLE_MESSAGE[canonical.status] || 'This device is not authorized in canonical registry.');
-        }
-      } catch (err) {
-        // Ignore DB connection errors in non-mongo test runs
+    if (
+      DeviceRegistration &&
+      mongoose.connection &&
+      mongoose.connection.readyState === 1 &&
+      typeof DeviceRegistration.findOne === 'function'
+    ) {
+      const canonical = await DeviceRegistration.findOne({
+        $or: [
+          { deviceId: String(device.id) },
+          { deviceId: String(device.deviceId || '') },
+        ],
+      }).lean();
+
+      if (!canonical) {
+        return fail(
+          res,
+          403,
+          'DEVICE_CANONICAL_REGISTRATION_REQUIRED',
+          'This device is not authorized in the canonical device registry.'
+        );
+      }
+
+      if (canonical.status !== 'ACTIVE') {
+        return fail(
+          res,
+          403,
+          `DEVICE_${canonical.status}`,
+          LIFECYCLE_MESSAGE[canonical.status] || 'This device is not authorized in canonical registry.'
+        );
       }
     }
 
