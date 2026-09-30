@@ -159,6 +159,7 @@ test('P2 attendance evidence regressions remain inside the canonical CI allowlis
     'test/attendanceEvidenceRetention.test.js',
     'test/attendanceEvidenceIntegrity.test.js',
     'test/attendanceCalendarEvidence.test.js',
+    'test/attendanceQrScannerPage.test.js',
   ]) {
     assert.ok(
       canonical.includes(rel),
