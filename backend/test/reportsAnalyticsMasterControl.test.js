@@ -15,6 +15,7 @@ const { PurchaseOrder } = require('../src/models/PurchaseOrder');
 const { Vendor } = require('../src/models/Vendor');
 const authService = require('../src/services/authService');
 const auditService = require('../src/services/auditService');
+const { CompanyIdentityService } = require('../src/services/companyIdentityService');
 
 function makeRequest({ port, method, path, headers = {}, body = null }) {
   return new Promise((resolve, reject) => {
@@ -196,6 +197,72 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
   t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
   t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
+
+  const reportIdentity = {
+    _id: 'IDENTITY-REPORTS-TEST-V1',
+    organisationId: 'ORG-ZAMORIN',
+    legalName: 'Reports Test Foods Private Limited',
+    brandName: 'Reports Test Cafe',
+    tagline: 'Reports Test Identity',
+    registeredAddress: {
+      line1: '1 Reports Test Road',
+      city: 'Kozhikode',
+      state: 'Kerala',
+      pincode: '673001',
+      country: 'India',
+    },
+    gstin: [
+      {
+        state: 'Kerala',
+        stateCode: '32',
+        number: '32AAACZ1234K1Z5',
+        isPrimary: true,
+      },
+    ],
+    licences: [
+      {
+        type: 'FSSAI Test Licence',
+        number: '12345678901234',
+      },
+    ],
+    contact: {
+      phone: '+91 99999 99999',
+      email: 'reports@example.invalid',
+      website: 'https://example.invalid',
+    },
+    logo: {
+      primarySvg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      monochromeSvg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    },
+    version: 1,
+  };
+
+  t.mock.method(CompanyIdentityService, 'getCurrentIdentity', async (organisationId) => ({
+    ...reportIdentity,
+    organisationId,
+  }));
+  t.mock.method(CompanyIdentityService, 'resolveExportBranding', async ({ organisationId, cafeId = null }) => ({
+    organisationId,
+    legalName: reportIdentity.legalName,
+    brandName: reportIdentity.brandName,
+    outletName: cafeId ? `${reportIdentity.brandName} (${cafeId})` : reportIdentity.brandName,
+    tagline: reportIdentity.tagline,
+    logoSvg: reportIdentity.logo.primarySvg,
+    watermarkSvg: reportIdentity.logo.monochromeSvg,
+    address: '1 Reports Test Road, Kozhikode, Kerala, 673001, India',
+    gstin: '32AAACZ1234K1Z5',
+    fssai: '12345678901234',
+    pan: '',
+    cin: '',
+    contact: reportIdentity.contact,
+    banking: null,
+    authorisedSignatory: null,
+    companyDetailsVersionId: 'v1-IDENTITY-REPORTS-TEST-V1',
+    versionNumber: 1,
+    identityStatus: 'CONFIGURED',
+    isOutletScoped: Boolean(cafeId),
+    cafeId: cafeId || null,
+  }));
   t.mock.method(AuditEvent, 'create', async (data) => data);
   AuditEvent.prototype.save = async function () { return this; };
 
@@ -530,8 +597,8 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
     assert.ok(res.data.data.runId.startsWith('RPT-RUN-'));
     assert.equal(res.data.data.hasWatermark, true);
     assert.ok(res.data.data.html.includes('zurf-page-watermark'));
-    assert.ok(res.data.data.html.includes('29AABCT1332L1ZV'));
-    assert.ok(res.data.data.html.includes('Zamorin Speciality Coffee & Kitchens Pvt. Ltd.'));
+    assert.ok(res.data.data.html.includes('32AAACZ1234K1Z5'));
+    assert.ok(res.data.data.html.includes('Reports Test Foods Private Limited'));
   });
 
   await t.test('21. POST /api/v1/reports/export generates clean XLSX workbook and rejects CSV', async () => {
