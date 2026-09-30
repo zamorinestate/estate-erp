@@ -573,7 +573,7 @@ const placePreservationHold = asyncHandler(async (request, response) => {
         session,
       });
     }
-  }, { requireTransactions: true });
+  });
 
   return response.status(200).json({
     success: true,
