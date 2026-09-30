@@ -1726,6 +1726,7 @@ export function openVerificationModal(flowType, onDoneCallback, { preScannedQrTo
       const formData = new FormData();
       formData.append("selfie", selfieBlob, `attendance_${flowType.toLowerCase()}_${Date.now()}.jpg`);
       formData.append("punchType", flowType);
+      formData.append("scanGrant", scannedQrToken);
       if (verifiedCafe?.challengeId) {
         formData.append("qrChallengeId", verifiedCafe.challengeId);
       }
