@@ -587,11 +587,19 @@ class AttendanceQrService {
       );
     }
 
-    if (accuracyMeters !== undefined && accuracyMeters !== null && (!Number.isFinite(accuracyMeters) || accuracyMeters < 0)) {
+    if (accuracyMeters === undefined || accuracyMeters === null) {
+      throw new ApiError(
+        400,
+        'GPS_ACCURACY_REQUIRED',
+        'A browser-reported GPS accuracy value is required for attendance presence verification.'
+      );
+    }
+
+    if (!Number.isFinite(accuracyMeters) || accuracyMeters < 0) {
       throw new ApiError(400, 'GPS_ACCURACY_INVALID', 'GPS accuracy must be a finite non-negative number.');
     }
 
-    if (Number.isFinite(accuracyMeters) && accuracyMeters > 100) {
+    if (accuracyMeters > 100) {
       throw new ApiError(
         422,
         'LOW_GPS_ACCURACY',
@@ -621,7 +629,7 @@ class AttendanceQrService {
       geofenceVerified: true,
       distanceMeters: Math.round(distance),
       allowedRadiusMeters: allowedRadius,
-      accuracyMeters: Number.isFinite(accuracyMeters) ? Math.round(accuracyMeters) : null,
+      accuracyMeters: Math.round(accuracyMeters),
       cafeId,
       cafeName: cafeDoc.name,
     };
