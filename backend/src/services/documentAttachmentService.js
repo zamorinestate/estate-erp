@@ -1688,6 +1688,20 @@ class DocumentAttachmentService {
 
     const now = new Date();
     const currentState = String(doc.dispositionState || 'NONE').trim().toUpperCase();
+    const staleDispositionCutoff = new Date(now.getTime() - 15 * 60 * 1000);
+
+    if (
+      currentState === 'STORAGE_DELETING' &&
+      doc.dispositionStartedAt &&
+      new Date(doc.dispositionStartedAt) > staleDispositionCutoff
+    ) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_ALREADY_IN_PROGRESS',
+        'A permanent document disposition attempt is already in progress.'
+      );
+    }
+
     const claimFilter = {
       _id: doc._id,
       organisationId,
@@ -1703,6 +1717,10 @@ class DocumentAttachmentService {
 
     if (doc.dispositionStartedAt) {
       claimFilter.dispositionStartedAt = doc.dispositionStartedAt;
+    }
+
+    if (currentState === 'STORAGE_DELETING') {
+      claimFilter.dispositionStartedAt = { $lte: staleDispositionCutoff };
     }
 
     const claimed = await BusinessDocument.findOneAndUpdate(
