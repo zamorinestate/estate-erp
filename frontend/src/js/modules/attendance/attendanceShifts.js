@@ -2928,11 +2928,6 @@ async function openScopedManualAttendanceModal(root) {
     employeeList = empRes?.data || empRes?.employees || (Array.isArray(empRes) ? empRes : []);
   } catch {}
 
-  if (!employeeList.length) {
-    const rosterList = cafeRosterSchedules[assignedCafe] || Object.values(cafeRosterSchedules)[0] || [];
-    employeeList = rosterList.map(s => ({ userId: s.id, name: s.name, designation: s.role, cafeId: assignedCafe }));
-  }
-
   const renderStaffOptions = (filterCafeId) => {
     let filtered = employeeList;
     if (filterCafeId) {
@@ -3059,10 +3054,8 @@ async function openScopedManualAttendanceModal(root) {
 
 // Modal: Interactive Click-to-Edit Shift
 function openEditShiftModal({ root, staffIndex, staffId, staffName, dayKey, dayLabel, currentShift }) {
-  const activeCafeId = state.role === ROLES.CAFE_ADMIN
-    ? (state.user?.assignedCafeIds?.[0] || state.currentCafeId || "")
-    : (selectedRosterCafe || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "");
-  const staffList = cafeRosterSchedules[activeCafeId] || Object.values(cafeRosterSchedules)[0] || [];
+  const activeCafeId = getActiveRosterCafeId();
+  const staffList = cafeRosterSchedules[activeCafeId] || [];
   const staffMember = staffList[staffIndex];
 
   let selectedShift = currentShift || "OFF";
@@ -3110,10 +3103,6 @@ function openEditShiftModal({ root, staffIndex, staffId, staffName, dayKey, dayL
               <div style="font-size:10.5px; opacity:0.8;">Rest / Weekly Day Off</div>
             </button>
 
-            <button type="button" class="btn btn-ghost shift-preset-btn ${selectedShift === "LEAVE" ? "btn-primary" : ""}" data-shift="LEAVE" style="padding:8px 10px; font-size:12px; justify-content:flex-start; text-align:left;">
-              <div>🌴 <strong>Approved Leave</strong></div>
-              <div style="font-size:10.5px; opacity:0.8;">Paid Statutory Leave</div>
-            </button>
           </div>
         </div>
 
@@ -3134,11 +3123,18 @@ function openEditShiftModal({ root, staffIndex, staffId, staffName, dayKey, dayL
     `,
     saveLabel: "Update Shift",
     cancelLabel: "Cancel",
-    onSave: () => {
-      if (staffMember) {
-        staffMember[dayKey] = selectedShift;
-        showToast(`Updated shift for ${staffName} on ${dayLabel} to ${selectedShift}`, "success");
+    onSave: async () => {
+      if (!staffMember) return false;
+      const previousShift = staffMember[dayKey];
+      staffMember[dayKey] = selectedShift;
+      try {
+        await saveCurrentRosterDraft();
+        showToast(`Shift saved for ${staffName} on ${dayLabel}.`, "success");
         rerender(root);
+      } catch (err) {
+        staffMember[dayKey] = previousShift;
+        showToast(err?.message || "Failed to save the shift change.", "error");
+        return false;
       }
     },
   });
@@ -3166,59 +3162,119 @@ function openEditShiftModal({ root, staffIndex, staffId, staffName, dayKey, dayL
 }
 
 // Modal: Add Staff to Weekly Shift Roster
-function openAddStaffToRosterModal(root) {
-  const activeCafeId = state.role === ROLES.CAFE_ADMIN
-    ? (state.user?.assignedCafeIds?.[0] || state.currentCafeId || "")
-    : (selectedRosterCafe || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "");
+async function openAddStaffToRosterModal(root) {
+  const activeCafeId = getActiveRosterCafeId();
+  if (!activeCafeId) {
+    showToast("Select an authorised café before editing a roster.", "error");
+    return;
+  }
+
   const staffList = cafeRosterSchedules[activeCafeId] || (cafeRosterSchedules[activeCafeId] = []);
+  if (!cachedEmployees.length) {
+    await loadEmployeeDirectory();
+  }
+
+  const existingIds = new Set(staffList.map((row) => String(row.id || "").toUpperCase()));
+  const employees = (cachedEmployees || []).filter((employee) => {
+    const userId = String(employee?.userId || employee?.employeeId || employee?.id || employee?._id || "").toUpperCase();
+    if (!userId || existingIds.has(userId)) return false;
+
+    const assigned = new Set([
+      ...(employee?.assignedCafeIds || []),
+      employee?.primaryCafeId,
+      employee?.cafeId,
+    ].filter(Boolean).map((id) => String(id).toUpperCase()));
+
+    return assigned.size === 0 || assigned.has(String(activeCafeId).toUpperCase());
+  });
+
+  const shifts = (cachedShifts || []).filter((shift) =>
+    shift?.isActive !== false && (!shift?.cafeId || String(shift.cafeId) === String(activeCafeId))
+  );
+
+  if (!employees.length) {
+    showToast("No additional authoritative employees are available for this café.", "info");
+    return;
+  }
+  if (!shifts.length) {
+    showToast("Configure an active shift template before assigning staff to the roster.", "error");
+    return;
+  }
 
   openModal({
-    title: `Add Staff Member to ${CAFE_NAMES[activeCafeId] || activeCafeId} Roster`,
-    maxWidth: "520px",
+    title: `Add Staff Assignment · ${CAFE_NAMES[activeCafeId] || activeCafeId}`,
+    maxWidth: "540px",
     body: `
       <div style="display:flex; flex-direction:column; gap:14px; font-size:12.5px;">
         <div class="form-group" style="margin:0;">
-          <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Staff Member *</label>
-          <select id="modal-add-staff-select" class="input" style="font-size:12.5px; width:100%; box-sizing:border-box;">
-            <option value="EMP-013|Specialist Barista|Barista Specialist">Specialist Barista (EMP-013)</option>
-            <option value="EMP-014|Meera Nambiar|Senior Cashier & Hospitality">Meera Nambiar (EMP-014 — Senior Cashier)</option>
-            <option value="EMP-015|Arvind Swamy|Roastery Dispatch Lead">Arvind Swamy (EMP-015 — Roastery Dispatch)</option>
-            <option value="EMP-016|Pooja Hegde|Trainee Barista">Pooja Hegde (EMP-016 — Trainee Barista)</option>
+          <label style="font-weight:700; display:block; margin-bottom:4px;">Employee *</label>
+          <select id="modal-add-staff-select" class="input" style="width:100%;">
+            ${employees.map((employee) => {
+              const id = employee.userId || employee.employeeId || employee.id || employee._id;
+              const name = employee.name || employee.fullName || id;
+              return `<option value="${id}">${name} (${id})</option>`;
+            }).join("")}
           </select>
         </div>
-
         <div class="form-group" style="margin:0;">
-          <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Default Weekday Shift Rotation *</label>
-          <select id="modal-add-staff-rotation" class="input" style="font-size:12.5px; width:100%; box-sizing:border-box;">
-            <option value="MORNING">Opening Morning (06:30 – 15:00, Sun/Wed OFF)</option>
-            <option value="EVENING">Closing Evening (13:00 – 21:30, Sun/Thu OFF)</option>
-            <option value="MID">Mid Shift (10:00 – 18:30, Sat/Sun OFF)</option>
+          <label style="font-weight:700; display:block; margin-bottom:4px;">First Assignment Day *</label>
+          <select id="modal-add-staff-day" class="input" style="width:100%;">
+            <option value="mon">Monday</option><option value="tue">Tuesday</option>
+            <option value="wed">Wednesday</option><option value="thu">Thursday</option>
+            <option value="fri">Friday</option><option value="sat">Saturday</option>
+            <option value="sun">Sunday</option>
           </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label style="font-weight:700; display:block; margin-bottom:4px;">Shift Template *</label>
+          <select id="modal-add-staff-shift" class="input" style="width:100%;">
+            ${shifts.map((shift, index) =>
+              `<option value="${index}">${shift.name || shift.shiftId} · ${shift.startTime} – ${shift.endTime}</option>`
+            ).join("")}
+          </select>
+        </div>
+        <div style="font-size:11.5px; color:var(--muted);">
+          This creates one real roster assignment. Add or edit other days from the weekly grid.
         </div>
       </div>
     `,
-    saveLabel: "Add to Roster",
+    saveLabel: "Save Assignment",
     cancelLabel: "Cancel",
-    onSave: () => {
-      const selectVal = document.getElementById("modal-add-staff-select")?.value || "";
-      const [id, name, role] = selectVal.split("|");
-      const rotation = document.getElementById("modal-add-staff-rotation")?.value || "MORNING";
-
-      let newRow;
-      if (rotation === "EVENING") {
-        newRow = { name, id, role, mon: "13:00 - 21:30", tue: "13:00 - 21:30", wed: "13:00 - 21:30", thu: "OFF", fri: "13:00 - 21:30", sat: "13:00 - 21:30", sun: "OFF" };
-      } else if (rotation === "MID") {
-        newRow = { name, id, role, mon: "10:00 - 18:30", tue: "10:00 - 18:30", wed: "10:00 - 18:30", thu: "10:00 - 18:30", fri: "10:00 - 18:30", sat: "OFF", sun: "OFF" };
-      } else {
-        newRow = { name, id, role, mon: "06:30 - 15:00", tue: "06:30 - 15:00", wed: "OFF", thu: "06:30 - 15:00", fri: "06:30 - 15:00", sat: "06:30 - 15:00", sun: "OFF" };
+    onSave: async () => {
+      const employeeId = document.getElementById("modal-add-staff-select")?.value || "";
+      const dayKey = document.getElementById("modal-add-staff-day")?.value || "mon";
+      const shiftIndex = Number(document.getElementById("modal-add-staff-shift")?.value || 0);
+      const employee = employees.find((item) =>
+        String(item?.userId || item?.employeeId || item?.id || item?._id) === String(employeeId)
+      );
+      const shift = shifts[shiftIndex];
+      if (!employee || !shift) {
+        showToast("Select a valid employee and shift template.", "error");
+        return false;
       }
 
-      staffList.push(newRow);
-      showToast(`${name} added to ${activeCafeId} weekly shift roster.`, "success");
-      rerender(root);
+      const row = {
+        id: employee.userId || employee.employeeId || employee.id || employee._id,
+        name: employee.name || employee.fullName || employeeId,
+        role: employee.designation || employee.role || "",
+        mon: "OFF", tue: "OFF", wed: "OFF", thu: "OFF", fri: "OFF", sat: "OFF", sun: "OFF",
+      };
+      row[dayKey] = `${shift.startTime} - ${shift.endTime}`;
+      staffList.push(row);
+
+      try {
+        await saveCurrentRosterDraft();
+        showToast(`${row.name} added to the draft roster.`, "success");
+        rerender(root);
+      } catch (err) {
+        staffList.pop();
+        showToast(err?.message || "Failed to save the roster assignment.", "error");
+        return false;
+      }
     },
   });
 }
+
 
 function exportRosterCsv() {
   const activeCafeId = state.role === ROLES.CAFE_ADMIN
@@ -3247,61 +3303,78 @@ function exportRosterCsv() {
 function openCreateShiftRosterModal(root) {
   const role = state.role || state.user?.role || ROLES.MASTER;
   const isCafeAdmin = role === ROLES.CAFE_ADMIN;
-  const assignedCafe = state.user?.assignedCafeIds?.[0] || state.currentCafeId || "";
-  const defaultMonday = new Date().toISOString().split("T")[0];
+  const assignedCafe = state.user?.assignedCafeIds?.[0] || state.user?.primaryCafeId || state.currentCafeId || "";
+  const defaultMonday = getRosterWeekStartDate(0);
 
   openModal({
-    title: "Create Weekly Shift Roster",
-    maxWidth: "560px",
+    title: "Create or Open Weekly Roster",
+    maxWidth: "540px",
     body: `
       <div style="display:flex; flex-direction:column; gap:14px; font-size:12.5px;">
         <div style="background:var(--surface-sunken); padding:10px 14px; border-radius:8px; border:1px solid var(--line);">
-          <div style="font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:700;">Roster Scope</div>
-          <div style="font-size:13px; font-weight:700; color:var(--ink); margin-top:2px;">
-            ${isCafeAdmin ? `Single Café Scope (${assignedCafe || 'Current Outlet'})` : "Multi-Café Operations Master"}
-          </div>
+          Select a café and Monday. If a roster already exists, it will be opened without overwriting assignments.
         </div>
-
         <div class="form-group" style="margin:0;">
-          <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Target Café *</label>
-          <select id="modal-roster-cafe" class="input" style="font-size:12.5px; width:100%; box-sizing:border-box;">
-            ${cachedCafes.length ? cachedCafes.map(c => {
-              const cid = c.cafeId || c.code || c.id || c._id;
-              return `<option value="${cid}">${cid} · ${c.name || 'Outlet'}</option>`;
-            }).join('') : `<option value="${assignedCafe}">${assignedCafe || 'Current Outlet'}</option>`}
+          <label style="font-weight:700; display:block; margin-bottom:4px;">Target Café *</label>
+          <select id="modal-roster-cafe" class="input" style="width:100%;">
+            ${cachedCafes.length ? cachedCafes.map((cafe) => {
+              const cid = cafe.cafeId || cafe.code || cafe.id || cafe._id;
+              const disabled = isCafeAdmin && String(cid) !== String(assignedCafe) ? "disabled" : "";
+              return `<option value="${cid}" ${String(cid) === String(assignedCafe) ? "selected" : ""} ${disabled}>${cafe.name || cid} (${cid})</option>`;
+            }).join("") : `<option value="${assignedCafe}">${assignedCafe || "Current Outlet"}</option>`}
           </select>
         </div>
-
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-          <div class="form-group" style="margin:0;">
-            <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Week Starting Date (Monday) *</label>
-            <input type="date" id="modal-roster-week-start" class="input" value="${defaultMonday}" style="font-size:12.5px; width:100%; box-sizing:border-box;" />
-          </div>
-          <div class="form-group" style="margin:0;">
-            <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Roster Template *</label>
-            <select id="modal-roster-template" class="input" style="font-size:12.5px; width:100%; box-sizing:border-box;">
-              <option value="STANDARD_ROTATING">Standard 2-Shift Rotation (06:30 & 13:00)</option>
-              <option value="PEAK_WEEKEND">Peak Weekend Heavy (Extended Roastery Hours)</option>
-              <option value="LEAN_SINGLE">Lean Single Shift Coverage</option>
-            </select>
-          </div>
-        </div>
-
         <div class="form-group" style="margin:0;">
-          <label style="font-weight:700; display:block; margin-bottom:4px; color:var(--ink);">Scheduling Notes & Constraints</label>
-          <textarea id="modal-roster-notes" class="input" rows="2" placeholder="e.g. Special training for junior barista on Wednesday afternoon" style="font-size:12px; width:100%; box-sizing:border-box;"></textarea>
+          <label style="font-weight:700; display:block; margin-bottom:4px;">Week Starting Monday *</label>
+          <input type="date" id="modal-roster-week-start" class="input" value="${defaultMonday}" style="width:100%;" />
         </div>
       </div>
     `,
-    saveLabel: "Create Draft Roster",
+    saveLabel: "Open Roster",
     cancelLabel: "Cancel",
     onSave: async () => {
-      showToast("Draft weekly shift roster created successfully.", "success");
-      await loadLiveAttendanceData();
-      rerender(root);
+      const cafeId = document.getElementById("modal-roster-cafe")?.value || assignedCafe;
+      const weekStartDate = document.getElementById("modal-roster-week-start")?.value || "";
+      if (!cafeId || !weekStartDate) {
+        showToast("Café and week-start date are required.", "error");
+        return false;
+      }
+
+      try {
+        const existingRes = await apiGet(
+          `/attendance/roster?cafeId=${encodeURIComponent(cafeId)}&weekStartDate=${encodeURIComponent(weekStartDate)}`
+        );
+        let roster = existingRes?.data?.roster || null;
+
+        if (!roster?.rosterId) {
+          const createRes = await apiPost("/attendance/roster", {
+            cafeId,
+            weekStartDate,
+            assignments: [],
+          });
+          roster = createRes?.data?.roster || null;
+        }
+
+        if (!roster) throw new Error("Roster could not be opened.");
+
+        selectedRosterCafe = cafeId;
+        const currentMonday = new Date(`${getRosterWeekStartDate(0)}T12:00:00+05:30`);
+        const targetMonday = new Date(`${weekStartDate}T12:00:00+05:30`);
+        selectedRosterWeekOffset = Math.round((targetMonday - currentMonday) / (7 * 86400000));
+        cachedRoster = roster;
+        cafeRosterSchedules[cafeId] = normaliseRosterRows(roster);
+        rosterPublishedMap[cafeId] = roster.status === "PUBLISHED";
+        showToast(roster.status === "PUBLISHED" ? "Published roster opened." : "Draft roster opened.", "success");
+        activeSubTab = "roster";
+        rerender(root);
+      } catch (err) {
+        showToast(err?.message || "Unable to create or open the roster.", "error");
+        return false;
+      }
     },
   });
 }
+
 
 // Utility: Export Timesheets CSV
 function exportTimesheetsCsv() {
