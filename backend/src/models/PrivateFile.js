@@ -104,6 +104,49 @@ const privateFileSchema = new mongoose.Schema(
       },
     },
 
+    // Atomic linkage guard between a verified punch and orphan cleanup.
+    // RESERVED is acquired before Attendance.save(); COMMITTED is written only
+    // after the attendance record has been persisted. Orphan reconciliation
+    // must never claim either state.
+    attendanceLink: {
+      status: {
+        type: String,
+        enum: ['RESERVED', 'COMMITTED', null],
+        default: null,
+        index: true,
+      },
+      claimId: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      reservedAt: {
+        type: Date,
+        default: null,
+      },
+      committedAt: {
+        type: Date,
+        default: null,
+      },
+      attendanceId: {
+        type: String,
+        default: null,
+        trim: true,
+        uppercase: true,
+      },
+      punchType: {
+        type: String,
+        enum: ['CHECK_IN', 'CHECK_OUT', null],
+        default: null,
+      },
+      linkedByUserId: {
+        type: String,
+        default: null,
+        trim: true,
+        uppercase: true,
+      },
+    },
+
     // State used only for expired, unlinked attendance-selfie reconciliation.
     // Linked evidence is never eligible for this cleanup flow.
     attendanceCleanup: {
@@ -159,6 +202,7 @@ privateFileSchema.index(
   {
     organisationId: 1,
     'attendanceContext.grantExpiresAt': 1,
+    'attendanceLink.status': 1,
     'attendanceCleanup.status': 1,
   },
   {
