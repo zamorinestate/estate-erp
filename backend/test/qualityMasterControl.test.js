@@ -12,6 +12,7 @@ const { RolePermission } = require('../src/models/RolePermission');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
 const authService = require('../src/services/authService');
 const auditService = require('../src/services/auditService');
+const { FoodSafetyService } = require('../src/services/foodSafetyService');
 
 function makeRequest({ port, method, path, headers = {}, body = null }) {
   return new Promise((resolve, reject) => {
@@ -196,6 +197,28 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
   t.mock.method(AuditEvent, 'create', async (data) => data);
   AuditEvent.prototype.save = async function () { return this; };
 
+  t.mock.method(FoodSafetyService, 'recordTemperature', async (payload) => ({
+    logId: 'TEMP-TEST-0001',
+    organisationId: payload.organisationId,
+    cafeId: payload.cafeId,
+    monitoringPoint: payload.monitoringPoint,
+    equipmentId: payload.equipmentId,
+    equipmentName: payload.equipmentName,
+    readingCelsius: payload.readingCelsius,
+    minimumAllowedCelsius: payload.minimumAllowedCelsius,
+    maximumAllowedCelsius: payload.maximumAllowedCelsius,
+    isExcursion:
+      payload.readingCelsius < payload.minimumAllowedCelsius ||
+      payload.readingCelsius > payload.maximumAllowedCelsius,
+    status:
+      payload.readingCelsius < payload.minimumAllowedCelsius ||
+      payload.readingCelsius > payload.maximumAllowedCelsius
+        ? 'OUT_OF_RANGE'
+        : 'WITHIN_RANGE',
+    recordedByUserId: payload.recordedByUserId,
+    recordedAt: new Date(),
+  }));
+
   SequenceCounter.generateId = async function (opts) {
     if (typeof opts === 'string') return `${opts}-2026-0001`;
     const pfx = opts?.prefix || 'QC';
@@ -259,9 +282,14 @@ test('SCR-021: Quality & Compliance Master Control & FSMS Integration Suite', as
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.kpis.checksDueToday, 18);
+    assert.equal(res.data.data.kpis.checksDueToday, null);
+    assert.equal(
+      res.data.data.kpis.checksDueTodayStatus,
+      'NOT_AVAILABLE_NO_DURABLE_CHECKLIST_SCHEDULE'
+    );
     assert.ok(Array.isArray(res.data.data.actionCentreItems));
-    assert.ok(res.data.data.prpStatus.cleaningSanitation);
+    assert.equal(res.data.data.prpStatus.cleaningSanitation, 'NOT_ASSESSED');
+    assert.equal(res.data.data.sourceStatus.qualityHolds, 'VOLATILE_RUNTIME_ONLY');
   });
 
   await t.test('2. GET /api/v1/quality/overview is accessible to OWNER', async () => {
