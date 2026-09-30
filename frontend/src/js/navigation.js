@@ -54,7 +54,7 @@ const PRIMARY_MASTER_ITEMS = [
   { id: 'staff-home',    label: 'Staff Self-Service',     icon: 'user',         route: 'staff-home',        group: 'PEOPLE' },
 
   // ── COMMERCIAL & REVENUE ─────────────────────────────────────────────────────
-  { id: 'menu',          label: 'Menu Management',        icon: 'menuItem',     route: 'menu',              group: 'COMMERCIAL' },
+  { id: 'menu',          label: 'POS Menu & Recipes',     icon: 'menuItem',     route: 'menu',              group: 'COMMERCIAL' },
   { id: 'customers',     label: 'Customers & Loyalty',    icon: 'customers',    route: 'customers',         group: 'COMMERCIAL' },
   { id: 'vendors',       label: 'Vendors',                icon: 'vendors',      route: 'vendors',           group: 'COMMERCIAL' },
   { id: 'reports',       label: 'Reports & Analytics',    icon: 'reports',      route: 'reports',           group: 'COMMERCIAL' },
