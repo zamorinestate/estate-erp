@@ -758,3 +758,35 @@ test('EVI-018: Primary Master UI states that legacy evidence is not quarantined 
   assert.match(frontend, /legacyGeofenceSnapshots/);
 });
 
+test('EVI-019: evidence record API exposes quarantine metadata without exposing image bytes', () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, '../src/modules/attendance/attendanceController.js'),
+    'utf8'
+  );
+
+  assert.match(controllerSource, /integrityState: checkInEvidence\?\.integrityState/);
+  assert.match(controllerSource, /integrityFailedChecks: isManagement/);
+  assert.match(controllerSource, /integrityAuditEventId: isManagement/);
+  assert.equal(
+    controllerSource.includes('data: buffer'),
+    false
+  );
+});
+
+test('EVI-020: evidence viewer explains quarantine and does not request quarantined image bytes', () => {
+  const viewer = fs.readFileSync(
+    path.join(__dirname, '../../frontend/src/js/modules/attendance/attendanceEvidenceViewer.js'),
+    'utf8'
+  );
+
+  assert.match(viewer, /\[409, 423\]\.includes\(res\.status\)/);
+  assert.match(viewer, /Evidence Quarantined/);
+  assert.match(viewer, /integrityFailedChecks/);
+  assert.match(viewer, /integrityAuditEventId/);
+
+  const quarantineBranch = viewer.indexOf('if (evidenceQuarantined)');
+  const fetchBranch = viewer.indexOf('fetchEvidencePhotoBlob(evidence.selfieMediaId)', quarantineBranch);
+  assert.ok(quarantineBranch >= 0);
+  assert.ok(fetchBranch > quarantineBranch);
+});
+
