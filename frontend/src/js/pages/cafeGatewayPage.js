@@ -100,15 +100,6 @@ export function renderCafeGatewayPage() {
               Please scan the official branch QR code or open your unique Café login URL to sign into this location.
             </p>
 
-            <div style="background:var(--surface, #1e1d1b);border:1px solid var(--line, #33302c);border-radius:10px;padding:16px;margin-bottom:20px;text-align:left;">
-              <div style="font-size:12px;font-weight:700;color:var(--bronze-400, #d4a359);margin-bottom:4px;">Initial Outlet Commissioning</div>
-              <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;">If you have a one-time short-lived setup code for new register setup, enter it below:</div>
-              <div style="display:flex;gap:8px;">
-                <input type="text" id="gw-setup-code-input" class="input" placeholder="Enter setup code" maxlength="12" style="flex:1;text-align:center;font-family:var(--font-mono);letter-spacing:0.1em;background:var(--surface-sunken, #121110);border:1px solid var(--line-strong, #3d3935);color:var(--ink);border-radius:6px;padding:8px;" />
-                <button type="button" id="gw-setup-code-submit-btn" class="btn btn-primary" style="padding:8px 16px;font-weight:700;">Resolve</button>
-              </div>
-            </div>
-
             <div style="border-top:1px solid var(--line, #33302c);padding-top:16px;margin-top:16px;text-align:center;">
               <a href="#login" style="font-size:12px;color:var(--muted);text-decoration:none;">← Return to Main Login</a>
             </div>
@@ -259,47 +250,6 @@ export function wireCafeGatewayPage(container, { onSignInSuccess } = {}) {
       }
     });
   }
-
-  // One-time setup code submission for initial commissioning
-  const setupCodeBtn = container.querySelector('#gw-setup-code-submit-btn');
-  const setupCodeInput = container.querySelector('#gw-setup-code-input');
-  setupCodeBtn?.addEventListener('click', async () => {
-    const code = setupCodeInput?.value?.trim();
-    if (!code) {
-      gatewayState.error = 'Please enter your one-time setup code.';
-      rerender();
-      return;
-    }
-    gatewayState.busy = true;
-    gatewayState.error = '';
-    rerender();
-
-    try {
-      const res = await apiPost('/cafe-access/resolve', {
-        method: 'SETUP_CODE',
-        credential: code,
-      });
-
-      const data = res?.data || res;
-      if (!data?.gatewayContextToken) {
-        throw new Error('Cafe Operations access is unavailable.');
-      }
-
-      gatewayState.gatewayContextToken = data.gatewayContextToken;
-      gatewayState.cafe = data.cafe;
-      gatewayState.expiresAt = data.expiresAt;
-      gatewayState.isEnteringCafePin = false;
-      gatewayState.pinDigits = [];
-      gatewayState.busy = false;
-      gatewayState.error = '';
-      rerender();
-    } catch (err) {
-      gatewayState.busy = false;
-      gatewayState.error = err?.message || 'Invalid or expired setup code.';
-      rerender();
-    }
-  });
-
 
   // Mode 2: Employee Sign-In form submission
   const form = container.querySelector('#gw-employee-form');
