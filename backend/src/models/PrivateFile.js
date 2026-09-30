@@ -100,6 +100,51 @@ const privateFileSchema = new mongoose.Schema(
       grantExpiresAt: {
         type: Date,
         default: null,
+        index: true,
+      },
+    },
+
+    // State used only for expired, unlinked attendance-selfie reconciliation.
+    // Linked evidence is never eligible for this cleanup flow.
+    attendanceCleanup: {
+      status: {
+        type: String,
+        enum: ['CLAIMED', 'FAILED', 'STORAGE_DELETED', null],
+        default: null,
+        index: true,
+      },
+      claimId: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      claimedAt: {
+        type: Date,
+        default: null,
+      },
+      claimedByUserId: {
+        type: String,
+        default: null,
+        trim: true,
+        uppercase: true,
+      },
+      attemptCount: {
+        type: Number,
+        min: 0,
+        default: 0,
+      },
+      lastAttemptAt: {
+        type: Date,
+        default: null,
+      },
+      storageDeletedAt: {
+        type: Date,
+        default: null,
+      },
+      lastError: {
+        type: String,
+        default: '',
+        maxlength: 1000,
       },
     },
   },
