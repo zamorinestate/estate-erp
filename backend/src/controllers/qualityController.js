@@ -124,6 +124,30 @@ function buildQualityScopeFilter(request, extra = {}) {
   return filter;
 }
 
+function resolveSafetyRegisterScope(request, rawCafeId = null) {
+  const cafeId = normalizeId(rawCafeId || '');
+  if (cafeId && cafeId !== 'ALL') {
+    assertCafeAccess(request, cafeId);
+    return { cafeId, cafeIds: [] };
+  }
+
+  if (request.auth.role === 'MASTER') {
+    return { cafeId: null, cafeIds: [] };
+  }
+
+  const assignedCafeIds = (request.auth.assignedCafeIds || [])
+    .map(normalizeId)
+    .filter(Boolean);
+
+  return {
+    cafeId: null,
+    cafeIds: assignedCafeIds.length > 0
+      ? assignedCafeIds
+      : ['__NO_AUTHORIZED_CAFE__'],
+  };
+}
+
+
 async function runQualityAtomic(work) {
   if (mongoose.connection?.readyState !== 1 || typeof mongoose.startSession !== 'function') {
     return work(null);
@@ -545,32 +569,24 @@ const listTemplates = asyncHandler(async (request, response) => {
  * 5. Temperature Monitoring & Excursions (Food Safety R02-01)
  */
 const listTemperatures = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds } = request.auth;
+  const { organisationId } = request.auth;
   const { cafeId: queryCafe, excursionsOnly, limit = 50 } = request.query || {};
+  const scope = resolveSafetyRegisterScope(request, queryCafe);
 
-  let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
-  if (targetCafe) {
-    assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
-    targetCafe = assignedCafeIds[0];
-  }
-
-  let logs = [];
-  try {
-    logs = await FoodSafetyService.listTemperatures({
-      organisationId,
-      cafeId: targetCafe || 'CAFE-001',
-      excursionsOnly: excursionsOnly === 'true',
-      limit: Number(limit),
-    });
-  } catch (err) {
-    logs = [];
-  }
-
+  const logs = await FoodSafetyService.listTemperatures({
+    organisationId,
+    cafeId: scope.cafeId,
+    cafeIds: scope.cafeIds,
+    excursionsOnly: excursionsOnly === 'true',
+    limit: Number(limit),
+  });
 
   return response.status(200).json({
     success: true,
-    data: { temperatures: logs },
+    data: {
+      temperatures: logs,
+      scope: scope.cafeId ? { cafeId: scope.cafeId } : { cafeIds: scope.cafeIds },
+    },
     correlationId: request.correlationId || null,
   });
 });
@@ -615,6 +631,7 @@ const recordTemperature = asyncHandler(async (request, response) => {
     minimumAllowedCelsius: min,
     maximumAllowedCelsius: max,
     recordedByUserId: request.auth.userId,
+    actorRole: request.auth.role,
     operatorSessionId,
     remarks: remarks || notes,
   });
@@ -645,6 +662,7 @@ const applyCorrectiveAction = asyncHandler(async (request, response) => {
     correctiveAction: correctiveAction.trim(),
     resolvedReadingCelsius,
     actionTakenByUserId: request.auth.userId,
+    actorRole: request.auth.role,
     remarks,
   });
 
@@ -659,26 +677,24 @@ const applyCorrectiveAction = asyncHandler(async (request, response) => {
  * 5b. Cleaning & Sanitation Tasks (Food Safety R02-01)
  */
 const listCleaningTasks = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds } = request.auth;
+  const { organisationId } = request.auth;
   const { cafeId: queryCafe, status, limit = 50 } = request.query || {};
-
-  let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
-  if (targetCafe) {
-    assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
-    targetCafe = assignedCafeIds[0];
-  }
+  const scope = resolveSafetyRegisterScope(request, queryCafe);
 
   const tasks = await FoodSafetyService.listCleaningTasks({
     organisationId,
-    cafeId: targetCafe || 'CAFE-001',
+    cafeId: scope.cafeId,
+    cafeIds: scope.cafeIds,
     status: status ? normalizeId(status) : null,
     limit: Number(limit),
   });
 
   return response.status(200).json({
     success: true,
-    data: { tasks },
+    data: {
+      tasks,
+      scope: scope.cafeId ? { cafeId: scope.cafeId } : { cafeIds: scope.cafeIds },
+    },
     correlationId: request.correlationId || null,
   });
 });
@@ -726,6 +742,7 @@ const completeCleaningTask = asyncHandler(async (request, response) => {
     cafeId,
     taskId: id,
     completedByUserId: request.auth.userId,
+    actorRole: request.auth.role,
     verifiedByUserId,
     remarks,
   });
@@ -741,25 +758,23 @@ const completeCleaningTask = asyncHandler(async (request, response) => {
  * 5c. Pest Control Register (Food Safety R02-01)
  */
 const listPestControl = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds } = request.auth;
+  const { organisationId } = request.auth;
   const { cafeId: queryCafe, limit = 50 } = request.query || {};
-
-  let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
-  if (targetCafe) {
-    assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
-    targetCafe = assignedCafeIds[0];
-  }
+  const scope = resolveSafetyRegisterScope(request, queryCafe);
 
   const records = await FoodSafetyService.listPestControl({
     organisationId,
-    cafeId: targetCafe || 'CAFE-001',
+    cafeId: scope.cafeId,
+    cafeIds: scope.cafeIds,
     limit: Number(limit),
   });
 
   return response.status(200).json({
     success: true,
-    data: { pestControlRecords: records },
+    data: {
+      pestControlRecords: records,
+      scope: scope.cafeId ? { cafeId: scope.cafeId } : { cafeIds: scope.cafeIds },
+    },
     correlationId: request.correlationId || null,
   });
 });
@@ -814,25 +829,23 @@ const recordPestControl = asyncHandler(async (request, response) => {
  * 5d. Calibration Register (Food Safety R02-01)
  */
 const listCalibrations = asyncHandler(async (request, response) => {
-  const { organisationId, role, assignedCafeIds } = request.auth;
+  const { organisationId } = request.auth;
   const { cafeId: queryCafe, limit = 50 } = request.query || {};
-
-  let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
-  if (targetCafe) {
-    assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
-    targetCafe = assignedCafeIds[0];
-  }
+  const scope = resolveSafetyRegisterScope(request, queryCafe);
 
   const calibrations = await FoodSafetyService.listCalibrations({
     organisationId,
-    cafeId: targetCafe || 'CAFE-001',
+    cafeId: scope.cafeId,
+    cafeIds: scope.cafeIds,
     limit: Number(limit),
   });
 
   return response.status(200).json({
     success: true,
-    data: { calibrations },
+    data: {
+      calibrations,
+      scope: scope.cafeId ? { cafeId: scope.cafeId } : { cafeIds: scope.cafeIds },
+    },
     correlationId: request.correlationId || null,
   });
 });
