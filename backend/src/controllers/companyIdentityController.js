@@ -42,11 +42,20 @@ const getCompanyIdentity = asyncHandler(async (request, response) => {
 
   const organisationId = requireOrganisationId(request);
   try {
-    const identity = await CompanyIdentityService.getCurrentIdentity(organisationId);
+    const identity = await CompanyIdentityService.getCurrentIdentity(
+      organisationId,
+      { allowLegacyUnverified: true }
+    );
     return response.status(200).json({
       success: true,
       configured: true,
+      verificationRequired: identity.verificationRequired === true,
+      identityVerificationStatus:
+        identity.identityVerificationStatus || 'VERIFIED_CONFIGURED',
       data: identity,
+      message: identity.verificationRequired === true
+        ? 'Organisation Identity was created by a retired sample-data provisioner. Review every statutory field and save a verified replacement version before using exports.'
+        : 'Organisation Identity loaded.',
       correlationId: request.correlationId || null,
     });
   } catch (error) {
