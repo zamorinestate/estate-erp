@@ -16,6 +16,9 @@
 
 const path = require('path');
 const ApiError = require('../utils/ApiError');
+const {
+  isUnsafeAttendanceSecret,
+} = require('./attendanceSecurityConfig');
 
 const PRODUCTION_MANDATORY_SPECS = [
   {
@@ -55,6 +58,26 @@ const PRODUCTION_MANDATORY_SPECS = [
     validate: (val, isProd) => {
       if (!isProd) return typeof val === 'string' && val.trim().length >= 32;
       return typeof val === 'string' && /^[0-9a-fA-F]{64}$/.test(val.trim());
+    },
+  },
+  {
+    key: 'QR_SIGNING_SECRET',
+    requiredInProduction: true,
+    description: 'HMAC-SHA256 secret for signed attendance QR envelopes',
+    isSecret: true,
+    validate: (val, isProd) => {
+      if (!isProd) return true;
+      return !isUnsafeAttendanceSecret(val);
+    },
+  },
+  {
+    key: 'ATTENDANCE_QR_SECRET',
+    requiredInProduction: true,
+    description: 'HMAC-SHA256 secret for attendance compact tokens and scan grants',
+    isSecret: true,
+    validate: (val, isProd) => {
+      if (!isProd) return true;
+      return !isUnsafeAttendanceSecret(val);
     },
   },
   {
@@ -148,6 +171,21 @@ function validateStartupConfiguration(env = process.env, { failClosed = true } =
       isSecret: spec.isSecret,
       detail: spec.isSecret && isPresent ? 'Configured (Value Redacted)' : detail,
     });
+  }
+
+  if (isProduction) {
+    const qrSigningSecret = String(env.QR_SIGNING_SECRET || '').trim();
+    const attendanceQrSecret = String(env.ATTENDANCE_QR_SECRET || '').trim();
+
+    if (
+      qrSigningSecret &&
+      attendanceQrSecret &&
+      qrSigningSecret === attendanceQrSecret
+    ) {
+      blockingIssues.push(
+        'ATTENDANCE_SECURITY_SECRETS: QR_SIGNING_SECRET and ATTENDANCE_QR_SECRET must be distinct'
+      );
+    }
   }
 
   const isSafe = blockingIssues.length === 0;
