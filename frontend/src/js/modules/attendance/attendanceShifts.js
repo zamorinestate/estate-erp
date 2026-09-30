@@ -30,6 +30,7 @@ let cachedShifts = [];
 let cachedExceptions = [];
 let cachedOvertime = [];
 let cachedOrphanReconciliation = null;
+let cachedEvidenceIntegrityAudit = null;
 
 const CAFE_NAMES = {};
 
@@ -1355,6 +1356,12 @@ function renderPoliciesSubpanel() {
   const staleReservationsLinked = Number(cachedOrphanReconciliation?.staleReservationsLinked || 0);
   const staleReservationsCommitted = Number(cachedOrphanReconciliation?.staleReservationsCommitted || 0);
   const staleReservationsQuarantined = Number(cachedOrphanReconciliation?.staleReservationsQuarantined || 0);
+  const integrityScanned = Number(cachedEvidenceIntegrityAudit?.evidenceSlotsScanned || 0);
+  const integrityPassed = Number(cachedEvidenceIntegrityAudit?.passed || 0);
+  const integrityFailed = Number(cachedEvidenceIntegrityAudit?.failed || 0);
+  const integrityStatus = cachedEvidenceIntegrityAudit
+    ? (cachedEvidenceIntegrityAudit.integrityOk === true ? "PASS" : "ATTENTION REQUIRED")
+    : "NOT RUN";
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
@@ -1527,9 +1534,25 @@ function renderPoliciesSubpanel() {
             <div style="display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Distinct Check-In / Check-Out selfies</span><strong>Required</strong>
             </div>
-            <div style="display:flex; justify-content:space-between; gap:12px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding-bottom:8px;">
               <span style="color:var(--muted);">Evidence viewing</span><strong>Authenticated &amp; audited</strong>
             </div>
+            <div style="display:flex; justify-content:space-between; gap:12px;">
+              <span style="color:var(--muted);">Forensic chain status</span>
+              <strong style="color:${integrityFailed ? "var(--color-danger)" : (cachedEvidenceIntegrityAudit ? "var(--color-success)" : "var(--muted)")};">${integrityStatus}</strong>
+            </div>
+            ${isPrimary && cachedEvidenceIntegrityAudit ? `
+              <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:2px;">
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityScanned}</strong><div style="font-size:10px;color:var(--muted);">Evidence Slots</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityPassed}</strong><div style="font-size:10px;color:var(--muted);">Passed</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${integrityFailed}</strong><div style="font-size:10px;color:var(--muted);">Failed</div></div>
+              </div>
+            ` : ""}
+            ${isPrimary ? `
+              <button class="btn btn-secondary" id="run-evidence-integrity-audit-btn" type="button" style="font-size:11.5px; align-self:flex-start; margin-top:2px;">
+                Verify Stored Evidence Integrity
+              </button>
+            ` : ""}
           </div>
         </div>
       </div>
@@ -2163,6 +2186,32 @@ function wireAttendanceSubpanelActions(root) {
       await loadLiveAttendanceData();
       rerender(root);
     });
+  });
+
+  // Primary Master: read-only forensic integrity audit of committed attendance evidence.
+  root.querySelector("#run-evidence-integrity-audit-btn")?.addEventListener("click", async () => {
+    try {
+      const scopedCafeId =
+        (state.selectedCafeId && state.selectedCafeId !== "ALL" ? state.selectedCafeId : "") ||
+        state.currentCafeId ||
+        "";
+      const res = await apiPost("/attendance/evidence/integrity/audit", {
+        cafeId: scopedCafeId || undefined,
+        batchSize: 25,
+        verifyStorageBytes: true,
+      });
+      cachedEvidenceIntegrityAudit = res?.data || null;
+      const failed = Number(res?.data?.failed || 0);
+      showToast(
+        failed
+          ? `Evidence integrity audit found ${failed} failed evidence slot(s). Review before relying on those records.`
+          : `Evidence integrity audit passed ${Number(res?.data?.passed || 0)} evidence slot(s).`,
+        failed ? "error" : "success"
+      );
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Unable to run attendance evidence integrity audit.", "error");
+    }
   });
 
   // Primary Master: expired orphan attendance evidence reconciliation
