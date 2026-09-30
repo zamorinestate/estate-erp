@@ -2797,13 +2797,11 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'MEDIA_ID_REQUIRED', 'mediaId parameter is required.');
   }
 
-  const privateFile = await PrivateFile.findOne({ fileId: mediaId.trim().toUpperCase() });
+  const privateFile = await PrivateFile.findOne({
+    fileId: mediaId.trim().toUpperCase(),
+    organisationId,
+  });
   if (!privateFile) {
-    throw new ApiError(404, 'MEDIA_NOT_FOUND', 'Attendance photograph not found.');
-  }
-
-  // Cross-organisation isolation
-  if (privateFile.organisationId !== organisationId) {
     throw new ApiError(404, 'MEDIA_NOT_FOUND', 'Attendance photograph not found.');
   }
 
@@ -2821,6 +2819,21 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
   const attendance = (attendanceQuery && typeof attendanceQuery.lean === 'function')
     ? await attendanceQuery.lean()
     : await attendanceQuery;
+
+  // This endpoint is exclusively for attendance evidence. A same-organisation
+  // PrivateFile that is not linked to an attendance record must never be
+  // streamable merely because its fileId is known.
+  if (!attendance) {
+    throw new ApiError(404, 'ATTENDANCE_EVIDENCE_NOT_FOUND', 'Attendance photograph not found.');
+  }
+
+  if (role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may view organisation-wide attendance evidence.'
+    );
+  }
 
   // Strict Media Authorization Matrix (Section 31-35, 56)
   if (role === 'STAFF') {
@@ -2921,6 +2934,14 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
   }
 
   // Authorization checks
+  if (role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may view organisation-wide attendance evidence.'
+    );
+  }
+
   if (role === 'STAFF' && attendance.userId !== userId) {
     throw new ApiError(403, 'FORBIDDEN', 'Access denied to other employees attendance records.');
   }
