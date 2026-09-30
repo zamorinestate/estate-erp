@@ -1928,6 +1928,10 @@ const correctAttendance = asyncHandler(async (request, response) => {
     throw new ApiError(403, 'PERMISSION_DENIED', 'You do not have permission to correct attendance records.');
   }
 
+  // Reject retired/non-primary MASTER and untrusted Café Admin context before
+  // processing correction inputs or reading the target attendance record.
+  ensureCafeOperationsAllowed(request);
+
   if (!reason || !reason.trim()) {
     throw new ApiError(400, 'REASON_REQUIRED', 'A mandatory reason is required for attendance correction.');
   }
@@ -1943,9 +1947,7 @@ const correctAttendance = asyncHandler(async (request, response) => {
 
   await ensurePeriodNotLocked(request.auth.organisationId, attendance.businessDate);
 
-  // Re-check live management authority and café scope for every administrative
-  // role. This rejects retired/non-primary MASTER claims and cross-café Owner/Admin edits.
-  ensureCafeOperationsAllowed(request);
+  // Apply target café scope after the authoritative record is resolved.
   ensureCafeAccess(request, attendance.cafeId);
 
   const beforeSnapshot = {
