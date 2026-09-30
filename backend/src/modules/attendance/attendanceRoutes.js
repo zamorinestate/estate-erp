@@ -6,6 +6,17 @@
  */
 
 const express = require('express');
+const multer = require('multer');
+
+const ATTENDANCE_SELFIE_MAX_BYTES = 5 * 1024 * 1024;
+const attendanceSelfieUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: ATTENDANCE_SELFIE_MAX_BYTES,
+    files: 1,
+    fields: 4,
+  },
+});
 
 const {
   authenticate,
@@ -76,7 +87,11 @@ router.post('/attestation', recordStaffAttestation);
 router.get('/qr/active', getActiveCafeQr);
 router.post('/qr/verify', verifyScannedQr);
 router.post('/geofence/verify', verifyPunchGeofence);
-router.post('/evidence/upload', uploadPunchSelfie);
+router.post(
+  '/evidence/upload',
+  attendanceSelfieUpload.single('selfie'),
+  uploadPunchSelfie
+);
 router.get('/evidence/media/:mediaId', getEvidenceMedia);
 router.get('/evidence/record/:attendanceId', getAttendanceEvidenceRecord);
 
