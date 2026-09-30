@@ -2367,10 +2367,15 @@ const getPendingCorrections = asyncHandler(async (request, response) => {
     throw new ApiError(403, 'PERMISSION_DENIED', 'Insufficient permissions to view correction requests.');
   }
 
+  ensureCafeOperationsAllowed(request);
+
   const filter = { organisationId, status: 'PENDING' };
-  if (request.auth.role === 'CAFE_ADMIN') {
-    ensureCafeOperationsAllowed(request);
-    filter.cafeId = { $in: request.auth.assignedCafeIds };
+  if (request.auth.role === 'OWNER' || request.auth.role === 'CAFE_ADMIN') {
+    const assigned = (request.auth.assignedCafeIds || []).map(normalizeIdentifier).filter(Boolean);
+    if (!assigned.length) {
+      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'No authorised café scope is available for correction requests.');
+    }
+    filter.cafeId = { $in: assigned };
   }
 
   const requests = await AttendanceCorrectionRequest.find(filter).sort({ createdAt: -1 }).lean();
@@ -2710,6 +2715,8 @@ const resolveException = asyncHandler(async (request, response) => {
     throw new ApiError(403, 'PERMISSION_DENIED', 'Insufficient permissions to resolve attendance exceptions.');
   }
 
+  ensureCafeOperationsAllowed(request);
+
   const exceptionId = normalizeIdentifier(request.params.exceptionId);
   const { action = 'RESOLVE', reason = '' } = request.body || {};
 
@@ -2727,10 +2734,7 @@ const resolveException = asyncHandler(async (request, response) => {
 
   if (!exception) throw new ApiError(404, 'EXCEPTION_NOT_FOUND', 'Attendance exception not found.');
 
-  if (request.auth.role === 'CAFE_ADMIN') {
-    ensureCafeOperationsAllowed(request);
-    ensureCafeAccess(request, exception.cafeId);
-  }
+  ensureCafeAccess(request, exception.cafeId);
 
   exception.status = normalizedAction === 'RESOLVE' ? 'RESOLVED' : 'DISMISSED';
   exception.resolvedAt = new Date();
@@ -2762,21 +2766,17 @@ const resolveException = asyncHandler(async (request, response) => {
  * Authoritative rotating QR challenge for display on authorized screens.
  */
 const getActiveCafeQr = asyncHandler(async (request, response) => {
-  const { organisationId, userId, role, isPrimaryMaster, assignedCafeIds, assignedCafeId, primaryCafeId } = request.auth;
+  const { organisationId, userId, role, assignedCafeIds, assignedCafeId, primaryCafeId } = request.auth;
 
-  if (role === 'MASTER' && isPrimaryMaster !== true) {
-    throw new ApiError(
-      403,
-      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
-      'Only the Primary Master may display attendance QR challenges from the management console.'
-    );
-  }
+  ensureCafeOperationsAllowed(request);
 
   const cafeId = normalizeIdentifier(request.query.cafeId) || assignedCafeId || primaryCafeId || (assignedCafeIds && assignedCafeIds[0]);
 
   if (!cafeId) {
     throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId query parameter is required.');
   }
+
+  ensureCafeAccess(request, cafeId);
 
   const challengeData = await attendanceQrService.getActiveOrNewChallenge({
     organisationId,
@@ -3222,10 +3222,17 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
   }
 
   if (role === 'CAFE_OPS') {
-    const boundCafe = String(assignedCafeId || primaryCafeId || (assignedCafeIds && assignedCafeIds[0]) || '').toUpperCase();
+    const boundCafe = String(request.auth.boundCafeId || assignedCafeId || primaryCafeId || (assignedCafeIds && assignedCafeIds[0]) || '').toUpperCase();
     if (attendance.cafeId.toUpperCase() !== boundCafe) {
       throw new ApiError(403, 'FORBIDDEN', 'Access denied to records outside your bound café.');
     }
+  } else if (role === 'OWNER') {
+    const ownerCafes = new Set((assignedCafeIds || []).map((c) => String(c).trim().toUpperCase()));
+    if (!ownerCafes.size || !ownerCafes.has(attendance.cafeId.toUpperCase())) {
+      throw new ApiError(403, 'CROSS_CAFE_RESOURCE_DENIED', 'Access denied to attendance evidence outside your assigned café.');
+    }
+  } else if (!['MASTER', 'STAFF', 'CAFE_ADMIN'].includes(role)) {
+    throw new ApiError(403, 'FORBIDDEN_EVIDENCE_ACCESS', 'Unauthorised to view attendance evidence.');
   }
 
   const [userDoc, cafeDoc] = await Promise.all([
