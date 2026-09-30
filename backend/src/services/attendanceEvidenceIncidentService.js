@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const { Attendance } = require('../modules/attendance/Attendance');
 const { recordRequestAudit } = require('./auditService');
 const { notificationService } = require('./NotificationService');
+const { verifyAttendanceEvidenceSlot } = require('./attendanceEvidenceIntegrityService');
+const { ApiError } = require('../utils/ApiError');
 
 const CRITICAL_FAILURE_CHECKS = new Set([
   'private_file_metadata_present',
@@ -311,9 +313,174 @@ async function quarantineAttendanceEvidenceFailures({
   return summary;
 }
 
+
+async function releaseQuarantinedAttendanceEvidence({
+  request,
+  attendanceId,
+  punchType,
+  reason,
+} = {}) {
+  if (!request?.auth?.organisationId || !request?.auth?.userId) {
+    throw new TypeError('Authenticated request context is required.');
+  }
+
+  const organisationId = normalizeId(request.auth.organisationId);
+  const actorUserId = normalizeId(request.auth.userId);
+  const normalizedAttendanceId = normalizeId(attendanceId);
+  const normalizedPunchType = normalizeId(punchType);
+  const releaseReason = String(reason || '').trim();
+
+  if (!normalizedAttendanceId || !['CHECK_IN', 'CHECK_OUT'].includes(normalizedPunchType)) {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_EVIDENCE_RELEASE_REFERENCE_INVALID',
+      'A valid attendanceId and CHECK_IN or CHECK_OUT punch type are required.'
+    );
+  }
+
+  if (releaseReason.length < 10) {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_EVIDENCE_RELEASE_REASON_REQUIRED',
+      'A specific release reason of at least 10 characters is required.'
+    );
+  }
+
+  const query = Attendance.findOne({
+    organisationId,
+    attendanceId: normalizedAttendanceId,
+  });
+  const attendance = query && typeof query.lean === 'function'
+    ? await query.lean()
+    : await query;
+
+  if (!attendance) {
+    throw new ApiError(404, 'ATTENDANCE_NOT_FOUND', 'Attendance record not found.');
+  }
+
+  const slot = getEvidenceSlot(attendance, normalizedPunchType);
+  if (
+    !slot ||
+    String(slot.integrityState || '').toUpperCase() !== 'QUARANTINED' ||
+    String(slot.verificationStatus || '').toUpperCase() !== 'FLAGGED'
+  ) {
+    throw new ApiError(
+      409,
+      'ATTENDANCE_EVIDENCE_NOT_QUARANTINED',
+      'The selected attendance evidence is not currently quarantined.'
+    );
+  }
+
+  // A release is permitted only after a fresh full byte-level verification.
+  // Versioned proof/geofence snapshots remain strictly enforced; historical
+  // pre-version evidence is not treated as corrupt merely because it is older.
+  const verification = await verifyAttendanceEvidenceSlot({
+    organisationId,
+    attendance,
+    punchType: normalizedPunchType,
+    verifyStorageBytes: true,
+    requireProofSnapshot: false,
+  });
+
+  if (verification.status !== 'PASS') {
+    throw new ApiError(
+      409,
+      'ATTENDANCE_EVIDENCE_RELEASE_VERIFICATION_FAILED',
+      `Evidence still fails integrity verification: ${(verification.failedChecks || []).join(', ') || 'unknown check'}.`
+    );
+  }
+
+  // First write an immutable authorization/verification event. This event does
+  // not claim the state transition occurred; it records that release criteria
+  // were satisfied and that the Primary Master authorized the attempt.
+  const releaseAudit = await recordRequestAudit({
+    request,
+    module: 'ATTENDANCE',
+    action: 'ATTENDANCE_EVIDENCE_QUARANTINE_RELEASE_VERIFIED',
+    entityType: 'AttendanceEvidence',
+    entityId: `${normalizedAttendanceId}:${normalizedPunchType}`,
+    cafeId: attendance.cafeId || null,
+    reason: releaseReason,
+    result: 'SUCCESS',
+    riskClassification: 'HIGH',
+    metadata: {
+      attendanceId: normalizedAttendanceId,
+      punchType: normalizedPunchType,
+      fileId: verification.fileId || resolveSlotFileId(attendance, normalizedPunchType) || null,
+      previousIntegrityAuditEventId: slot.integrityAuditEventId || null,
+      verificationStatus: verification.status,
+      failedChecks: verification.failedChecks || [],
+      releaseAuthorizedByUserId: actorUserId,
+    },
+  });
+
+  if (!releaseAudit?.auditEventId) {
+    throw new ApiError(
+      503,
+      'ATTENDANCE_EVIDENCE_RELEASE_AUDIT_FAILED',
+      'Release was not applied because its immutable audit event could not be confirmed.'
+    );
+  }
+
+  const slotPath = normalizedPunchType === 'CHECK_IN'
+    ? 'attendanceEvidence.checkIn'
+    : 'attendanceEvidence.checkOut';
+  const now = new Date();
+
+  const update = await Attendance.updateOne(
+    {
+      _id: attendance._id,
+      organisationId,
+      attendanceId: normalizedAttendanceId,
+      [`${slotPath}.integrityState`]: 'QUARANTINED',
+      [`${slotPath}.verificationStatus`]: 'FLAGGED',
+    },
+    {
+      $set: {
+        [`${slotPath}.verificationStatus`]: 'VERIFIED',
+        [`${slotPath}.integrityState`]: 'PASS',
+        [`${slotPath}.integrityLastCheckedAt`]: now,
+        [`${slotPath}.integrityFailedChecks`]: [],
+        [`${slotPath}.integrityReleaseAuditEventId`]: releaseAudit.auditEventId,
+        [`${slotPath}.integrityReleasedAt`]: now,
+        [`${slotPath}.integrityReleasedByUserId`]: actorUserId,
+        [`${slotPath}.integrityReleaseReason`]: releaseReason,
+      },
+    }
+  );
+
+  const changed = Boolean(
+    update &&
+    (
+      update.modifiedCount === 1 ||
+      update.nModified === 1
+    )
+  );
+
+  if (!changed) {
+    throw new ApiError(
+      409,
+      'ATTENDANCE_EVIDENCE_RELEASE_STATE_CONFLICT',
+      'Evidence state changed while release was being verified. No release was applied.'
+    );
+  }
+
+  return {
+    attendanceId: normalizedAttendanceId,
+    punchType: normalizedPunchType,
+    fileId: verification.fileId || null,
+    integrityState: 'PASS',
+    verificationStatus: 'VERIFIED',
+    releasedAt: now,
+    releasedByUserId: actorUserId,
+    releaseAuditEventId: releaseAudit.auditEventId,
+  };
+}
+
 module.exports = {
   CRITICAL_FAILURE_CHECKS,
   classifyIntegrityFailure,
   buildSecurityAlertKey,
   quarantineAttendanceEvidenceFailures,
+  releaseQuarantinedAttendanceEvidence,
 };
