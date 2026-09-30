@@ -3637,6 +3637,7 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
       attendance,
       punchType: evidenceType,
       verifyStorageBytes: false,
+      requireProofSnapshot: false,
     });
 
     if (metadataIntegrity.status !== 'PASS') {
