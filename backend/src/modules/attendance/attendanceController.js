@@ -973,42 +973,129 @@ const listShiftsForRoster = asyncHandler(async (request, response) => {
 
 // 6. Overtime Decision (CAFE_ADMIN verification -> Primary Master final decision)
 const decideOvertime = asyncHandler(async (request, response) => {
-  const { attendanceId: rawAttId, decision, approvedMinutes = 0, reason = '' } = request.body || {};
+  const {
+    attendanceId: rawAttId,
+    decision: rawDecision,
+    approvedMinutes,
+    reason = '',
+  } = request.body || {};
   const attendanceId = normalizeIdentifier(rawAttId);
+  const decision = normalizeIdentifier(rawDecision);
+
+  if (!['APPROVE', 'VERIFY_ADMIN', 'REJECT'].includes(decision)) {
+    throw new ApiError(
+      400,
+      'OVERTIME_DECISION_INVALID',
+      'Overtime decision must be APPROVE, VERIFY_ADMIN, or REJECT.'
+    );
+  }
 
   const attendance = await Attendance.findOne({
     attendanceId,
     organisationId: request.auth.organisationId,
   });
 
-  if (!attendance) throw new ApiError(404, 'ATTENDANCE_NOT_FOUND', 'Attendance record not found.');
+  if (!attendance) {
+    throw new ApiError(404, 'ATTENDANCE_NOT_FOUND', 'Attendance record not found.');
+  }
 
-  ensureCafeAccess(request, attendance.cafeId);
+  await ensurePeriodNotLocked(request.auth.organisationId, attendance.businessDate);
 
-  const isPrimary = request.auth.isPrimaryMaster === true;
+  const beforeSnapshot = {
+    overtimeStatus: attendance.overtimeStatus,
+    detectedOvertimeMinutes: attendance.detectedOvertimeMinutes,
+    approvedOvertimeMinutes: attendance.approvedOvertimeMinutes,
+    overtimeDecidedByUserId: attendance.overtimeDecidedByUserId,
+    overtimeReason: attendance.overtimeReason,
+  };
 
-  if (decision === 'APPROVE') {
-    if (!isPrimary) {
-      throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for final Overtime decision.');
+  if (decision === 'VERIFY_ADMIN') {
+    if (request.auth.role !== 'CAFE_ADMIN') {
+      throw new ApiError(
+        403,
+        'CAFE_ADMIN_VERIFICATION_REQUIRED',
+        'Only an authorised Café Admin may verify detected overtime before final review.'
+      );
     }
-    attendance.overtimeStatus = 'APPROVED_BY_PRIMARY';
-    attendance.approvedOvertimeMinutes = Number(approvedMinutes) || attendance.detectedOvertimeMinutes || 0;
-    attendance.overtimeDecidedByUserId = request.auth.userId;
-    attendance.overtimeDecidedAt = new Date();
-    attendance.overtimeReason = reason.trim();
-  } else if (decision === 'VERIFY_ADMIN') {
+    ensureCafeOperationsAllowed(request);
+    ensureCafeAccess(request, attendance.cafeId);
+
     attendance.overtimeStatus = 'VERIFIED_BY_ADMIN';
+    attendance.overtimeReason = reason.trim();
   } else {
-    if (!isPrimary && request.auth.role !== 'MASTER') {
-      throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for final Overtime decision.');
+    if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Final overtime approval or rejection requires Primary Master authority.'
+      );
     }
-    attendance.overtimeStatus = 'REJECTED';
-    attendance.approvedOvertimeMinutes = 0;
+    ensureCafeAccess(request, attendance.cafeId);
+
+    if (decision === 'APPROVE') {
+      const detectedMinutes = Math.max(0, Number(attendance.detectedOvertimeMinutes) || 0);
+      const requestedMinutes =
+        approvedMinutes === undefined || approvedMinutes === null || approvedMinutes === ''
+          ? detectedMinutes
+          : Number(approvedMinutes);
+
+      if (!Number.isFinite(requestedMinutes) || requestedMinutes < 0) {
+        throw new ApiError(400, 'OVERTIME_MINUTES_INVALID', 'Approved overtime minutes must be a finite non-negative number.');
+      }
+      if (requestedMinutes > detectedMinutes) {
+        throw new ApiError(
+          422,
+          'OVERTIME_EXCEEDS_DETECTED',
+          'Approved overtime minutes cannot exceed the server-detected overtime. Correct attendance first if the detected duration is wrong.'
+        );
+      }
+
+      attendance.overtimeStatus = 'APPROVED_BY_PRIMARY';
+      attendance.approvedOvertimeMinutes = Math.round(requestedMinutes);
+      attendance.overtimeReason = reason.trim();
+    } else {
+      if (!reason.trim()) {
+        throw new ApiError(400, 'REASON_REQUIRED', 'A reason is required to reject overtime.');
+      }
+      attendance.overtimeStatus = 'REJECTED';
+      attendance.approvedOvertimeMinutes = 0;
+      attendance.overtimeReason = reason.trim();
+    }
+
     attendance.overtimeDecidedByUserId = request.auth.userId;
     attendance.overtimeDecidedAt = new Date();
   }
 
   await attendance.save();
+
+  await flagPayrollRecalculationRequired(
+    request.auth.organisationId,
+    attendance.cafeId,
+    attendance.businessDate,
+    request.auth.userId
+  );
+
+  await recordRequestAudit({
+    request,
+    module: 'ATTENDANCE',
+    action: 'ATTENDANCE_OVERTIME_DECIDED',
+    entityType: 'Attendance',
+    entityId: attendance.attendanceId,
+    metadata: {
+      decision,
+      cafeId: attendance.cafeId,
+      businessDate: attendance.businessDate,
+      userId: attendance.userId,
+      beforeSnapshot,
+      afterSnapshot: {
+        overtimeStatus: attendance.overtimeStatus,
+        detectedOvertimeMinutes: attendance.detectedOvertimeMinutes,
+        approvedOvertimeMinutes: attendance.approvedOvertimeMinutes,
+        overtimeDecidedByUserId: attendance.overtimeDecidedByUserId,
+        overtimeReason: attendance.overtimeReason,
+      },
+    },
+  });
 
   return response.status(200).json({
     success: true,
