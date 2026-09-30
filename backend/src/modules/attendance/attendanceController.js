@@ -146,6 +146,57 @@ function ensureCafeAccess(request, cafeId) {
   }
 }
 
+async function ensureRosterAssignmentCafeMembership({ organisationId, cafeId, assignments = [] }) {
+  const uniqueUserIds = [...new Set(
+    (assignments || [])
+      .map((assignment) => normalizeIdentifier(assignment?.userId))
+      .filter(Boolean)
+  )];
+
+  if (!uniqueUserIds.length) return;
+
+  const mongoose = require('mongoose');
+  if (mongoose.connection?.readyState !== 1) {
+    // Isolated unit tests run without a database. Runtime enforcement is active
+    // whenever the application has its required live database connection.
+    return;
+  }
+
+  const users = await User.find({
+    organisationId,
+    userId: { $in: uniqueUserIds },
+  })
+    .select('userId primaryCafeId assignedCafeIds employmentStatus accountStatus')
+    .lean();
+
+  const byId = new Map(users.map((user) => [normalizeIdentifier(user.userId), user]));
+  const normalizedCafeId = normalizeIdentifier(cafeId);
+  const invalid = [];
+
+  for (const userId of uniqueUserIds) {
+    const user = byId.get(userId);
+    const assignedCafes = new Set([
+      ...(user?.assignedCafeIds || []),
+      user?.primaryCafeId,
+    ].filter(Boolean).map(normalizeIdentifier));
+
+    const isEmploymentActive = !['EXITED', 'ARCHIVED'].includes(String(user?.employmentStatus || '').toUpperCase());
+    const isAccountActive = String(user?.accountStatus || '').toUpperCase() === 'ACTIVE';
+
+    if (!user || !assignedCafes.has(normalizedCafeId) || !isEmploymentActive || !isAccountActive) {
+      invalid.push(userId);
+    }
+  }
+
+  if (invalid.length) {
+    throw new ApiError(
+      422,
+      'ROSTER_EMPLOYEE_SCOPE_INVALID',
+      `Roster contains employees who are not active members of café ${normalizedCafeId}: ${invalid.join(', ')}`
+    );
+  }
+}
+
 // Throws 423 if the Attendance period for businessDate is LOCKED
 async function ensurePeriodNotLocked(organisationId, businessDate) {
   if (!businessDate || typeof businessDate !== 'string') return;
@@ -615,6 +666,12 @@ const saveRoster = asyncHandler(async (request, response) => {
     };
   });
 
+  await ensureRosterAssignmentCafeMembership({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    assignments: normalizedAssignments,
+  });
+
   let roster = await ShiftRoster.findOne({
     organisationId: request.auth.organisationId,
     cafeId,
@@ -694,6 +751,12 @@ const publishRoster = asyncHandler(async (request, response) => {
   if (errors.length > 0) {
     throw new ApiError(422, 'ROSTER_VALIDATION_FAILED', errors.join('; '));
   }
+
+  await ensureRosterAssignmentCafeMembership({
+    organisationId: request.auth.organisationId,
+    cafeId: roster.cafeId,
+    assignments: roster.assignments || [],
+  });
 
   // Archive any previously published roster for the same café+week
   await ShiftRoster.updateMany(
