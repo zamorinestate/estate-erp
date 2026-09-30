@@ -415,11 +415,12 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     });
     assert.equal(adminPurgeRes.statusCode, 403);
 
-    // Primary Master purge selfies -> 200
+    // Primary Master reaches the purge boundary, but physical deletion fails closed
+    // until explicit retention cutoff + provider deletion are configured.
     const masterPurgeRes = await invokeHandler(attendanceController.purgeSelfieEvidence, {
       auth: primaryMasterAuth,
     });
-    assert.equal(masterPurgeRes.statusCode, 200);
-    assert.equal(masterPurgeRes.body.success, true);
+    assert.equal(masterPurgeRes.statusCode, 503);
+    assert.equal(masterPurgeRes.body.code, 'EVIDENCE_PURGE_NOT_CONFIGURED');
   });
 });
