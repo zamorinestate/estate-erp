@@ -3294,25 +3294,6 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
     request.auth.userId = role === 'CAFE_OPS' ? 'DEVICE-OPS-TERMINAL' : 'SYSTEM_ACTOR';
   }
 
-  // Audit event (NEVER log image bytes)
-  await recordRequestAudit({
-    request,
-    module: 'ATTENDANCE',
-    action: 'ATTENDANCE_EVIDENCE_VIEWED',
-    entityType: 'AttendanceEvidence',
-    entityId: privateFile.fileId,
-    metadata: {
-      mediaId: privateFile.fileId,
-      fileKey: privateFile.fileKey || privateFile.storagePath || null,
-      actorUserId: request.auth.userId,
-      actorRole: role,
-      employeeUserId: attendance?.userId || privateFile.uploadedByUserId,
-      attendanceId: attendance?.attendanceId || null,
-      cafeId: attendance?.cafeId || null,
-      evidenceType,
-    },
-  });
-
   // Fetch image bytes
   const buffer = await attendanceEvidenceStorageService.readObjectBuffer({ fileKey: privateFile.fileKey || privateFile.storagePath });
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
@@ -3333,6 +3314,27 @@ const getEvidenceMedia = asyncHandler(async (request, response) => {
       );
     }
   }
+
+  // Audit only after the evidence bytes have been successfully retrieved and
+  // their stored checksum has passed. Failed/missing/corrupt evidence must not
+  // be recorded as a successful view.
+  await recordRequestAudit({
+    request,
+    module: 'ATTENDANCE',
+    action: 'ATTENDANCE_EVIDENCE_VIEWED',
+    entityType: 'AttendanceEvidence',
+    entityId: privateFile.fileId,
+    metadata: {
+      mediaId: privateFile.fileId,
+      fileKey: privateFile.fileKey || privateFile.storagePath || null,
+      actorUserId: request.auth.userId,
+      actorRole: role,
+      employeeUserId: attendance?.userId || privateFile.uploadedByUserId,
+      attendanceId: attendance?.attendanceId || null,
+      cafeId: attendance?.cafeId || null,
+      evidenceType,
+    },
+  });
 
   response.setHeader('Content-Type', privateFile.mimeType || 'image/jpeg');
   response.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
