@@ -942,17 +942,19 @@ function renderAuditTab() {
   `;
 }
 
-// ─── TAB: OTHER PLACEHOLDER VIEWS ────────────────────────────────────────────
-function renderSimpleTab(title, description, content) {
+// ─── TAB: CAPABILITY / SOURCE-OF-TRUTH BOUNDARIES ────────────────────────────
+function renderPayrollCapabilityBoundary(title, description, statusMessage, guidance = "") {
   return `
-    <div style="display: flex; flex-direction: column; gap: 16px; width: 100%; min-width: 0;">
-      <div style="margin-bottom: 6px;">
-        <h3 style="font-size: 18px; font-weight: 700; color: var(--ink); margin: 0 0 6px 0;">${escapeHtml(title)}</h3>
-        <p style="color: var(--muted); font-size: 13px; margin: 0;">${escapeHtml(description)}</p>
+    <div style="display:flex;flex-direction:column;gap:16px;width:100%;min-width:0;">
+      <div style="margin-bottom:6px;">
+        <h3 style="font-size:18px;font-weight:700;color:var(--ink);margin:0 0 6px 0;">${escapeHtml(title)}</h3>
+        <p style="color:var(--muted);font-size:13px;margin:0;">${escapeHtml(description)}</p>
       </div>
-      <div class="card card-pad" style="text-align: center; padding: 32px 20px;">
-        <div style="font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 8px;">${escapeHtml(content)}</div>
-        <div style="font-size: 12px; color: var(--success); font-weight: 600;">✓ Module synchronized with master payroll engine.</div>
+      <div class="card card-pad" style="padding:26px 22px;border-left:3px solid var(--warning,#d97706);">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--warning,#d97706);margin-bottom:8px;">AUTHORITATIVE SOURCE NOT WIRED IN THIS VIEW</div>
+        <div style="font-size:14px;font-weight:650;color:var(--ink);line-height:1.55;">${escapeHtml(statusMessage)}</div>
+        ${guidance ? `<div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5;">${escapeHtml(guidance)}</div>` : ""}
+        <div style="font-size:11px;color:var(--muted);margin-top:12px;">No synthetic totals, readiness percentages, employee counts, statutory forms, or payment identifiers are generated here.</div>
       </div>
     </div>
   `;
@@ -970,21 +972,46 @@ function renderActiveTabContent(userRole) {
     case "employees":
       return renderEmployeesTab(loadedPayrollRuns);
     case "exceptions":
-      return renderSimpleTab("Exception Centre & Quality Gates", "Zero blocker exceptions detected for current period.", "Quality checks: 100% Passing (0 Blockers, 0 Warnings)");
+      return renderPayrollCapabilityBoundary(
+        "Exception Centre & Quality Gates",
+        "Run-level payroll exceptions must come from an authoritative payroll-run quality-gate query.",
+        "This summary tab does not currently load a selected run's exception dataset.",
+        "Use an individual Payroll Run workflow for run-specific validation until this aggregate view is wired."
+      );
     case "adjustments":
-      return renderSimpleTab("Adjustments & Variable Pay Register", "Manual arrears, bonuses, and supervisor allowances register.", "All adjustment batches reconciled for active runs.");
+      return renderPayrollCapabilityBoundary(
+        "Adjustments & Variable Pay Register",
+        "Manual arrears, bonuses, allowances, and correction batches require a dedicated authoritative adjustment ledger.",
+        "The dedicated adjustments register is not yet wired to a canonical adjustment source.",
+        "No reconciliation status is inferred from payroll totals."
+      );
     case "reconciliation":
       return renderReconciliationTab(cachedOverview);
     case "payments":
       return renderPaymentsTab(userRole);
     case "payslips":
-      return renderSimpleTab("Payslips Workspace & Publication", "Self-service payslip generation and distribution control.", "40/40 payslips generated and ready for issuance.");
+      return renderPayrollCapabilityBoundary(
+        "Payslips Workspace & Publication",
+        "Payslip records are managed against specific payroll runs.",
+        "This aggregate tab does not infer generated or publication counts.",
+        "Open a Payroll Run and use its Payslips workflow for authoritative employee-level records."
+      );
     case "compliance":
       return renderComplianceTab(cachedCompliance);
     case "year_end":
-      return renderSimpleTab("Year-End / YTD Accumulators", "Cumulative financial year 2026-27 gross-to-net totals.", "YTD Total Payroll: ₹96,50,000 (INR). Annual projections on track.");
+      return renderPayrollCapabilityBoundary(
+        "Year-End / YTD Accumulators",
+        "Year-to-date payroll totals require an effective-dated cumulative payroll source and closed-period reconciliation.",
+        "The YTD accumulator is not yet wired in this management view.",
+        "No annual total or projection is shown until the canonical accumulator is available."
+      );
     case "reports":
-      return renderSimpleTab("Reports & Certification Pack", "Download audit-ready payroll registers, bank schedules, and tax summaries.", "Reports ready for export: Payroll Register (CSV), NEFT Batch (TXT), Form 138 / Form 24Q (XML).");
+      return renderPayrollCapabilityBoundary(
+        "Reports & Certification Pack",
+        "Only exports backed by implemented server endpoints may be presented as available.",
+        "A consolidated payroll certification pack is not yet wired in this view.",
+        "Use the implemented run/payslip export actions; unsupported statutory pack formats are not advertised as ready."
+      );
     case "audit":
       return renderAuditTab();
     default:
