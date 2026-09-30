@@ -591,8 +591,12 @@ router.post(
 
     return res.status(200).json({
       success: true,
-      message: 'Retention policy updated successfully.',
+      message: doc.$locals?.retentionAuditWarning
+        ? 'Retention policy change applied with an audit-reporting warning.'
+        : 'Retention policy updated successfully.',
       data: doc,
+      auditWarning: doc.$locals?.retentionAuditWarning || null,
+      authorizationAuditEventId: doc.$locals?.retentionAuthorizationAuditEventId || null,
     });
   })
 );
