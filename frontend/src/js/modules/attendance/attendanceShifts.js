@@ -29,6 +29,7 @@ let cachedCalendar360 = { userId: "", month: "", records: [], summary: null };
 let cachedShifts = [];
 let cachedExceptions = [];
 let cachedOvertime = [];
+let cachedOrphanReconciliation = null;
 
 const CAFE_NAMES = {};
 
@@ -1343,6 +1344,14 @@ function renderPoliciesSubpanel() {
   const geofenceDisplay = geofenceConfigured
     ? `${Math.round(geofenceRadius)} m`
     : (scopedCafeId ? "Not configured" : "Per café");
+  const orphanPolicy = cachedOrphanReconciliation?.policy || null;
+  const orphanGraceDisplay = Number.isFinite(Number(orphanPolicy?.graceMinutes))
+    ? `${Number(orphanPolicy.graceMinutes)} minutes`
+    : "Preview to load";
+  const orphanEligible = Number(cachedOrphanReconciliation?.eligibleOrphans || 0);
+  const orphanDeleted = Number(cachedOrphanReconciliation?.deleted || 0);
+  const orphanLinkedProtected = Number(cachedOrphanReconciliation?.linkedProtected || 0);
+  const orphanScanned = Number(cachedOrphanReconciliation?.scanned || 0);
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; width:100%; min-width:0;">
@@ -1442,8 +1451,38 @@ function renderPoliciesSubpanel() {
             </div>
           </div>
 
-          <div style="font-size:11.5px; color:var(--muted); text-align:center; padding:8px; background:var(--surface-sunken); border-radius:6px;">
-            Evidence retention changes require an audited governance workflow. This screen does not simulate purge counts or deletion results.
+          <div style="display:flex; flex-direction:column; gap:10px; padding:10px; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--line);">
+            <div style="display:flex; justify-content:space-between; gap:10px; font-size:11.5px;">
+              <span style="color:var(--muted);">Orphan upload grace policy</span>
+              <strong style="color:var(--ink); font-family:var(--font-mono);">${orphanGraceDisplay}</strong>
+            </div>
+            ${cachedOrphanReconciliation ? `
+              <div style="display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px;">
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanScanned}</strong><div style="font-size:10px;color:var(--muted);">Scanned</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanLinkedProtected}</strong><div style="font-size:10px;color:var(--muted);">Linked Protected</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanEligible}</strong><div style="font-size:10px;color:var(--muted);">Eligible Orphans</div></div>
+                <div style="padding:7px; border:1px solid var(--line); border-radius:6px; text-align:center;"><strong>${orphanDeleted}</strong><div style="font-size:10px;color:var(--muted);">Deleted</div></div>
+              </div>
+            ` : ""}
+            ${isPrimary ? `
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-secondary" id="preview-orphan-evidence-btn" type="button" style="font-size:11.5px;">
+                  Preview Orphan Reconciliation
+                </button>
+                ${cachedOrphanReconciliation?.dryRun === true && orphanEligible > 0 ? `
+                  <button class="btn btn-danger" id="execute-orphan-evidence-btn" type="button" style="font-size:11.5px;">
+                    Delete ${orphanEligible} Expired Unlinked Upload${orphanEligible === 1 ? "" : "s"}
+                  </button>
+                ` : ""}
+              </div>
+            ` : `
+              <div style="font-size:11.5px; color:var(--muted);">
+                Orphan evidence reconciliation is restricted to the Primary Master.
+              </div>
+            `}
+            <div style="font-size:10.8px; color:var(--muted); line-height:1.45;">
+              This workflow only targets expired uploads that are unlinked from every attendance record. Committed attendance evidence purge remains disabled pending a formal retention policy.
+            </div>
           </div>
         </div>
 
@@ -2116,6 +2155,49 @@ function wireAttendanceSubpanelActions(root) {
       await loadLiveAttendanceData();
       rerender(root);
     });
+  });
+
+  // Primary Master: expired orphan attendance evidence reconciliation
+  root.querySelector("#preview-orphan-evidence-btn")?.addEventListener("click", async () => {
+    try {
+      const res = await apiPost("/attendance/evidence/orphans/reconcile", { execute: false });
+      cachedOrphanReconciliation = res?.data || null;
+      showToast(
+        `Preview complete: ${Number(res?.data?.eligibleOrphans || 0)} expired unlinked upload(s) eligible.`,
+        "info"
+      );
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Unable to preview orphan attendance evidence.", "error");
+    }
+  });
+
+  root.querySelector("#execute-orphan-evidence-btn")?.addEventListener("click", () => {
+    const eligible = Number(cachedOrphanReconciliation?.eligibleOrphans || 0);
+    if (!eligible) {
+      showToast("Run the preview first. No eligible orphan evidence is currently loaded.", "warning");
+      return;
+    }
+
+    confirmAction(
+      `Delete ${eligible} expired, unlinked attendance selfie upload(s)? Linked attendance evidence is protected and will not be deleted.`,
+      async () => {
+        try {
+          const res = await apiPost("/attendance/evidence/orphans/reconcile", {
+            execute: true,
+            confirmation: "DELETE_EXPIRED_UNLINKED_ATTENDANCE_SELFIES",
+          });
+          cachedOrphanReconciliation = res?.data || null;
+          showToast(
+            `Orphan reconciliation completed: ${Number(res?.data?.deleted || 0)} file(s) deleted.`,
+            "success"
+          );
+          rerender(root);
+        } catch (err) {
+          showToast(err?.message || "Unable to reconcile orphan attendance evidence.", "error");
+        }
+      }
+    );
   });
 
   // Open Manual Attendance Modal (Both in Header and Child Header)
