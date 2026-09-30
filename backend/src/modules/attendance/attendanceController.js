@@ -89,6 +89,7 @@ const {
 } = require('../../services/attendanceEvidenceIntegrityService');
 const {
   quarantineAttendanceEvidenceFailures,
+  releaseQuarantinedAttendanceEvidence,
 } = require('../../services/attendanceEvidenceIncidentService');
 const { PrivateFile } = require('../../models/PrivateFile');
 const { AttendanceSubmission } = require('../../models/AttendanceSubmission');
@@ -1484,6 +1485,42 @@ const auditAttendanceEvidence = asyncHandler(async (request, response) => {
     message: result.integrityOk
       ? 'Attendance evidence integrity audit completed without detected failures.'
       : 'Attendance evidence integrity audit detected failures; affected evidence was quarantined where an exact evidence slot could be identified.',
+    data: result,
+    correlationId: request.correlationId || null,
+  });
+});
+
+const releaseAttendanceEvidenceQuarantine = asyncHandler(async (request, response) => {
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may release quarantined attendance evidence.'
+    );
+  }
+
+  const { attendanceId: rawAttendanceId, punchType: rawPunchType, reason = '', confirmation = '' } = request.body || {};
+  const attendanceId = normalizeIdentifier(rawAttendanceId);
+  const punchType = normalizeIdentifier(rawPunchType);
+
+  if (String(confirmation || '').trim() !== 'RELEASE_QUARANTINED_ATTENDANCE_EVIDENCE') {
+    throw new ApiError(
+      400,
+      'ATTENDANCE_EVIDENCE_RELEASE_CONFIRMATION_REQUIRED',
+      'Release requires confirmation RELEASE_QUARANTINED_ATTENDANCE_EVIDENCE.'
+    );
+  }
+
+  const result = await releaseQuarantinedAttendanceEvidence({
+    request,
+    attendanceId,
+    punchType,
+    reason,
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Attendance evidence quarantine released after a fresh forensic integrity pass.',
     data: result,
     correlationId: request.correlationId || null,
   });
@@ -3918,6 +3955,7 @@ module.exports = {
   purgeSelfieEvidence,
   reconcileOrphanSelfieEvidence,
   auditAttendanceEvidence,
+  releaseAttendanceEvidenceQuarantine,
   getServerTime,
   getStaffPolicy,
   getStaffToday,
