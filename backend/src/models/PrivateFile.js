@@ -210,6 +210,18 @@ privateFileSchema.index(
   }
 );
 
+privateFileSchema.index(
+  {
+    organisationId: 1,
+    'attendanceLink.status': 1,
+    'attendanceLink.reservedAt': 1,
+    'attendanceContext.grantExpiresAt': 1,
+  },
+  {
+    name: 'attendance_stale_reservation_reconciliation_scan',
+  }
+);
+
 privateFileSchema.pre('validate', function normaliseFileFields() {
   const upperFields = ['fileId', 'organisationId', 'uploadedByUserId'];
   for (const field of upperFields) {
