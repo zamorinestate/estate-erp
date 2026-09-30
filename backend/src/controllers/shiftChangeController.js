@@ -334,7 +334,12 @@ const reviewShiftChangeRequest = asyncHandler(async (request, response) => {
   try {
     const recipientUser = await User.findOne({ organisationId, userId: shiftRequest.employeeUserId }).select('email role').lean();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${dateStr}`,
+      prefix: `NT-${dateStr}`,
+      minimumDigits: 5,
+    });
     const eventType = status === 'APPROVED' ? 'SHIFT_CHANGE_APPROVED' : 'SHIFT_CHANGE_REJECTED';
     await Notification.create({
       notificationId: notifId,
