@@ -555,25 +555,17 @@ const createEntry = asyncHandler(async (request, response) => {
         }
       }
 
-      let ledgerEntryId;
-      try {
-        const generated = await SequenceCounter.generateId({
-          organisationId: request.auth.organisationId,
-          sequenceKey: `PERSONAL_LEDGER_${datePrefix}`,
-          prefix: `PL-${datePrefix}`,
-          minimumDigits: 4,
-          session,
-        });
-        if (typeof generated === 'string' && /^PL-\d{8}-\d{4,}$/.test(generated)) {
-          ledgerEntryId = generated;
-        } else {
-          const seqSuffix = String(generated).padStart(4, '0');
-          ledgerEntryId = `PL-${datePrefix}-${seqSuffix}`;
-        }
-      } catch (_) {
-        const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-        ledgerEntryId = `PL-${datePrefix}-${randomSuffix}`;
-      }
+      const generated = await SequenceCounter.generateId({
+        organisationId: request.auth.organisationId,
+        sequenceKey: `PERSONAL_LEDGER_${datePrefix}`,
+        prefix: `PL-${datePrefix}`,
+        minimumDigits: 4,
+        session,
+      });
+      const ledgerEntryId =
+        typeof generated === 'string' && /^PL-\d{8}-\d{4,}$/.test(generated)
+          ? generated
+          : `PL-${datePrefix}-${String(generated).padStart(4, '0')}`;
 
       const docPayload = {
         ledgerEntryId,
@@ -682,7 +674,15 @@ const classifyToBusinessBooks = asyncHandler(async (request, response) => {
   const accessLevel = verifyPersonalLedgerAccess(request);
 
   const ledgerEntryId = normalizeIdentifier(request.params.ledgerEntryId);
-  const { targetGLAccount, accountingTreatment, cafeId, businessPurpose } = request.body;
+  const { targetGLAccount, accountingTreatment, cafeId, businessPurpose } = request.body || {};
+  const normalizedTreatment = normalizeIdentifier(accountingTreatment || 'BUSINESS_EXPENSE');
+
+  if (!ACCOUNTING_TREATMENTS.includes(normalizedTreatment) || normalizedTreatment === 'PERSONAL') {
+    throw ApiError.badRequest(
+      'A valid non-personal accountingTreatment is required for business classification.',
+      'INVALID_ACCOUNTING_TREATMENT'
+    );
+  }
 
   const filter = {
     ledgerEntryId,
@@ -709,18 +709,19 @@ const classifyToBusinessBooks = asyncHandler(async (request, response) => {
       throw ApiError.badRequest('Reversed entries cannot be classified.', 'ENTRY_NOT_ACTIVE');
     }
 
-    // Generate Finance Journal Reference
-    const journalRef = `JRN-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    if (doc.financePostingStatus === 'POSTED' || doc.financeJournalRef) {
+      throw ApiError.badRequest(
+        'This entry already carries a GL posting reference and cannot be reclassified without the governed GL reversal workflow.',
+        'GL_POSTING_ALREADY_EXISTS'
+      );
+    }
 
-    doc.accountingTreatment = accountingTreatment || 'BUSINESS_EXPENSE';
-    doc.workflowStatus = 'POSTED';
-    doc.financeJournalRef = journalRef;
-    doc.financePostingStatus = 'POSTED';
-    doc.financePostedAt = new Date();
     if (cafeId) {
       const targetCafeId = normalizeIdentifier(cafeId);
       if (accessLevel === 'OWNER') {
-        const assigned = Array.isArray(request.auth.assignedCafeIds) ? request.auth.assignedCafeIds.map(normalizeIdentifier) : [];
+        const assigned = Array.isArray(request.auth.assignedCafeIds)
+          ? request.auth.assignedCafeIds.map(normalizeIdentifier)
+          : [];
         if (!assigned.includes(targetCafeId)) {
           throw ApiError.forbidden(
             `Cannot classify personal transaction to unassigned café ${targetCafeId}.`,
@@ -730,7 +731,18 @@ const classifyToBusinessBooks = asyncHandler(async (request, response) => {
       }
       doc.cafeId = targetCafeId;
     }
-    if (businessPurpose) doc.businessPurpose = String(businessPurpose).trim();
+
+    doc.accountingTreatment = normalizedTreatment;
+    doc.workflowStatus = 'POSTING_PENDING';
+    doc.financeJournalRef = null;
+    doc.financePostingStatus = 'NOT_POSTED';
+    doc.financePostingError =
+      'GL_CONTROL_ACCOUNT_MAPPING_NOT_CONFIGURED';
+    doc.financePostedAt = null;
+
+    if (businessPurpose) {
+      doc.businessPurpose = String(businessPurpose).trim();
+    }
 
     if (session) {
       await doc.save({ session });
@@ -746,8 +758,10 @@ const classifyToBusinessBooks = asyncHandler(async (request, response) => {
       entityId: ledgerEntryId,
       metadata: {
         accountingTreatment: doc.accountingTreatment,
-        financeJournalRef: journalRef,
-        targetGLAccount,
+        requestedTargetGLAccount: targetGLAccount || null,
+        financePostingStatus: doc.financePostingStatus,
+        workflowStatus: doc.workflowStatus,
+        glPostingAvailability: 'UNAVAILABLE_NO_GOVERNED_CONTROL_ACCOUNT_MAPPING',
         actorRole: accessLevel,
       },
       session,
@@ -760,6 +774,11 @@ const classifyToBusinessBooks = asyncHandler(async (request, response) => {
     data: {
       ...entry.toObject(),
       amountInr: entry.amountPaisa / 100,
+      glPosting: {
+        status: 'NOT_POSTED',
+        actuality: 'UNAVAILABLE',
+        reason: 'GL_CONTROL_ACCOUNT_MAPPING_NOT_CONFIGURED',
+      },
     },
   });
 });
@@ -769,7 +788,16 @@ const reverseClassification = asyncHandler(async (request, response) => {
   const accessLevel = verifyPersonalLedgerAccess(request);
 
   const ledgerEntryId = normalizeIdentifier(request.params.ledgerEntryId);
-  const { reason } = request.body;
+  const reason = typeof request.body?.reason === 'string'
+    ? request.body.reason.trim()
+    : '';
+
+  if (!reason) {
+    throw ApiError.badRequest(
+      'A reason is required to reverse a classification.',
+      'REASON_REQUIRED'
+    );
+  }
 
   const filter = {
     ledgerEntryId,
@@ -792,11 +820,21 @@ const reverseClassification = asyncHandler(async (request, response) => {
       throw ApiError.notFound('Entry not found.', 'ENTRY_NOT_FOUND');
     }
 
-    const originalJournal = doc.financeJournalRef;
+    if (doc.financePostingStatus === 'POSTED' || doc.financeJournalRef) {
+      throw new ApiError(
+        409,
+        'GL_REVERSAL_REQUIRED',
+        'This classification is linked to a GL posting. Reverse the actual journal before changing the Personal Ledger classification.'
+      );
+    }
+
     doc.workflowStatus = 'SUBMITTED';
     doc.accountingTreatment = 'PERSONAL';
-    doc.financePostingStatus = 'REVERSED';
-    doc.notes = `${doc.notes ? doc.notes + ' | ' : ''}Classification reversed: ${reason || 'Governance review'}`;
+    doc.financeJournalRef = null;
+    doc.financePostingStatus = 'NOT_POSTED';
+    doc.financePostingError = null;
+    doc.financePostedAt = null;
+    doc.notes = `${doc.notes ? doc.notes + ' | ' : ''}Classification reversed: ${reason}`;
 
     if (session) {
       await doc.save({ session });
@@ -811,8 +849,8 @@ const reverseClassification = asyncHandler(async (request, response) => {
       entityType: 'PERSONAL_LEDGER_ENTRY',
       entityId: ledgerEntryId,
       metadata: {
-        originalFinanceJournalRef: originalJournal,
         reason,
+        financePostingStatus: doc.financePostingStatus,
         actorRole: accessLevel,
       },
       session,
@@ -871,25 +909,17 @@ const reverseEntry = asyncHandler(async (request, response) => {
     const today = getIstBusinessDate();
     const datePrefix = today.replace(/-/g, '');
 
-    let reversalEntryId;
-    try {
-      const generated = await SequenceCounter.generateId({
-        organisationId: request.auth.organisationId,
-        sequenceKey: `PERSONAL_LEDGER_${datePrefix}`,
-        prefix: `PL-${datePrefix}`,
-        minimumDigits: 4,
-        session,
-      });
-      if (typeof generated === 'string' && /^PL-\d{8}-\d{4,}$/.test(generated)) {
-        reversalEntryId = generated;
-      } else {
-        const seqSuffix = String(generated).padStart(4, '0');
-        reversalEntryId = `PL-${datePrefix}-${seqSuffix}`;
-      }
-    } catch (_) {
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-      reversalEntryId = `PL-${datePrefix}-${randomSuffix}`;
-    }
+    const generated = await SequenceCounter.generateId({
+      organisationId: request.auth.organisationId,
+      sequenceKey: `PERSONAL_LEDGER_${datePrefix}`,
+      prefix: `PL-${datePrefix}`,
+      minimumDigits: 4,
+      session,
+    });
+    const reversalEntryId =
+      typeof generated === 'string' && /^PL-\d{8}-\d{4,}$/.test(generated)
+        ? generated
+        : `PL-${datePrefix}-${String(generated).padStart(4, '0')}`;
 
     const reversalPayload = {
       ledgerEntryId: reversalEntryId,
@@ -973,21 +1003,37 @@ const reverseEntry = asyncHandler(async (request, response) => {
 const settleBalances = asyncHandler(async (request, response) => {
   const accessLevel = verifyPersonalLedgerAccess(request);
 
-  const { voucherIds, settlementAmountPaisa, paymentMethod, paymentReference, notes } = request.body;
+  const {
+    voucherIds,
+    settlementAmountPaisa,
+    paymentMethod = 'BANK_TRANSFER',
+    paymentReference,
+    notes,
+  } = request.body || {};
 
-  if (!Array.isArray(voucherIds) || voucherIds.length === 0) {
-    throw ApiError.badRequest('At least one voucher ID is required for settlement.', 'VOUCHERS_REQUIRED');
+  const normalizedVoucherIds = [...new Set(
+    (Array.isArray(voucherIds) ? voucherIds : [])
+      .map(normalizeIdentifier)
+      .filter(Boolean)
+  )];
+
+  if (normalizedVoucherIds.length === 0) {
+    throw ApiError.badRequest(
+      'At least one voucher ID is required for settlement.',
+      'VOUCHERS_REQUIRED'
+    );
   }
 
   const parsedAmount = Number.parseInt(settlementAmountPaisa, 10);
-  if (!Number.isInteger(parsedAmount) || parsedAmount < 1) {
-    throw ApiError.badRequest('settlementAmountPaisa must be a positive integer.', 'INVALID_AMOUNT');
+  if (!Number.isSafeInteger(parsedAmount) || parsedAmount < 1) {
+    throw ApiError.badRequest(
+      'settlementAmountPaisa must be a positive integer.',
+      'INVALID_AMOUNT'
+    );
   }
 
-  const batchRef = `SETTLE-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-
   const findFilter = {
-    ledgerEntryId: { $in: voucherIds.map(normalizeIdentifier) },
+    ledgerEntryId: { $in: normalizedVoucherIds },
     organisationId: request.auth.organisationId,
     status: 'ACTIVE',
   };
@@ -1004,16 +1050,88 @@ const settleBalances = asyncHandler(async (request, response) => {
     if (session) q = q.session(session);
     const entries = await q;
 
-    if (entries.length === 0) {
-      throw ApiError.notFound('No eligible active vouchers found for settlement.', 'NO_VOUCHERS_FOUND');
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw ApiError.notFound(
+        'No eligible active vouchers found for settlement.',
+        'NO_VOUCHERS_FOUND'
+      );
     }
 
-    for (const entry of entries) {
+    const foundIds = new Set(entries.map((entry) => normalizeIdentifier(entry.ledgerEntryId)));
+    const missingVoucherIds = normalizedVoucherIds.filter((id) => !foundIds.has(id));
+    if (missingVoucherIds.length > 0) {
+      throw ApiError.notFound(
+        'One or more requested vouchers are unavailable in your authorized scope.',
+        'VOUCHER_NOT_FOUND'
+      );
+    }
+
+    const outstandingByEntry = entries.map((entry) => {
+      const amountPaisa = Number(entry.amountPaisa || 0);
+      const alreadySettled = Number(entry.settledAmountPaisa || 0);
+      return {
+        entry,
+        outstandingPaisa: Math.max(0, amountPaisa - alreadySettled),
+      };
+    });
+
+    const computedOutstandingPaisa = outstandingByEntry.reduce(
+      (sum, row) => sum + row.outstandingPaisa,
+      0
+    );
+
+    if (computedOutstandingPaisa <= 0) {
+      throw new ApiError(
+        409,
+        'VOUCHERS_ALREADY_SETTLED',
+        'The selected vouchers have no outstanding amount.'
+      );
+    }
+
+    if (parsedAmount !== computedOutstandingPaisa) {
+      throw new ApiError(
+        409,
+        'SETTLEMENT_AMOUNT_MISMATCH',
+        'settlementAmountPaisa must exactly equal the selected vouchers outstanding balance.',
+        {
+          requestedSettlementPaisa: parsedAmount,
+          computedOutstandingPaisa,
+        }
+      );
+    }
+
+    const normalizedPaymentMethod = normalizeIdentifier(paymentMethod || 'BANK_TRANSFER');
+    const normalizedPaymentReference = String(paymentReference || '').trim();
+    if (normalizedPaymentMethod !== 'CASH' && !normalizedPaymentReference) {
+      throw ApiError.badRequest(
+        'A paymentReference is required for non-cash settlements.',
+        'PAYMENT_REFERENCE_REQUIRED'
+      );
+    }
+
+    const settlementDateKey = getIstBusinessDate().replace(/-/g, '');
+    const generatedBatch = await SequenceCounter.generateId({
+      organisationId: request.auth.organisationId,
+      sequenceKey: `PERSONAL_LEDGER_SETTLEMENT_${settlementDateKey}`,
+      prefix: `SETTLE-${settlementDateKey}`,
+      minimumDigits: 4,
+      session,
+    });
+    const batchRef =
+      typeof generatedBatch === 'string' && /^SETTLE-\d{8}-\d{4,}$/.test(generatedBatch)
+        ? generatedBatch
+        : `SETTLE-${settlementDateKey}-${String(generatedBatch).padStart(4, '0')}`;
+
+    for (const row of outstandingByEntry) {
+      const { entry, outstandingPaisa } = row;
       entry.settlementStatus = 'SETTLED';
-      entry.settledAmountPaisa = entry.amountPaisa;
+      entry.settledAmountPaisa = Number(entry.settledAmountPaisa || 0) + outstandingPaisa;
       entry.outstandingAmountPaisa = 0;
       entry.settlementBatchRef = batchRef;
       entry.workflowStatus = 'SETTLED';
+      if (notes) {
+        entry.notes = `${entry.notes ? entry.notes + ' | ' : ''}Settlement: ${String(notes).trim()}`;
+      }
       if (session) {
         await entry.save({ session });
       } else {
@@ -1030,21 +1148,23 @@ const settleBalances = asyncHandler(async (request, response) => {
       metadata: {
         settlementAmountPaisa: parsedAmount,
         settlementBatchRef: batchRef,
+        paymentMethod: normalizedPaymentMethod,
+        paymentReference: normalizedPaymentReference || null,
         vouchersCount: entries.length,
         actorRole: accessLevel,
       },
       session,
     });
 
-    return entries;
+    return { entries, batchRef };
   });
 
   return response.status(200).json({
     data: {
-      settlementBatchRef: batchRef,
+      settlementBatchRef: updatedEntries.batchRef,
       settledAmountPaisa: parsedAmount,
       settledAmountInr: parsedAmount / 100,
-      vouchersSettled: updatedEntries.map((e) => e.ledgerEntryId),
+      vouchersSettled: updatedEntries.entries.map((entry) => entry.ledgerEntryId),
     },
   });
 });
@@ -1058,7 +1178,17 @@ const confirmBalance = asyncHandler(async (request, response) => {
     throw ApiError.badRequest('confirmationStatus must be CONFIRMED or DISPUTED.', 'INVALID_CONFIRMATION_STATUS');
   }
 
-  const confirmationRef = `CONF-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+  const confirmationDateKey = getIstBusinessDate().replace(/-/g, '');
+  const generatedConfirmation = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `PERSONAL_LEDGER_CONFIRMATION_${confirmationDateKey}`,
+    prefix: `CONF-${confirmationDateKey}`,
+    minimumDigits: 4,
+  });
+  const confirmationRef =
+    typeof generatedConfirmation === 'string' && /^CONF-\d{8}-\d{4,}$/.test(generatedConfirmation)
+      ? generatedConfirmation
+      : `CONF-${confirmationDateKey}-${String(generatedConfirmation).padStart(4, '0')}`;
 
   await recordRequestAudit({
     request,
@@ -1097,9 +1227,14 @@ const getReconciliation = asyncHandler(async (request, response) => {
   return response.status(200).json({
     data: {
       subLedgerBalancePaisa: balance.netCurrentAccountPositionPaisa,
-      financeGLControlBalancePaisa: balance.netCurrentAccountPositionPaisa,
-      differencePaisa: 0,
-      reconciliationStatus: 'BALANCED',
+      financeGLControlBalancePaisa: null,
+      differencePaisa: null,
+      reconciliationStatus: 'GL_SOURCE_NOT_CONFIGURED',
+      reconciliationVerified: false,
+      sourceStatus: {
+        personalLedger: 'AUTHORITATIVE',
+        financeGLControlAccount: 'UNAVAILABLE_NO_GOVERNED_OWNER_CONTROL_ACCOUNT_MAPPING',
+      },
       components: {
         dueToOwnerPaisa: balance.dueToOwnerPaisa,
         dueFromOwnerPaisa: balance.dueFromOwnerPaisa,
