@@ -251,7 +251,9 @@ async function quarantineAttendanceEvidenceFailures({
           cafeId: attendance.cafeId || null,
           actorUserId,
           includePrimaryMaster: true,
-          severity: severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING',
+          // All integrity-failure notifications are SECURITY-category alerts.
+          // The audit event preserves the finer HIGH/CRITICAL risk classification.
+          severity: 'CRITICAL',
           priority: 'CRITICAL',
           templateId: 'SECURITY_ALERT',
           templateData: {
