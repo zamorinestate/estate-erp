@@ -52,13 +52,13 @@ router.get(
 // 2. Global Menu Item Master
 router.get(
   '/items',
-  authorize('MENU_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  authorize('MENU_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
   listMenuItems
 );
 
 router.get(
   '/items/:menuItemId',
-  authorize('MENU_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  authorize('MENU_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
   getMenuItem
 );
 
@@ -221,7 +221,7 @@ router.post(
 // 9. Simulator
 router.get(
   '/simulator',
-  authorize('MENU_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN'] }),
+  authorize('MENU_READ', { allowedRoles: ['MASTER', 'OWNER', 'CAFE_ADMIN', 'STAFF'] }),
   simulateEffectiveMenu
 );
 

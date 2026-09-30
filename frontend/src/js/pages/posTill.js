@@ -155,10 +155,11 @@ let _menuCatalogueLoadError = "";
 const POS_CATEGORY_GROUPS = Object.freeze([
   { key: "ALL", label: "All Items", categories: null },
   { key: "HOT_COFFEES", label: "Hot Coffees", categories: ["COFFEE"] },
-  { key: "COLD_BREWS", label: "Cold Brews", categories: ["TEA", "BEVERAGES_OTHER"] },
+  { key: "COLD_BREWS", label: "Cold Brews & Teas", categories: ["TEA", "BEVERAGES_OTHER"] },
   { key: "BAKERY", label: "Bakery & Viennoiserie", categories: ["BAKERY"] },
   { key: "SAVOURIES_MAINS", label: "Savouries & Mains", categories: ["SNACKS", "STARTERS", "SOUPS", "SALADS", "MAIN_COURSE", "SIDES"] },
   { key: "DESSERTS", label: "Desserts", categories: ["DESSERTS"] },
+  { key: "OTHER", label: "Other & Retail", categories: ["MERCHANDISE", "OTHER"] },
 ]);
 
 function canManagePosMenu() {
