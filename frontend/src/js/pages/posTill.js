@@ -564,6 +564,13 @@ function renderTerminalView() {
                   <strong style="font-size:14px;display:block;color:var(--ink);">POS Menu Could Not Load</strong>
                   <p style="font-size:12px;margin:4px 0 0;">${escapeHtml(_menuCatalogueLoadError)}</p>
                   <button class="btn btn-sm btn-secondary" id="pos-retry-menu-btn" style="margin-top:10px;font-size:11.5px;" type="button">Retry Menu Load</button>
+                ` : _menuCatalogue.length > 0 && activeCategory !== "ALL" ? `
+                  <div style="font-size:32px;margin-bottom:8px;">🔎</div>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">No Items in This Category</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">
+                    The POS catalogue contains ${_menuCatalogue.length} active item${_menuCatalogue.length === 1 ? "" : "s"}, but none match ${escapeHtml(activeCategoryGroup?.label || activeCategory)}.
+                  </p>
+                  <button class="btn btn-sm btn-secondary" id="pos-show-all-items-btn" style="margin-top:10px;font-size:11.5px;" type="button">Show All Items</button>
                 ` : `
                   <div style="font-size:32px;margin-bottom:8px;">☕</div>
                   <strong style="font-size:14px;display:block;color:var(--ink);">No POS Menu Items Yet</strong>
@@ -1309,6 +1316,10 @@ function wirePOSEventListeners(root) {
 
   root.querySelector("#pos-refresh-menu-btn")?.addEventListener("click", (event) => reloadMenu(event.currentTarget));
   root.querySelector("#pos-retry-menu-btn")?.addEventListener("click", (event) => reloadMenu(event.currentTarget));
+  root.querySelector("#pos-show-all-items-btn")?.addEventListener("click", () => {
+    activeCategory = "ALL";
+    refreshPOSView(root);
+  });
 
   // Keyboard shortcut listener: Ctrl+K or F2 focuses search
   const handleKeydown = (e) => {
