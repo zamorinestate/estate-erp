@@ -1319,7 +1319,7 @@ class PosOrderService {
           transactionType: 'CASH_IN',
           direction: 'IN',
           category: 'POS_SALE',
-          amount: Math.max(0.01, cashPaidPaisa / 100),
+          amount: cashPaidPaisa / 100,
           paymentMethod: 'CASH',
           status: 'POSTED',
           description: `POS Sale Receipt #${invoiceNumber}`,
@@ -1341,9 +1341,9 @@ class PosOrderService {
             invoiceNumber,
             effectType: 'CASH_LEDGER',
             error: err,
-            expectedAmount: Math.max(0.01, cashPaidPaisa / 100),
+            expectedAmount: cashPaidPaisa / 100,
             payloadSnapshot: {
-              amount: Math.max(0.01, cashPaidPaisa / 100),
+              amount: cashPaidPaisa / 100,
               invoiceNumber,
               businessDate,
               cashierUserId:
