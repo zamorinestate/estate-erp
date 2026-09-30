@@ -612,6 +612,48 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
     assert.ok(notif.message.includes('2026-09-21'));
   });
 
+  await suite.test('P2-RST-4: publishRoster rejects employee moved outside roster café', async () => {
+    const orgId = 'ZAMORIN';
+    const managerId = 'MU-0001';
+    const staffId = 'ST-0044';
+    const rosterId = 'ROSTER-20260928-CROSS-CAFE';
+
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-01' });
+    await ShiftRoster.create({
+      rosterId,
+      organisationId: orgId,
+      cafeId: 'CAFE-02',
+      weekStartDate: '2026-09-28',
+      status: 'DRAFT',
+      createdByUserId: managerId,
+      assignments: [
+        {
+          userId: staffId,
+          date: '2026-09-29',
+          startTime: '08:00',
+          endTime: '16:00',
+        },
+      ],
+    });
+
+    const req = {
+      params: { rosterId },
+      auth: {
+        userId: managerId,
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        organisationId: orgId,
+      },
+      headers: {},
+      ip: '127.0.0.1',
+    };
+
+    await assert.rejects(
+      async () => attendanceController.publishRoster(req, createMockRes()),
+      { statusCode: 422, code: 'ROSTER_EMPLOYEE_SCOPE_INVALID' }
+    );
+  });
+
   // ─────────────────────────────────────────────────────────────────────────────
   // SUITE 4: LOAN REPAYMENT DEFERMENT DECISION ENDPOINT & ROUTE
   // ─────────────────────────────────────────────────────────────────────────────
