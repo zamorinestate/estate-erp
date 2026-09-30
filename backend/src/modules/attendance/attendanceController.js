@@ -3868,6 +3868,11 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
       checkIn: {
         time: attendance.checkInAt,
         selfieMediaId: checkInEvidence?.selfieMediaId || attendance.selfieFileId,
+        verificationStatus: checkInEvidence?.verificationStatus || 'VERIFIED',
+        integrityState: checkInEvidence?.integrityState || 'UNVERIFIED',
+        integrityLastCheckedAt: checkInEvidence?.integrityLastCheckedAt || null,
+        integrityFailedChecks: isManagement ? checkInEvidence?.integrityFailedChecks || [] : [],
+        integrityAuditEventId: isManagement ? checkInEvidence?.integrityAuditEventId || null : null,
         qrVerified: checkInEvidence?.qrVerified ?? false,
         geofenceVerified: checkInEvidence?.geofenceVerified ?? false,
         distanceMeters: isManagement ? checkInEvidence?.distanceMeters ?? null : null,
@@ -3877,6 +3882,11 @@ const getAttendanceEvidenceRecord = asyncHandler(async (request, response) => {
       checkOut: attendance.checkOutAt ? {
         time: attendance.checkOutAt,
         selfieMediaId: checkOutEvidence?.selfieMediaId || null,
+        verificationStatus: checkOutEvidence?.verificationStatus || 'VERIFIED',
+        integrityState: checkOutEvidence?.integrityState || 'UNVERIFIED',
+        integrityLastCheckedAt: checkOutEvidence?.integrityLastCheckedAt || null,
+        integrityFailedChecks: isManagement ? checkOutEvidence?.integrityFailedChecks || [] : [],
+        integrityAuditEventId: isManagement ? checkOutEvidence?.integrityAuditEventId || null : null,
         qrVerified: checkOutEvidence?.qrVerified ?? false,
         geofenceVerified: checkOutEvidence?.geofenceVerified ?? false,
         distanceMeters: isManagement ? checkOutEvidence?.distanceMeters ?? null : null,
