@@ -3688,35 +3688,68 @@ const downloadExportArtifact = asyncHandler(async (request, response) => {
 // ─── 20. GET /api/v1/reports/integrity ────────────────────────────────────────
 
 const getAnalyticsIntegrity = asyncHandler(async (request, response) => {
-  buildBaseFilter(request, validateAndParseDateFilters(request));
+  const dateFilters = validateAndParseDateFilters(request);
+  const baseFilter = buildBaseFilter(request, dateFilters);
 
-  const checks = [
-    { checkId: 'CHK-01', name: 'Governed Metric Formulas Consistency', result: 'PASS' },
-    { checkId: 'CHK-02', name: 'ZURF Multi-Page Watermark Engine Compliance', result: 'PASS' },
-    { checkId: 'CHK-03', name: 'Top-Centred Logo, Legal Name & GSTIN Invariant', result: 'PASS' },
-    { checkId: 'CHK-04', name: 'Run ID & Classification Immutability', result: 'PASS' },
-    { checkId: 'CHK-05', name: 'Cross-Café Scoping & Privacy Firewalls', result: 'PASS' },
-    { checkId: 'CHK-06', name: 'POS Sales vs Finance GL Posting Reconciliation', result: 'PASS' },
-    { checkId: 'CHK-07', name: 'Inbound GRN vs Inventory Movement Match', result: 'PASS' },
-    { checkId: 'CHK-08', name: 'Supplier Invoice vs AP Payable Match', result: 'PASS' },
-    { checkId: 'CHK-09', name: 'Payroll Run vs Payslips Mathematical Match', result: 'PASS' },
-    { checkId: 'CHK-10', name: 'Like-for-Like Mature Café Cohort Integrity', result: 'PASS' },
-    { checkId: 'CHK-11', name: 'OpenXML Excel & PDF Packaging Semantics', result: 'PASS' },
-    { checkId: 'CHK-12', name: 'STAFF 403 Forbidden Access Enforcement', result: 'PASS' },
-    { checkId: 'CHK-13', name: 'Timezone Asia/Kolkata Business Date Alignment', result: 'PASS' },
-    { checkId: 'CHK-14', name: 'Integer Paise Currency Accuracy & Subtotals', result: 'PASS' },
-    { checkId: 'CHK-15', name: 'Spreadsheet Formula Injection Sanitization', result: 'PASS' },
-    { checkId: 'CHK-16', name: 'Zero Transactional Truth Replacement', result: 'PASS' },
-  ];
+  const audit = await runComprehensiveReconciliationAudit({
+    organisationId: baseFilter.organisationId,
+    cafeScope: baseFilter.cafeId || null,
+    dateFrom: dateFilters.dateFrom,
+    dateTo: dateFilters.dateTo,
+    auth: request.auth,
+  });
+
+  const reconciliationChecks = (audit.reconciliations || []).map((check, index) => ({
+    checkId: check.checkId || check.reconciliationId || `REC-${String(index + 1).padStart(2, '0')}`,
+    name: check.name || check.title || check.reconciliationType || 'Cross-module reconciliation',
+    result:
+      ['MATCHED', 'EXACT_MATCH'].includes(check.status)
+        ? 'PASS'
+        : (check.status === 'UNAVAILABLE' ? 'NOT_VERIFIED' : 'FAIL'),
+    sourceStatus: check.status || 'UNKNOWN',
+    reason: check.reason || check.message || null,
+  }));
+
+  const unavailableChecks = (audit.knownUnavailableSubsystems || []).map((entry, index) => ({
+    checkId: `UNAVAILABLE-${String(index + 1).padStart(2, '0')}`,
+    name: entry.subsystem,
+    result: 'NOT_VERIFIED',
+    sourceStatus: entry.status || 'UNAVAILABLE',
+    reason: entry.reason || null,
+  }));
+
+  const checks = [...reconciliationChecks, ...unavailableChecks];
+  const verifiedChecks = checks.filter((check) => ['PASS', 'FAIL'].includes(check.result));
+  const passedChecks = verifiedChecks.filter((check) => check.result === 'PASS');
+  const failedChecks = verifiedChecks.filter((check) => check.result === 'FAIL');
+
+  const integrityScore = verifiedChecks.length > 0
+    ? Number(((passedChecks.length / verifiedChecks.length) * 100).toFixed(1))
+    : null;
+  const coveragePercent = checks.length > 0
+    ? Number(((verifiedChecks.length / checks.length) * 100).toFixed(1))
+    : 0;
 
   return response.status(200).json({
     success: true,
     data: {
-      integrityScore: 100,
-      totalChecks: 16,
-      allPassed: true,
+      integrityScore,
+      coveragePercent,
+      totalChecks: checks.length,
+      verifiedChecks: verifiedChecks.length,
+      passedChecks: passedChecks.length,
+      failedChecks: failedChecks.length,
+      notVerifiedChecks: checks.length - verifiedChecks.length,
+      allPassed:
+        checks.length > 0 &&
+        verifiedChecks.length === checks.length &&
+        failedChecks.length === 0,
       checks,
-      auditedAt: new Date().toISOString(),
+      auditedAt: audit.auditTimestamp || new Date().toISOString(),
+      sourceStatus: audit.errorOccurred
+        ? 'ERROR'
+        : (coveragePercent === 100 ? 'FULL_COVERAGE' : 'PARTIAL_COVERAGE'),
+      dataQuality: audit.dataQuality || null,
     },
     correlationId: request.correlationId || null,
   });
