@@ -10,6 +10,7 @@ const { retentionPolicyService } = require('./retentionPolicyService');
 const { documentReconciliationService } = require('./documentReconciliationService');
 const { backupVerificationService } = require('./backupVerificationService');
 const { assetMaintenanceService } = require('./assetMaintenanceService');
+const { attendanceRolloverService } = require('./attendanceRolloverService');
 
 const DEFAULT_TICK_INTERVAL_MS = 60_000;
 const WORKER_ID = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
@@ -139,6 +140,28 @@ const JOB_SPECS = [
         continuousBackupCapable: Boolean(result?.continuousBackupCapable),
         totalCollections: Number(result?.totalCollections || 0),
         missingCriticalCollections: result?.missingCriticalCollections || [],
+      };
+    },
+  },
+  {
+    jobId: 'JOB-ATTENDANCE-AUTO-CHECKOUT',
+    dailyHour: 4,
+    leaseMs: 20 * 60 * 1000,
+    async run() {
+      const organisationId =
+        String(process.env.INITIAL_ORGANISATION_ID || 'ZAMORIN').trim().toUpperCase();
+      const result = await attendanceRolloverService.markStaleOpenAttendance({
+        organisationId,
+        batchLimit: Number(process.env.ATTENDANCE_ROLLOVER_BATCH_LIMIT) || 500,
+      });
+      return {
+        status: result?.status || null,
+        currentBusinessDate: result?.currentBusinessDate || null,
+        scannedCount: Number(result?.scannedCount || 0),
+        updatedCount: Number(result?.updatedCount || 0),
+        lockedOpenCount: Number(result?.lockedOpenCount || 0),
+        hasMore: Boolean(result?.hasMore),
+        invariant: result?.invariant || null,
       };
     },
   },
