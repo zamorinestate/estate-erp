@@ -156,6 +156,7 @@ describe('Stage 01 — Universal Export + Print Engine Complete Suite', () => {
     const bill = {
       billId: 'BILL-2026-000892',
       invoiceNumber: 'INV-2026-000892',
+      businessDate: '2026-09-13',
       subtotalPaisa: 100000,
       taxPaisa: 5000,
       totalPaisa: 105000,
@@ -174,6 +175,10 @@ describe('Stage 01 — Universal Export + Print Engine Complete Suite', () => {
     const bill = {
       billId: 'BILL-2026-000892',
       invoiceNumber: 'INV-2026-000892',
+      businessDate: '2026-09-13',
+      subtotalPaisa: 100000,
+      taxPaisa: 5000,
+      totalPaisa: 105000,
       status: 'VOID'
     };
 
