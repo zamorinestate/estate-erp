@@ -34,6 +34,7 @@ const {
 const apiRouter = require('./routes');
 const { documentStorageAdapter } = require('./services/documentStorageAdapter');
 const { getTrustedClientIp, getTrustedProxies } = require('./utils/clientIp');
+const { redisClientFactory } = require('./services/redisClientFactory');
 
 const SERVICE_NAME =
   'zamorin-cafe-erp-api';
@@ -306,7 +307,6 @@ function createApp(environment) {
         request.correlationId || null,
     });
 
-  app.get('/api/v1/health', healthHandler);
   app.get('/api/health', healthHandler);
   app.get('/health', healthHandler);
 
@@ -323,15 +323,36 @@ function createApp(environment) {
     const isStorageReady = storageStatus === 'OK' || storageStatus === 'HEALTHY';
     const isDbReady = database.readyState === 1;
     const isProd = process.env.NODE_ENV === 'production';
-    const ready = isProd ? (isDbReady && isStorageReady) : isDbReady;
 
     const { malwareScannerService } = require('./services/malwareScannerService');
     let scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false };
     try {
       scannerReport = await malwareScannerService.getStatus();
     } catch {
-      scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false, details: 'Probe failed' };
+      scannerReport = {
+        CORE_APP_READY: true,
+        DOCUMENT_SCANNER_READY: false,
+        details: 'Probe failed',
+      };
     }
+
+    let redisReport = { status: 'LOCAL_FALLBACK', isConnected: false, lastError: null };
+    try {
+      redisReport = await redisClientFactory.getHealthStatus();
+    } catch (redisError) {
+      redisReport = {
+        status: 'DEGRADED',
+        isConnected: false,
+        lastError: redisError.message,
+      };
+    }
+
+    const requireScanner = isProd && process.env.REQUIRE_DOCUMENT_SCANNER === 'true';
+    const isScannerReady = !requireScanner || scannerReport.DOCUMENT_SCANNER_READY === true;
+    const isRedisReady = !isProd || redisReport.isConnected === true;
+    const ready = isProd
+      ? (isDbReady && isStorageReady && isScannerReady && isRedisReady)
+      : isDbReady;
 
     return response
       .status(ready ? 200 : 503)
@@ -341,6 +362,11 @@ function createApp(environment) {
         service: SERVICE_NAME,
         database: database.status,
         storage: storageStatus,
+        redis: {
+          status: redisReport.status,
+          connected: Boolean(redisReport.isConnected),
+          required: isProd,
+        },
         scanner: {
           coreAppReady: scannerReport.CORE_APP_READY,
           documentScannerReady: scannerReport.DOCUMENT_SCANNER_READY,
@@ -354,6 +380,12 @@ function createApp(environment) {
         correlationId: request.correlationId || null,
       });
   };
+
+  app.get('/api/v1/health', (request, response) =>
+    process.env.NODE_ENV === 'production'
+      ? readinessHandler(request, response)
+      : healthHandler(request, response)
+  );
 
   app.get('/health/ready', readinessHandler);
   app.get('/api/health/ready', readinessHandler);
@@ -495,11 +527,20 @@ async function startServer() {
   }
 
   // Validate durable document storage configuration before accepting traffic (Fails safe if unconfigured in production)
-  documentStorageAdapter.validateStartupConfiguration(environment);
+  documentStorageAdapter.validateStartupConfiguration(process.env);
 
   // Universal production configuration & secrets validator (Fails safe: reports PRESENT/MISSING/INVALID/UNSAFE without revealing secrets)
   const { validateStartupConfiguration: validateConfig } = require('./config/startupValidator');
-  validateConfig(environment, { failClosed: true });
+  validateConfig(process.env, { failClosed: true });
+
+  // Redis is mandatory distributed state in production. Initialize it before
+  // accepting traffic so locks, rate limits, presence and coordination never
+  // silently fall back to process-local state.
+  await redisClientFactory.initializeClients({
+    url: process.env.REDIS_URL || null,
+    keyPrefix: process.env.REDIS_KEY_PREFIX || 'zamorin:',
+    clusterMode: environment.production || process.env.NODE_ENV === 'production',
+  });
 
   const app =
     createApp(environment);
@@ -577,6 +618,7 @@ function registerShutdownHandlers(
       );
 
       await closeHttpServer(server);
+      await redisClientFactory.close();
       await disconnectDatabase();
 
       console.log(
@@ -647,6 +689,14 @@ async function runMain() {
       server
     );
   } catch (error) {
+    try {
+      await redisClientFactory.close();
+    } catch (redisCloseError) {
+      console.error(
+        'Redis cleanup failed:',
+        redisCloseError.message
+      );
+    }
     try {
       await disconnectDatabase();
     } catch (disconnectError) {

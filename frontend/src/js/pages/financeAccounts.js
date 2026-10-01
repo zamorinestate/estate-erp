@@ -684,16 +684,18 @@ async function renderSalesAuditTab(wrap) {
   wrap.querySelectorAll(".btn-clear-store-day").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const storeDayId = btn.dataset.id;
-      const target = storeDays.find(d => d.storeDayId === storeDayId);
-      if (target) {
-        target.status = "FINANCE_CLEARED";
-        target.clearedBy = "Finance Lead";
-      }
       try {
-        await apiPost(`/finance/sales-audit/store-days/${storeDayId}/clear`, {});
-      } catch (err) {}
-      showToast(`Store Day ${storeDayId} cleared and verified by Finance.`, "success");
-      renderSalesAuditTab(wrap);
+        const res = await apiPost(`/finance/sales-audit/store-days/${storeDayId}/clear`, {});
+        const target = storeDays.find(d => d.storeDayId === storeDayId);
+        if (target) {
+          target.status = res?.data?.storeDay?.status || "FINANCE_CLEARED";
+          target.clearedBy = res?.data?.storeDay?.clearedBy || "Finance Lead";
+        }
+        showToast(res?.message || `Store Day ${storeDayId} cleared and verified by Finance.`, "success");
+        await renderSalesAuditTab(wrap);
+      } catch (err) {
+        showToast(err?.message || `Failed to clear Store Day ${storeDayId}.`, "error");
+      }
     });
   });
 }
@@ -762,15 +764,17 @@ async function renderJournalsTab(wrap) {
   wrap.querySelectorAll(".btn-post-journal").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.id;
-      const target = journals.find(j => j.journalId === id);
-      if (target) {
-        target.status = "POSTED";
-      }
       try {
-        await apiPost(`/finance/journals/${id}/post`, {});
-      } catch (err) {}
-      showToast(`Journal ${id} posted to General Ledger.`, "success");
-      renderJournalsTab(wrap);
+        const res = await apiPost(`/finance/journals/${id}/post`, {});
+        const target = journals.find(j => j.journalId === id);
+        if (target) {
+          target.status = res?.data?.journal?.status || "POSTED";
+        }
+        showToast(res?.message || `Journal ${id} posted to General Ledger.`, "success");
+        await renderJournalsTab(wrap);
+      } catch (err) {
+        showToast(err?.message || `Failed to post Journal ${id}.`, "error");
+      }
     });
   });
 
@@ -779,15 +783,17 @@ async function renderJournalsTab(wrap) {
       const id = btn.dataset.id;
       const reason = prompt("Enter mandatory reason for reversing this journal:");
       if (!reason) return;
-      const target = journals.find(j => j.journalId === id);
-      if (target) {
-        target.status = "REVERSED";
-      }
       try {
-        await apiPost(`/finance/journals/${id}/reverse`, { reason });
-      } catch (err) {}
-      showToast(`Journal ${id} reversed successfully.`, "success");
-      renderJournalsTab(wrap);
+        const res = await apiPost(`/finance/journals/${id}/reverse`, { reason });
+        const target = journals.find(j => j.journalId === id);
+        if (target) {
+          target.status = res?.data?.journal?.status || "REVERSED";
+        }
+        showToast(res?.message || `Journal ${id} reversed successfully.`, "success");
+        await renderJournalsTab(wrap);
+      } catch (err) {
+        showToast(err?.message || `Failed to reverse Journal ${id}.`, "error");
+      }
     });
   });
 }
