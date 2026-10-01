@@ -210,6 +210,13 @@ test('BACKEND-ACTION-002: attendance and shift controls map to live backend rout
   }
 });
 
+test('BACKEND-RUNTIME-007: legacy Render health path enforces readiness in production', () => {
+  assert.ok(serverSource.includes("app.get('/api/v1/health', (request, response) =>"));
+  assert.ok(serverSource.includes("process.env.NODE_ENV === 'production'"));
+  assert.ok(serverSource.includes('? readinessHandler(request, response)'));
+  assert.ok(serverSource.includes(': healthHandler(request, response)'));
+});
+
 test('BACKEND-RUNTIME-006: diagnostics report real core dependency state instead of hard-coded health', () => {
   const controllerSource = read('backend/src/controllers/settingsController.js');
   assert.ok(controllerSource.includes('redisClientFactory.getHealthStatus()'));
