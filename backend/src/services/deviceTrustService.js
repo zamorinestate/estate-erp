@@ -877,19 +877,48 @@ class DeviceTrustService {
       } catch {}
     }
 
+    const normalizedOrganisationId =
+      organisationId.toUpperCase();
+    const normalizedUserId =
+      userId.toUpperCase();
+    const now = new Date();
+
+    await TrustedDevice.updateMany(
+      {
+        organisationId: normalizedOrganisationId,
+        userId: normalizedUserId,
+        status: 'ACTIVE',
+        expiresAt: { $lte: now },
+      },
+      {
+        $set: {
+          status: 'EXPIRED',
+        },
+      }
+    );
+
     const devices = await TrustedDevice.find({
-      organisationId: organisationId.toUpperCase(),
-      userId: userId.toUpperCase(),
+      organisationId: normalizedOrganisationId,
+      userId: normalizedUserId,
       status: 'ACTIVE',
+      expiresAt: { $gt: now },
     })
-      .select('-tokenHash')
       .sort({ lastUsedAt: -1 })
       .lean();
 
-    return devices.map((d) => ({
-      ...d,
-      isCurrentDevice: currentTokenHash ? d.tokenHash === currentTokenHash : false,
-    }));
+    return devices.map((device) => {
+      const {
+        tokenHash,
+        ...safeDevice
+      } = device;
+
+      return {
+        ...safeDevice,
+        isCurrentDevice:
+          Boolean(currentTokenHash) &&
+          tokenHash === currentTokenHash,
+      };
+    });
   }
 }
 
