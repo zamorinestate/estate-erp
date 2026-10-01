@@ -111,13 +111,12 @@ export function renderAttendance(subroute) {
         <div>
           <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:4px;">
             <h1 class="page-title" style="font-size:23px; font-weight:800; margin:0; color:var(--ink); letter-spacing:-0.3px;">Attendance &amp; Shifts</h1>
-            <span class="status info" style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">SCR-004</span>
             ${
               isCafeAdmin
                 ? `<span class="status warning" style="font-size:10px; font-weight:800; letter-spacing:0.5px;">CAFE OPERATIONS</span>`
                 : isPrimary
                 ? `<span class="status success" style="font-size:10px; font-weight:800;">PRIMARY MASTER</span>`
-                : `<span class="status info" style="font-size:10px; font-weight:800;">OPERATIONAL MASTER</span>`
+                : `<span class="status info" style="font-size:10px; font-weight:800;">MANAGEMENT ACCESS</span>`
             }
           </div>
 

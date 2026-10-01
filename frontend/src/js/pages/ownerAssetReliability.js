@@ -26,12 +26,8 @@ export function renderOwnerAssetReliability() {
       <!-- Header -->
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;">
         <div>
-          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(14,165,233,0.12);border:1px solid rgba(14,165,233,0.3);border-radius:20px;font-size:11px;font-weight:700;color:#38bdf8;letter-spacing:0.5px;margin-bottom:8px;">
-            <span style="width:6px;height:6px;border-radius:50%;background:#0ea5e9;"></span>
-            OWNER STRATEGIC EXPANSION · STAGE 07
-          </div>
           <h1 style="font-size:24px;font-weight:800;color:var(--text-primary,#fff);margin:0 0 4px 0;letter-spacing:-0.5px;">
-            Asset Reliability & Preventive Maintenance Centre
+            Asset Reliability &amp; Preventive Maintenance Centre
           </h1>
           <div style="font-size:13px;color:var(--text-muted,#94a3b8);">
             Equipment Work Orders · Breakdown Triage · Food-Safety Isolation · MTBF/MTTR Calculations · CAPEX Linkage

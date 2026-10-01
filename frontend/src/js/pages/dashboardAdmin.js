@@ -218,7 +218,6 @@ export function renderAdminDashboard() {
             <h1 class="page-title" style="font-size:24px; font-weight:800; margin:0; color:var(--ink); letter-spacing:-0.3px;">
               ${getGreeting()}, ${operatorName.split(" ")[0]} 👋
             </h1>
-            <span class="status info" style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">SCR-002</span>
             <span class="status warning" style="font-size:10px; font-weight:800; letter-spacing:0.5px;">CAFE OPERATIONS</span>
           </div>
           <p style="font-size:13px; color:var(--muted); margin:0 0 10px;" id="admin-dash-subtitle">

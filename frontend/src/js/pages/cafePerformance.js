@@ -119,7 +119,6 @@ export function renderPerformance() {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; color:var(--ink); margin:0;">Café Performance Control Centre</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">OWN-SCR-006</span>
             <span id="perf-ist-clock" style="font-family:var(--font-mono); font-size:12px; color:var(--muted);">${getIstClockString()}</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0 0;">

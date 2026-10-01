@@ -25,13 +25,9 @@ export function renderOwnerAcademy() {
       <!-- Header -->
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;">
         <div>
-          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.3);border-radius:20px;font-size:11px;font-weight:700;color:#c084fc;letter-spacing:0.5px;margin-bottom:8px;">
-            <span style="width:6px;height:6px;border-radius:50%;background:#a855f7;"></span>
-            OWNER STRATEGIC EXPANSION · STAGE 06
-          </div>
           <h1 style="font-size:24px;font-weight:800;color:var(--text-primary,#fff);margin:0 0 4px 0;letter-spacing:-0.5px;">
-            SOP, Training & Competency Academy
-          </div>
+            SOP, Training &amp; Competency Academy
+          </h1>
           <div style="font-size:13px;color:var(--text-muted,#94a3b8);">
             Governed SOP Version Lifecycle · FoSTaC 2026 Procedure Integration · Competency vs Attendance Distinction
           </div>

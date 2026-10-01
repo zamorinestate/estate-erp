@@ -84,7 +84,6 @@ export function renderVendors(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; margin:0; color:var(--ink);">Supplier &amp; Vendor Control Centre</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-025 VENDORS</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0;">
             Source governance, order placement lifecycle, physical GRN arrival, 3-way matching &amp; server-authoritative MASTER stock posting.

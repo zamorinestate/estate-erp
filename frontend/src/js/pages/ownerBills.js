@@ -84,7 +84,7 @@ export function renderOwnerBills(subroute) {
   const isOwner = state.role === ROLES.OWNER || state.user?.role === "OWNER";
   const isMaster = state.role === ROLES.MASTER || state.user?.role === "MASTER";
 
-  let badgeLabel = "OPERATIONAL MASTER";
+  let badgeLabel = "MANAGEMENT ACCESS";
   let badgeClass = "status info";
   if (isPrimary) {
     badgeLabel = "PRIMARY MASTER";
@@ -104,7 +104,6 @@ export function renderOwnerBills(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
             <h1 class="page-title" style="font-size:24px; font-weight:800; margin:0; color:var(--ink); letter-spacing:-0.3px;">Sales Bills &amp; Tax Receipts</h1>
-            <span class="status info" style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">SCR-005</span>
             <span class="${badgeClass}" style="font-size:10px; font-weight:700;">${badgeLabel}</span>
           </div>
           <p style="font-size:13px; color:var(--muted); margin:0;">

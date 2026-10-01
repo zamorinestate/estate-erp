@@ -174,7 +174,6 @@ export function renderOwnerFinanceSummary() {
         <div>
           <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
             <h1 class="page-title" style="font-size:24px; font-weight:800; margin:0; color:var(--ink); letter-spacing:-0.3px;">Owner Finance Summary</h1>
-            <span class="status info" style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">OWN-SCR-004</span>
             <span class="status success" style="font-size:10px; font-weight:700;">EXECUTIVE FINANCIAL GOVERNANCE</span>
           </div>
           <p style="font-size:13px; color:var(--muted); margin:0;">

@@ -22,12 +22,8 @@ export function renderOwnerUtilitiesWaste() {
       <!-- Header -->
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;">
         <div>
-          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:20px;font-size:11px;font-weight:700;color:#4ade80;letter-spacing:0.5px;margin-bottom:8px;">
-            <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;"></span>
-            OWNER STRATEGIC EXPANSION · STAGE 14
-          </div>
           <h1 style="font-size:24px;font-weight:800;color:var(--text-primary,#fff);margin:0 0 4px 0;letter-spacing:-0.5px;">
-            Utilities, Waste & Energy Management Centre
+            Utilities, Waste &amp; Energy Management Centre
           </h1>
           <div style="font-size:13px;color:var(--text-muted,#94a3b8);">
             Meter Governance · SWM Rules 2026 Applicability · RUCO 25% TPC Limit · Zero Double Counting

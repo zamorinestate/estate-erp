@@ -557,12 +557,9 @@ export function renderMasterDashboard({ roleLabel = "Master Administrator" } = {
             <h1 class="page-title" style="font-size:24px; font-weight:800; margin:0; color:var(--ink); letter-spacing:-0.3px;">
               Zamorin Command Centre
             </h1>
-            <span class="status info" style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">SCR-001</span>
             ${
               isMaster && isPrimary
                 ? `<span class="status success" style="font-size:10px; font-weight:800;">PRIMARY MASTER</span>`
-                : isMaster && !isPrimary
-                ? `<span class="status info" style="font-size:10px; font-weight:800;">OPERATIONAL MASTER</span>`
                 : `<span class="status success" style="font-size:10px; font-weight:800;">OWNER PORTAL</span>`
             }
           </div>
