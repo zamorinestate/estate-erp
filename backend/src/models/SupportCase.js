@@ -223,7 +223,7 @@ const supportCaseSchema = new mongoose.Schema(
   }
 );
 
-supportCaseSchema.index({ caseId: 1 }, { unique: true });
+supportCaseSchema.index({ organisationId: 1, caseId: 1 }, { unique: true });
 supportCaseSchema.index({ organisationId: 1, status: 1 });
 supportCaseSchema.index({ organisationId: 1, cafeId: 1, status: 1 });
 supportCaseSchema.index({ organisationId: 1, gmailThreadId: 1 });
