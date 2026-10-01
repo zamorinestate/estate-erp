@@ -200,6 +200,18 @@ test('BACKEND-ACTION-002: attendance and shift controls map to live backend rout
   }
 });
 
+test('BACKEND-RUNTIME-006: diagnostics report real core dependency state instead of hard-coded health', () => {
+  const controllerSource = read('backend/src/controllers/settingsController.js');
+  assert.ok(controllerSource.includes('redisClientFactory.getHealthStatus()'));
+  assert.ok(controllerSource.includes('documentStorageAdapter.healthCheck()'));
+  assert.ok(controllerSource.includes('mongoose.connection.readyState === 1'));
+  assert.equal(controllerSource.includes("serviceHealth: 'CONNECTED'"), false);
+  assert.ok(settingsFrontend.includes('settings-service-health-chip'));
+  assert.ok(settingsFrontend.includes('Backend Dependency Degraded'));
+  assert.ok(settingsFrontend.includes('Backend Unreachable'));
+  assert.equal(settingsFrontend.includes('All Services Healthy'), false);
+});
+
 test('BACKEND-ACTION-004: successful UI mutations are never fabricated after API failure', () => {
   for (const forbidden of [
     'await apiPost(\`/finance/journals/\${id}/post\`, {});\\n      } catch (err) {}',
