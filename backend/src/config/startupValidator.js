@@ -58,6 +58,24 @@ const PRODUCTION_MANDATORY_SPECS = [
     },
   },
   {
+    key: 'QR_SIGNING_SECRET',
+    requiredInProduction: true,
+    description: 'HMAC secret for rotating Cafe attendance QR envelopes (min 32 chars)',
+    isSecret: true,
+    validate: (val, isProd) => typeof val === 'string' &&
+      val.trim().length >= (isProd ? 32 : 16) &&
+      !/placeholder|zamorin_qr_master_signing_secret_key_2026_dsec/i.test(val),
+  },
+  {
+    key: 'ATTENDANCE_QR_SECRET',
+    requiredInProduction: true,
+    description: 'HMAC secret for compact attendance scan grants (min 32 chars)',
+    isSecret: true,
+    validate: (val, isProd) => typeof val === 'string' &&
+      val.trim().length >= (isProd ? 32 : 16) &&
+      !/placeholder|zamorin-attendance-presence-secret-salt-2026/i.test(val),
+  },
+  {
     key: 'DOCUMENT_STORAGE_PROVIDER',
     requiredInProduction: true,
     description: 'Durable document storage provider (GridFS, persistent disk, or private object storage)',
@@ -145,6 +163,15 @@ function validateStartupConfiguration(env = process.env, { failClosed = true } =
       isSecret: spec.isSecret,
       detail: spec.isSecret && isPresent ? 'Configured (Value Redacted)' : detail,
     });
+  }
+
+  if (
+    isProduction &&
+    env.QR_SIGNING_SECRET &&
+    env.ATTENDANCE_QR_SECRET &&
+    String(env.QR_SIGNING_SECRET) === String(env.ATTENDANCE_QR_SECRET)
+  ) {
+    blockingIssues.push('ATTENDANCE_SIGNING_SECRETS: QR_SIGNING_SECRET and ATTENDANCE_QR_SECRET must be distinct');
   }
 
   const isSafe = blockingIssues.length === 0;
