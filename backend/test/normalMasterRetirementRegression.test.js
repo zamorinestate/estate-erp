@@ -4,6 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const authService = require('../src/services/authService');
+const { User } = require('../src/models/User');
+const { authenticate } = require('../src/middleware/authenticate');
+const { authorize, canAccessCafe } = require('../src/middleware/authorize');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SCAN_ROOTS = [
@@ -59,4 +63,149 @@ test('retired non-primary Master role tokens cannot return to active code or aud
     [],
     `Retired non-primary Master role tokens were reintroduced:\n${violations.join('\n')}`
   );
+});
+
+
+test('non-primary Master cannot inherit organisation-wide cafe access', () => {
+  assert.equal(
+    canAccessCafe(
+      {
+        role: 'MASTER',
+        isPrimaryMaster: false,
+        assignedCafeIds: [],
+      },
+      'ZC-0001'
+    ),
+    false
+  );
+
+  assert.equal(
+    canAccessCafe(
+      {
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        assignedCafeIds: [],
+      },
+      'ZC-0001'
+    ),
+    true
+  );
+});
+
+test('role-only MASTER authorization denies a non-primary Master claim', async () => {
+  const middleware = authorize(['MASTER']);
+  let nextCalled = false;
+  let statusCode = null;
+  let body = null;
+
+  const response = {
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(payload) {
+      body = payload;
+      return payload;
+    },
+  };
+
+  await middleware(
+    {
+      auth: {
+        userId: 'MU-0099',
+        organisationId: 'ZAMORIN',
+        role: 'MASTER',
+        isPrimaryMaster: false,
+      },
+    },
+    response,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  assert.equal(statusCode, 403);
+  assert.equal(nextCalled, false);
+  assert.equal(body?.error?.code, 'PERMISSION_DENIED');
+});
+
+test('authentication rejects a stale session for a non-primary Master', async (t) => {
+  t.mock.method(
+    authService,
+    'verifyAccessToken',
+    async () => ({
+      payload: {
+        org: 'ZAMORIN',
+        sub: 'MU-0099',
+        role: 'MASTER',
+        usv: 0,
+        pv: 0,
+      },
+      session: {
+        sessionId: 'SS-STALE-MASTER',
+        roleSnapshot: 'MASTER',
+        sessionVersion: 0,
+        mfaVerified: true,
+        mfaVerifiedAt: new Date(),
+        stepUpVerifiedAt: new Date(),
+      },
+    })
+  );
+
+  t.mock.method(
+    User,
+    'findOne',
+    async () => ({
+      userId: 'MU-0099',
+      email: 'retired-master@zamorin.test',
+      name: 'Retired Master Fixture',
+      organisationId: 'ZAMORIN',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      accountStatus: 'ACTIVE',
+      archivedAt: null,
+      assignedCafeIds: [],
+      primaryCafeId: null,
+      capabilities: [],
+      sessionVersion: 0,
+      permissionsVersion: 0,
+    })
+  );
+
+  let nextCalled = false;
+  let statusCode = null;
+  let body = null;
+
+  const request = {
+    cookies: {},
+    query: {},
+    get(name) {
+      return name === 'authorization'
+        ? 'Bearer stale-master-token'
+        : null;
+    },
+  };
+
+  const response = {
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(payload) {
+      body = payload;
+      return payload;
+    },
+  };
+
+  await authenticate(
+    request,
+    response,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  assert.equal(statusCode, 401);
+  assert.equal(nextCalled, false);
+  assert.equal(body?.error?.code, 'MASTER_ACCOUNT_RETIRED');
 });
