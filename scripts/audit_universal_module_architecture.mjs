@@ -418,7 +418,7 @@ async function main() {
     console.log(`AUDITING MODULE: ${m.module} (#${m.route}) [Role: ${m.role}${m.isPrimary ? ' (Primary)' : ''}]`);
     console.log(`-----------------------------------------------------------------------------`);
 
-    const roleParam = m.role === 'MASTER' ? (m.isPrimary ? 'master' : 'master_normal') : (m.role === 'CAFE_ADMIN' ? 'cafe_admin' : m.role.toLowerCase());
+    const roleParam = m.role === 'MASTER' ? 'master' : (m.role === 'CAFE_ADMIN' ? 'cafe_admin' : m.role.toLowerCase());
     const landingUrl = `http://localhost:${HTTP_PORT}/?role=${roleParam}#${m.route}`;
 
     // A. Open Overview
