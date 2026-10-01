@@ -34,6 +34,7 @@ const { SequenceCounter } = require('../models/SequenceCounter');
 const { Approval } = require('../models/Approval');
 const { Notification } = require('../models/Notification');
 const auditService = require('../services/auditService');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 const { getEffectiveAuthSecurityPolicy } = require('../services/authService');
 const ApiError = require('../utils/ApiError');
 
