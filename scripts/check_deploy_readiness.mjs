@@ -70,7 +70,11 @@ export function runDeploymentReadinessCheck({ targetEnv = process.env.NODE_ENV |
       renderContent.includes('ATTENDANCE_QR_SECRET');
     const hasCoreRuntimeDependencies = hasRedis && hasAttendanceSigningSecrets;
 
-    if (((hasDisk && hasDocStorage) || hasGridFs) && hasCoreRuntimeDependencies) {
+    const hasCanonicalRepository =
+      renderContent.includes('https://github.com/zamorinestate/estate-erp') &&
+      !renderContent.includes('https://github.com/zamorinestate-erp/estate-erp');
+
+    if (((hasDisk && hasDocStorage) || hasGridFs) && hasCoreRuntimeDependencies && hasCanonicalRepository) {
       checks.push({
         name: 'Render Blueprint (render.yaml)',
         status: 'PASS',
@@ -87,6 +91,9 @@ export function runDeploymentReadinessCheck({ targetEnv = process.env.NODE_ENV |
       }
       if (!hasAttendanceSigningSecrets) {
         issues.push('render.yaml missing QR_SIGNING_SECRET and/or ATTENDANCE_QR_SECRET declarations');
+      }
+      if (!hasCanonicalRepository) {
+        issues.push('render.yaml must bind to canonical repository https://github.com/zamorinestate/estate-erp and must not reference the retired namespace');
       }
       checks.push({
         name: 'Render Blueprint (render.yaml)',
