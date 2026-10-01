@@ -209,3 +209,63 @@ test('authentication rejects a stale session for a non-primary Master', async (t
   assert.equal(nextCalled, false);
   assert.equal(body?.error?.code, 'MASTER_ACCOUNT_RETIRED');
 });
+
+
+test('canonical password authentication rejects a non-primary Master even with the correct password', async (t) => {
+  const password = 'CorrectPassword@123';
+  const passwordHash = await authService.hashPassword(password);
+
+  const user = {
+    _id: '507f1f77bcf86cd799439011',
+    userId: 'MU-0098',
+    organisationId: 'ZAMORIN',
+    email: 'nonprimary-master@zamorin.test',
+    role: 'MASTER',
+    isPrimaryMaster: false,
+    accountStatus: 'ACTIVE',
+    failedLoginAttempts: 0,
+    lockedUntil: null,
+    passwordHash,
+    passwordHistoryHashes: [],
+    mfaEnabled: false,
+    mustChangePassword: false,
+    sessionVersion: 0,
+    permissionsVersion: 0,
+    save: async () => user,
+  };
+
+  t.mock.method(
+    User,
+    'findOne',
+    () => ({
+      select: async () => user,
+    })
+  );
+
+  await assert.rejects(
+    authService.authenticatePassword({
+      organisationId: 'ZAMORIN',
+      email: user.email,
+      password,
+    }),
+    /not available for sign-in/i
+  );
+});
+
+test('session creation rejects a non-primary Master before issuing tokens', async () => {
+  await assert.rejects(
+    authService.createSession({
+      user: {
+        userId: 'MU-0097',
+        organisationId: 'ZAMORIN',
+        role: 'MASTER',
+        isPrimaryMaster: false,
+      },
+      device: {
+        deviceId: 'DEV-RETIRED-MASTER',
+      },
+      createdBy: 'MU-0097',
+    }),
+    /no longer authorized to create sessions/i
+  );
+});
