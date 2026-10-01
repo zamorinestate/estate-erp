@@ -650,7 +650,7 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
     assert.equal(csvRes.data.error.code, 'UNSUPPORTED_EXPORT_FORMAT');
   });
 
-  await t.test('22. GET /api/v1/reports/integrity performs 16-point invariant audit verification', async () => {
+  await t.test('22. GET /api/v1/reports/integrity reports measured coverage and never self-certifies unavailable checks', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -660,8 +660,9 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.integrityScore, 100);
-    assert.equal(res.data.data.totalChecks, 16);
-    assert.equal(res.data.data.allPassed, true);
+    assert.ok(Array.isArray(res.data.data.checks));
+    assert.equal(typeof res.data.data.coveragePercent, 'number');
+    assert.equal(res.data.data.allPassed, false);
+    assert.ok(res.data.data.notVerifiedChecks > 0 || res.data.data.failedChecks > 0);
   });
 });
