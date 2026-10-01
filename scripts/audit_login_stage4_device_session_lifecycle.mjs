@@ -551,7 +551,7 @@ async function runStage4LifecycleAudit() {
   // --- 22. Reassignment Authority Matrix ---
   const rolesToTest = [
     { role: 'MASTER_PRIMARY', expectedStatus: 200, label: 'Primary Master' },
-    { role: 'MASTER_NORMAL', expectedStatus: 200, label: 'Normal Master' },
+    { role: 'MASTER', expectedStatus: 403, label: 'Non-primary Master' },
     { role: 'OWNER', expectedStatus: 200, label: 'Owner' },
     { role: 'CAFE_ADMIN', expectedStatus: 403, label: 'Local Cafe Admin' },
     { role: 'STAFF', expectedStatus: 403, label: 'Staff Member' },
@@ -564,7 +564,7 @@ async function runStage4LifecycleAudit() {
     });
     assert.strictEqual(authTestRes.status, item.expectedStatus, `${item.label} reassignment permission contract respected`);
   }
-  reportPass('Reassignment Authority Matrix strictly enforces governance roles and denies local Cafe Admins / Staff');
+  reportPass('Reassignment Authority Matrix strictly enforces governance roles and denies non-primary Master / local Cafe Admins / Staff');
 
   // --- 23. Reassignment & Revoke Race Invalidation ---
   const raceSessionReq = await request(standaloneBaseUrl, '/operator/session', {
