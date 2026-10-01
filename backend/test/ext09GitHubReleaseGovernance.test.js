@@ -225,10 +225,13 @@ describe('EXT-09 — GitHub Branch Protection & Release Governance (38-Point Sui
   // -------------------------------------------------------------------------
   // TEST 20 — Admin Bypass Classified
   // -------------------------------------------------------------------------
-  it('20. Admin bypass classified: REQUIRED_SOLE_OWNER / EMERGENCY_ONLY', () => {
-    const adminBypass = 'REQUIRED_SOLE_OWNER';
-    assert.equal(adminBypass, 'REQUIRED_SOLE_OWNER',
-      'Sole maintainer granted emergency recovery bypass to avoid lockout');
+  it('20. Ruleset bypass classified: no bypass actors configured on main', () => {
+    const adminBypass = 'NO_BYPASS_ACTORS';
+    assert.equal(
+      adminBypass,
+      'NO_BYPASS_ACTORS',
+      'Main Branch Release Governance currently has no bypass actors'
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -284,9 +287,17 @@ describe('EXT-09 — GitHub Branch Protection & Release Governance (38-Point Sui
   // -------------------------------------------------------------------------
   // TEST 26 — Vercel Production Branch Audit
   // -------------------------------------------------------------------------
-  it('26. Vercel production branch audit: Vercel production branch target is main', () => {
-    assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'vercel.json')), 'vercel.json exists');
-    assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, '.vercel', 'project.json')), '.vercel/project.json exists');
+  it('26. Vercel deployment config is tracked without fabricating a local project binding', () => {
+    assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'vercel.json')), 'root vercel.json exists');
+    assert.ok(
+      fs.existsSync(path.join(WORKSPACE_ROOT, 'frontend', 'vercel.json')),
+      'frontend/vercel.json exists'
+    );
+    assert.equal(
+      fs.existsSync(path.join(WORKSPACE_ROOT, '.vercel', 'project.json')),
+      false,
+      'Repository must not invent a local Vercel project binding while control-plane authorization is unresolved'
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -301,11 +312,23 @@ describe('EXT-09 — GitHub Branch Protection & Release Governance (38-Point Sui
   // -------------------------------------------------------------------------
   // TEST 28 — Staging and Production Branch Separation
   // -------------------------------------------------------------------------
-  it('28. Staging and production branch separation: staging branch != production branch', () => {
-    const stagingBranch = 'owner-strategic-batch-03';
-    const productionBranch = 'main';
-    assert.notEqual(stagingBranch, productionBranch,
-      'Staging branch must remain separate from production release branch');
+  it('28. Staging and production are isolated by service/environment while canonical source remains main', () => {
+    const renderSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'render.yaml'), 'utf8');
+    const networkGovernance = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'scripts', 'validateBcp01GovernanceNetwork.ps1'),
+      'utf8'
+    );
+
+    assert.ok(renderSrc.includes('branch: main'), 'Canonical Render source branch must be main');
+    assert.ok(
+      networkGovernance.includes('srv-dac38c6k1f9s73e1ks5g') &&
+      networkGovernance.includes('srv-dam1nc67bikc7380i4j0'),
+      'Production and staging must remain distinct Render services'
+    );
+    assert.ok(
+      !renderSrc.includes('owner-strategic-batch-03'),
+      'Retired staging branch must not return to canonical Render configuration'
+    );
   });
 
   // -------------------------------------------------------------------------
