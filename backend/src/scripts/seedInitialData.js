@@ -993,7 +993,8 @@ async function runSeed() {
       masterEmail,
     });
 
-    const isMinimalSeed = process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false';
+    const isProductionSeed = environment.production || process.env.NODE_ENV === 'production';
+    const isMinimalSeed = isProductionSeed || process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false';
 
     if (!isMinimalSeed) {
       await seedDepartmentOrdersData({
@@ -1043,8 +1044,7 @@ async function runSeed() {
     console.error(
       `Initial data seed failed: ${error.message}`
     );
-
-    process.exitCode = 1;
+    throw error;
   } finally {
     await disconnectDatabase();
   }
@@ -2216,7 +2216,9 @@ async function runSeed() {
 }
 
 if (require.main === module) {
-  runSeed();
+  runSeed().catch(() => {
+    process.exitCode = 1;
+  });
 }
 
 module.exports = {
