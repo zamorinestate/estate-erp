@@ -82,6 +82,7 @@ async function authenticate(
         }) || await User.findOne({
           organisationId: 'ZAMORIN',
           role: 'MASTER',
+          isPrimaryMaster: true,
           accountStatus: 'ACTIVE',
         });
 
@@ -153,6 +154,17 @@ async function authenticate(
         response,
         'USER_UNAVAILABLE',
         'The authenticated user is unavailable.'
+      );
+    }
+
+    if (
+      user.role === 'MASTER' &&
+      user.isPrimaryMaster !== true
+    ) {
+      return sendAuthenticationError(
+        response,
+        'MASTER_ACCOUNT_RETIRED',
+        'This Master account is no longer authorized to sign in.'
       );
     }
 

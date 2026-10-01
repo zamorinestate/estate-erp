@@ -148,7 +148,7 @@ function canAccessCafe(
   }
 
   if (auth.role === 'MASTER') {
-    return true;
+    return auth.isPrimaryMaster === true;
   }
 
   const assignedCafeIds =
@@ -169,8 +169,11 @@ function ruleAppliesToRequest({
 
   switch (rule.scope) {
     case 'ORGANISATION':
-      return auth.role === 'MASTER' ||
-        auth.role === 'OWNER';
+      return (
+        (auth.role === 'MASTER' &&
+          auth.isPrimaryMaster === true) ||
+        auth.role === 'OWNER'
+      );
 
     case 'ASSIGNED_CAFES':
       if (!cafeId) {
@@ -389,8 +392,14 @@ function authorize(
         );
       }
       const authRole = String(request.auth.role).toUpperCase();
-      const isMasterRole = authRole === 'MASTER' || authRole === 'PRIMARY_MASTER' || Boolean(request.auth.isPrimaryMaster);
-      const isRoleAllowed = roles.includes(authRole) || (roles.includes('MASTER') && isMasterRole);
+      const isMasterRole =
+        (authRole === 'MASTER' &&
+          request.auth.isPrimaryMaster === true) ||
+        authRole === 'PRIMARY_MASTER';
+      const isRoleAllowed =
+        roles.includes(authRole) &&
+        (authRole !== 'MASTER' || isMasterRole) ||
+        (roles.includes('MASTER') && isMasterRole);
       if (!isRoleAllowed) {
         return sendAuthorizationError(
           response,
@@ -426,6 +435,20 @@ function authorize(
       }
 
       const auth = request.auth;
+
+      if (
+        auth.role === 'MASTER' &&
+        auth.isPrimaryMaster !== true
+      ) {
+        return sendAuthorizationError(
+          response,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'This Master account no longer has active governance authority.',
+          403,
+          request
+        );
+      }
+
       const userCaps = Array.isArray(auth.capabilities) ? auth.capabilities : [];
       const hasMatchingCapability =
         Array.isArray(allowedCapabilities) &&
@@ -552,7 +575,9 @@ function authorize(
         // No explicit DB rule found. If the route explicitly permits this role,
         // or if the actor is Primary Master (with full governance and no absolute restriction),
         // fallback to default permission grant.
-        const isMaster = auth.role === 'MASTER' || Boolean(auth.isPrimaryMaster);
+        const isMaster =
+          auth.role === 'MASTER' &&
+          auth.isPrimaryMaster === true;
         const isRoleInAllowed = Array.isArray(allowedRoles) && allowedRoles.includes(auth.role);
 
         if (isMaster || isRoleInAllowed || hasMatchingCapability) {

@@ -134,11 +134,6 @@ const REPRESENTATIVE_INTERACTIONS = [
   { persona: 'Primary Master', role: 'master', fromRoute: 'settings', toRoute: 'settings/appearance', control: 'Settings Appearance Section' },
   { persona: 'Primary Master', role: 'master', fromRoute: 'settings/appearance', toRoute: 'settings/trash', control: 'Settings Trash Recovery' },
 
-  // Normal Master Flows
-  { persona: 'Normal Master', role: 'master_normal', fromRoute: 'dashboard', toRoute: 'inventory', control: 'Normal Master Inventory' },
-  { persona: 'Normal Master', role: 'master_normal', fromRoute: 'inventory', toRoute: 'reports', control: 'Normal Master Reports' },
-  { persona: 'Normal Master', role: 'master_normal', fromRoute: 'reports', toRoute: 'procurement', control: 'Normal Master Procurement' },
-
   // Owner Flows
   { persona: 'Owner', role: 'owner', fromRoute: 'dashboard', toRoute: 'ledger', control: 'Owner Personal Ledger' },
   { persona: 'Owner', role: 'owner', fromRoute: 'ledger', toRoute: 'bills', control: 'Owner Bills' },

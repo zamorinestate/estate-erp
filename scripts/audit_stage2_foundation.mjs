@@ -4,7 +4,7 @@
 // 1. Session Lifecycle & API Foundation (0 missing session errors)
 // 2. Known Regressions (POS, Inventory, Payslips, Reports, Menu, ZURF Export)
 // 3. Universal Shared UI Components (Modals, Selects, DatePickers, Search, Notifs)
-// 4. Four-Profile Parity (Primary Master, Normal Master, Owner, Cafe Operations)
+// 4. Three-Profile Parity (Primary Master, Owner, Cafe Operations)
 // 5. Staff Frozen Scope Regression Smoke (Condition-Based Readiness)
 // 6. Four-Theme Visual Stability & 0 Runtime Console Exceptions
 // =============================================================================
@@ -243,7 +243,6 @@ async function runStage2Suite() {
     console.log('--- 1. API & SESSION LIFECYCLE AUDIT ---');
     const profiles = [
       { role: 'master', name: 'Primary Master' },
-      { role: 'master_normal', name: 'Normal Master' },
       { role: 'owner', name: 'Owner' },
       { role: 'cafe_admin', name: 'Cafe Operations' },
     ];

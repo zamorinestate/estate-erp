@@ -666,6 +666,15 @@ async function authenticatePassword({
     );
   }
 
+  if (
+    user.role === 'MASTER' &&
+    user.isPrimaryMaster !== true
+  ) {
+    throw new Error(
+      'This account is not available for sign-in.'
+    );
+  }
+
   // Transparent opportunistic upgrade to canonical scrypt KDF on successful login
   if (needsPasswordRehash(user.passwordHash)) {
     try {
@@ -730,6 +739,15 @@ async function createSession({
   if (!user?.userId || !user?.organisationId) {
     throw new Error(
       'A valid authenticated user is required.'
+    );
+  }
+
+  if (
+    user.role === 'MASTER' &&
+    user.isPrimaryMaster !== true
+  ) {
+    throw new Error(
+      'This Master account is no longer authorized to create sessions.'
     );
   }
 
@@ -922,6 +940,22 @@ async function rotateRefreshToken({
   if (!user) {
     throw new Error(
       'The user account is unavailable.'
+    );
+  }
+
+  if (
+    user.role === 'MASTER' &&
+    user.isPrimaryMaster !== true
+  ) {
+    await session.revoke({
+      revokedBy: 'SYSTEM',
+      reason: 'PERMISSION_CHANGED',
+      details:
+        'Non-primary Master authority has been retired.',
+    });
+
+    throw new Error(
+      'The session must be renewed.'
     );
   }
 

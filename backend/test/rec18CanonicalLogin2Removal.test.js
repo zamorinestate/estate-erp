@@ -480,14 +480,15 @@ test('REC-18 Canonical Login Page 2.0 & Legacy Login Permanent Removal 40-Point 
     assert.equal(sessionData.session.roleSnapshot, 'MASTER');
   });
 
-  await t.test('19. Normal Master login', async () => {
-    const authResult = await authService.authenticatePassword({
-      organisationId: TEST_ORG,
-      email: 'normal.master@zamorin.com',
-      password: 'Password@123',
-    });
-    assert.equal(authResult.user.role, 'MASTER');
-    assert.equal(authResult.user.isPrimaryMaster, false);
+  await t.test('19. non-primary Master login is permanently rejected', async () => {
+    await assert.rejects(
+      authService.authenticatePassword({
+        organisationId: TEST_ORG,
+        email: 'normal.master@zamorin.com',
+        password: 'Password@123',
+      }),
+      /not available for sign-in/i
+    );
   });
 
   await t.test('20. Owner login', async () => {

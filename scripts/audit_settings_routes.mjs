@@ -1,11 +1,10 @@
 // =============================================================================
 // ZAMORIN CAFE ERP — AUTOMATED SETTINGS ROUTE AUDIT
 //
-// Tests all 17 Settings destinations across 4 canonical profiles:
+// Tests all 17 Settings destinations across 3 canonical profiles:
 //   1. Primary Master
-//   2. Normal Master
-//   3. Owner
-//   4. Cafe Operations
+//   2. Owner
+//   3. Cafe Operations
 //
 // Verifies:
 //   - Tile visibility & authorization
@@ -49,7 +48,6 @@ const ALL_17_DESTINATIONS = [
 
 const PROFILES = [
   { name: "Primary Master", roleParam: "master", isMaster: true },
-  { name: "Normal Master", roleParam: "master_normal", isMaster: true },
   { name: "Owner", roleParam: "owner", isMaster: false },
   { name: "Cafe Operations", roleParam: "cafe_admin", isMaster: false },
 ];
