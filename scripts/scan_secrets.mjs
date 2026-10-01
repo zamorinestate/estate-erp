@@ -2,6 +2,7 @@ import cp from 'node:child_process';
 
 const SECRET_PATTERNS = [
   'mongodb\\+srv://[^:"\' ]+:[^@"\' ]+@',
+  'mongodb://[^:"\' ]+:[^@"\' ]+@',
   'JWT_ACCESS_SECRET\\s*=\\s*["\'][a-f0-9]{40,}',
   'SESSION_SECRET\\s*=\\s*["\'][a-f0-9]{40,}',
   'RENDER_API_KEY\\s*=\\s*["\']rnd_[A-Za-z0-9]{20,}',
