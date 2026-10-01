@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 /**
  * settingsController.js â€” SCR-023
  *
@@ -32,6 +34,8 @@ const { Approval } = require('../models/Approval');
 const { Notification } = require('../models/Notification');
 const auditService = require('../services/auditService');
 const ApiError = require('../utils/ApiError');
+const { redisClientFactory } = require('../services/redisClientFactory');
+const { documentStorageAdapter } = require('../services/documentStorageAdapter');
 
 // â”€â”€ 23 top-level language definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LANGUAGE_CATALOGUE = [
@@ -1133,6 +1137,28 @@ async function getPrivacyNotice(req, res) {
 async function getDiagnostics(req, res) {
   const { userId, role, organisationId } = req.user;
 
+  const databaseReady = mongoose.connection.readyState === 1;
+  const redisHealth = await redisClientFactory.getHealthStatus();
+  const storageHealth = await documentStorageAdapter.healthCheck();
+
+  const services = {
+    database: {
+      status: databaseReady ? 'READY' : 'DEGRADED',
+    },
+    redis: {
+      status: redisHealth?.isConnected ? 'READY' : 'DEGRADED',
+    },
+    documentStorage: {
+      status: ['OK', 'READY', 'HEALTHY'].includes(storageHealth?.status)
+        ? 'READY'
+        : 'DEGRADED',
+    },
+  };
+
+  const serviceHealth = Object.values(services).every((service) => service.status === 'READY')
+    ? 'READY'
+    : 'DEGRADED';
+
   res.json({
     success: true,
     data: {
@@ -1143,8 +1169,9 @@ async function getDiagnostics(req, res) {
       userId,
       role,
       organisationId,
-      // Never expose: tokens, session secrets, DB connection strings, JWT secrets
-      serviceHealth: 'CONNECTED',
+      // Never expose tokens, connection strings, credentials, or raw dependency errors.
+      serviceHealth,
+      services,
     },
   });
 }
