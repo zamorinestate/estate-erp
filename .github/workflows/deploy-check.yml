@@ -30,6 +30,9 @@ jobs:
         working-directory: ./backend
         run: npm ci
 
+      - name: Audit Production Dependencies
+        run: npm run audit:deps
+
       - name: Verify Blueprint & Server Syntax
         working-directory: ./backend
         run: |
