@@ -48,6 +48,8 @@ const authRoutes = read('backend/src/routes/authRoutes.js');
 const seedSource = read('backend/src/scripts/seedInitialData.js');
 const startProdSource = read('backend/src/scripts/startProd.js');
 const attendanceQrSource = read('backend/src/services/attendanceQrService.js');
+const authControllerSource = read('backend/src/controllers/authController.js');
+const backendPackage = JSON.parse(read('backend/package.json'));
 
 function productionEnv(overrides = {}) {
   return {
@@ -172,6 +174,26 @@ test('BACKEND-RUNTIME-010: Render binds REDIS_URL to the managed Key Value conne
   assert.ok(renderYaml.includes('name: zamorin-cafe-erp-redis-production'));
   assert.ok(renderYaml.includes('property: connectionString'));
   assert.equal(renderYaml.includes('key: REDIS_URL\n        sync: false'), false);
+});
+
+test('BACKEND-RUNTIME-011: MFA reenrollment is recovery-backed and revokes stale trust', () => {
+  assert.ok(hasDirectExpressRoute(authRoutes, 'post', '/mfa/re-enroll/start'));
+  assert.ok(hasDirectExpressRoute(authRoutes, 'post', '/mfa/re-enroll/confirm'));
+  assert.ok(authRoutes.includes('requireMfa'));
+  assert.ok(authControllerSource.includes("'MFA_REENROLLMENT_FIELDS_REQUIRED'"));
+  assert.ok(authControllerSource.includes('verifyPassword('));
+  assert.ok(authControllerSource.includes('hashRecoveryCode(recoveryCode)'));
+  assert.ok(authControllerSource.includes("purpose: 'mfa_reenroll'"));
+  assert.ok(authControllerSource.includes("verifyMfaToken(\n        token,\n        'mfa_reenroll'"));
+  assert.ok(authControllerSource.includes('revokeAllUserSessions({'));
+  assert.ok(authControllerSource.includes("reason:\n          'MFA_REENROLLMENT'"));
+  assert.ok(authControllerSource.includes('.revokeAllUserTrustedDevices({'));
+  assert.ok(authControllerSource.includes('clearTrustedDeviceCookie(response)'));
+  assert.ok(authControllerSource.includes('plainRecoveryCodes.map(\n        hashRecoveryCode'));
+});
+
+test('BACKEND-RUNTIME-012: backend runtime is pinned to the Node 20 CI major', () => {
+  assert.equal(backendPackage.engines?.node, '20.x');
 });
 
 test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
