@@ -1397,6 +1397,15 @@ const mfaConfirm = asyncHandler(
       );
     }
 
+    const previousMfaState = {
+      mfaEnabled: Boolean(user.mfaEnabled),
+      mfaMethod: user.mfaMethod || 'NONE',
+      mfaSecretEncrypted: user.mfaSecretEncrypted || null,
+      pendingMfaSecretEncrypted: user.pendingMfaSecretEncrypted || null,
+      lastMfaCounter: user.lastMfaCounter || null,
+      recoveryCodeHashes: [...(user.recoveryCodeHashes || [])],
+    };
+
     const plainRecoveryCodes = generateRecoveryCodes(10);
     const hashedCodes = plainRecoveryCodes.map(hashRecoveryCode);
 
@@ -1406,15 +1415,6 @@ const mfaConfirm = asyncHandler(
     user.pendingMfaSecretEncrypted = null;
     user.lastMfaCounter = counter;
     user.recoveryCodeHashes = hashedCodes;
-
-    const previousMfaState = {
-      mfaEnabled: false,
-      mfaMethod: user.mfaMethod || 'NONE',
-      mfaSecretEncrypted: null,
-      pendingMfaSecretEncrypted: user.pendingMfaSecretEncrypted,
-      lastMfaCounter: user.lastMfaCounter || null,
-      recoveryCodeHashes: [],
-    };
 
     await user.save();
 
