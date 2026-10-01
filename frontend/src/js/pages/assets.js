@@ -1273,15 +1273,17 @@ function openRegisterAssetWizard(root) {
         try {
           submitBtn.disabled = true;
           submitBtn.textContent = "Registering...";
-          await apiPost("/assets", formData);
+          const res = await apiPost("/assets", formData);
+          const created = res?.data?.asset || newAsset;
+          cachedAssets.unshift(created);
+          showToast(res?.message || `Asset "${created.name || newAsset.name}" (${created.assetId || newAssetId}) registered successfully.`, "success");
+          modal.close();
+          rerender(root);
         } catch (err) {
-          // ignore offline
+          showToast(err?.message || "Failed to register asset.", "error");
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Register Asset";
         }
-
-        cachedAssets.unshift(newAsset);
-        showToast(`Asset "${newAsset.name}" (${newAssetId}) registered successfully.`, "success");
-        modal.close();
-        rerender(root);
       });
     }
   }
@@ -1497,13 +1499,15 @@ function openCreateWorkOrderModal(root, defaultAssetId = "") {
     };
 
     try {
-      await apiPost("/assets/work-orders", { assetId, title, workType, priority, description });
-    } catch (err) {}
-
-    cachedWorkOrders.unshift(newWo);
-    showToast(`Work order ${newWoId} ("${title}") created successfully.`, "success");
-    modal.close();
-    rerender(root);
+      const res = await apiPost("/assets/work-orders", { assetId, title, workType, priority, description });
+      const created = res?.data?.workOrder || newWo;
+      cachedWorkOrders.unshift(created);
+      showToast(res?.message || `Work order ${created.workOrderId || newWoId} ("${title}") created successfully.`, "success");
+      modal.close();
+      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Failed to create work order.", "error");
+    }
   });
 }
 
