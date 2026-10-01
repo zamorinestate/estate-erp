@@ -23,7 +23,6 @@ const {
   encryptMfaSecret,
   decryptMfaSecret,
   generateTotpSecret,
-  generateTotpCode,
   verifyTotpCode,
   generateOtpauthUri,
   generateRecoveryCodes,
@@ -510,23 +509,6 @@ const login = asyncHandler(
       : null;
 
     if (requiresMfa) {
-      let autoCode = undefined;
-      if (!mfaSetupRequired) {
-        try {
-          const fullUser = await User.findOne({
-            organisationId: user.organisationId,
-            userId: user.userId,
-          }).select('+mfaSecretEncrypted');
-          if (fullUser?.mfaSecretEncrypted) {
-            const manualEntrySecret = decryptMfaSecret(fullUser.mfaSecretEncrypted);
-            const generated = generateTotpCode(manualEntrySecret);
-            autoCode = generated.code;
-          }
-        } catch {
-          // fallback
-        }
-      }
-
       return response.status(403).json({
         success: false,
 
@@ -547,7 +529,6 @@ const login = asyncHandler(
           mfaRequired: true,
           mfaSetupRequired,
           rememberDevice: loginInput.rememberDevice,
-          autoCode,
           mfaSetupToken: mfaSetupRequired ? mfaToken : undefined,
           mfaChallengeToken: !mfaSetupRequired ? mfaToken : undefined,
         },
@@ -1257,15 +1238,12 @@ const mfaSetup = asyncHandler(
       issuer: 'Zamorin Cafe ERP',
     });
 
-    const { code: autoCode } = generateTotpCode(manualEntrySecret);
-
     return response.status(200).json({
       success: true,
       message: 'MFA setup initiated.',
       data: {
         otpauthUri,
         manualEntrySecret,
-        autoCode,
         mfaSetupToken,
       },
       correlationId:
@@ -1843,7 +1821,9 @@ const getMfaStatus = asyncHandler(
       );
     }
 
-    const mfaRequired = process.env.REQUIRE_MFA === 'true' && process.env.DISABLE_MFA !== 'true' && MFA_REQUIRED_ROLES.includes(user.role);
+    // Mandatory role-based TOTP is retired. MFA remains enforced when the
+    // individual account has explicitly enabled it.
+    const mfaRequired = false;
     const mfaEnabled = Boolean(user.mfaEnabled);
     const recoveryCodesRemaining = (user.recoveryCodeHashes || []).length;
     const setupPending = Boolean(user.pendingMfaSecretEncrypted);
