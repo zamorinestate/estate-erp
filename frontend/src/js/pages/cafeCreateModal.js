@@ -10,6 +10,7 @@ import { apiPost } from '../apiClient.js';
 import { showToast } from '../components.js';
 import { openCafeAccessManagementModal } from './cafeAccessManagementModal.js';
 import { generateQrSvg, downloadQrSvg, downloadQrPng, openQrViewerModal } from '../utils/qrCodeGen.js';
+import { formatCafeAddress, getCafeCity } from '../utils/addressFormatter.js';
 
 function escHtml(str) {
   if (str === null || str === undefined) return '';
@@ -846,7 +847,7 @@ function renderAccessPackScreen(container, { cafe, access, operationsPin }, opts
   const rawPin = operationsPin || access?.operationsPin || '••••••';
   const cafeId = cafe?.cafeId || access?.cafeId || 'ZC-0000';
   const cafeName = cafe?.name || 'Zamorin Café';
-  const city = cafe?.address?.city || cafe?.city || '';
+  const city = getCafeCity(cafe);
   const dedicatedLoginUrl = access?.dedicatedLoginUrl || `${window.location.origin}/cafe-operations/login?cafe=${encodeURIComponent(cafeId)}`;
 
   // Generate crisp QR SVG for the dedicated login URL
@@ -1133,12 +1134,12 @@ function renderAccessPackScreen(container, { cafe, access, operationsPin }, opts
 
   // Download General Access Pack PDF / Printable (Section 23)
   container.querySelector('#pack-dl-pack-btn')?.addEventListener('click', () => {
-    printAccessPackDocument({ cafeName, cafeId, city, dedicatedLoginUrl, address: cafe?.address?.line1 || cafe?.addressLine1 || '' });
+    printAccessPackDocument({ cafeName, cafeId, city, dedicatedLoginUrl, address: formatCafeAddress(cafe) || cafe?.addressLine1 || '' });
   });
 
   // Private Confidential Setup Sheet (Section 24)
   container.querySelector('#pack-setup-sheet-btn')?.addEventListener('click', () => {
-    printConfidentialSetupSheet({ cafeName, cafeId, city, dedicatedLoginUrl, rawPin, address: cafe?.address?.line1 || cafe?.addressLine1 || '' });
+    printConfidentialSetupSheet({ cafeName, cafeId, city, dedicatedLoginUrl, rawPin, address: formatCafeAddress(cafe) || cafe?.addressLine1 || '' });
   });
 
   // Assign Café Admin (Section 28)
