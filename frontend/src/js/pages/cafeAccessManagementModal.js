@@ -38,8 +38,8 @@ export function openCafeAccessManagementModal(mountParent = document.body, cafeI
 
 async function loadAndRenderAccessModal(container, cafeId) {
   container.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(18,17,16,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);">
-      <div class="modal-card card" style="width:780px;max-width:96vw;max-height:90vh;overflow-y:auto;padding:28px;background:var(--surface-raised, #242220);border:1px solid var(--line-strong, #3d3935);box-shadow:var(--shadow-xl);border-radius:12px;color:var(--ink, #ede8e1);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(18,17,16,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);">
+      <div class="modal-card card" style="opacity:1;transform:none;width:780px;max-width:96vw;max-height:90vh;overflow-y:auto;padding:28px;background:var(--surface-raised, #242220);border:1px solid var(--line-strong, #3d3935);box-shadow:var(--shadow-xl);border-radius:12px;color:var(--ink, #ede8e1);">
         <div style="display:flex;justify-content:center;align-items:center;min-height:220px;flex-direction:column;gap:12px;">
           <span class="spinner" style="display:inline-block;width:24px;height:24px;border:3px solid var(--bronze-500, #b17d38);border-right-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;"></span>
           <span style="font-size:13px;color:var(--muted, #9e978e);">Loading Café Operations Access status...</span>
@@ -59,8 +59,8 @@ async function loadAndRenderAccessModal(container, cafeId) {
     renderAccessModalContent(container, data);
   } catch (err) {
     container.innerHTML = `
-      <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(18,17,16,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;">
-        <div class="modal-card card" style="width:480px;max-width:95vw;padding:24px;background:var(--surface-raised, #242220);border:1px solid var(--danger, #dc2626);border-radius:12px;text-align:center;">
+      <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(18,17,16,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;">
+        <div class="modal-card card" style="opacity:1;transform:none;width:480px;max-width:95vw;padding:24px;background:var(--surface-raised, #242220);border:1px solid var(--danger, #dc2626);border-radius:12px;text-align:center;">
           <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
           <h3 style="margin:0 0 8px;font-size:18px;color:var(--ink);">Access Governance Unavailable</h3>
           <p style="font-size:13px;color:var(--muted);margin-bottom:18px;">${escHtml(err.message || 'Café access record not found.')}</p>
@@ -85,8 +85,8 @@ function renderAccessModalContent(container, data) {
   const loginUrl = data.dedicatedLoginUrl || data.linkUrl || `${window.location.origin}/cafe-access/link/${encodeURIComponent(data.cafeId)}`;
 
   container.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(18,17,16,0.82);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);">
-      <div class="modal-card card" style="width:840px;max-width:96vw;max-height:92vh;overflow-y:auto;padding:28px;background:var(--surface-raised, #242220);border:1px solid var(--line-strong, #3d3935);box-shadow:var(--shadow-2xl);border-radius:12px;color:var(--ink, #ede8e1);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(18,17,16,0.82);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);">
+      <div class="modal-card card" style="opacity:1;transform:none;width:840px;max-width:96vw;max-height:92vh;overflow-y:auto;padding:28px;background:var(--surface-raised, #242220);border:1px solid var(--line-strong, #3d3935);box-shadow:var(--shadow-2xl);border-radius:12px;color:var(--ink, #ede8e1);">
 
         <!-- Header -->
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:1px solid var(--line, #33302c);padding-bottom:16px;">
