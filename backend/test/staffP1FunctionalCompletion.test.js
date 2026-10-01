@@ -790,7 +790,7 @@ test('Staff P1 Functional Completion Programme Suite', async (suite) => {
 
   await suite.test('P1-SUP-1: submitSupportTicket creates a SupportCase with OPEN status', async () => {
     const req = {
-      auth: { userId: 'ST-SUP-01', organisationId: 'ZAMORIN', email: 'sup-staff@zamorin.cafe' },
+      auth: { userId: 'ST-SUP-01', organisationId: 'ZAMORIN', role: 'STAFF', email: 'sup-staff@zamorin.cafe' },
       body: {
         category: 'HR_PAYROLL',
         severity: 'NORMAL',
