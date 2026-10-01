@@ -281,8 +281,12 @@ function loadEnvironment(
     mfaEncryptionKey,
     initialOrganisationId: String(source.INITIAL_ORGANISATION_ID || 'ZAMORIN').trim(),
     initialMasterName: String(source.INITIAL_MASTER_NAME || 'Zamorin Primary Master').trim(),
-    initialMasterEmail: String(source.INITIAL_MASTER_EMAIL || 'pradeeshk331@gmail.com').trim(),
-    initialMasterPassword: String(source.INITIAL_MASTER_PASSWORD || 'PRADEESHK@94309').trim(),
+    initialMasterEmail: production
+      ? requireConfiguredValue('INITIAL_MASTER_EMAIL', source.INITIAL_MASTER_EMAIL)
+      : String(source.INITIAL_MASTER_EMAIL || '').trim(),
+    initialMasterPassword: production
+      ? requireConfiguredValue('INITIAL_MASTER_PASSWORD', source.INITIAL_MASTER_PASSWORD)
+      : String(source.INITIAL_MASTER_PASSWORD || '').trim(),
   });
 }
 
