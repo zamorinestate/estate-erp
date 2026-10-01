@@ -1406,7 +1406,7 @@ tr:last-child td { border-bottom: 0; }
   opacity:0;
   transition: transform var(--motion-modal) var(--ease-enter), opacity var(--motion-modal) var(--ease-enter);
 }
-.modal.open .modal-card, .modal-backdrop.open .modal-window { transform:translateY(0) scale(1); opacity:1; }
+.modal.open .modal-card, .modal-backdrop.open .modal-card, .modal-backdrop.open .modal-window { transform:translateY(0) scale(1); opacity:1; }
 .modal-head, .modal-header {
   display:flex; align-items:center; justify-content:space-between;
   gap:12px; padding:18px 22px; border-bottom:1px solid var(--line);
