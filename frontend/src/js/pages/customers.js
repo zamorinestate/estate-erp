@@ -950,16 +950,13 @@ function openCreateRewardModal(root) {
     }
 
     try {
-      await apiPost("/customers/rewards", { name, pointsRequired: points, category, status: "ACTIVE" });
-      showToast("Reward item added to catalogue.", "success");
+      const res = await apiPost("/customers/rewards", { name, pointsRequired: points, category, status: "ACTIVE" });
+      showToast(res?.message || "Reward item added to catalogue.", "success");
       modal.close();
       await loadCustomerData();
       rerender(root);
-    } catch {
-      showToast("Reward item added to catalogue.", "success");
-      modal.close();
-      await loadCustomerData();
-      rerender(root);
+    } catch (err) {
+      showToast(err?.message || "Failed to add reward item.", "error");
     }
   });
 }
