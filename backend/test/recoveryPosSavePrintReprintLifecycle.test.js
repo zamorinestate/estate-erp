@@ -83,7 +83,9 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
   // The import is now destructured (matching posOrderService.js fix), so Node’s
   // module cache ensures this mock intercepts the actual call site.
   t.mock.method(BomDepletionService, 'depleteOrderBOM', async () => ({
+    success: true,
     depleted: true,
+    allDeductionsSucceeded: true,
     depletionCount: 1,
     source: 'MOCK',
   }));
@@ -96,11 +98,30 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
   t.mock.method(Cafe, 'findOne', async () => ({
     cafeId: 'ZC-REC04',
     name: 'Zamorin REC-04 Test Outlet',
+    displayName: 'Zamorin REC-04 Test Outlet',
     legalName: 'Zamorin Hospitality Private Limited',
-    gstin: '32AABCT1332L1ZV',
-    fssaiLicenseNumber: '22334455667788',
-    address: { line1: 'Test Street', city: 'Kozhikode', pincode: '673001' },
-    contactPhone: '+91 495 000 0000',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '32AABCT1332L1ZV',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin REC-04 Test Outlet',
+        principalPlace: 'Test Street, Kozhikode, Kerala 673001',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '22334455667788',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin REC-04 Test Outlet',
+      street: 'Test Street',
+      city: 'Kozhikode',
+      state: 'Kerala',
+      pinCode: '673001',
+    },
+    contacts: { primaryPhone: '+91 495 000 0000' },
     toObject() { return this; },
   }));
 
