@@ -49,7 +49,6 @@ $hardBlockers = @(
     @{ Id = 'EXT-08'; Area = 'Statutory CA Audit'; Detail = 'External CA sign-off on GST, tax calculations, and statutory ledgers pending' },
     @{ Id = 'EXT-10'; Area = 'Commercial Hosting & Domain'; Detail = 'Commercial Vercel plan, commercial Render compute & custom domain pending' },
     @{ Id = 'EXT-14'; Area = 'Real Café Shadow Pilot'; Detail = 'Time-bound real café operator shadow pilot pending (synthetic rehearsal passed)' },
-    @{ Id = 'EXT-16'; Area = 'Atlas Network Hardening'; Detail = 'Atlas access list contains 0.0.0.0/0 wildcard IP entry pending Render CIDRs' },
     @{ Id = 'EXT-16'; Area = 'Cloud Account Ownership'; Detail = 'Cloud provider account ownership and break-glass recovery require human verification' }
 )
 

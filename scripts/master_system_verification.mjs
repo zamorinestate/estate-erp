@@ -210,7 +210,8 @@ console.log('===================================================================
 console.log(`Total Checks Executed : ${results.totalChecks}`);
 console.log(`Passed Checks         : \x1b[32m${results.passedChecks}\x1b[0m`);
 console.log(`Failed Checks         : ${results.failedChecks > 0 ? `\x1b[31m${results.failedChecks}\x1b[0m` : '\x1b[32m0\x1b[0m'}`);
-console.log(`System Status         : \x1b[32m100% PRODUCTION READY & CERTIFIED\x1b[0m`);
+console.log(`System Status         : \x1b[32mAUTOMATED SOFTWARE VERIFICATION PASS\x1b[0m`);
+console.log('Commercial Cutover    : GATED SEPARATELY BY EXT-19 + HUMAN AUTHORIZATION');
 console.log('===============================================================================\n');
 
 if (results.failedChecks > 0) {
