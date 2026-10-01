@@ -62,6 +62,7 @@ function normalizeAccountKey(req, fallbackIdentifierKey = 'email') {
     body.email ||
     body.identifier ||
     body.userId ||
+    req.auth?.userId ||
     ''
   ).trim().toLowerCase();
 
