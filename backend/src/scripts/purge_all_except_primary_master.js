@@ -14,10 +14,16 @@ try {
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-const hosts = 'ac-rdyrmsn-shard-00-00.maxooka.mongodb.net:27017,ac-rdyrmsn-shard-00-01.maxooka.mongodb.net:27017,ac-rdyrmsn-shard-00-02.maxooka.mongodb.net:27017';
-const options = 'ssl=true&replicaSet=atlas-jsr01r-shard-0&authSource=admin&retryWrites=true&w=majority';
+const uri =
+  process.env.MONGODB_URI ||
+  process.env.MONGODB_URI_LIVE;
 
-const uri = `mongodb://zamorin_admin:2gCygldpDF0kw1AY@${hosts}/zamorin_cafe_erp?${options}`;
+if (!uri || !String(uri).trim()) {
+  throw new Error(
+    'MONGODB_URI (or MONGODB_URI_LIVE) is required. ' +
+    'Database credentials must be supplied through the runtime environment.'
+  );
+}
 
 async function main() {
   console.log('Connecting to MongoDB Atlas...');
