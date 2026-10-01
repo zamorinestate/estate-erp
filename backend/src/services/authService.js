@@ -406,7 +406,11 @@ function getEffectiveAuthSecurityPolicy() {
       commonPasswordBlocklistEnabled: true,
     },
     mfa: {
-      requiredRoles: [...MFA_REQUIRED_ROLES],
+      // Mandatory role-based TOTP is retired. When a user explicitly has MFA
+      // enabled, session creation still requires successful MFA verification.
+      mandatoryRoleMfaEnabled: false,
+      requiredRoles: [],
+      userConfiguredMfaEnforced: true,
     },
     session: {
       accessTokenTtlMinutes: getPositiveIntegerEnvironmentValue(
