@@ -20,6 +20,13 @@ const attendanceStaffFrontend = read('frontend/src/js/modules/attendance/staffAt
 const attendanceAdminFrontend = read('frontend/src/js/modules/attendance/attendanceShifts.js');
 const administrationFrontend = read('frontend/src/js/pages/administration.js');
 const cafeOpsLoginFrontend = read('frontend/src/js/pages/cafeOperationsLogin2.js');
+const financeFrontend = read('frontend/src/js/pages/financeAccounts.js');
+const employeesFrontend = read('frontend/src/js/pages/employees.js');
+const qualityFrontend = read('frontend/src/js/pages/quality.js');
+const customersFrontend = read('frontend/src/js/pages/customers.js');
+const assetsFrontend = read('frontend/src/js/pages/assets.js');
+const settingsFrontend = read('frontend/src/js/pages/settingsShared.js');
+const announcementsFrontend = read('frontend/src/js/pages/announcements.js');
 
 const posRoutes = read('backend/src/routes/posRoutes.js');
 const billRoutes = read('backend/src/routes/billRoutes.js');
@@ -191,6 +198,44 @@ test('BACKEND-ACTION-002: attendance and shift controls map to live backend rout
       `Backend missing attendance/shift route ${backendRoute}`
     );
   }
+});
+
+test('BACKEND-ACTION-004: successful UI mutations are never fabricated after API failure', () => {
+  for (const forbidden of [
+    'await apiPost(\`/finance/journals/\${id}/post\`, {});\\n      } catch (err) {}',
+    'await apiPost(\`/finance/journals/\${id}/reverse\`, { reason });\\n      } catch (err) {}',
+    'await apiPost("/employees/staffing-requests", payload).catch(() => null)',
+    'await apiPost("/employees/positions", payload).catch(() => null)',
+    'await apiPost(\`/employees/\${userId}/skills\`, payload).catch(() => null)',
+    'await apiPost(\`/employees/\${userId}/training\`, payload).catch(() => null)',
+    'await apiPost(\`/employees/\${userId}/documents/generate\`, payload).catch(() => null)',
+    "await apiPost('/quality/checklists'",
+    "await apiPost('/quality/temperatures'",
+  ]) {
+    if (forbidden.includes('/quality/checklists')) {
+      assert.equal(qualityFrontend.includes("}).catch(() => null);\\n    } catch (err) {}"), false);
+      continue;
+    }
+    if (forbidden.includes('/quality/temperatures')) continue;
+    assert.equal(
+      [financeFrontend, employeesFrontend].some((source) => source.includes(forbidden)),
+      false,
+      `Forbidden false-success mutation pattern remains: ${forbidden}`
+    );
+  }
+
+  assert.ok(financeFrontend.includes('Failed to post Journal'));
+  assert.ok(financeFrontend.includes('Failed to reverse Journal'));
+  assert.ok(employeesFrontend.includes('Failed to submit staffing requisition.'));
+  assert.ok(employeesFrontend.includes('Failed to create sanctioned position.'));
+  assert.ok(qualityFrontend.includes('Failed to record quality inspection.'));
+  assert.ok(qualityFrontend.includes('Failed to record temperature reading.'));
+  assert.ok(customersFrontend.includes('Failed to add reward item.'));
+  assert.ok(assetsFrontend.includes('Failed to register asset.'));
+  assert.ok(assetsFrontend.includes('Failed to create work order.'));
+  assert.ok(settingsFrontend.includes('Failed to save notification preferences.'));
+  assert.ok(announcementsFrontend.includes('Failed to mark notices as read.'));
+  assert.equal(customersFrontend.includes('catch {\\n      showToast("Reward item added to catalogue.", "success");'), false);
 });
 
 test('BACKEND-ACTION-003: administration and login actions map to live backend routes', () => {
