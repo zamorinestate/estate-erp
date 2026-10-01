@@ -136,4 +136,89 @@ test('Notification Outbox, Backoff & Resilience Suite', async (t) => {
     assert.equal(outboxItem.lastErrorCode, 'SIMULATED_GMAIL_API_TIMEOUT');
     assert.ok(outboxItem.nextRetryAt > new Date());
   });
+
+
+  await t.test('Durable outbox staging failure is reported truthfully for non-mandatory notification', async () => {
+    const originalCreate = NotificationOutbox.create;
+    NotificationOutbox.create = async () => {
+      const err = new Error('Simulated durable outbox write failure');
+      err.code = 'SIMULATED_OUTBOX_WRITE_FAILED';
+      throw err;
+    };
+
+    try {
+      const result = await notificationService.publishNotification({
+        eventType: 'STAGING_FAILURE_TEST',
+        organisationId: 'ZAMORIN',
+        targetUserIds: ['MU-0001'],
+        templateId: 'SECURITY_ALERT',
+        templateData: {
+          title: 'Staging Test',
+          message: 'Durable outbox staging should fail truthfully',
+        },
+        channels: ['EMAIL'],
+        idempotencyKey: 'IDEMP_STAGE_FAIL_NONMANDATORY_1',
+        processImmediately: false,
+      });
+
+      assert.equal(result.success, false);
+      assert.equal(result.deliveryStatus, 'STAGE_FAILED');
+      assert.equal(result.outboxQueued, 0);
+      assert.equal(result.stagingFailures.length, 1);
+      assert.equal(result.stagingFailures[0].channel, 'EMAIL');
+      assert.equal(result.stagingFailures[0].code, 'SIMULATED_OUTBOX_WRITE_FAILED');
+    } finally {
+      NotificationOutbox.create = originalCreate;
+    }
+  });
+
+  await t.test('Mandatory notification fails closed when durable staging fails', async () => {
+    const originalCreate = NotificationOutbox.create;
+    NotificationOutbox.create = async () => {
+      const err = new Error('Simulated mandatory outbox write failure');
+      err.code = 'SIMULATED_MANDATORY_OUTBOX_WRITE_FAILED';
+      throw err;
+    };
+
+    try {
+      await assert.rejects(
+        () => notificationService.publishNotification({
+          eventType: 'MANDATORY_STAGING_FAILURE_TEST',
+          organisationId: 'ZAMORIN',
+          targetUserIds: ['MU-0001'],
+          templateId: 'SECURITY_ALERT',
+          templateData: {
+            title: 'Mandatory Staging Test',
+            message: 'Mandatory notification must fail closed',
+          },
+          channels: ['EMAIL'],
+          idempotencyKey: 'IDEMP_STAGE_FAIL_MANDATORY_1',
+          processImmediately: false,
+          mandatory: true,
+        }),
+        (err) => {
+          assert.equal(err.code, 'MANDATORY_NOTIFICATION_STAGE_FAILED');
+          assert.ok(Array.isArray(err.stagingFailures));
+          assert.equal(err.stagingFailures.length, 1);
+          return true;
+        }
+      );
+    } finally {
+      NotificationOutbox.create = originalCreate;
+    }
+  });
+
+  await t.test('Notification staging IDs use cryptographic randomness instead of Math.random', () => {
+    const source = require('node:fs').readFileSync(
+      require('node:path').join(__dirname, '../src/services/NotificationService.js'),
+      'utf8'
+    );
+    const start = source.indexOf('async publishNotification');
+    const end = source.indexOf('Marks expired processing leases', start);
+    const block = source.slice(start, end);
+
+    assert.equal(block.includes('Math.random()'), false);
+    assert.ok(block.includes('crypto.randomInt'));
+    assert.ok(block.includes('crypto.randomUUID'));
+  });
 });
