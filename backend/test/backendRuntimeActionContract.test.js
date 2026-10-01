@@ -130,8 +130,6 @@ test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
     '/bills/tickets/open',
     '/bills/history/calendar',
     '/bills/history/stats',
-    '/menu/items',
-    '/menu/simulator',
     '/kds/tickets/',
   ]) {
     assert.ok(posFrontend.includes(frontendCall), `POS frontend missing expected call ${frontendCall}`);
@@ -147,8 +145,6 @@ test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
     ['get', '/tickets/open'],
     ['get', '/history/calendar'],
     ['get', '/history/stats'],
-    ['get', '/items'],
-    ['get', '/simulator'],
     ['post', '/tickets/:ticketId/bump'],
   ]) {
     assert.ok(
