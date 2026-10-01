@@ -226,18 +226,30 @@ class FefoService {
   /**
    * Finds expiring stock within N days or already expired stock with positive quantity.
    */
-  static async getExpiryAlerts({ organisationId, cafeId, thresholdDays = 7, businessDate = null }) {
+  static async getExpiryAlerts({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    thresholdDays = 7,
+    businessDate = null,
+  }) {
     const today = businessDate ? new Date(businessDate) : new Date();
     const futureDate = new Date(today);
     futureDate.setDate(futureDate.getDate() + Number(thresholdDays));
 
     const todayStr = getIstDateStr(today);
     const thresholdStr = getIstDateStr(futureDate);
+    const scope = { organisationId };
+
+    if (cafeId) {
+      scope.cafeId = String(cafeId).trim().toUpperCase();
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      scope.cafeId = { $in: cafeIds.map((id) => String(id).trim().toUpperCase()) };
+    }
 
     const [nearExpiryLots, expiredAvailableLots] = await Promise.all([
       InventoryLot.find({
-        organisationId,
-        cafeId,
+        ...scope,
         status: 'AVAILABLE',
         quantityBase: { $gt: 0 },
         expiryDate: { $gte: todayStr, $lte: thresholdStr },
@@ -246,8 +258,7 @@ class FefoService {
         .lean(),
 
       InventoryLot.find({
-        organisationId,
-        cafeId,
+        ...scope,
         quantityBase: { $gt: 0 },
         expiryDate: { $lt: todayStr },
       })
@@ -259,6 +270,9 @@ class FefoService {
       today: todayStr,
       thresholdDays: Number(thresholdDays),
       thresholdDate: thresholdStr,
+      scope: cafeId
+        ? { cafeId: String(cafeId).trim().toUpperCase() }
+        : { cafeIds: Array.isArray(cafeIds) ? cafeIds : [] },
       nearExpiryCount: nearExpiryLots.length,
       nearExpiryLots,
       expiredCount: expiredAvailableLots.length,
