@@ -72,7 +72,37 @@ test('SHARED INFRASTRUCTURE — Implementation Verification Suite', async (t) =>
   // Mock global auditService
   t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
   t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
-  t.mock.method(Cafe, 'findOne', async () => null);
+  t.mock.method(Cafe, 'findOne', async () => ({
+    cafeId: 'ZC-0001',
+    organisationId: 'ORG-ZAMORIN',
+    name: 'Zamorin Test Café',
+    displayName: 'Zamorin Test Café',
+    legalName: 'Zamorin Hospitality Private Limited',
+    status: 'ACTIVE',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '29AABCT1332L1ZV',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin Test Café',
+        principalPlace: 'Indiranagar, Bengaluru, Karnataka 560038',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '11223344556677',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin Test Café',
+      street: '100 Feet Road',
+      area: 'Indiranagar',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pinCode: '560038',
+    },
+    toObject() { return this; },
+  }));
 
   // ===========================================================================
   // 1. POS ACTION SURFACE: PREVIEW, REPRINT & MANDATORY REASON
