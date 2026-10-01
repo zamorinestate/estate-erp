@@ -47,6 +47,7 @@ const userRoutes = read('backend/src/routes/userRoutes.js');
 const authRoutes = read('backend/src/routes/authRoutes.js');
 const seedSource = read('backend/src/scripts/seedInitialData.js');
 const startProdSource = read('backend/src/scripts/startProd.js');
+const attendanceQrSource = read('backend/src/services/attendanceQrService.js');
 
 function productionEnv(overrides = {}) {
   return {
@@ -117,6 +118,60 @@ test('BACKEND-RUNTIME-005: production seed is minimal by default and bootstrap f
   assert.ok(startProdSource.includes('throw seedErr;'));
   assert.ok(renderYaml.includes('SEED_MINIMAL'));
   assert.ok(renderYaml.includes('SEED_DEMO_DATA'));
+});
+
+test('BACKEND-RUNTIME-008: production attendance signing secrets are mandatory and distinct', () => {
+  const missingQr = productionEnv();
+  delete missingQr.QR_SIGNING_SECRET;
+  assert.throws(
+    () => validateStartupConfiguration(missingQr, { failClosed: true }),
+    (error) => error?.code === 'STARTUP_CONFIGURATION_FAILED' &&
+      String(error.message).includes('QR_SIGNING_SECRET')
+  );
+
+  const missingAttendance = productionEnv();
+  delete missingAttendance.ATTENDANCE_QR_SECRET;
+  assert.throws(
+    () => validateStartupConfiguration(missingAttendance, { failClosed: true }),
+    (error) => error?.code === 'STARTUP_CONFIGURATION_FAILED' &&
+      String(error.message).includes('ATTENDANCE_QR_SECRET')
+  );
+
+  assert.throws(
+    () => validateStartupConfiguration(
+      productionEnv({
+        QR_SIGNING_SECRET: 'S'.repeat(64),
+        ATTENDANCE_QR_SECRET: 'S'.repeat(64),
+      }),
+      { failClosed: true }
+    ),
+    (error) => error?.code === 'STARTUP_CONFIGURATION_FAILED' &&
+      String(error.message).includes('must be distinct')
+  );
+});
+
+test('BACKEND-RUNTIME-009: attendance service cannot use source-code secrets in production', () => {
+  assert.ok(attendanceQrSource.includes("process.env.NODE_ENV === 'production'"));
+  assert.ok(attendanceQrSource.includes("'ATTENDANCE_SIGNING_SECRET_MISSING'"));
+  assert.ok(attendanceQrSource.includes('getQrSigningSecret()'));
+  assert.ok(attendanceQrSource.includes('getAttendanceQrSecret()'));
+  assert.equal(
+    attendanceQrSource.includes("process.env.QR_SIGNING_SECRET || 'zamorin_qr_master_signing_secret_key_2026_dsec'"),
+    false
+  );
+  assert.equal(
+    attendanceQrSource.includes("process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026'"),
+    false
+  );
+});
+
+test('BACKEND-RUNTIME-010: Render binds REDIS_URL to the managed Key Value connection string', () => {
+  assert.ok(renderYaml.includes('key: REDIS_URL'));
+  assert.ok(renderYaml.includes('fromService:'));
+  assert.ok(renderYaml.includes('type: keyvalue'));
+  assert.ok(renderYaml.includes('name: zamorin-cafe-erp-redis-production'));
+  assert.ok(renderYaml.includes('property: connectionString'));
+  assert.equal(renderYaml.includes('key: REDIS_URL\n        sync: false'), false);
 });
 
 test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {

@@ -10,7 +10,36 @@ const { Attendance } = require('../modules/attendance/Attendance');
 const { Cafe } = require('../models/Cafe');
 const ApiError = require('../utils/ApiError');
 
-const QR_SIGNING_SECRET = process.env.QR_SIGNING_SECRET || 'zamorin_qr_master_signing_secret_key_2026_dsec';
+function getSigningSecret(name, developmentFallback) {
+  const configured = String(process.env[name] || '').trim();
+  if (configured.length >= 32) {
+    return configured;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new ApiError(
+      500,
+      'ATTENDANCE_SIGNING_SECRET_MISSING',
+      `Production attendance signing secret ${name} is missing or too short.`
+    );
+  }
+
+  return configured || developmentFallback;
+}
+
+function getQrSigningSecret() {
+  return getSigningSecret(
+    'QR_SIGNING_SECRET',
+    'zamorin_qr_master_signing_secret_key_2026_dsec'
+  );
+}
+
+function getAttendanceQrSecret() {
+  return getSigningSecret(
+    'ATTENDANCE_QR_SECRET',
+    'zamorin-attendance-presence-secret-salt-2026'
+  );
+}
 
 function calculateDistanceMetres(lat1, lon1, lat2, lon2) {
   const R = 6371000; // Earth radius in metres
@@ -50,7 +79,7 @@ class AttendanceQrService {
    */
   signPayload(payload) {
     const serialized = JSON.stringify(payload);
-    return crypto.createHmac('sha256', QR_SIGNING_SECRET).update(serialized).digest('hex');
+    return crypto.createHmac('sha256', getQrSigningSecret()).update(serialized).digest('hex');
   }
 
   /**
@@ -154,7 +183,7 @@ class AttendanceQrService {
       sig: challenge.signature,
     };
 
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceQrSecret();
     const expiresAtSec = Math.floor(challenge.expiresAt.getTime() / 1000);
     const issuedAtSec = Math.floor(challenge.issuedAt.getTime() / 1000);
     const dotPayload = `${challenge.challengeId}.${challenge.organisationId}.${challenge.cafeId}.${issuedAtSec}.${expiresAtSec}`;
@@ -235,7 +264,7 @@ class AttendanceQrService {
       };
     }
 
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceQrSecret();
 
     // Branch A: Dot-separated compact token (challengeId.orgId.cafeId.expiresAt.signature)
     if (typeof qrToken === 'string' && !qrToken.trim().startsWith('{')) {
