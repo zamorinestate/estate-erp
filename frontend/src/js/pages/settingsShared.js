@@ -2839,10 +2839,10 @@ function _wireNotifications(root) {
 
   root.querySelector("#settings-notif-save")?.addEventListener("click", async () => {
     try {
-      await apiPatch("/settings/preferences/notifications", state.settings?.notifications || {});
-      showToast("Notification preferences saved.", "mint");
+      const res = await apiPatch("/settings/preferences/notifications", state.settings?.notifications || {});
+      showToast(res?.message || "Notification preferences saved.", "mint");
     } catch (err) {
-      showToast(err?.message || "Preferences saved.", "mint");
+      showToast(err?.message || "Failed to save notification preferences.", "coral");
     }
   });
 
