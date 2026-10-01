@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const test = require('node:test');
+const bcrypt = require('bcryptjs');
 
 const { createApp } = require('../src/server');
 const { User } = require('../src/models/User');
@@ -22,17 +23,23 @@ function makeQueryMock(result) {
   return promise;
 }
 
-function request(server, path, body) {
+function request(
+  server,
+  path,
+  body,
+  { method = 'POST', headers = {} } = {}
+) {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
-        method: 'POST',
+        method,
         hostname: '127.0.0.1',
         port: server.address().port,
         path,
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
+          ...headers,
         },
       },
       (res) => {
@@ -43,7 +50,7 @@ function request(server, path, body) {
         res.on('end', () => {
           resolve({
             status: res.statusCode,
-            body: JSON.parse(raw),
+            body: raw ? JSON.parse(raw) : {},
             headers: res.headers,
           });
         });
@@ -51,7 +58,13 @@ function request(server, path, body) {
     );
 
     req.on('error', reject);
-    req.write(JSON.stringify(body || {}));
+    if (
+      body !== undefined &&
+      body !== null &&
+      method !== 'GET'
+    ) {
+      req.write(JSON.stringify(body));
+    }
     req.end();
   });
 }
@@ -98,6 +111,7 @@ function makeUser(overrides = {}) {
 
 function mockSessionCreation(t) {
   let next = 1;
+  let lastSession = null;
 
   t.mock.method(
     SequenceCounter,
@@ -110,6 +124,12 @@ function mockSessionCreation(t) {
       ...data,
       accessTokenExpiresAt: data.accessTokenExpiresAt,
       refreshTokenExpiresAt: data.refreshTokenExpiresAt,
+      isActive() {
+        return this.status === 'ACTIVE';
+      },
+      async save() {
+        return this;
+      },
       toJSON() {
         return {
           sessionId: this.sessionId,
@@ -117,8 +137,11 @@ function mockSessionCreation(t) {
           userId: this.userId,
           roleSnapshot: this.roleSnapshot,
           status: this.status,
+          sessionVersion: this.sessionVersion,
           mfaVerified: this.mfaVerified,
           mfaVerifiedAt: this.mfaVerifiedAt,
+          mfaReenrollmentRequired:
+            Boolean(this.mfaReenrollmentRequired),
           device: this.device,
           issuedAt: this.issuedAt,
           lastActivityAt: this.lastActivityAt,
@@ -128,8 +151,11 @@ function mockSessionCreation(t) {
       },
     };
 
+    lastSession = session;
     return session;
   });
+
+  return () => lastSession;
 }
 
 test.beforeEach(() => {
@@ -237,6 +263,10 @@ test('POST /auth/mfa/confirm enables MFA, persists the replay counter, returns r
   assert.equal(response.body.data?.recoveryCodes?.length, 10);
   assert.equal(response.body.data?.session?.mfaVerified, true);
   assert.equal(
+    response.body.data?.session?.mfaReenrollmentRequired,
+    false
+  );
+  assert.equal(
     response.body.data?.session?.device?.deviceId,
     'DEV-CONFIRM'
   );
@@ -287,12 +317,16 @@ test('POST /auth/mfa/verify accepts fresh TOTP, persists its counter, and create
   );
 });
 
-test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) => {
+test('recovery-code login is quarantined until MFA reenrollment completes and the code is single-use', async (t) => {
   const recoveryCode = 'ABCDEF-123456';
+  const currentPassword =
+    'Correct-Horse-Battery-Staple-2026!';
   const hashedRecoveryCode =
     mfaService.hashRecoveryCode(recoveryCode);
 
   const user = makeUser({
+    passwordHash:
+      await bcrypt.hash(currentPassword, 4),
     mfaEnabled: true,
     mfaMethod: 'TOTP',
     mfaSecretEncrypted:
@@ -310,7 +344,16 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
     'findOne',
     () => makeQueryMock(user)
   );
-  mockSessionCreation(t);
+
+  const getLastSession =
+    mockSessionCreation(t);
+
+  t.mock.method(
+    Session,
+    'findOne',
+    async () => getLastSession()
+  );
+
   t.mock.method(Session, 'find', () => ({
     select: async () => [],
   }));
@@ -323,6 +366,7 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
     {
       mfaChallengeToken: token,
       recoveryCode,
+      rememberDevice: true,
       device: {
         deviceId: 'DEV-RECOVERY',
       },
@@ -332,14 +376,109 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
   assert.equal(response.status, 200);
   assert.equal(user.recoveryCodeHashes.length, 0);
   assert.equal(response.body.data?.mfaReenrollmentRequired, true);
+  assert.equal(
+    response.body.data?.session?.mfaReenrollmentRequired,
+    true
+  );
   assert.ok(response.body.data?.mfaReenrollmentAuthorizationToken);
   assert.equal(response.body.data?.trustedDevice, false);
+  assert.ok(response.body.data?.recoverySecurityReset);
+  assert.equal(
+    response.body.data?.recoverySecurityReset?.revokedSessionCount,
+    0
+  );
+
+  const accessToken =
+    response.body.data?.accessToken;
+  const reenrollmentAuthorizationToken =
+    response.body.data?.mfaReenrollmentAuthorizationToken;
+
   const reenrollPayload = mfaService.verifyMfaToken(
-    response.body.data.mfaReenrollmentAuthorizationToken,
+    reenrollmentAuthorizationToken,
     'mfa_reenroll_authorized'
   );
   assert.equal(reenrollPayload.sub, user.userId);
   assert.equal(reenrollPayload.org, user.organisationId);
+
+  const authHeaders = {
+    Authorization: `Bearer ${accessToken}`,
+  };
+
+  response = await request(
+    server,
+    '/api/v1/auth/me',
+    null,
+    {
+      method: 'GET',
+      headers: authHeaders,
+    }
+  );
+
+  assert.equal(response.status, 403);
+  assert.equal(
+    response.body.error?.code,
+    'MFA_REENROLLMENT_REQUIRED'
+  );
+
+  response = await request(
+    server,
+    '/api/v1/auth/mfa/re-enroll/start',
+    {
+      mfaReenrollmentAuthorizationToken:
+        reenrollmentAuthorizationToken,
+    },
+    { headers: authHeaders }
+  );
+
+  assert.equal(response.status, 200);
+  assert.ok(response.body.data?.manualEntrySecret);
+  assert.ok(response.body.data?.mfaReenrollmentToken);
+
+  const replacementSecret =
+    response.body.data.manualEntrySecret;
+  const replacementCode =
+    mfaService.generateTotpCode(
+      replacementSecret
+    ).code;
+  const mfaReenrollmentToken =
+    response.body.data.mfaReenrollmentToken;
+
+  response = await request(
+    server,
+    '/api/v1/auth/mfa/re-enroll/confirm',
+    {
+      mfaReenrollmentToken,
+      password: currentPassword,
+      code: replacementCode,
+    },
+    { headers: authHeaders }
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    getLastSession()?.mfaReenrollmentRequired,
+    false
+  );
+  assert.equal(
+    response.body.data?.recoveryCodes?.length,
+    10
+  );
+
+  response = await request(
+    server,
+    '/api/v1/auth/me',
+    null,
+    {
+      method: 'GET',
+      headers: authHeaders,
+    }
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.body.data?.user?.userId,
+    user.userId
+  );
 
   response = await request(
     server,

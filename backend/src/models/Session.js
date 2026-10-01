@@ -14,6 +14,8 @@ const REVOCATION_REASONS = [
   'LOGOUT_ALL',
   'PASSWORD_CHANGED',
   'PASSWORD_RESET',
+  'MFA_RECOVERY_LOGIN',
+  'MFA_REENROLLMENT',
   'ROLE_CHANGED',
   'CAFE_ASSIGNMENT_CHANGED',
   'PERMISSION_CHANGED',
@@ -145,6 +147,11 @@ const sessionSchema = new mongoose.Schema(
     mfaVerifiedAt: {
       type: Date,
       default: null,
+    },
+
+    mfaReenrollmentRequired: {
+      type: Boolean,
+      default: false,
     },
 
     stepUpVerifiedAt: {

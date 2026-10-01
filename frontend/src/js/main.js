@@ -49,7 +49,7 @@ import {
   wireRegisterPage2,
   showGlassAlert,
   abortActivePasskeyRequests,
-} from "./pages/login2.js?v=3.5.3";
+} from "./pages/login2.js?v=3.5.4";
 
 // Lazy-loaded Router Module: Prevents 75+ admin pages (4.5 MB) from loading during initial login screen display
 let routerModulePromise = null;
@@ -523,12 +523,24 @@ export function mountAuthScreen(screen = "login", params = {}) {
           res?.data?.mfaReenrollmentRequired &&
           res?.data?.mfaReenrollmentAuthorizationToken
         ) {
+          const preparation = await apiPost(
+            "/auth/mfa/re-enroll/start",
+            {
+              mfaReenrollmentAuthorizationToken:
+                res.data.mfaReenrollmentAuthorizationToken,
+            },
+            { timeoutMs: 60000 }
+          );
+
           mountAuthScreen("mfa-reenroll", {
-            stage: "start",
+            stage: "confirm",
             email: user?.email || params.email || "",
-            user,
-            mfaReenrollmentAuthorizationToken:
-              res.data.mfaReenrollmentAuthorizationToken,
+            manualEntrySecret:
+              preparation?.data?.manualEntrySecret || "",
+            otpauthUri:
+              preparation?.data?.otpauthUri || "",
+            mfaReenrollmentToken:
+              preparation?.data?.mfaReenrollmentToken || "",
           });
           return;
         }
@@ -561,7 +573,7 @@ export function mountAuthScreen(screen = "login", params = {}) {
       onBack: () => mountAuthScreen("login"),
     });
   } else if (screen === "mfa-reenroll") {
-    const stage = params.stage || "start";
+    const stage = params.stage || "confirm";
     appEl.innerHTML = renderMfaReenrollment2({
       email: params.email || "",
       stage,
@@ -571,27 +583,6 @@ export function mountAuthScreen(screen = "login", params = {}) {
 
     wireMfaReenrollment2(appEl, {
       stage,
-      onStart: async ({ password }) => {
-        const res = await apiPost(
-          "/auth/mfa/re-enroll/start",
-          {
-            password,
-            mfaReenrollmentAuthorizationToken:
-              params.mfaReenrollmentAuthorizationToken,
-          },
-          { timeoutMs: 60000 }
-        );
-
-        mountAuthScreen("mfa-reenroll", {
-          ...params,
-          stage: "confirm",
-          manualEntrySecret:
-            res?.data?.manualEntrySecret || "",
-          mfaReenrollmentToken:
-            res?.data?.mfaReenrollmentToken || "",
-          mfaReenrollmentAuthorizationToken: undefined,
-        });
-      },
       onConfirm: async ({ password, code }) => {
         const res = await apiPost(
           "/auth/mfa/re-enroll/confirm",
@@ -599,27 +590,25 @@ export function mountAuthScreen(screen = "login", params = {}) {
             password,
             code,
             mfaReenrollmentToken:
-              params.mfaReenrollmentToken,
+              params.mfaReenrollmentToken || "",
           },
           { timeoutMs: 60000 }
         );
 
         mountAuthScreen("mfa-reenroll", {
-          ...params,
           stage: "done",
-          manualEntrySecret: "",
-          mfaReenrollmentToken: undefined,
+          email: params.email || "",
           recoveryCodes:
             res?.data?.recoveryCodes || [],
         });
       },
       onContinue: async () => {
-        if (params.user) {
-          handleAuthenticatedUserSession(params.user);
-          return;
+        const me = await apiGet("/auth/me", { timeoutMs: 60000 });
+        const user = me?.data?.user;
+        if (!user) {
+          throw new Error("Authenticated profile could not be loaded.");
         }
-        window.location.hash = "#dashboard";
-        await boot();
+        handleAuthenticatedUserSession(user);
       },
     });
   } else if (screen === "forgot") {

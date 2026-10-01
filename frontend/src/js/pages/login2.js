@@ -2167,14 +2167,22 @@ export function wireMfaChallenge2(container, { onSubmit, onBack } = {}) {
 
 export function renderMfaReenrollment2({
   email = "",
-  stage = "start",
+  stage = "confirm",
   manualEntrySecret = "",
   recoveryCodes = [],
 } = {}) {
-  let body = "";
-
-  if (stage === "confirm") {
-    body = `
+  const body = stage === "done"
+    ? `
+      <div class="login-header">
+        <h2>MFA Replaced Successfully</h2>
+        <p class="login-subtitle">Save these new recovery codes now. Each code can be used only once.</p>
+      </div>
+      <div id="l2-mfa-reenroll-recovery-codes" style="margin:16px 0; padding:14px; border:1px solid rgba(255,255,255,.16); border-radius:12px; font-family:monospace; line-height:1.8; text-align:center;">
+        ${(recoveryCodes || []).map((code) => `<div>${code}</div>`).join("")}
+      </div>
+      <button type="button" id="l2-mfa-reenroll-continue" class="light-btn">Continue to Dashboard</button>
+    `
+    : `
       <div class="login-header">
         <h2>Replace Authenticator</h2>
         <p class="login-subtitle">
@@ -2195,33 +2203,6 @@ export function renderMfaReenrollment2({
         <button type="submit" class="light-btn">Confirm New Authenticator</button>
       </form>
     `;
-  } else if (stage === "done") {
-    body = `
-      <div class="login-header">
-        <h2>MFA Replaced Successfully</h2>
-        <p class="login-subtitle">Save these new recovery codes now. Each code can be used only once.</p>
-      </div>
-      <div id="l2-mfa-reenroll-recovery-codes" style="margin:16px 0; padding:14px; border:1px solid rgba(255,255,255,.16); border-radius:12px; font-family:monospace; line-height:1.8; text-align:center;">
-        ${(recoveryCodes || []).map((code) => `<div>${code}</div>`).join("")}
-      </div>
-      <button type="button" id="l2-mfa-reenroll-continue" class="light-btn">Continue to Dashboard</button>
-    `;
-  } else {
-    body = `
-      <div class="login-header">
-        <h2>Secure Your Account</h2>
-        <p class="login-subtitle">
-          You signed in with a recovery code. Your previous authenticator secret can no longer be used, so create a new one now.
-        </p>
-      </div>
-      <form id="l2-mfa-reenroll-start-form">
-        <div class="light-input-group">
-          <input type="password" id="l2-mfa-reenroll-password" placeholder="Current Password" autocomplete="current-password" />
-        </div>
-        <button type="submit" class="light-btn">Create New Authenticator Secret</button>
-      </form>
-    `;
-  }
 
   return `
     ${renderBackgroundAndModalsHtml()}
@@ -2239,7 +2220,7 @@ export function renderMfaReenrollment2({
 
 export function wireMfaReenrollment2(
   container,
-  { stage = "start", onStart, onConfirm, onContinue } = {}
+  { stage = "confirm", onConfirm, onContinue } = {}
 ) {
   const errorEl = container.querySelector("#l2-mfa-reenroll-error");
 
@@ -2251,26 +2232,6 @@ export function wireMfaReenrollment2(
       "Unable to replace multi-factor authentication.";
     errorEl.style.display = "block";
   };
-
-  if (stage === "start") {
-    const form = container.querySelector("#l2-mfa-reenroll-start-form");
-    form?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (errorEl) errorEl.style.display = "none";
-      const password =
-        container.querySelector("#l2-mfa-reenroll-password")?.value || "";
-      if (!password) {
-        showError(new Error("Enter your current password."));
-        return;
-      }
-      try {
-        await onStart?.({ password });
-      } catch (error) {
-        showError(error);
-      }
-    });
-    return;
-  }
 
   if (stage === "confirm") {
     const form = container.querySelector("#l2-mfa-reenroll-confirm-form");
