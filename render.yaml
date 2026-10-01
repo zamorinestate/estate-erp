@@ -27,7 +27,10 @@ services:
       - key: MONGODB_URI
         sync: false
       - key: REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: zamorin-cafe-erp-redis-production
+          property: connectionString
       - key: REDIS_KEY_PREFIX
         value: zamorin:
       - key: ALLOWED_ORIGINS
