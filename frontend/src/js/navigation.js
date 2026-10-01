@@ -189,6 +189,8 @@ export const PRIMARY_MASTER_ONLY_ROUTES = new Set([
   'org-identity',
   'organisation-identity',
   'mailops',
+  'exports',
+  'export-centre',
 ]);
 
 // ─── Implicit routes — not in sidebar but accessible to all authenticated users ─
@@ -225,6 +227,8 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
   const role = (cleanRole === 'admin' || cleanRole === 'cafe_admin') ? ROLES.CAFE_ADMIN : cleanRole;
   const cleanRoute = (rawRoute || '').replace(/^#/, '');
   const route = cleanRoute.split('?')[0];
+  const pathOnly = route ? route.split('?')[0] : '';
+  const baseRoute = pathOnly ? pathOnly.split('/')[0] : '';
 
   // STRICT VENDOR ROUTE ISOLATION:
   // Vendor users operate under a dedicated external visibility boundary.
@@ -277,6 +281,15 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
   // Primary Master has 100% universal unrestricted access to every route and module
   if ((role === ROLES.MASTER || role === 'master') && isPrimaryMaster) {
     return true;
+  }
+
+  // For MASTER: Non-primary master claim is strictly denied sensitive primary-only routes
+  if (
+    (role === ROLES.MASTER || role === 'master') &&
+    !isPrimaryMaster &&
+    (PRIMARY_MASTER_ONLY_ROUTES.has(pathOnly) || PRIMARY_MASTER_ONLY_ROUTES.has(route) || PRIMARY_MASTER_ONLY_ROUTES.has(baseRoute))
+  ) {
+    return false;
   }
 
   // Implicit CAFE_ADMIN auth-context routes
@@ -339,6 +352,7 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
       'owner-supplier-intelligence',
       'owner-complaints',
       'owner-food-safety',
+      'owner-utilities',
       'owner-utilities-waste',
       'owner-planning',
       'owner-risk-audit',
@@ -346,6 +360,7 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
       'owner-asset-reliability',
       'owner-academy',
       'owner-master-data',
+      'owner-governance',
       'owner-governance-delegation',
       'owner-bcdr',
       'owner-privacy-cyber',
@@ -370,8 +385,6 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
     items = navConfig.items || [];
   }
 
-  const pathOnly = route ? route.split("?")[0] : "";
-  const baseRoute = pathOnly ? pathOnly.split("/")[0] : "";
   const routeAliases = {
     'devices': 'cafe-ops-devices',
     'cafe-ops-devices': 'devices',
