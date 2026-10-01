@@ -17,16 +17,17 @@ try {
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-const hosts = 'ac-rdyrmsn-shard-00-00.maxooka.mongodb.net:27017,ac-rdyrmsn-shard-00-01.maxooka.mongodb.net:27017,ac-rdyrmsn-shard-00-02.maxooka.mongodb.net:27017';
-const options = 'ssl=true&replicaSet=atlas-jsr01r-shard-0&authSource=admin&retryWrites=true&w=majority';
-
-// Try standard replica set first (bypasses querySrv), then fall back to MONGODB_URI
 const connectionStrings = [
-  `mongodb://zamorin_admin:2gCygldpDF0kw1AY@${hosts}/zamorin_cafe_erp?${options}`,
-  `mongodb://zamorin_admin:Zamestpvt2124@${hosts}/zamorin_cafe_erp?${options}`,
   process.env.MONGODB_URI,
   process.env.MONGODB_URI_LIVE,
-].filter(Boolean);
+].filter((value) => typeof value === 'string' && value.trim());
+
+if (connectionStrings.length === 0) {
+  throw new Error(
+    'MONGODB_URI (or MONGODB_URI_LIVE) is required. ' +
+    'Database credentials must be supplied through the runtime environment.'
+  );
+}
 
 async function connectToMongo() {
   for (const uri of connectionStrings) {
