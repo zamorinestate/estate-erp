@@ -1523,6 +1523,8 @@ const mfaVerify = asyncHandler(
       device,
       network,
       mfaVerified: true,
+      mfaReenrollmentRequired:
+        Boolean(recoveryCode),
       createdBy: user.userId,
     });
 
@@ -2110,6 +2112,22 @@ const confirmMfaReenrollment = asyncHandler(
       );
 
     await user.save();
+
+    const authenticatedSession =
+      request.authenticatedSession;
+
+    if (!authenticatedSession) {
+      throw new ApiError(
+        401,
+        'SESSION_UNAVAILABLE',
+        'The authenticated session is unavailable.'
+      );
+    }
+
+    authenticatedSession.mfaReenrollmentRequired =
+      false;
+
+    await authenticatedSession.save();
 
     const revokedSessionCount =
       await revokeAllUserSessions({
