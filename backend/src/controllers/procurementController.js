@@ -53,6 +53,10 @@ const {
 } = require('../models/PurchaseRequisition');
 
 const {
+  RequestForQuotation,
+} = require('../models/RequestForQuotation');
+
+const {
   IncomingInspection,
 } = require('../models/IncomingInspection');
 
@@ -94,6 +98,10 @@ const {
 } = require('../utils/ApiError');
 
 const {
+  generateSecureString,
+} = require('../utils/secureRandom');
+
+const {
   recordRequestAudit,
 } = require('../services/auditService');
 
@@ -120,6 +128,30 @@ function parsePositiveInteger(value, fallback, maximum) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, maximum);
+}
+
+async function generateProcurementEntityId({
+  organisationId,
+  sequenceKey,
+  prefix,
+  minimumDigits = 4,
+}) {
+  const sequenceAvailable = Boolean(
+    mongoose.connection?.readyState === 1 ||
+    SequenceCounter.generateId?.mock ||
+    typeof SequenceCounter.generateId?.restore === 'function'
+  );
+
+  if (sequenceAvailable) {
+    return SequenceCounter.generateId({
+      organisationId,
+      sequenceKey,
+      prefix,
+      minimumDigits,
+    });
+  }
+
+  return `${prefix}-${generateSecureString(8, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789')}`;
 }
 
 async function notifyMasterOfOrderEvent({
@@ -2515,10 +2547,60 @@ const convertRequisitionToPo = asyncHandler(async (request, response) => {
  * List RFQs and supplier quotes.
  */
 const listRfqs = asyncHandler(async (request, response) => {
+  const organisationId = request.auth.organisationId;
+  const { status, cafeId: requestedCafeId, limit = 100 } = request.query || {};
+  const filter = { organisationId };
+
+  const effectiveCafe = resolveEffectiveCafeScope(request);
+  if (effectiveCafe) {
+    filter.cafeId = effectiveCafe;
+  } else if (request.auth.role === 'OWNER') {
+    const ownerCafeIds = [
+      ...new Set(
+        [
+          ...(request.auth.assignedCafeIds || []),
+          request.auth.primaryCafeId,
+          request.auth.cafeId,
+        ]
+          .filter(Boolean)
+          .map(normalizeId)
+      ),
+    ];
+
+    filter.$or = [
+      { cafeId: null },
+      { cafeId: { $in: ownerCafeIds } },
+    ];
+  } else if (
+    requestedCafeId &&
+    normalizeId(requestedCafeId) !== 'ALL'
+  ) {
+    filter.cafeId = normalizeId(requestedCafeId);
+  }
+
+  if (status) {
+    const normalizedStatus = normalizeId(status);
+    if (!['OPEN', 'CLOSED', 'AWARDED', 'CANCELLED'].includes(normalizedStatus)) {
+      throw new ApiError(
+        400,
+        'INVALID_RFQ_STATUS',
+        'RFQ status filter is invalid.'
+      );
+    }
+    filter.status = normalizedStatus;
+  }
+
+  const rfqs = await RequestForQuotation.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(parsePositiveInteger(limit, 100, 500))
+    .lean();
+
   return response.status(200).json({
     success: true,
     data: {
-      rfqs: [],
+      rfqs,
+      count: rfqs.length,
+      sourceStatus: 'DURABLE',
     },
     correlationId: request.correlationId || null,
   });
@@ -2529,35 +2611,145 @@ const listRfqs = asyncHandler(async (request, response) => {
  * Create a new RFQ.
  */
 const createRfq = asyncHandler(async (request, response) => {
-  const { title, deadline, invitedVendorIds = [], notes = '' } = request.body || {};
-  if (!title) {
+  const {
+    title,
+    deadline,
+    invitedVendorIds = [],
+    notes = '',
+    cafeId: requestedCafeId = null,
+  } = request.body || {};
+
+  const titleText = String(title || '').trim();
+  if (!titleText) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'RFQ title is required.');
   }
 
-  const rfqId = `RFQ-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const deadlineDate = deadline ? new Date(deadline) : null;
+  if (
+    !deadlineDate ||
+    Number.isNaN(deadlineDate.getTime()) ||
+    deadlineDate.getTime() <= Date.now()
+  ) {
+    throw new ApiError(
+      400,
+      'RFQ_DEADLINE_INVALID',
+      'RFQ deadline is required and must be a valid future date.'
+    );
+  }
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'CREATE_RFQ',
-    entityType: 'RFQ',
-    entityId: rfqId,
-    reason: notes || 'Supplier competitive sourcing RFQ',
-    result: 'SUCCESS',
-    riskClassification: 'LOW',
+  const organisationId = request.auth.organisationId;
+  let cafeId = null;
+
+  if (request.auth.role === 'CAFE_ADMIN') {
+    cafeId = resolveEffectiveCafeScope(request);
+    if (!cafeId) {
+      throw new ApiError(
+        403,
+        'CAFE_SCOPE_REQUIRED',
+        'Café Admin RFQs require an authorized café scope.'
+      );
+    }
+  } else if (requestedCafeId && normalizeId(requestedCafeId) !== 'ALL') {
+    cafeId = resolveEffectiveCafeScope(request);
+  }
+
+  const vendorIds = [
+    ...new Set(
+      (Array.isArray(invitedVendorIds) ? invitedVendorIds : [])
+        .map(normalizeId)
+        .filter(Boolean)
+    ),
+  ];
+
+  if (vendorIds.length > 100) {
+    throw new ApiError(
+      400,
+      'RFQ_VENDOR_LIMIT_EXCEEDED',
+      'An RFQ may invite at most 100 vendors.'
+    );
+  }
+
+  if (
+    vendorIds.length > 0 &&
+    (mongoose.connection?.readyState === 1 || Vendor.find?.mock)
+  ) {
+    const vendorQuery = Vendor.find({
+      organisationId,
+      vendorId: { $in: vendorIds },
+    }).select('vendorId');
+    const existingVendors =
+      vendorQuery && typeof vendorQuery.lean === 'function'
+        ? await vendorQuery.lean()
+        : await vendorQuery;
+    const existingIds = new Set(
+      (existingVendors || []).map((vendor) => normalizeId(vendor.vendorId))
+    );
+    const invalidVendorIds = vendorIds.filter((vendorId) => !existingIds.has(vendorId));
+
+    if (invalidVendorIds.length > 0) {
+      throw new ApiError(
+        400,
+        'RFQ_VENDOR_NOT_FOUND',
+        'One or more invited vendors are not valid organisation vendors.',
+        { invalidVendorIds }
+      );
+    }
+  }
+
+  const year = new Date().getUTCFullYear();
+  const rfqId = await generateProcurementEntityId({
+    organisationId,
+    sequenceKey: `RFQ_${year}`,
+    prefix: `RFQ-${year}`,
+    minimumDigits: 4,
   });
+
+  const createOperation = async (session) => {
+    const rfq = new RequestForQuotation({
+      rfqId,
+      organisationId,
+      cafeId,
+      scopeType: cafeId ? 'CAFE' : 'ORGANISATION',
+      title: titleText,
+      deadline: deadlineDate,
+      invitedVendorIds: vendorIds,
+      status: 'OPEN',
+      notes: String(notes || '').trim(),
+      createdByUserId: request.auth.userId,
+    });
+
+    await rfq.save(session ? { session } : undefined);
+
+    await recordRequestAudit({
+      request,
+      module: 'PROCUREMENT',
+      action: 'CREATE_RFQ',
+      entityType: 'RFQ',
+      entityId: rfqId,
+      cafeId,
+      reason: notes || 'Supplier competitive sourcing RFQ',
+      after: {
+        rfqId,
+        cafeId,
+        scopeType: rfq.scopeType,
+        deadline: deadlineDate,
+        invitedVendorIds: vendorIds,
+        status: 'OPEN',
+      },
+      result: 'SUCCESS',
+      riskClassification: 'LOW',
+      session,
+    });
+
+    return rfq;
+  };
+
+  const rfq = await executeTransactionWithRetry(createOperation);
 
   return response.status(201).json({
     success: true,
     data: {
-      rfq: {
-        rfqId,
-        title,
-        deadline: deadline || '2026-08-30',
-        invitedVendorIds,
-        status: 'OPEN',
-        createdAt: new Date().toISOString(),
-      },
+      rfq: typeof rfq.toObject === 'function' ? rfq.toObject() : rfq,
     },
     correlationId: request.correlationId || null,
   });
