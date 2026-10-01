@@ -1478,14 +1478,26 @@ const mfaVerify = asyncHandler(
 
     await user.save();
 
+    const mfaReenrollmentAuthorizationToken =
+      recoveryCode
+        ? generateMfaToken({
+            user,
+            purpose: 'mfa_reenroll_authorized',
+            rememberDevice: false,
+            expiresIn: '10m',
+          })
+        : null;
+
     const device = buildDeviceMetadata(request);
     const network = buildNetworkMetadata(request);
 
-    const shouldRememberDevice = Boolean(
-      request.body?.rememberDevice ||
-      request.body?.remember ||
-      payload.rem
-    );
+    const shouldRememberDevice =
+      !recoveryCode &&
+      Boolean(
+        request.body?.rememberDevice ||
+        request.body?.remember ||
+        payload.rem
+      );
 
     let registeredTrustedDevice = null;
     if (shouldRememberDevice) {
@@ -1519,6 +1531,49 @@ const mfaVerify = asyncHandler(
       sessionData
     );
 
+    let recoveryRevokedSessionCount = 0;
+    let recoveryRevokedTrustedDeviceCount = 0;
+
+    if (recoveryCode) {
+      recoveryRevokedSessionCount =
+        await revokeAllUserSessions({
+          organisationId:
+            user.organisationId,
+          userId:
+            user.userId,
+          revokedBy:
+            user.userId,
+          reason:
+            'MFA_RECOVERY_LOGIN',
+          details:
+            'Other sessions revoked after recovery-code MFA verification.',
+          excludeSessionId:
+            sessionData.session.sessionId,
+        });
+
+      const recoveryTrustedDeviceResult =
+        await deviceTrustService
+          .revokeAllUserTrustedDevices({
+            organisationId:
+              user.organisationId,
+            userId:
+              user.userId,
+            revokedBy:
+              user.userId,
+            reason:
+              'MFA_RECOVERY_LOGIN',
+            actorRole:
+              user.role,
+            correlationId:
+              request.correlationId || null,
+          });
+
+      recoveryRevokedTrustedDeviceCount =
+        recoveryTrustedDeviceResult?.modifiedCount || 0;
+
+      clearTrustedDeviceCookie(response);
+    }
+
     return response.status(200).json({
       success: true,
       message: 'MFA verification successful.',
@@ -1529,6 +1584,16 @@ const mfaVerify = asyncHandler(
         accessTokenExpiresAt: sessionData.accessTokenExpiresAt,
         refreshTokenExpiresAt: sessionData.refreshTokenExpiresAt,
         trustedDevice: Boolean(registeredTrustedDevice),
+        mfaReenrollmentRequired: Boolean(recoveryCode),
+        mfaReenrollmentAuthorizationToken,
+        recoverySecurityReset: recoveryCode
+          ? {
+              revokedSessionCount:
+                recoveryRevokedSessionCount,
+              revokedTrustedDeviceCount:
+                recoveryRevokedTrustedDeviceCount,
+            }
+          : null,
       },
       correlationId:
         request.correlationId || null,
@@ -1833,6 +1898,299 @@ const getMfaStatus = asyncHandler(
         mfaEnabled,
         recoveryCodesRemaining,
         setupPending,
+      },
+      correlationId:
+        request.correlationId || null,
+    });
+  }
+);
+
+const beginMfaReenrollment = asyncHandler(
+  async (request, response) => {
+    const password =
+      typeof request.body?.password === 'string'
+        ? request.body.password
+        : '';
+
+    const authorizationToken =
+      request.body?.mfaReenrollmentAuthorizationToken ||
+      request.get('x-mfa-reenrollment-authorization-token');
+
+    if (!password || !authorizationToken) {
+      throw new ApiError(
+        400,
+        'MFA_REENROLLMENT_FIELDS_REQUIRED',
+        'Current password and recovery authorization are required.'
+      );
+    }
+
+    const authorizationPayload =
+      verifyMfaToken(
+        authorizationToken,
+        'mfa_reenroll_authorized'
+      );
+
+    if (
+      authorizationPayload.sub !== request.auth.userId ||
+      authorizationPayload.org !== request.auth.organisationId
+    ) {
+      throw new ApiError(
+        403,
+        'MFA_REENROLLMENT_AUTHORIZATION_MISMATCH',
+        'The MFA replacement authorization does not belong to this session.'
+      );
+    }
+
+    const user = await User.findOne({
+      organisationId: request.auth.organisationId,
+      userId: request.auth.userId,
+      accountStatus: 'ACTIVE',
+      archivedAt: null,
+    }).select(
+      '+passwordHash +pendingMfaSecretEncrypted'
+    );
+
+    if (!user || !user.mfaEnabled) {
+      throw new ApiError(
+        400,
+        'MFA_NOT_ENABLED',
+        'MFA must already be enabled before it can be replaced.'
+      );
+    }
+
+    const passwordMatches = await verifyPassword(
+      password,
+      user.passwordHash
+    );
+
+    if (!passwordMatches) {
+      throw new ApiError(
+        401,
+        'INVALID_PASSWORD',
+        'Invalid current password.'
+      );
+    }
+
+    const manualEntrySecret =
+      generateTotpSecret();
+
+    user.pendingMfaSecretEncrypted =
+      encryptMfaSecret(manualEntrySecret);
+
+    await user.save();
+
+    const mfaReenrollmentToken =
+      generateMfaToken({
+        user,
+        purpose: 'mfa_reenroll',
+        rememberDevice: false,
+        expiresIn: '10m',
+      });
+
+    try {
+      await auditService.recordRequestAudit({
+        request,
+        module: 'AUTHENTICATION',
+        action: 'MFA_REENROLLMENT_STARTED',
+        entityType: 'USER',
+        entityId: user.userId,
+        reason: 'MFA replacement initiated after recovery-code verification and password confirmation.',
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+        metadata: {
+          recoveryAuthorizationVerified: true,
+        },
+      });
+    } catch (_error) {}
+
+    return response.status(200).json({
+      success: true,
+      message: 'MFA replacement initiated.',
+      data: {
+        otpauthUri: generateOtpauthUri({
+          email: user.email,
+          secretBase32: manualEntrySecret,
+          issuer: 'Zamorin Cafe ERP',
+        }),
+        manualEntrySecret,
+        mfaReenrollmentToken,
+      },
+      correlationId:
+        request.correlationId || null,
+    });
+  }
+);
+
+const confirmMfaReenrollment = asyncHandler(
+  async (request, response) => {
+    const token =
+      request.body?.mfaReenrollmentToken ||
+      request.get('x-mfa-reenrollment-token');
+
+    const password =
+      typeof request.body?.password === 'string'
+        ? request.body.password
+        : '';
+
+    const code =
+      typeof request.body?.code === 'string'
+        ? request.body.code.trim()
+        : '';
+
+    if (!token || !password || !code) {
+      throw new ApiError(
+        400,
+        'MFA_REENROLLMENT_CONFIRM_FIELDS_REQUIRED',
+        'Replacement token, current password, and TOTP code are required.'
+      );
+    }
+
+    const payload =
+      verifyMfaToken(
+        token,
+        'mfa_reenroll'
+      );
+
+    if (
+      payload.sub !== request.auth.userId ||
+      payload.org !== request.auth.organisationId
+    ) {
+      throw new ApiError(
+        403,
+        'MFA_REENROLLMENT_TOKEN_MISMATCH',
+        'The MFA replacement token does not belong to this session.'
+      );
+    }
+
+    const user = await User.findOne({
+      organisationId: request.auth.organisationId,
+      userId: request.auth.userId,
+      accountStatus: 'ACTIVE',
+      archivedAt: null,
+    }).select(
+      '+passwordHash +pendingMfaSecretEncrypted +mfaSecretEncrypted +recoveryCodeHashes +lastMfaCounter'
+    );
+
+    if (!user || !user.pendingMfaSecretEncrypted) {
+      throw new ApiError(
+        400,
+        'MFA_REENROLLMENT_NOT_PENDING',
+        'No pending MFA replacement was found.'
+      );
+    }
+
+    const passwordMatches = await verifyPassword(
+      password,
+      user.passwordHash
+    );
+
+    if (!passwordMatches) {
+      throw new ApiError(
+        401,
+        'INVALID_PASSWORD',
+        'Invalid current password.'
+      );
+    }
+
+    const manualEntrySecret =
+      decryptMfaSecret(
+        user.pendingMfaSecretEncrypted
+      );
+
+    const { valid, counter } =
+      verifyTotpCode(
+        manualEntrySecret,
+        code,
+        Date.now(),
+        1
+      );
+
+    if (!valid) {
+      throw new ApiError(
+        400,
+        'INVALID_MFA_CODE',
+        'The MFA verification code is invalid or expired.'
+      );
+    }
+
+    const plainRecoveryCodes =
+      generateRecoveryCodes(10);
+
+    user.mfaEnabled = true;
+    user.mfaMethod = 'TOTP';
+    user.mfaSecretEncrypted =
+      user.pendingMfaSecretEncrypted;
+    user.pendingMfaSecretEncrypted = null;
+    user.lastMfaCounter = counter;
+    user.recoveryCodeHashes =
+      plainRecoveryCodes.map(
+        hashRecoveryCode
+      );
+
+    await user.save();
+
+    const revokedSessionCount =
+      await revokeAllUserSessions({
+        organisationId:
+          request.auth.organisationId,
+        userId:
+          request.auth.userId,
+        revokedBy:
+          request.auth.userId,
+        reason:
+          'MFA_REENROLLMENT',
+        details:
+          'Other sessions revoked after MFA replacement.',
+        excludeSessionId:
+          request.auth.sessionId,
+      });
+
+    const trustedDeviceResult =
+      await deviceTrustService
+        .revokeAllUserTrustedDevices({
+          organisationId:
+            request.auth.organisationId,
+          userId:
+            request.auth.userId,
+          revokedBy:
+            request.auth.userId,
+          reason:
+            'MFA_REENROLLMENT',
+          actorRole:
+            request.auth.role,
+          correlationId:
+            request.correlationId || null,
+        });
+
+    clearTrustedDeviceCookie(response);
+
+    try {
+      await auditService.recordRequestAudit({
+        request,
+        module: 'AUTHENTICATION',
+        action: 'MFA_REENROLLMENT_COMPLETED',
+        entityType: 'USER',
+        entityId: user.userId,
+        reason: 'MFA replacement confirmed with a new TOTP secret.',
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+        metadata: {
+          revokedSessionCount,
+          revokedTrustedDeviceCount:
+            trustedDeviceResult?.modifiedCount || 0,
+        },
+      });
+    } catch (_error) {}
+
+    return response.status(200).json({
+      success: true,
+      message: 'MFA replacement completed successfully.',
+      data: {
+        recoveryCodes:
+          plainRecoveryCodes,
+        revokedSessionCount,
+        revokedTrustedDeviceCount:
+          trustedDeviceResult?.modifiedCount || 0,
       },
       correlationId:
         request.correlationId || null,
@@ -2836,6 +3194,8 @@ module.exports = {
   mfaVerify,
   getMfaStatus,
   regenerateRecoveryCodes,
+  beginMfaReenrollment,
+  confirmMfaReenrollment,
   stepUpAuthentication,
   changePassword,
   refreshSession,

@@ -14,6 +14,8 @@ const {
   mfaVerify,
   getMfaStatus,
   regenerateRecoveryCodes,
+  beginMfaReenrollment,
+  confirmMfaReenrollment,
   changePassword,
   stepUpAuthentication,
   refreshSession,
@@ -60,6 +62,7 @@ function normalizeAccountKey(req, fallbackIdentifierKey = 'email') {
     body.email ||
     body.identifier ||
     body.userId ||
+    req.auth?.userId ||
     ''
   ).trim().toLowerCase();
 
@@ -331,6 +334,22 @@ router.post('/mfa/verify', mfaIpRateLimiter, mfaAccountRateLimiter, mfaVerify);
 // Authenticated MFA status and recovery code regeneration routes
 router.get('/mfa/status', authenticate, getMfaStatus);
 router.post('/mfa/recovery-codes/regenerate', authenticate, mfaIpRateLimiter, regenerateRecoveryCodes);
+router.post(
+  '/mfa/re-enroll/start',
+  authenticate,
+  requireMfa,
+  mfaIpRateLimiter,
+  mfaAccountRateLimiter,
+  beginMfaReenrollment
+);
+router.post(
+  '/mfa/re-enroll/confirm',
+  authenticate,
+  requireMfa,
+  mfaIpRateLimiter,
+  mfaAccountRateLimiter,
+  confirmMfaReenrollment
+);
 
 router.get('/me', authenticate, getCurrentUser);
 router.get('/me/privacy-security', authenticate, getSelfPrivacySecurity);

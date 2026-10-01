@@ -43,6 +43,8 @@ import {
   wirePasswordResetFinal2,
   renderMfaChallenge2,
   wireMfaChallenge2,
+  renderMfaReenrollment2,
+  wireMfaReenrollment2,
   renderRegisterPage2,
   wireRegisterPage2,
   showGlassAlert,
@@ -495,7 +497,7 @@ export function mountAuthScreen(screen = "login", params = {}) {
       }
     });
   } else if (screen === "mfa") {
-    const handleMfaSubmit = async ({ code }) => {
+    const handleMfaSubmit = async ({ code, recoveryCode }) => {
       try {
         const isSetup = Boolean(params.mfaSetupRequired);
         const endpoint = isSetup ? "/auth/mfa/confirm" : "/auth/mfa/verify";
@@ -503,7 +505,11 @@ export function mountAuthScreen(screen = "login", params = {}) {
         const rememberDevice = Boolean(params.rememberDevice);
         const payload = isSetup
           ? { mfaSetupToken: challengeToken, code, rememberDevice }
-          : { mfaChallengeToken: challengeToken, code, rememberDevice };
+          : {
+              mfaChallengeToken: challengeToken,
+              ...(recoveryCode ? { recoveryCode } : { code }),
+              rememberDevice,
+            };
 
         const res = await apiPost(endpoint, payload, { timeoutMs: 60000 });
 
@@ -511,7 +517,22 @@ export function mountAuthScreen(screen = "login", params = {}) {
         if (accessToken) {
           setAccessToken(accessToken);
         }
+
         const user = res?.data?.user;
+        if (
+          res?.data?.mfaReenrollmentRequired &&
+          res?.data?.mfaReenrollmentAuthorizationToken
+        ) {
+          mountAuthScreen("mfa-reenroll", {
+            stage: "start",
+            email: user?.email || params.email || "",
+            user,
+            mfaReenrollmentAuthorizationToken:
+              res.data.mfaReenrollmentAuthorizationToken,
+          });
+          return;
+        }
+
         if (user) {
           handleAuthenticatedUserSession(user);
           return;
@@ -530,7 +551,7 @@ export function mountAuthScreen(screen = "login", params = {}) {
           });
           return;
         }
-        throw new Error(err.userMessage || err.message || "Invalid or expired MFA verification code.");
+        throw new Error(err.userMessage || err.message || "Invalid or expired MFA verification credential.");
       }
     };
 
@@ -538,6 +559,68 @@ export function mountAuthScreen(screen = "login", params = {}) {
     wireMfaChallenge2(appEl, {
       onSubmit: handleMfaSubmit,
       onBack: () => mountAuthScreen("login"),
+    });
+  } else if (screen === "mfa-reenroll") {
+    const stage = params.stage || "start";
+    appEl.innerHTML = renderMfaReenrollment2({
+      email: params.email || "",
+      stage,
+      manualEntrySecret: params.manualEntrySecret || "",
+      recoveryCodes: params.recoveryCodes || [],
+    });
+
+    wireMfaReenrollment2(appEl, {
+      stage,
+      onStart: async ({ password }) => {
+        const res = await apiPost(
+          "/auth/mfa/re-enroll/start",
+          {
+            password,
+            mfaReenrollmentAuthorizationToken:
+              params.mfaReenrollmentAuthorizationToken,
+          },
+          { timeoutMs: 60000 }
+        );
+
+        mountAuthScreen("mfa-reenroll", {
+          ...params,
+          stage: "confirm",
+          manualEntrySecret:
+            res?.data?.manualEntrySecret || "",
+          mfaReenrollmentToken:
+            res?.data?.mfaReenrollmentToken || "",
+          mfaReenrollmentAuthorizationToken: undefined,
+        });
+      },
+      onConfirm: async ({ password, code }) => {
+        const res = await apiPost(
+          "/auth/mfa/re-enroll/confirm",
+          {
+            password,
+            code,
+            mfaReenrollmentToken:
+              params.mfaReenrollmentToken,
+          },
+          { timeoutMs: 60000 }
+        );
+
+        mountAuthScreen("mfa-reenroll", {
+          ...params,
+          stage: "done",
+          manualEntrySecret: "",
+          mfaReenrollmentToken: undefined,
+          recoveryCodes:
+            res?.data?.recoveryCodes || [],
+        });
+      },
+      onContinue: async () => {
+        if (params.user) {
+          handleAuthenticatedUserSession(params.user);
+          return;
+        }
+        window.location.hash = "#dashboard";
+        await boot();
+      },
     });
   } else if (screen === "forgot") {
     appEl.innerHTML = renderPasswordResetRequest2(params);
