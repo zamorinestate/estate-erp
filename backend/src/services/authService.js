@@ -487,23 +487,81 @@ function createAccessToken({
 }
 
 async function recordFailedLogin(user) {
-  user.failedLoginAttempts += 1;
-
-  if (
-    user.failedLoginAttempts >=
-    MAX_FAILED_LOGIN_ATTEMPTS
-  ) {
-    user.accountStatus = 'LOCKED';
-
-    user.lockedUntil = new Date(
-      Date.now() +
-        TEMPORARY_LOCK_MINUTES *
-          60 *
-          1000
+  if (!user?._id) {
+    throw new Error(
+      'A persisted user is required to record a failed login.'
     );
   }
 
-  await user.save();
+  // Atomically claim the next failed-attempt count while the account is still
+  // active and below the threshold. This avoids whole-document save() races
+  // under User.optimisticConcurrency and caps concurrent requests at the
+  // configured threshold.
+  const updatedUser = await User.findOneAndUpdate(
+    {
+      _id: user._id,
+      accountStatus: 'ACTIVE',
+      $or: [
+        {
+          failedLoginAttempts: {
+            $lt: MAX_FAILED_LOGIN_ATTEMPTS,
+          },
+        },
+        {
+          failedLoginAttempts: {
+            $exists: false,
+          },
+        },
+      ],
+    },
+    {
+      $inc: {
+        failedLoginAttempts: 1,
+        version: 1,
+      },
+      $set: {
+        updatedAt: new Date(),
+      },
+    },
+    {
+      new: true,
+    }
+  ).select(
+    'failedLoginAttempts accountStatus lockedUntil'
+  );
+
+  if (
+    !updatedUser ||
+    updatedUser.failedLoginAttempts <
+      MAX_FAILED_LOGIN_ATTEMPTS
+  ) {
+    return;
+  }
+
+  const lockUntil = new Date(
+    Date.now() +
+      TEMPORARY_LOCK_MINUTES * 60 * 1000
+  );
+
+  await User.updateOne(
+    {
+      _id: user._id,
+      accountStatus: 'ACTIVE',
+      failedLoginAttempts: {
+        $gte: MAX_FAILED_LOGIN_ATTEMPTS,
+      },
+    },
+    {
+      $set: {
+        accountStatus: 'LOCKED',
+        lockedUntil: lockUntil,
+        updatedAt: new Date(),
+      },
+      $inc: {
+        version: 1,
+      },
+    }
+  );
 }
 
 async function clearExpiredTemporaryLock(user) {
