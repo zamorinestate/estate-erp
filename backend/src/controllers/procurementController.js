@@ -4100,21 +4100,6 @@ const attachOrderDocument = asyncHandler(async (request, response) => {
     await po.save();
   }
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'PO_DOCUMENT_ATTACHED',
-    entityType: 'PURCHASE_ORDER',
-    entityId: purchaseOrderId,
-    cafeId: po.cafeId,
-    metadata: {
-      documentId: doc.documentId,
-      documentType: docType,
-      documentNumber: docNum,
-      reconciliationStatus: matchResult.reconciliationStatus,
-      warnings: doc.metadata?.warnings || [],
-    },
-  }).catch(() => {});
 
   return response.status(201).json({
     success: true,
@@ -4192,7 +4177,7 @@ const previewOrderDocument = asyncHandler(async (request, response) => {
     entityId: documentId,
     cafeId: po.cafeId,
     metadata: { purchaseOrderId, documentType: doc.documentType },
-  }).catch(() => {});
+  });
 
   const stream = await documentStorageAdapter.getStream({ storageKey: key });
   return stream.pipe(response);
@@ -4271,7 +4256,7 @@ const downloadOrderDocument = asyncHandler(async (request, response) => {
     entityId: documentId,
     cafeId: po.cafeId,
     metadata: { purchaseOrderId, documentType: doc.documentType, exportId },
-  }).catch(() => {});
+  });
 
   const stream = await documentStorageAdapter.getStream({ storageKey: key });
   return stream.pipe(response);
@@ -4320,19 +4305,6 @@ const replaceOrderDocumentVersion = asyncHandler(async (request, response) => {
     auth: request.auth,
   });
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'PO_DOCUMENT_VERSION_REPLACED',
-    entityType: 'BUSINESS_DOCUMENT',
-    entityId: documentId,
-    cafeId: po.cafeId,
-    metadata: {
-      purchaseOrderId,
-      newVersion: updatedDoc.currentVersion,
-      changeReason: body.changeReason,
-    },
-  }).catch(() => {});
 
   return response.status(200).json({
     success: true,
@@ -4376,15 +4348,6 @@ const archiveOrderDocument = asyncHandler(async (request, response) => {
     auth: request.auth,
   });
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'PO_DOCUMENT_ARCHIVED',
-    entityType: 'BUSINESS_DOCUMENT',
-    entityId: documentId,
-    cafeId: po.cafeId,
-    metadata: { purchaseOrderId, reason: request.body?.reason },
-  }).catch(() => {});
 
   return response.status(200).json({
     success: true,
