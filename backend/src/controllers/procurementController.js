@@ -3377,6 +3377,38 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
           );
         }
 
+        if (deliveredQty <= 0) {
+          throw new ApiError(
+            400,
+            'RECEIVING_QUANTITY_REQUIRED',
+            `Delivered quantity must be greater than zero for item ${itemId}.`
+          );
+        }
+
+        const supplierLot = String(item.lotNumber || '').trim();
+        const expiryDate = String(item.expiryDate || '').trim();
+        if (!supplierLot) {
+          throw new ApiError(
+            400,
+            'SUPPLIER_LOT_REQUIRED',
+            `Supplier lot/batch number is required for received item ${itemId}.`
+          );
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate) || Number.isNaN(new Date(`${expiryDate}T00:00:00Z`).getTime())) {
+          throw new ApiError(
+            400,
+            'EXPIRY_DATE_REQUIRED',
+            `A valid expiryDate (YYYY-MM-DD) is required for received item ${itemId}.`
+          );
+        }
+        if (acceptedQty > 0 && expiryDate < getIstBusinessDate()) {
+          throw new ApiError(
+            409,
+            'EXPIRED_STOCK_CANNOT_BE_ACCEPTED',
+            `Accepted quantity for item ${itemId} cannot be posted from an already expired lot.`
+          );
+        }
+
         // Invariant: CONCURRENT_GRN_OVER_RECEIVES_PO = 0
         const currentReceived = Number(poLine.receivedQuantityBase) || 0;
         const ordered = Number(poLine.orderedQuantityBase) || 0;
@@ -3558,13 +3590,10 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
               organisationId: request.auth.organisationId,
               cafeId: po.cafeId,
               itemId,
-              movementType: 'RECEIPT',
+              movementType: 'PROCUREMENT_RECEIPT',
               quantityBase: acceptedQty,
               balanceBeforeBase: balanceBefore,
               balanceAfterBase: balanceAfter,
-              quantityDelta: acceptedQty,
-              balanceBefore,
-              balanceAfter,
               businessDate,
               serverTimestamp: now,
               status: 'ACTIVE',
@@ -3596,14 +3625,14 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
               minimumDigits: 4,
             });
 
-            const expiry = item.expiryDate
-              ? new Date(item.expiryDate).toISOString().slice(0, 10)
-              : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            const expiry = new Date(`${item.expiryDate}T00:00:00Z`)
+              .toISOString()
+              .slice(0, 10);
 
             const lotRecord = new InventoryLot({
               organisationId: request.auth.organisationId,
               lotId,
-              supplierLot: item.lotNumber || `SLOT-${Date.now().toString().slice(-6)}`,
+              supplierLot: String(item.lotNumber).trim(),
               itemId,
               cafeId: po.cafeId,
               vendorId: po.vendorId,
@@ -3638,14 +3667,14 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
             const qLotDoc = new InventoryLot({
               organisationId: request.auth.organisationId,
               lotId: qLotId,
-              supplierLot: item.lotNumber || `REJ-${Date.now().toString().slice(-6)}`,
+              supplierLot: String(item.lotNumber).trim(),
               itemId,
               cafeId: po.cafeId,
               vendorId: po.vendorId,
               procurementReference: po.purchaseOrderId,
               receivingInspectionId: inspectionId,
               storageLocation: 'Quarantine Holding Bay',
-              expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : businessDate,
+              expiryDate: new Date(`${item.expiryDate}T00:00:00Z`).toISOString().slice(0, 10),
               unit: poLine.baseUnit || 'units',
               initialQuantity: rejectedQty,
               quantityBase: rejectedQty,
