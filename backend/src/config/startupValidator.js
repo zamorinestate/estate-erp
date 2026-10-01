@@ -17,6 +17,27 @@
 const path = require('path');
 const ApiError = require('../utils/ApiError');
 
+function normalizeWrappedSecret(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  let normalized = value.trim();
+  if (normalized.length >= 2) {
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    const isMatchingQuotedPair =
+      (first === '"' && last === '"') ||
+      (first === "'" && last === "'");
+
+    if (isMatchingQuotedPair) {
+      normalized = normalized.slice(1, -1).trim();
+    }
+  }
+
+  return normalized;
+}
+
 const PRODUCTION_MANDATORY_SPECS = [
   {
     key: 'NODE_ENV',
@@ -53,8 +74,9 @@ const PRODUCTION_MANDATORY_SPECS = [
     description: 'AES-256-GCM symmetric key for MFA secrets (64-char hex)',
     isSecret: true,
     validate: (val, isProd) => {
-      if (!isProd) return typeof val === 'string' && val.trim().length >= 32;
-      return typeof val === 'string' && /^[0-9a-fA-F]{64}$/.test(val.trim());
+      const normalized = normalizeWrappedSecret(val);
+      if (!isProd) return normalized.length >= 32;
+      return /^[0-9a-fA-F]{64}$/.test(normalized);
     },
   },
   {
