@@ -44,13 +44,13 @@ const REGISTERED_JOBS = [
   },
   {
     jobId: 'JOB-ATTENDANCE-AUTO-CHECKOUT',
-    name: 'Midnight Attendance Rollover & Auto-Checkout',
+    name: 'Attendance Rollover & Missed-Punch Detection',
     schedule: 'Daily at 04:00 IST (30 22 * * *)',
     owner: 'Workforce Operations',
     staleThresholdMinutes: 1560,
     critical: true,
-    runtimeWiring: 'NOT_WIRED',
-    workerEntrypoint: null,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-BACKUP-PRECONDITION-AUDIT',
