@@ -147,6 +147,12 @@ const sessionSchema = new mongoose.Schema(
       default: null,
     },
 
+    mfaReenrollmentRequired: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     stepUpVerifiedAt: {
       type: Date,
       default: null,
