@@ -47,9 +47,9 @@ $hardBlockers = @(
     @{ Id = 'EXT-05'; Area = 'Offsite Disaster Recovery'; Detail = 'Independent secondary offsite backup storage target unconfigured' },
     @{ Id = 'EXT-07'; Area = 'Independent Pentest'; Detail = 'Accredited third-party black-box/grey-box penetration test pending' },
     @{ Id = 'EXT-08'; Area = 'Statutory CA Audit'; Detail = 'External CA sign-off on GST, tax calculations, and statutory ledgers pending' },
-    @{ Id = 'EXT-10'; Area = 'Commercial Hosting & Domain'; Detail = 'Commercial Vercel plan, commercial Render compute & custom domain pending' },
+    @{ Id = 'EXT-10'; Area = 'Commercial Hosting & Domain'; Detail = 'Vercel project/team authorization, Render canonical-repository rebind, and commercial hosting/domain decisions pending (tracked in GitHub issue #31)' },
     @{ Id = 'EXT-14'; Area = 'Real Café Shadow Pilot'; Detail = 'Time-bound real café operator shadow pilot pending (synthetic rehearsal passed)' },
-    @{ Id = 'EXT-16'; Area = 'Cloud Account Ownership'; Detail = 'Cloud provider account ownership and break-glass recovery require human verification' }
+    @{ Id = 'EXT-16'; Area = 'Secrets, IAM & Account Ownership'; Detail = 'Legacy compromised Atlas administrator account retirement plus cloud account ownership and break-glass recovery require human verification (tracked in GitHub issue #31)' }
 )
 
 Write-Host "`n Enumerating Mandatory Commercial Launch Blockers ($($hardBlockers.Count) active):" -ForegroundColor Magenta
@@ -86,7 +86,7 @@ Write-Host "`n Operational Safety Assets:" -ForegroundColor Magenta
 Write-Host "  Rollback Manager Tool:         $(if ($hasRollback) { 'READY (scripts/rollback_manager.mjs)' } else { 'MISSING' })" -ForegroundColor $(if ($hasRollback) { 'Green' } else { 'Red' })
 Write-Host "  Schema Migration Tool:         $(if ($hasMigration) { 'READY (scripts/migration_runner.mjs)' } else { 'MISSING' })" -ForegroundColor $(if ($hasMigration) { 'Green' } else { 'Red' })
 Write-Host "  Database Decoupling Guard:     PASS (Application code revert decoupled from data restore)" -ForegroundColor Green
-Write-Host "  Production Mutation Guard:     PASS (Zero production writes, zero deploys, zero DNS changes)" -ForegroundColor Green
+Write-Host "  Production Mutation Guard:     PASS (This audit performs zero production writes, deploys, or DNS changes)" -ForegroundColor Green
 
 Write-Host '============================================================' -ForegroundColor Cyan
 Write-Host ' EXT-19 READINESS AUDIT COMPLETE: CUTOVER SAFELY BLOCKED' -ForegroundColor Cyan
