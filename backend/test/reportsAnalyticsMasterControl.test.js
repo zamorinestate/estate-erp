@@ -399,7 +399,7 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
     assert.ok(Array.isArray(res.data.data.waterfall));
   });
 
-  await t.test('7. GET /api/v1/reports/workforce returns attendance exceptions and labour %', async () => {
+  await t.test('7. GET /api/v1/reports/workforce returns source-derived metrics without offline fixture substitution', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -409,11 +409,12 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.workforceMetrics.labourCostPctOfSales, 20.0);
+    assert.ok(res.data.data.workforceMetrics && typeof res.data.data.workforceMetrics === 'object');
     assert.ok(Array.isArray(res.data.data.exceptions));
+    assert.equal(res.data.data.exceptions.some((e) => String(e.employeeName || '').includes('Staff Member #104')), false);
   });
 
-  await t.test('8. GET /api/v1/reports/customers returns guest retention and RFM segments', async () => {
+  await t.test('8. GET /api/v1/reports/customers returns source-derived guest analytics without fixture metrics', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -423,8 +424,9 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.customerSummary.repeatPurchaseRatePct, 70.4);
+    assert.ok(res.data.data.customerSummary && typeof res.data.data.customerSummary === 'object');
     assert.ok(Array.isArray(res.data.data.rfmSegments));
+    assert.notEqual(res.data.data.customerSummary.totalIdentifiableCustomers, 2840);
   });
 
   await t.test('9. GET /api/v1/reports/inventory returns stock valuation and movement waterfall', async () => {
@@ -455,7 +457,7 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
     assert.ok(Array.isArray(res.data.data.supplierSpend));
   });
 
-  await t.test('11. GET /api/v1/reports/menu returns item margins and engineering matrix', async () => {
+  await t.test('11. GET /api/v1/reports/menu never injects synthetic products when source rows are absent', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -466,10 +468,10 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
     assert.ok(Array.isArray(res.data.data.menuPerformance));
-    assert.ok(res.data.data.menuPerformance.length > 0);
+    assert.equal(res.data.data.menuPerformance.some((row) => row.item === 'Zamorin House Pour (Cold Brew)'), false);
   });
 
-  await t.test('12. GET /api/v1/reports/quality returns checklists, excursions, and CAPA status', async () => {
+  await t.test('12. GET /api/v1/reports/quality returns source-derived quality metrics without canned incidents', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -479,10 +481,12 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.qualityMetrics.checklistCompletionRatePct, 98.6);
+    assert.ok(res.data.data.qualityMetrics && typeof res.data.data.qualityMetrics === 'object');
+    assert.ok(Array.isArray(res.data.data.recentIncidents));
+    assert.equal(res.data.data.recentIncidents.some((row) => row.ref === 'QA-CAPA-142'), false);
   });
 
-  await t.test('13. GET /api/v1/reports/assets returns equipment availability and PM compliance', async () => {
+  await t.test('13. GET /api/v1/reports/assets returns source-derived asset metrics without baseline fixtures', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -492,7 +496,8 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.equal(res.data.data.assetMetrics.availabilityRatePct, 99.4);
+    assert.ok(res.data.data.assetMetrics && typeof res.data.data.assetMetrics === 'object');
+    assert.notEqual(res.data.data.assetMetrics.totalTrackedAssets, 38);
   });
 
   await t.test('14. GET /api/v1/reports/portfolio never manufactures fallback cafes or KPI values', async () => {
