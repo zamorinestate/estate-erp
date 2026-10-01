@@ -37,6 +37,10 @@ const {
   startNotificationOutboxWorker,
   stopNotificationOutboxWorker,
 } = require('./services/notificationOutboxWorker');
+const {
+  startScheduledOperationsWorker,
+  stopScheduledOperationsWorker,
+} = require('./services/scheduledOperationsWorker');
 const { getTrustedClientIp, getTrustedProxies } = require('./utils/clientIp');
 const { redisClientFactory } = require('./services/redisClientFactory');
 
@@ -545,6 +549,7 @@ async function startServer() {
     });
 
   startNotificationOutboxWorker();
+  startScheduledOperationsWorker();
 
   console.log(
     `Zamorin Cafe ERP API running on ${environment.host}:${environment.port} in ${environment.nodeEnvironment} mode.`
@@ -612,6 +617,7 @@ function registerShutdownHandlers(
         `${signal} received; shutting down safely.`
       );
 
+      await stopScheduledOperationsWorker();
       await stopNotificationOutboxWorker();
       await closeHttpServer(server);
       await redisClientFactory.close();
