@@ -27,6 +27,8 @@ const customersFrontend = read('frontend/src/js/pages/customers.js');
 const assetsFrontend = read('frontend/src/js/pages/assets.js');
 const settingsFrontend = read('frontend/src/js/pages/settingsShared.js');
 const announcementsFrontend = read('frontend/src/js/pages/announcements.js');
+const revenueShareFrontend = read('frontend/src/js/pages/revenueShare.js');
+const payrollFrontend = read('frontend/src/js/pages/payrollManagement.js');
 
 const posRoutes = read('backend/src/routes/posRoutes.js');
 const billRoutes = read('backend/src/routes/billRoutes.js');
@@ -249,6 +251,39 @@ test('BACKEND-ACTION-004: successful UI mutations are never fabricated after API
   assert.ok(settingsFrontend.includes('Failed to save notification preferences.'));
   assert.ok(announcementsFrontend.includes('Failed to mark notices as read.'));
   assert.equal(customersFrontend.includes('catch {\\n      showToast("Reward item added to catalogue.", "success");'), false);
+});
+
+test('BACKEND-ACTION-005: Revenue Share never fabricates production financial writes or simulations', () => {
+  assert.equal(revenueShareFrontend.includes('optimistic local update'), false);
+  assert.equal(revenueShareFrontend.includes('Simulating locally for offline/mock'), false);
+  assert.equal(revenueShareFrontend.includes(".catch(() => {})"), false);
+  assert.ok(revenueShareFrontend.includes('Revenue Share Backend Unavailable'));
+  assert.ok(revenueShareFrontend.includes('No local or sample records have been substituted.'));
+  assert.ok(revenueShareFrontend.includes('isRevenueDevPreview()'));
+  assert.ok(revenueShareFrontend.includes('Settlement simulation failed.'));
+  assert.ok(revenueShareFrontend.includes('Revenue Share action failed. No local changes were made.'));
+});
+
+test('BACKEND-ACTION-006: Payroll never exposes development fixtures on production hosts', () => {
+  const devModeStart = payrollFrontend.indexOf('function isDevMode()');
+  const fixtureStart = payrollFrontend.indexOf('// ─── CANONICAL DEV FIXTURES', devModeStart);
+  const devModeBlock = payrollFrontend.slice(devModeStart, fixtureStart);
+  assert.equal(devModeBlock.includes('state.user?.isDevPreview'), false);
+  assert.ok(devModeBlock.includes("location.hostname === \"localhost\""));
+  assert.equal(payrollFrontend.includes('Promise.allSettled'), false);
+  assert.ok(payrollFrontend.includes('Payroll Backend Unavailable'));
+  assert.ok(payrollFrontend.includes('No development fixtures have been substituted.'));
+  assert.ok(payrollFrontend.includes('if (!cachedOverview && isDevMode())'));
+});
+
+test('BACKEND-ACTION-007: Quality compliance reads fail visibly instead of asserting zero-risk state', () => {
+  assert.ok(qualityFrontend.includes('function renderQualityLoadError'));
+  assert.ok(qualityFrontend.includes('The system will not report zero NCRs while the backend is unavailable.'));
+  assert.ok(qualityFrontend.includes('The quarantine register could not be verified. No zero-hold assumption has been made.'));
+  assert.ok(qualityFrontend.includes('Traceability Engine Unavailable'));
+  assert.equal(qualityFrontend.includes("console.warn(\"Quality holds API offline, using fallback data:\""), false);
+  assert.equal(qualityFrontend.includes("cachedTrace = DEFAULT_QUALITY_TRACEABILITY"), false);
+  assert.equal(qualityFrontend.includes("value=\"${searchedLot || 'LOT-20260815-MILK'}\""), false);
 });
 
 test('BACKEND-ACTION-003: administration and login actions map to live backend routes', () => {
