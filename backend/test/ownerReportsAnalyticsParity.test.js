@@ -334,16 +334,17 @@ test('OWN-SCR-007 / Master Parity: Reports & Governed Analytics Parity & Securit
   });
 
   // ── 18. Analytics Integrity & Governance ────────────────────────────────────
-  await t.test('18. Analytics integrity returns 100% check pass rate and audit timestamp', async () => {
+  await t.test('18. Analytics integrity reports measured coverage instead of a hard-coded 100% pass', async () => {
     const { req, res, getResult } = buildMockReqRes('OWNER');
     await reportController.getAnalyticsIntegrity(req, res, () => {});
     const result = getResult();
 
     assert.equal(result.statusCode, 200);
-    assert.equal(result.data.data.integrityScore, 100);
-    assert.equal(result.data.data.allPassed, true);
     assert.ok(Array.isArray(result.data.data.checks));
-    assert.equal(result.data.data.checks.length, 16);
+    assert.equal(typeof result.data.data.coveragePercent, 'number');
+    assert.equal(result.data.data.allPassed, false);
+    assert.ok(result.data.data.notVerifiedChecks > 0 || result.data.data.failedChecks > 0);
+    assert.ok(result.data.data.auditedAt);
   });
 
   // ── 19. Multi-Café Scoping & Cross-Café Rejection ───────────────────────────
