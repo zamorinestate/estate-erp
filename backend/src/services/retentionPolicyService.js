@@ -212,6 +212,7 @@ class RetentionPolicyService {
     let scanned = 0;
     let deleted = 0;
     const deletedFiles = [];
+    const failures = [];
 
     for (const name of entries) {
       if (!name.endsWith('.tmp') && !name.startsWith('stg-')) {
@@ -224,18 +225,45 @@ class RetentionPolicyService {
         const stat = await fs.promises.stat(fullPath);
         if (stat.mtimeMs < cutoff) {
           await fs.promises.unlink(fullPath);
-          deleted += 1;
-          deletedFiles.push(name);
+
+          // Verify deletion instead of assuming unlink success.
+          try {
+            await fs.promises.access(fullPath);
+            failures.push({
+              file: name,
+              code: 'STAGING_DELETE_UNVERIFIED',
+              message: 'File still exists after unlink returned.',
+            });
+          } catch (accessError) {
+            if (accessError?.code === 'ENOENT') {
+              deleted += 1;
+              deletedFiles.push(name);
+            } else {
+              failures.push({
+                file: name,
+                code: String(accessError?.code || 'STAGING_DELETE_VERIFY_FAILED'),
+                message: String(accessError?.message || 'Unable to verify staging deletion').slice(0, 300),
+              });
+            }
+          }
         }
-      } catch (_) {}
+      } catch (error) {
+        failures.push({
+          file: name,
+          code: String(error?.code || 'STAGING_CLEANUP_FAILED'),
+          message: String(error?.message || 'Staging cleanup failed').slice(0, 300),
+        });
+      }
     }
 
     return {
-      status: 'SUCCESS',
+      status: failures.length === 0 ? 'SUCCESS' : 'PARTIAL_FAILURE',
       scanned,
       deleted,
+      failureCount: failures.length,
       cutoffAgeMinutes: olderThanMinutes,
       deletedFiles,
+      failures,
       timestamp: new Date().toISOString(),
     };
   }
