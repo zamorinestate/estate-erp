@@ -119,6 +119,8 @@ function mockSessionCreation(t) {
           status: this.status,
           mfaVerified: this.mfaVerified,
           mfaVerifiedAt: this.mfaVerifiedAt,
+          mfaReenrollmentRequired:
+            Boolean(this.mfaReenrollmentRequired),
           device: this.device,
           issuedAt: this.issuedAt,
           lastActivityAt: this.lastActivityAt,
@@ -237,6 +239,10 @@ test('POST /auth/mfa/confirm enables MFA, persists the replay counter, returns r
   assert.equal(response.body.data?.recoveryCodes?.length, 10);
   assert.equal(response.body.data?.session?.mfaVerified, true);
   assert.equal(
+    response.body.data?.session?.mfaReenrollmentRequired,
+    false
+  );
+  assert.equal(
     response.body.data?.session?.device?.deviceId,
     'DEV-CONFIRM'
   );
@@ -333,6 +339,10 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
   assert.equal(response.status, 200);
   assert.equal(user.recoveryCodeHashes.length, 0);
   assert.equal(response.body.data?.mfaReenrollmentRequired, true);
+  assert.equal(
+    response.body.data?.session?.mfaReenrollmentRequired,
+    true
+  );
   assert.ok(response.body.data?.mfaReenrollmentAuthorizationToken);
   assert.equal(response.body.data?.trustedDevice, false);
   assert.ok(response.body.data?.recoverySecurityReset);
