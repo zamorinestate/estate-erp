@@ -193,6 +193,7 @@ class NotificationService {
 
     const outboxRecords = [];
     const inAppRecords = [];
+    const stagingFailures = [];
 
     // Render templates and stage outbox/in-app entries
     for (const recipient of recipients) {
@@ -213,9 +214,9 @@ class NotificationService {
       if (channels.includes('IN_APP') && recipient.userId) {
         try {
           const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-          const randId = Math.floor(1000 + Math.random() * 9000);
+          const secureSuffix = String(crypto.randomInt(10000000, 100000000));
           const inApp = await Notification.create({
-            notificationId: `NT-${dateStr}-${randId}`,
+            notificationId: `NT-${dateStr}-${secureSuffix}`,
             organisationId,
             cafeId,
             eventType: eventType || 'SYSTEM_NOTIFICATION',
@@ -241,8 +242,14 @@ class NotificationService {
           });
           inAppRecords.push(inApp);
         } catch (err) {
-          // Log without blocking
-          console.warn('[NotificationService] In-app notification creation non-fatal error:', err.message);
+          stagingFailures.push({
+            channel: 'IN_APP',
+            recipientUserId: recipient.userId || null,
+            recipientEmail: recipient.email || null,
+            code: String(err?.code || 'IN_APP_STAGE_FAILED'),
+            message: String(err?.message || 'In-app notification staging failed').slice(0, 300),
+          });
+          console.warn('[NotificationService] In-app notification staging error:', err.message);
         }
       }
 
@@ -256,7 +263,7 @@ class NotificationService {
 
           if (!outboxItem) {
             outboxItem = await NotificationOutbox.create({
-              outboxId: `OUTBOX-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+              outboxId: `OUTBOX-${Date.now()}-${crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`,
               organisationId,
               cafeId,
               eventType,
@@ -282,7 +289,14 @@ class NotificationService {
 
           outboxRecords.push(outboxItem);
         } catch (err) {
-          console.warn('[NotificationService] Outbox staging non-fatal error:', err.message);
+          stagingFailures.push({
+            channel: 'EMAIL',
+            recipientUserId: recipient.userId || null,
+            recipientEmail: recipient.email || null,
+            code: String(err?.code || 'EMAIL_OUTBOX_STAGE_FAILED'),
+            message: String(err?.message || 'Email outbox staging failed').slice(0, 300),
+          });
+          console.warn('[NotificationService] Email outbox staging error:', err.message);
         }
       }
     }
@@ -299,11 +313,33 @@ class NotificationService {
       }
     }
 
+    const requestedInApp = channels.includes('IN_APP');
+    const requestedEmail = channels.includes('EMAIL') && settings.outboundEnabled;
+    const expectedStageCount =
+      recipients.length * (Number(requestedInApp) + Number(requestedEmail));
+    const actualStageCount = inAppRecords.length + outboxRecords.length;
+
+    const deliveryStatus =
+      stagingFailures.length === 0
+        ? 'STAGED'
+        : (actualStageCount > 0 ? 'PARTIAL_STAGE_FAILURE' : 'STAGE_FAILED');
+
+    if (mandatory && stagingFailures.length > 0) {
+      const error = new Error('Mandatory notification could not be durably staged on every requested channel.');
+      error.code = 'MANDATORY_NOTIFICATION_STAGE_FAILED';
+      error.stagingFailures = stagingFailures;
+      throw error;
+    }
+
     return {
-      success: true,
+      success: stagingFailures.length === 0,
+      deliveryStatus,
       recipientCount: recipients.length,
+      expectedStageCount,
+      actualStageCount,
       outboxQueued: outboxRecords.length,
       inAppDelivered: inAppRecords.length,
+      stagingFailures,
       recipients: recipients.map(r => ({ userId: r.userId, email: r.email, role: r.role })),
     };
   }
