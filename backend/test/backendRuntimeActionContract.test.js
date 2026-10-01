@@ -190,6 +190,8 @@ test('BACKEND-RUNTIME-011: recovery login authorizes secure MFA replacement and 
   assert.ok(authControllerSource.includes('mfaReenrollmentAuthorizationToken'));
   assert.ok(authControllerSource.includes("'MFA_RECOVERY_LOGIN'"));
   assert.ok(sessionModelSource.includes('mfaReenrollmentRequired'));
+  assert.ok(sessionModelSource.includes("'MFA_RECOVERY_LOGIN'"));
+  assert.ok(sessionModelSource.includes("'MFA_REENROLLMENT'"));
   assert.ok(authServiceSource.includes('mfaReenrollmentRequired = false'));
   assert.ok(authServiceSource.includes('Boolean(mfaReenrollmentRequired)'));
   assert.ok(authenticateSource.includes("'MFA_REENROLLMENT_REQUIRED'"));
