@@ -601,7 +601,7 @@ async function renderPage() {
     case "admin":
       setAdminActiveTab?.(subroute || "overview");
       content.innerHTML = renderAdmin(subroute);
-      wireAdmin(content, subroute);
+      await wireAdmin(content, subroute);
       break;
 
     case "org-identity":
