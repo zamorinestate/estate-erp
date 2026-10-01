@@ -495,7 +495,7 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
     assert.equal(res.data.data.assetMetrics.availabilityRatePct, 99.4);
   });
 
-  await t.test('14. GET /api/v1/reports/portfolio returns like-for-like sales growth', async () => {
+  await t.test('14. GET /api/v1/reports/portfolio never manufactures fallback cafes or KPI values', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -505,11 +505,15 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.ok(res.data.data.overallLikeForLikeGrowthPct > 0);
-    assert.ok(res.data.data.portfolio.some((p) => p.category === 'MATURE'));
+    assert.ok(Array.isArray(res.data.data.portfolio));
+    assert.equal(res.data.data.portfolio.some((p) => ['CAFE-01', 'CAFE-02', 'CAFE-03'].includes(p.cafeId)), false);
+    assert.equal(res.data.data.portfolio.some((p) => ['Primary Hub', 'Secondary Hub', 'Roastery Reserve'].includes(p.name)), false);
+    if (res.data.data.portfolio.length === 0) {
+      assert.equal(res.data.data.overallLikeForLikeGrowthPct, null);
+    }
   });
 
-  await t.test('15. GET /api/v1/reports/goals returns scorecards linked to governed metrics', async () => {
+  await t.test('15. GET /api/v1/reports/goals is explicit when governed scorecard definitions are not configured', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -519,10 +523,12 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.ok(Array.isArray(res.data.data.scorecards));
+    assert.deepEqual(res.data.data.scorecards, []);
+    assert.equal(res.data.data.capabilityStatus, 'NOT_CONFIGURED');
+    assert.equal(res.data.data.sourceStatus, 'GOAL_SCORECARD_DEFINITION_SOURCE_MISSING');
   });
 
-  await t.test('16. GET /api/v1/reports/scheduled-alerts returns subscriptions and alerts', async () => {
+  await t.test('16. GET /api/v1/reports/scheduled-alerts never invents scheduler or alert state', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
@@ -532,8 +538,10 @@ test('SCR-022: Reports & Analytics Master Control & ZURF Integration Suite', asy
 
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
-    assert.ok(Array.isArray(res.data.data.subscriptions));
-    assert.ok(Array.isArray(res.data.data.alerts));
+    assert.deepEqual(res.data.data.subscriptions, []);
+    assert.deepEqual(res.data.data.alerts, []);
+    assert.equal(res.data.data.subscriptionCapabilityStatus, 'NOT_IMPLEMENTED_SOURCE_MISSING');
+    assert.equal(res.data.data.alertCapabilityStatus, 'NOT_IMPLEMENTED_SOURCE_MISSING');
   });
 
   await t.test('17. GET /api/v1/reports/reconciliations returns cross-module reconciliation checks', async () => {
