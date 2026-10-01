@@ -323,6 +323,7 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
     {
       mfaChallengeToken: token,
       recoveryCode,
+      rememberDevice: true,
       device: {
         deviceId: 'DEV-RECOVERY',
       },
@@ -334,6 +335,11 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
   assert.equal(response.body.data?.mfaReenrollmentRequired, true);
   assert.ok(response.body.data?.mfaReenrollmentAuthorizationToken);
   assert.equal(response.body.data?.trustedDevice, false);
+  assert.ok(response.body.data?.recoverySecurityReset);
+  assert.equal(
+    response.body.data?.recoverySecurityReset?.revokedSessionCount,
+    0
+  );
   const reenrollPayload = mfaService.verifyMfaToken(
     response.body.data.mfaReenrollmentAuthorizationToken,
     'mfa_reenroll_authorized'
