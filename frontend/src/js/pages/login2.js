@@ -1988,7 +1988,20 @@ export function wireRegisterPage2(container, { onLogin, onSubmit } = {}) {
 // -----------------------------------------------------------------------------
 // 6. MFA / TOTP CHALLENGE SCREEN
 // -----------------------------------------------------------------------------
-export function renderMfaChallenge2({ email = "", challengeId = "", tempToken = "", mfaChallengeToken = "" } = {}) {
+export function renderMfaChallenge2({
+  email = "",
+  mfaSetupRequired = false,
+} = {}) {
+  const recoveryToggle = mfaSetupRequired
+    ? ""
+    : `
+      <div style="margin-top: 10px; text-align: center;">
+        <button type="button" id="l2-mfa-use-recovery" class="btn-pill-translucent">
+          Use a recovery code
+        </button>
+      </div>
+    `;
+
   return `
     ${renderBackgroundAndModalsHtml()}
     <div class="l2-glass-wrapper">
@@ -1999,13 +2012,17 @@ export function renderMfaChallenge2({ email = "", challengeId = "", tempToken = 
 
         <div class="login-header">
           <h2>Two-Factor Authentication</h2>
-          <p class="login-subtitle">Enter the 6-digit verification code from your Authenticator app${email ? ` for <strong>${email}</strong>` : ""}.</p>
+          <p class="login-subtitle">
+            ${mfaSetupRequired
+              ? "Enter the verification code for your new Authenticator setup."
+              : `Enter the 6-digit verification code from your Authenticator app${email ? ` for <strong>${email}</strong>` : ""}.`}
+          </p>
         </div>
 
         <div id="l2-mfa-error" class="l2-error-banner" style="display:none;"></div>
 
         <form id="l2-mfa-form">
-          <div class="light-input-group">
+          <div id="l2-mfa-totp-group" class="light-input-group">
             <div class="light-input-icon left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             </div>
@@ -2016,7 +2033,6 @@ export function renderMfaChallenge2({ email = "", challengeId = "", tempToken = 
               placeholder="6-digit Code"
               maxlength="6"
               pattern="[0-9]{6}"
-              required
               inputmode="numeric"
               autocomplete="one-time-code"
               autofocus
@@ -2024,7 +2040,21 @@ export function renderMfaChallenge2({ email = "", challengeId = "", tempToken = 
             />
           </div>
 
+          <div id="l2-mfa-recovery-group" class="light-input-group" style="display:none;">
+            <div class="light-input-icon left">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.6 7.6a5 5 0 1 1-7.07 7.07 5 5 0 0 1 7.07-7.07zm0 0L15 8m0 0l3 3 3-3-3-3m-3 3L9 14"/></svg>
+            </div>
+            <input
+              type="text"
+              id="l2-mfa-recovery-code"
+              name="recoveryCode"
+              placeholder="Recovery Code"
+              autocomplete="one-time-code"
+            />
+          </div>
+
           <button type="submit" id="l2-mfa-submit" class="light-btn">Verify &amp; Sign In</button>
+          ${recoveryToggle}
           <div style="margin-top: 12px; text-align: center;">
             <button type="button" id="l2-mfa-back" class="btn-pill-white">Back to Sign In</button>
           </div>
@@ -2037,22 +2067,48 @@ export function renderMfaChallenge2({ email = "", challengeId = "", tempToken = 
 export function wireMfaChallenge2(container, { onSubmit, onBack } = {}) {
   const form = container.querySelector("#l2-mfa-form");
   const backBtn = container.querySelector("#l2-mfa-back");
+  const toggleBtn = container.querySelector("#l2-mfa-use-recovery");
   const errorEl = container.querySelector("#l2-mfa-error");
   const codeInput = container.querySelector("#l2-mfa-code");
+  const recoveryInput = container.querySelector("#l2-mfa-recovery-code");
+  const totpGroup = container.querySelector("#l2-mfa-totp-group");
+  const recoveryGroup = container.querySelector("#l2-mfa-recovery-group");
+  const submitBtn = container.querySelector("#l2-mfa-submit");
 
-  if (codeInput) {
+  let useRecoveryCode = false;
+  let isSubmittingMfa = false;
+
+  const focusCurrentInput = () => {
     setTimeout(() => {
       try {
-        codeInput.focus();
+        (useRecoveryCode ? recoveryInput : codeInput)?.focus();
       } catch {}
     }, 50);
+  };
+
+  focusCurrentInput();
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      useRecoveryCode = !useRecoveryCode;
+      if (totpGroup) totpGroup.style.display = useRecoveryCode ? "none" : "";
+      if (recoveryGroup) recoveryGroup.style.display = useRecoveryCode ? "" : "none";
+      toggleBtn.textContent = useRecoveryCode
+        ? "Use Authenticator code"
+        : "Use a recovery code";
+      if (submitBtn) {
+        submitBtn.textContent = useRecoveryCode
+          ? "Verify Recovery Code"
+          : "Verify & Sign In";
+      }
+      if (errorEl) errorEl.style.display = "none";
+      focusCurrentInput();
+    });
   }
 
   if (backBtn && typeof onBack === "function") {
     backBtn.addEventListener("click", () => onBack());
   }
-
-  let isSubmittingMfa = false;
 
   if (form && typeof onSubmit === "function") {
     form.addEventListener("submit", async (e) => {
@@ -2060,17 +2116,20 @@ export function wireMfaChallenge2(container, { onSubmit, onBack } = {}) {
       if (isSubmittingMfa) return;
       if (errorEl) errorEl.style.display = "none";
 
-      const code = codeInput?.value?.trim() || "";
-      if (!code) {
+      const code = useRecoveryCode ? "" : (codeInput?.value?.trim() || "");
+      const recoveryCode = useRecoveryCode ? (recoveryInput?.value?.trim() || "") : "";
+
+      if ((!useRecoveryCode && !code) || (useRecoveryCode && !recoveryCode)) {
         if (errorEl) {
-          errorEl.textContent = "Please enter your 6-digit TOTP Verification Code.";
+          errorEl.textContent = useRecoveryCode
+            ? "Please enter an unused MFA recovery code."
+            : "Please enter your 6-digit TOTP verification code.";
           errorEl.style.display = "block";
         }
-        codeInput?.focus();
+        focusCurrentInput();
         return;
       }
 
-      const submitBtn = container.querySelector("#l2-mfa-submit");
       isSubmittingMfa = true;
       if (submitBtn) {
         submitBtn.disabled = true;
@@ -2078,21 +2137,25 @@ export function wireMfaChallenge2(container, { onSubmit, onBack } = {}) {
       }
 
       try {
-        await onSubmit({ code });
+        await onSubmit({ code, recoveryCode });
       } catch (err) {
         isSubmittingMfa = false;
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Verify & Sign In";
+          submitBtn.textContent = useRecoveryCode
+            ? "Verify Recovery Code"
+            : "Verify & Sign In";
         }
         if (errorEl) {
-          errorEl.textContent = err.userMessage || err.message || "Invalid or expired MFA code. Please try again.";
+          errorEl.textContent =
+            err.userMessage ||
+            err.message ||
+            "Invalid or expired MFA credential. Please try again.";
           errorEl.style.display = "block";
         }
-        if (codeInput) {
-          codeInput.select();
-          codeInput.focus();
-        }
+        const activeInput = useRecoveryCode ? recoveryInput : codeInput;
+        activeInput?.select();
+        activeInput?.focus();
       } finally {
         if (!errorEl || errorEl.style.display === "none") {
           isSubmittingMfa = false;
@@ -2102,3 +2165,136 @@ export function wireMfaChallenge2(container, { onSubmit, onBack } = {}) {
   }
 }
 
+export function renderMfaReenrollment2({
+  email = "",
+  stage = "start",
+  manualEntrySecret = "",
+  recoveryCodes = [],
+} = {}) {
+  let body = "";
+
+  if (stage === "confirm") {
+    body = `
+      <div class="login-header">
+        <h2>Replace Authenticator</h2>
+        <p class="login-subtitle">
+          Add this new secret to your Authenticator app${email ? ` for <strong>${email}</strong>` : ""}, then enter the generated 6-digit code.
+        </p>
+      </div>
+      <div style="margin: 16px 0; padding: 14px; border: 1px solid rgba(255,255,255,.16); border-radius: 12px; word-break: break-all; text-align:center;">
+        <div style="font-size:12px; opacity:.75; margin-bottom:6px;">Manual entry secret</div>
+        <strong id="l2-mfa-reenroll-secret" style="letter-spacing:2px;">${manualEntrySecret}</strong>
+      </div>
+      <form id="l2-mfa-reenroll-confirm-form">
+        <div class="light-input-group">
+          <input type="password" id="l2-mfa-reenroll-confirm-password" placeholder="Current Password" autocomplete="current-password" />
+        </div>
+        <div class="light-input-group">
+          <input type="text" id="l2-mfa-reenroll-code" placeholder="6-digit Code" maxlength="6" pattern="[0-9]{6}" inputmode="numeric" autocomplete="one-time-code" />
+        </div>
+        <button type="submit" class="light-btn">Confirm New Authenticator</button>
+      </form>
+    `;
+  } else if (stage === "done") {
+    body = `
+      <div class="login-header">
+        <h2>MFA Replaced Successfully</h2>
+        <p class="login-subtitle">Save these new recovery codes now. Each code can be used only once.</p>
+      </div>
+      <div id="l2-mfa-reenroll-recovery-codes" style="margin:16px 0; padding:14px; border:1px solid rgba(255,255,255,.16); border-radius:12px; font-family:monospace; line-height:1.8; text-align:center;">
+        ${(recoveryCodes || []).map((code) => `<div>${code}</div>`).join("")}
+      </div>
+      <button type="button" id="l2-mfa-reenroll-continue" class="light-btn">Continue to Dashboard</button>
+    `;
+  } else {
+    body = `
+      <div class="login-header">
+        <h2>Secure Your Account</h2>
+        <p class="login-subtitle">
+          You signed in with a recovery code. Your previous authenticator secret can no longer be used, so create a new one now.
+        </p>
+      </div>
+      <form id="l2-mfa-reenroll-start-form">
+        <div class="light-input-group">
+          <input type="password" id="l2-mfa-reenroll-password" placeholder="Current Password" autocomplete="current-password" />
+        </div>
+        <button type="submit" class="light-btn">Create New Authenticator Secret</button>
+      </form>
+    `;
+  }
+
+  return `
+    ${renderBackgroundAndModalsHtml()}
+    <div class="l2-glass-wrapper">
+      <div class="light-glass-container auth-shell-container">
+        <div class="l2-brand-header">
+          <img src="/src/assets/zamorin-logo-stacked.svg" alt="Zamorin Café" class="l2-brand-logo" />
+        </div>
+        <div id="l2-mfa-reenroll-error" class="l2-error-banner" style="display:none;"></div>
+        ${body}
+      </div>
+    </div>
+  `;
+}
+
+export function wireMfaReenrollment2(
+  container,
+  { stage = "start", onStart, onConfirm, onContinue } = {}
+) {
+  const errorEl = container.querySelector("#l2-mfa-reenroll-error");
+
+  const showError = (error) => {
+    if (!errorEl) return;
+    errorEl.textContent =
+      error?.userMessage ||
+      error?.message ||
+      "Unable to replace multi-factor authentication.";
+    errorEl.style.display = "block";
+  };
+
+  if (stage === "start") {
+    const form = container.querySelector("#l2-mfa-reenroll-start-form");
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (errorEl) errorEl.style.display = "none";
+      const password =
+        container.querySelector("#l2-mfa-reenroll-password")?.value || "";
+      if (!password) {
+        showError(new Error("Enter your current password."));
+        return;
+      }
+      try {
+        await onStart?.({ password });
+      } catch (error) {
+        showError(error);
+      }
+    });
+    return;
+  }
+
+  if (stage === "confirm") {
+    const form = container.querySelector("#l2-mfa-reenroll-confirm-form");
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (errorEl) errorEl.style.display = "none";
+      const password =
+        container.querySelector("#l2-mfa-reenroll-confirm-password")?.value || "";
+      const code =
+        container.querySelector("#l2-mfa-reenroll-code")?.value?.trim() || "";
+      if (!password || !/^[0-9]{6}$/.test(code)) {
+        showError(new Error("Enter your current password and a valid 6-digit authenticator code."));
+        return;
+      }
+      try {
+        await onConfirm?.({ password, code });
+      } catch (error) {
+        showError(error);
+      }
+    });
+    return;
+  }
+
+  container
+    .querySelector("#l2-mfa-reenroll-continue")
+    ?.addEventListener("click", () => onContinue?.());
+}
