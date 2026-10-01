@@ -207,6 +207,8 @@ async function authenticate(
         Boolean(session.mfaVerified),
       mfaVerifiedAt:
         session.mfaVerifiedAt || null,
+      mfaReenrollmentRequired:
+        Boolean(session.mfaReenrollmentRequired),
       stepUpVerifiedAt:
         session.stepUpVerifiedAt || null,
       sessionVersion:
@@ -218,6 +220,33 @@ async function authenticate(
     request.user = request.auth;
     request.authenticatedUser = user;
     request.authenticatedSession = session;
+
+    if (session.mfaReenrollmentRequired) {
+      const requestPath = String(
+        request.originalUrl ||
+        request.url ||
+        ''
+      ).split('?')[0];
+
+      const allowedDuringReenrollment = [
+        '/auth/mfa/re-enroll/start',
+        '/auth/mfa/re-enroll/confirm',
+        '/auth/logout',
+      ].some((suffix) =>
+        requestPath.endsWith(suffix)
+      );
+
+      if (!allowedDuringReenrollment) {
+        return response.status(403).json({
+          success: false,
+          error: {
+            code: 'MFA_REENROLLMENT_REQUIRED',
+            message:
+              'Complete MFA replacement before continuing. If this recovery session was interrupted, sign in again with another unused recovery code.',
+          },
+        });
+      }
+    }
 
     return next();
   } catch (error) {
