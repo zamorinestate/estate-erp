@@ -148,7 +148,7 @@ describe('Stage 01 — Universal Export + Print Engine Complete Suite', () => {
     assert.ok(content.includes('TAX INVOICE / RETAIL BILL'), 'Statutory document title present');
     assert.ok(content.includes('INV/2026-27/ZC01/00892'), 'Invoice number present');
     assert.ok(content.includes('(Sl. No.)'), 'Sl. No. column present in invoice line items');
-    assert.ok(content.includes('Tax (GST 5%):'), 'GST tax breakdown present');
+    assert.ok(content.includes('Total GST:'), 'GST tax breakdown present without assuming a fixed GST rate');
   });
 
   // ─── 01.15 REPRINT WATERMARK: ORIGINAL VS REPRINT ────────────────────────
