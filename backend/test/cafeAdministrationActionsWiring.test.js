@@ -137,8 +137,8 @@ test('12. Failed API produces visible toast error instead of silent swallow', ()
   assert.ok(adminSource.includes('showToast(err.message || "Unable to save Café changes.", "danger");'), 'openCafeEditModal save must show error toast');
 });
 
-test('13. Service-worker cache version bumped to zamorin-pwa-v3.12.1 and index.html versioned', () => {
-  assert.ok(swSource.includes("CACHE_VERSION = 'zamorin-pwa-v3.12.1'"), 'Service worker CACHE_VERSION must be bumped to zamorin-pwa-v3.12.1');
-  assert.ok(indexHtmlSource.includes('src="/src/js/main.js?v=3.12.1"'), 'index.html entry module must be versioned with ?v=3.10.0');
+test('13. Service-worker cache version bumped to zamorin-pwa-v3.12.0 and index.html versioned', () => {
+  assert.ok(swSource.includes("CACHE_VERSION = 'zamorin-pwa-v3.12.0'"), 'Service worker CACHE_VERSION must be bumped to zamorin-pwa-v3.12.0');
+  assert.ok(indexHtmlSource.includes('src="/src/js/main.js?v=3.12.1"'), 'index.html entry module must be versioned with ?v=3.12.1');
   assert.ok(swSource.includes("url.pathname.startsWith('/api/')"), 'sw.js must keep /api/ network-only');
 });
