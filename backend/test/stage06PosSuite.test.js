@@ -147,7 +147,9 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
   t.mock.method(IdempotencyRecord, 'deleteOne', async () => ({}));
 
   t.mock.method(BomDepletionService, 'depleteOrderBOM', async () => ({
+    success: true,
     depleted: true,
+    allDeductionsSucceeded: true,
     depletionCount: 1,
     source: 'MOCK',
   }));
@@ -182,12 +184,34 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
 
   t.mock.method(Cafe, 'findOne', async () => ({
     cafeId: 'ZC-0001',
+    organisationId: 'ORG-ZAMORIN',
     name: 'Zamorin Koramangala',
+    displayName: 'Zamorin Koramangala',
     legalName: 'Zamorin Hospitality Private Limited',
-    gstin: '29AABCT1332L1ZV',
-    fssaiLicenseNumber: '11223344556677',
-    address: { line1: '80ft Road, 4th Block', city: 'Bengaluru', pincode: '560095' },
-    contactPhone: '+91 80 2555 1234',
+    status: 'ACTIVE',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '29AABCT1332L1ZV',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin Koramangala',
+        principalPlace: '80ft Road, 4th Block, Bengaluru, Karnataka 560095',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '11223344556677',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin Koramangala',
+      street: '80ft Road',
+      area: '4th Block',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pinCode: '560095',
+    },
+    contacts: { primaryPhone: '+91 80 2555 1234' },
     toObject() { return this; },
   }));
 
