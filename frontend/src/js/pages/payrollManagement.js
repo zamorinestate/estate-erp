@@ -94,10 +94,9 @@ function apiErrorMessage(error) {
 }
 
 function isDevMode() {
-  return (
-    state.user?.isDevPreview ||
-    (typeof location !== "undefined" &&
-      (location.hostname === "localhost" || location.hostname === "127.0.0.1"))
+  return Boolean(
+    typeof location !== "undefined" &&
+    (location.hostname === "localhost" || location.hostname === "127.0.0.1")
   );
 }
 
@@ -1483,8 +1482,7 @@ async function loadAllPayrollData(root) {
   }
 
   try {
-    // Parallel fetch
-    const [overviewRes, runsRes, complianceRes, integrityRes, cafesRes] = await Promise.allSettled([
+    const [overviewRes, runsRes, complianceRes, integrityRes, cafesRes] = await Promise.all([
       apiGet("/payroll/overview", { signal: requestController.signal }),
       apiGet(`/payroll/runs?limit=100${selectedStatus ? `&status=${encodeURIComponent(selectedStatus)}` : ""}`, { signal: requestController.signal }),
       apiGet("/payroll/compliance/overview", { signal: requestController.signal }),
@@ -1494,46 +1492,46 @@ async function loadAllPayrollData(root) {
 
     if (requestController.signal.aborted || !root.isConnected) return;
 
-    if (overviewRes.status === "fulfilled" && overviewRes.value?.data) {
-      cachedOverview = overviewRes.value.data;
-    } else {
-      cachedOverview = null;
+    if (!overviewRes?.data || !complianceRes?.data || !integrityRes?.data) {
+      throw new Error("Payroll backend returned an incomplete control-centre payload.");
     }
 
-    if (runsRes.status === "fulfilled" && runsRes.value?.data?.payrollRuns) {
-      loadedPayrollRuns = runsRes.value.data.payrollRuns;
-    } else {
-      loadedPayrollRuns = [];
-    }
-
-    if (complianceRes.status === "fulfilled" && complianceRes.value?.data) {
-      cachedCompliance = complianceRes.value.data;
-    } else {
-      cachedCompliance = null;
-    }
-
-    if (integrityRes.status === "fulfilled" && integrityRes.value?.data) {
-      cachedIntegrity = integrityRes.value.data;
-    } else {
-      cachedIntegrity = null;
-    }
-
-    if (cafesRes.status === "fulfilled" && cafesRes.value?.data?.cafes) {
-      cachedCafes = cafesRes.value.data.cafes;
-    } else {
-      cachedCafes = [];
-    }
+    cachedOverview = overviewRes.data;
+    loadedPayrollRuns = runsRes?.data?.payrollRuns || [];
+    cachedCompliance = complianceRes.data;
+    cachedIntegrity = integrityRes.data;
+    cachedCafes = cafesRes?.data?.cafes || [];
 
     renderPayrollControlCentre(root);
   } catch (err) {
     if (err?.name === "AbortError" || !root.isConnected) return;
+
+    if (isDevMode()) {
+      cachedOverview = getDevOverviewFixture();
+      loadedPayrollRuns = getDevRunsFixture();
+      cachedCompliance = getDevComplianceFixture();
+      cachedIntegrity = getDevIntegrityFixture();
+      cachedCafes = getDevCafesFixture();
+      renderPayrollControlCentre(root);
+      return;
+    }
 
     cachedOverview = null;
     loadedPayrollRuns = [];
     cachedCompliance = null;
     cachedIntegrity = null;
     cachedCafes = [];
-    renderPayrollControlCentre(root);
+
+    root.innerHTML = renderModuleErrorState({
+      title: "Payroll Backend Unavailable",
+      message: "Payroll, compliance, and payment state could not be verified. No development fixtures have been substituted.",
+      error: err,
+      retryActionId: "payroll-backend-retry",
+      retryLabel: "Retry",
+      type: err?.status >= 500 ? "server" : undefined,
+    });
+    root.querySelector("#payroll-backend-retry")?.addEventListener("click", () => loadAllPayrollData(root));
+    showToast(apiErrorMessage(err), "coral");
   } finally {
     if (activeRequest === requestController) {
       activeRequest = null;
@@ -1558,25 +1556,33 @@ export function wirePayrollManagement(container, subroute) {
     activeTab = subroute || "overview";
   }
   const root = container.querySelector("#payroll-management-root") || container;
-  if (!cachedOverview) {
+  if (!cachedOverview && isDevMode()) {
     cachedOverview = getDevOverviewFixture();
     loadedPayrollRuns = getDevRunsFixture();
     cachedCompliance = getDevComplianceFixture();
     cachedIntegrity = getDevIntegrityFixture();
     cachedCafes = getDevCafesFixture();
+    renderPayrollControlCentre(root);
+  } else if (cachedOverview) {
+    renderPayrollControlCentre(root);
+  } else {
+    root.innerHTML = skeleton("420px");
   }
-  renderPayrollControlCentre(root);
   loadAllPayrollData(root);
 }
 
 export default function render(root) {
-  if (!cachedOverview) {
+  if (!cachedOverview && isDevMode()) {
     cachedOverview = getDevOverviewFixture();
     loadedPayrollRuns = getDevRunsFixture();
     cachedCompliance = getDevComplianceFixture();
     cachedIntegrity = getDevIntegrityFixture();
     cachedCafes = getDevCafesFixture();
+    renderPayrollControlCentre(root);
+  } else if (cachedOverview) {
+    renderPayrollControlCentre(root);
+  } else {
+    root.innerHTML = skeleton("420px");
   }
-  renderPayrollControlCentre(root);
   loadAllPayrollData(root);
 }
