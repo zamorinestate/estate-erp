@@ -410,13 +410,15 @@ export function wireAnnouncements(root) {
     if (markAllBtn) {
       markAllBtn.addEventListener("click", async () => {
         try {
-          await apiPatch("/notifications/read-all");
-        } catch {}
-        cachedAnnouncements.forEach((a) => {
-          if (!a.readAt) a.readAt = new Date().toISOString();
-        });
-        showToast("All ordinary notices marked as read");
-        loadAnnouncements();
+          const res = await apiPatch("/notifications/read-all");
+          cachedAnnouncements.forEach((a) => {
+            if (!a.readAt) a.readAt = new Date().toISOString();
+          });
+          showToast(res?.message || "All ordinary notices marked as read");
+          await loadAnnouncements();
+        } catch (err) {
+          showToast(err?.message || "Failed to mark notices as read.", "coral");
+        }
       });
     }
 
