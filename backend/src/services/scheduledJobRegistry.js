@@ -19,8 +19,8 @@ const REGISTERED_JOBS = [
     owner: 'Infrastructure Operations',
     staleThresholdMinutes: 480,
     critical: false,
-    runtimeWiring: 'NOT_WIRED',
-    workerEntrypoint: null,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-DOCUMENT-INTEGRITY-RECONCILIATION',
@@ -29,8 +29,8 @@ const REGISTERED_JOBS = [
     owner: 'Security & Compliance',
     staleThresholdMinutes: 1560,
     critical: true,
-    runtimeWiring: 'NOT_WIRED',
-    workerEntrypoint: null,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-NOTIFICATION-OUTBOX-DISPATCH',
@@ -59,8 +59,8 @@ const REGISTERED_JOBS = [
     owner: 'Database Operations',
     staleThresholdMinutes: 840,
     critical: true,
-    runtimeWiring: 'NOT_WIRED',
-    workerEntrypoint: null,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-ASSET-MAINTENANCE-SCHEDULER',
@@ -69,8 +69,8 @@ const REGISTERED_JOBS = [
     owner: 'Equipment & Asset Reliability Lead',
     staleThresholdMinutes: 1560,
     critical: true,
-    runtimeWiring: 'NOT_WIRED',
-    workerEntrypoint: null,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
 ];
 
