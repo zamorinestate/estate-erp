@@ -61,7 +61,6 @@ export function renderMenuManagement(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; color:var(--ink); margin:0;">Menu &amp; Recipe Management</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-013 MENU</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0;">
             Multi-Outlet Menu Master &bull; Recipe Formulation &bull; Pricing Precedence &bull; Layered Availability &bull; POS Sync
@@ -315,6 +314,7 @@ function renderOverviewTab(wrap) {
 
   const menuTiles = [
     { id: "items", icon: "📋", title: "Global Item Master", subtitle: "Catalogue items, categories & dietary tags", badge: `${kpis.activeItems || 7} Items`, badgeType: "accent" },
+    { id: "customers", icon: "👥", title: "Customers & Loyalty", subtitle: "Guest directory, loyalty tier balances & store credit", badge: "Loyalty Hub", badgeType: "accent", route: "menu/customers" },
     { id: "menus", icon: "📅", title: "Menus & Schedules", subtitle: "Daypart menus, breakfast & dinner schedules", badge: "Active", badgeType: "" },
     { id: "recipes", icon: "🍳", title: "Recipes & BOM", subtitle: "Ingredient formulation, sub-recipes & COGS", badge: `${kpis.totalRecipes || 7} Recipes`, badgeType: "success" },
     { id: "modifiers", icon: "🔀", title: "Modifiers & Variants", subtitle: "Milk choices, size variations & syrups", badge: "Customisers", badgeType: "" },
@@ -335,7 +335,7 @@ function renderOverviewTab(wrap) {
         <h3 class="module-hub-section-title">Menu &amp; Recipe Engineering Workspaces</h3>
         <div class="module-tile-grid">
           ${menuTiles.map((t) => `
-            <button class="module-hub-tile" data-menu-hub-tile="${t.id}" type="button">
+            <button class="module-hub-tile" data-menu-hub-tile="${t.id}" ${t.route ? `data-route="${t.route}"` : ""} type="button">
               <div class="module-tile-icon-box">${t.icon}</div>
               <div class="module-tile-content">
                 <div class="module-tile-title-row">
@@ -417,7 +417,12 @@ function renderOverviewTab(wrap) {
   // Wire Menu Hub Tiles
   wrap.querySelectorAll("[data-menu-hub-tile]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      navigate("menu/" + btn.dataset.menuHubTile);
+      const directRoute = btn.dataset.route;
+      if (directRoute) {
+        navigate(directRoute);
+      } else {
+        navigate("menu/" + btn.dataset.menuHubTile);
+      }
     });
   });
 }

@@ -88,7 +88,6 @@ export function renderInventory(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; color:var(--ink); margin:0;">Inventory &amp; Raw Material Stock</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-011 INV</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0;">Global item catalogue, per-café stock levels, replenishment PAR, batch lot FEFO, transfers, and food recall containment.</p>
         </div>
@@ -187,45 +186,69 @@ function renderOverviewContentHtml() {
   };
   const isCafeAdmin = state.user?.role === "CAFE_ADMIN";
 
-  const invTiles = [
+  // Conceptual Level 1: Daily Operations
+  const dailyTiles = [
     { id: "stock-by-cafe", icon: "📦", title: "Stock Levels", subtitle: "Multi-café on-hand, reserved & available balances", badge: `${kpis.totalActiveSkus || 0} SKUs`, badgeType: "accent" },
-    { id: "global-items", icon: "📋", title: "Global Item Master", subtitle: "Global item catalogue, UOM conversions & specs", badge: "Catalogue", badgeType: "" },
-    { id: "replenishment", icon: "📊", title: "Replenishment & PAR", subtitle: "Safety buffers, PAR thresholds & auto-order triggers", badge: `${kpis.lowStockCount || 0} Low`, badgeType: kpis.lowStockCount > 0 ? "warning" : "success" },
-    { id: "receipts", icon: "📥", title: "Receipts & Put-Away", subtitle: "Goods receipts from purchase orders & bin put-away", badge: "Live POs", badgeType: "" },
-    { id: "movements", icon: "📜", title: "Stock Ledger", subtitle: "Double-entry transaction audit & ledger logs", badge: "Ledger", badgeType: "" },
-    { id: "lots-expiry", icon: "⏳", title: "Lots & FEFO Expiry", subtitle: "Batch lot numbers, shelf life tracking & expiry alerts", badge: "FEFO", badgeType: "success" },
-    { id: "transfers", icon: "🚚", title: "Inter-Café Transfers", subtitle: "Transfer orders, transit dispatch & branch receipts", badge: `${kpis.inTransitQuantity || 0} In-Transit`, badgeType: "" },
-    { id: "reservations", icon: "🔒", title: "Reservations", subtitle: "Earmarked stock allocations & production hold", badge: "Active", badgeType: "" },
-    { id: "counts", icon: "⚖️", title: "Cycle Counts", subtitle: "Stocktakes, blind audits & variance reconciliation", badge: `${kpis.pendingCountsApproval || 0} Pending`, badgeType: "" },
+    { id: "replenishment", icon: "📊", title: "Low Stock / PAR", subtitle: "Safety buffers, PAR thresholds & auto-order triggers", badge: `${kpis.lowStockCount || 0} Low`, badgeType: kpis.lowStockCount > 0 ? "warning" : "success" },
+    { id: "receipts", icon: "📥", title: "Receiving & Put-Away", subtitle: "Goods receipts from purchase orders & bin put-away", badge: "Live POs", badgeType: "" },
     { id: "wastage", icon: "🗑️", title: "Wastage & Adjustments", subtitle: "Spoilage logs, preparation loss & damage write-offs", badge: "Logged", badgeType: "" },
+  ];
+
+  // Conceptual Level 2: Control & Governance
+  const controlTiles = [
+    { id: "movements", icon: "📜", title: "Stock Ledger", subtitle: "Double-entry transaction audit & ledger logs", badge: "Ledger", badgeType: "" },
+    { id: "counts", icon: "⚖️", title: "Stock Counts", subtitle: "Stocktakes, blind audits & variance reconciliation", badge: `${kpis.pendingCountsApproval || 0} Pending`, badgeType: "" },
+    { id: "transfers", icon: "🚚", title: "Inter-Café Transfers", subtitle: "Transfer orders, transit dispatch & branch receipts", badge: `${kpis.inTransitQuantity || 0} In-Transit`, badgeType: "" },
+    { id: "global-items", icon: "📋", title: "Global Item Master", subtitle: "Global item catalogue, UOM conversions & specs", badge: "Catalogue", badgeType: "" },
+  ];
+
+  // Conceptual Level 3: Advanced Intelligence & Traceability
+  const advancedTiles = [
+    { id: "lots-expiry", icon: "⏳", title: "Lots & FEFO Expiry", subtitle: "Batch lot numbers, shelf life tracking & expiry alerts", badge: "FEFO", badgeType: "success" },
+    { id: "reservations", icon: "🔒", title: "Reservations", subtitle: "Earmarked stock allocations & production hold", badge: "Active", badgeType: "" },
     { id: "consumption-variance", icon: "☕", title: "Recipe Variance", subtitle: "Theoretical POS depletion vs physical stock variance", badge: "COGS Mapped", badgeType: "success" },
+    ...(!isCafeAdmin ? [
+      { id: "recalls", icon: "🛡️", title: "Food Safety & Recall", subtitle: "Lot containment & food safety quarantine logs", badge: `${kpis.activeRecallsCount || 0} Recalls`, badgeType: kpis.activeRecallsCount > 0 ? "danger" : "success" },
+    ] : []),
     { id: "valuation", icon: "💰", title: "Valuation & Reports", subtitle: "Weighted average cost valuations & asset balance", badge: fmtInr(kpis.totalValuationPaisa), badgeType: "success" },
     ...(!isCafeAdmin ? [
-      { id: "recalls", icon: "🛡️", title: "Recall & Traceability", subtitle: "Lot containment & food safety quarantine logs", badge: `${kpis.activeRecallsCount || 0} Recalls`, badgeType: kpis.activeRecallsCount > 0 ? "danger" : "success" },
       { id: "integrity", icon: "🔒", title: "Inventory Integrity", subtitle: "Invariant verification & negative stock guards", badge: "Zero Violations", badgeType: "success" },
     ] : []),
   ];
 
-  return `
-    <div style="display:flex; flex-direction:column; gap:24px;">
-      <!-- Control Centre Button Hub Section -->
-      <div class="module-hub-section">
-        <h3 class="module-hub-section-title">Inventory &amp; Stock Workspaces</h3>
-        <div class="module-tile-grid">
-          ${invTiles.map((t) => `
-            <button class="module-hub-tile" data-inv-hub-tile="${t.id}" type="button">
-              <div class="module-tile-icon-box">${t.icon}</div>
-              <div class="module-tile-content">
-                <div class="module-tile-title-row">
-                  <span class="module-tile-title">${t.title}</span>
-                  ${t.badge ? `<span class="module-tile-badge ${t.badgeType}">${t.badge}</span>` : ""}
-                </div>
-                <div class="module-tile-sub">${t.subtitle}</div>
-              </div>
-            </button>
-          `).join("")}
-        </div>
+  const renderTileSection = (title, subtitle, tiles) => `
+    <div class="module-hub-section" style="margin-bottom: 20px;">
+      <div style="margin-bottom: 10px;">
+        <h3 class="module-hub-section-title" style="margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: 0.05em;">${title}</h3>
+        <p style="font-size: 12px; color: var(--muted); margin: 2px 0 0 0;">${subtitle}</p>
       </div>
+      <div class="module-tile-grid">
+        ${tiles.map((t) => `
+          <button class="module-hub-tile" data-inv-hub-tile="${t.id}" type="button">
+            <div class="module-tile-icon-box">${t.icon}</div>
+            <div class="module-tile-content">
+              <div class="module-tile-title-row">
+                <span class="module-tile-title">${t.title}</span>
+                ${t.badge ? `<span class="module-tile-badge ${t.badgeType}">${t.badge}</span>` : ""}
+              </div>
+              <div class="module-tile-sub">${t.subtitle}</div>
+            </div>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+
+  return `
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <!-- Conceptual Level 1: Daily Operations -->
+      ${renderTileSection("Daily Operations", "Fast-lane store stock takes, receiving, and replenishment alerts", dailyTiles)}
+
+      <!-- Conceptual Level 2: Control & Governance -->
+      ${renderTileSection("Control & Governance", "Material movement ledger, cycle counts, inter-store transfers, and master catalog", controlTiles)}
+
+      <!-- Conceptual Level 3: Advanced Intelligence & Traceability -->
+      ${renderTileSection("Advanced Intelligence & Traceability", "FEFO expiration tracking, batch lots, recipe variance, and quarantine controls", advancedTiles)}
 
       <!-- Top KPI Grid -->
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">

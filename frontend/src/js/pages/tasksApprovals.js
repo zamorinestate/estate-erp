@@ -7,6 +7,7 @@ import { showToast, openModal } from "../components.js";
 import { apiGet, apiPost } from "../apiClient.js";
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
+import { navigate } from "../router.js";
 
 let liveTasks = null;
 let summaryMetrics = null;
@@ -346,13 +347,17 @@ export function renderTasks({ title } = {}) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; margin:0; color:var(--ink);">${escapeHtml(pageTitle)}</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-002 TASKS</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0;">
             Cross-café oversight of operational tasks, compliance obligations, recurring controls, verification and escalations.
           </p>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          ${isOwner ? `
+            <button class="btn btn-secondary" id="goto-complaints-btn" type="button" style="font-weight:600; display:flex; align-items:center; gap:6px;">
+              📢 Complaints &amp; Recovery
+            </button>
+          ` : ""}
           <button class="btn btn-primary" id="add-task-btn" type="button" style="font-weight:700;" aria-label="Assign New Management Task">
             + Assign Management Task
           </button>
@@ -683,6 +688,10 @@ export function renderTasks({ title } = {}) {
 
 function wireTaskEventListeners(root) {
   if (!root) return;
+
+  root.querySelector("#goto-complaints-btn")?.addEventListener("click", () => {
+    navigate("owner-complaints");
+  });
 
   // Refresh Button
   const refreshBtn = root.querySelector("#refresh-tasks-btn");

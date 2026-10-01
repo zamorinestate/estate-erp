@@ -3,7 +3,6 @@
 //
 // Shared canonical POS engine supporting:
 //   - Primary Master (Full org scope, void authority)
-//   - Normal Master (Full org scope, void authority)
 //   - Cafe Operations / CAFE_ADMIN (Strict single-cafe scope, Operator Session attribution,
 //     no void authority, fixed device context)
 // =============================================================================
@@ -11,6 +10,7 @@ import { apiGet, apiPost } from "../apiClient.js";
 import { showToast, openModal, closeModal, confirmAction } from "../components.js";
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
+import { navigate } from "../router.js";
 import { generateInvoicePdf } from "../utils/invoicePdfGenerator.js";
 import { offlineManager, QUEUE_STATUSES } from "../utils/offlineManager.js";
 import { generateQR, buildUpiUri, initClipboard, initSpeedDial } from "../flowbiteUtils.js";
@@ -271,6 +271,9 @@ function renderTerminalView() {
           </button>
           <button class="btn btn-sm btn-secondary" id="view-past-orders-btn" style="font-size:12px;padding:6px 12px;font-weight:700;min-height:32px;" type="button">
             📜 Past Orders
+          </button>
+          <button class="pos-service-mode-btn" id="pos-dept-orders-btn" style="padding:6px 12px;font-size:12px;" type="button" title="Open Department Orders">
+            🏢 Dept Orders
           </button>
           <button class="pos-service-mode-btn" id="toggle-density-btn" style="padding:6px 10px;font-size:12px;" title="Toggle Compact Mode" type="button">
             ${isCompactMode ? "🖼️ Visual" : "☷ Compact"}
@@ -1030,6 +1033,10 @@ function wirePOSEventListeners(root) {
       refreshPOSView(root);
     });
   }
+
+  root.querySelector("#pos-dept-orders-btn")?.addEventListener("click", () => {
+    navigate("dept-orders");
+  });
 
 
   root.querySelectorAll("[data-bump-ticket]").forEach((btn) => {

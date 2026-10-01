@@ -105,24 +105,18 @@ export function renderAdmin(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; margin:0; color:var(--ink);">
-              Administration &amp; Governance
+              Cafés &amp; Administration
             </h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-027 ADMIN</span>
-            <span class="badge" style="background:${isPrimary ? "rgba(16,185,129,0.2)" : "var(--surface-sunken)"}; color:${isPrimary ? "#10b981" : "var(--muted)"}; font-weight:700; font-size:11px; padding:4px 8px; border-radius:12px;">
-              ${isPrimary ? "PRIMARY MASTER" : "OPERATIONAL MASTER"}
+            <span class="badge" style="background:rgba(16,185,129,0.2); color:#10b981; font-weight:700; font-size:11px; padding:4px 8px; border-radius:12px;">
+              PRIMARY MASTER
             </span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0 0;">
-            Multi-Location Café Management, Identity Lifecycle, Security Policies, Configuration Schema &amp; Immutable Audit
+            Multi-Location Café Management, Assets, Quality Standards, Identity Lifecycle &amp; Governance
           </p>
         </div>
 
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          ${
-            !isPrimary && isMaster
-              ? `<button class="btn btn-ghost" id="admin-request-primary-btn" type="button">📩 Request Primary Action</button>`
-              : ""
-          }
           <button class="btn btn-secondary" id="admin-live-refresh-btn" type="button" style="display:flex; align-items:center; gap:6px; font-weight:600;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             Refresh Admin
@@ -251,6 +245,8 @@ function renderOverviewTab() {
 
   const adminTiles = [
     { id: "cafes", icon: "🏛️", title: "Cafés & Locations", subtitle: "Multi-location café lifecycle, opening checklist & statuses", badge: `${kpis.cafes?.active || 3} Active`, badgeType: "accent" },
+    { id: "assets", icon: "🔧", title: "Assets & Maintenance", subtitle: "Espresso machines, grinders, refrigeration & equipment service", badge: "Equipment", badgeType: "", isExternalRoute: true },
+    { id: "quality", icon: "✨", title: "Quality & Compliance", subtitle: "Food safety standards, hygiene audits & compliance checklists", badge: "Standards", badgeType: "success", isExternalRoute: true },
     { id: "users", icon: "👥", title: "Users & Identity", subtitle: "User credentials, access levels & JML identity lifecycles", badge: `${kpis.users?.active || 42} Users`, badgeType: "" },
     { id: "governance", icon: "🛡️", title: "Governance & Policies", subtitle: "RBAC matrix, device trust, session policies & approvals", badge: "Enforced", badgeType: "success" },
     { id: "configuration", icon: "⚙️", title: "Configuration & Schema", subtitle: "GSTIN tax registries, custom schema & templates", badge: "Governed", badgeType: "success" },
@@ -295,8 +291,8 @@ function renderOverviewTab() {
           trendType: "up",
         })}
         ${kpiCard({
-          label: "MASTER Accounts",
-          value: `${kpis.masters?.primary || 1} Primary · ${kpis.masters?.normal || 0} Normal`,
+          label: "Master Account",
+          value: `${kpis.masters?.primary || 1} Primary Master`,
           trend: "Single Primary Invariant",
           trendType: "neutral",
         })}
