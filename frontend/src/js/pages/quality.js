@@ -1176,7 +1176,7 @@ function openExecuteTemplateModal(root, tmpl) {
     };
 
     try {
-      await apiPost('/quality/checklists', {
+      const res = await apiPost('/quality/checklists', {
         cafeId: state.currentCafeId || state.selectedCafeId || '',
         title: tmpl.title,
         frequency: tmpl.frequency,
@@ -1185,14 +1185,15 @@ function openExecuteTemplateModal(root, tmpl) {
         items,
         overallResult,
         actionRequired: notes,
-      }).catch(() => null);
-    } catch (err) {}
-
-    cachedChecklists.unshift(newChecklist);
-    showToast(`Quality inspection ${newCheckId} ("${tmpl.title}") completed and logged!`, 'success');
-    closeModal();
-    const inner = document.querySelector('#quality-submodule-inner-content');
-    if (inner) renderMyChecksSubtab(root, inner);
+      });
+      cachedChecklists.unshift(res?.data?.checklist || newChecklist);
+      showToast(res?.message || `Quality inspection ${newCheckId} ("${tmpl.title}") completed and logged!`, 'success');
+      closeModal();
+      const inner = document.querySelector('#quality-submodule-inner-content');
+      if (inner) renderMyChecksSubtab(root, inner);
+    } catch (err) {
+      showToast(err?.message || 'Failed to record quality inspection.', 'error');
+    }
   });
 }
 
@@ -1323,7 +1324,7 @@ function openLogTempModal(root) {
     };
 
     try {
-      await apiPost('/quality/temperatures', {
+      const res = await apiPost('/quality/temperatures', {
         cafeId: state.currentCafeId || state.selectedCafeId || '',
         assetId,
         assetName,
@@ -1331,14 +1332,15 @@ function openLogTempModal(root) {
         expectedMinCelsius: newTemp.expectedMinCelsius,
         expectedMaxCelsius: newTemp.expectedMaxCelsius,
         notes,
-      }).catch(() => null);
-    } catch (err) {}
-
-    cachedTemperatures.unshift(newTemp);
-    showToast(`Temperature ${reading}°C logged for ${assetName}`, isExcursion ? 'warning' : 'success');
-    closeModal();
-    const inner = document.querySelector('#quality-submodule-inner-content');
-    if (inner) renderTemperaturesSubtab(root, inner);
+      });
+      cachedTemperatures.unshift(res?.data?.temperature || res?.data?.log || newTemp);
+      showToast(res?.message || `Temperature ${reading}°C logged for ${assetName}`, isExcursion ? 'warning' : 'success');
+      closeModal();
+      const inner = document.querySelector('#quality-submodule-inner-content');
+      if (inner) renderTemperaturesSubtab(root, inner);
+    } catch (err) {
+      showToast(err?.message || 'Failed to record temperature reading.', 'error');
+    }
   });
 }
 
