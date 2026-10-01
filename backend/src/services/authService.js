@@ -493,71 +493,74 @@ async function recordFailedLogin(user) {
     );
   }
 
-  const lockDurationMs =
-    TEMPORARY_LOCK_MINUTES * 60 * 1000;
+  // Atomically claim the next failed-attempt count while the account is still
+  // active and below the threshold. This avoids whole-document save() races
+  // under User.optimisticConcurrency and caps concurrent requests at the
+  // configured threshold.
+  const updatedUser = await User.findOneAndUpdate(
+    {
+      _id: user._id,
+      accountStatus: 'ACTIVE',
+      $or: [
+        {
+          failedLoginAttempts: {
+            $lt: MAX_FAILED_LOGIN_ATTEMPTS,
+          },
+        },
+        {
+          failedLoginAttempts: {
+            $exists: false,
+          },
+        },
+      ],
+    },
+    {
+      $inc: {
+        failedLoginAttempts: 1,
+        version: 1,
+      },
+      $set: {
+        updatedAt: new Date(),
+      },
+    },
+    {
+      new: true,
+    }
+  ).select(
+    'failedLoginAttempts accountStatus lockedUntil'
+  );
 
-  // Failed-login accounting is security state and must remain correct under
-  // parallel requests. A document save is intentionally avoided here because
-  // User uses optimistic concurrency: two bad-password requests can load the
-  // same version and cause one increment to be lost with VersionError.
+  if (
+    !updatedUser ||
+    updatedUser.failedLoginAttempts <
+      MAX_FAILED_LOGIN_ATTEMPTS
+  ) {
+    return;
+  }
+
+  const lockUntil = new Date(
+    Date.now() +
+      TEMPORARY_LOCK_MINUTES * 60 * 1000
+  );
+
   await User.updateOne(
     {
       _id: user._id,
       accountStatus: 'ACTIVE',
-    },
-    [
-      {
-        $set: {
-          failedLoginAttempts: {
-            $add: [
-              { $ifNull: ['$failedLoginAttempts', 0] },
-              1,
-            ],
-          },
-          accountStatus: {
-            $cond: [
-              {
-                $gte: [
-                  {
-                    $add: [
-                      { $ifNull: ['$failedLoginAttempts', 0] },
-                      1,
-                    ],
-                  },
-                  MAX_FAILED_LOGIN_ATTEMPTS,
-                ],
-              },
-              'LOCKED',
-              '$accountStatus',
-            ],
-          },
-          lockedUntil: {
-            $cond: [
-              {
-                $gte: [
-                  {
-                    $add: [
-                      { $ifNull: ['$failedLoginAttempts', 0] },
-                      1,
-                    ],
-                  },
-                  MAX_FAILED_LOGIN_ATTEMPTS,
-                ],
-              },
-              { $add: ['$NOW', lockDurationMs] },
-              '$lockedUntil',
-            ],
-          },
-          updatedAt: '$NOW',
-          version: {
-            $add: [
-              { $ifNull: ['$version', 0] },
-              1,
-            ],
-          },
-        },
+      failedLoginAttempts: {
+        $gte: MAX_FAILED_LOGIN_ATTEMPTS,
       },
-    ]
+    },
+    {
+      $set: {
+        accountStatus: 'LOCKED',
+        lockedUntil: lockUntil,
+        updatedAt: new Date(),
+      },
+      $inc: {
+        version: 1,
+      },
+    }
   );
 }
 
