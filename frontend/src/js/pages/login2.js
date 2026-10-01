@@ -1269,7 +1269,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
         isSubmitting = false;
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Sign In";
+          submitBtn.textContent = "Login";
         }
         if (errorEl) {
           const rawMsg = err.userMessage || err.message || "";
@@ -1282,7 +1282,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
           } else if (err.isServerError || (err.status >= 500 && err.status <= 599)) {
             errorEl.textContent = "The server encountered a temporary error. Please try again in a moment.";
           } else if (err.status === 401 || err.code === "INVALID_LOGIN" || err.code === "INVALID_CREDENTIALS") {
-            errorEl.textContent = "Invalid email or password. Please verify your credentials and try again.";
+            errorEl.textContent = "Sign-in failed. Verify your credentials. If you recently changed your password or had repeated attempts, use Forgot Password to restore access.";
           } else if (rawMsg === "You do not have permission to perform this action." || err.status === 403 || err.code === "PERMISSION_DENIED" || err.code === "FORBIDDEN") {
             errorEl.textContent = "Invalid credentials or access denied. Please verify your Organisation ID, email, and password.";
           } else {
