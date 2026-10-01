@@ -31,6 +31,7 @@ const employeeService = require('../services/employeeService');
 const { hashPassword } = require('../services/authService');
 const operatorSessionService = require('../services/operatorSessionService');
 const { generateTemporaryEmployeePassword } = require('../utils/secureRandom');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 
 // ─── 1. OVERVIEW & WORKFORCE KPIS ─────────────────────────────────────────────
 const getWorkforceOverview = asyncHandler(async (req, res) => {
@@ -566,81 +567,144 @@ const onboardEmployee = asyncHandler(async (req, res) => {
 
   const employmentStatus = isPreboarding ? 'PREBOARDING' : 'PROBATION';
 
-  const newUser = await User.create({
-    userId: newUserId,
-    organisationId,
-    name: effectiveName,
-    preferredName: effectivePreferredName,
-    email: effectiveEmail,
-    phone: effectivePhone,
-    role: effectiveRole,
-    department,
-    designation: effectiveDesignation,
-    employmentType,
-    workerType: effectiveWorkerType,
-    employmentStatus,
-    probationStatus: 'PENDING',
-    primaryCafeId: effectivePrimaryCafeId,
-    assignedCafeIds: effectiveAssignedCafeIds,
-    positionId,
-    managerUserId,
-    joiningDate: new Date(joiningDate),
-    accountStatus: 'ACTIVE',
-    passwordHash,
-    mustChangePassword: true,
-    operatorPinHash,
-    operatorPinSetAt,
-    createdBy: actorId,
+  let newUser = null;
+  let onboardingTrainingId = null;
+  let onboardingDocumentId = null;
+
+  const compensateStandaloneOnboarding = async () => {
+    try {
+      if (onboardingDocumentId) {
+        await EmployeeDocument.deleteOne({
+          organisationId,
+          userId: newUserId,
+          documentId: onboardingDocumentId,
+        });
+      }
+      if (onboardingTrainingId) {
+        await EmployeeTraining.deleteOne({
+          organisationId,
+          userId: newUserId,
+          trainingId: onboardingTrainingId,
+        });
+      }
+      if (newUser?._id) {
+        await User.deleteOne({
+          _id: newUser._id,
+          organisationId,
+          userId: newUserId,
+        });
+      }
+    } catch (compensationError) {
+      throw new ApiError(
+        503,
+        'EMPLOYEE_ONBOARDING_COMPENSATION_FAILED',
+        'Employee onboarding failed and its partial records could not be safely compensated.',
+        { cause: String(compensationError?.message || 'UNKNOWN_COMPENSATION_FAILURE') }
+      );
+    }
+  };
+
+  await executeTransactionWithRetry(async (session) => {
+    try {
+      newUser = new User({
+        userId: newUserId,
+        organisationId,
+        name: effectiveName,
+        preferredName: effectivePreferredName,
+        email: effectiveEmail,
+        phone: effectivePhone,
+        role: effectiveRole,
+        department,
+        designation: effectiveDesignation,
+        employmentType,
+        workerType: effectiveWorkerType,
+        employmentStatus,
+        probationStatus: 'PENDING',
+        primaryCafeId: effectivePrimaryCafeId,
+        assignedCafeIds: effectiveAssignedCafeIds,
+        positionId,
+        managerUserId,
+        joiningDate: new Date(joiningDate),
+        accountStatus: 'ACTIVE',
+        passwordHash,
+        mustChangePassword: true,
+        operatorPinHash,
+        operatorPinSetAt,
+        createdBy: actorId,
+      });
+      await newUser.save(session ? { session } : undefined);
+
+      // Seed default onboarding training & documents checklist using
+      // authoritative sequence IDs in the same transaction when available.
+      const onboardingYear = new Date().getFullYear();
+      onboardingTrainingId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `EMPLOYEE_TRAINING_${onboardingYear}`,
+        prefix: `TRN-${onboardingYear}`,
+        minimumDigits: 4,
+        session,
+      });
+      onboardingDocumentId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `EMPLOYEE_DOCUMENT_${onboardingYear}`,
+        prefix: `DOC-${onboardingYear}`,
+        minimumDigits: 4,
+        session,
+      });
+
+      const training = new EmployeeTraining({
+        trainingId: onboardingTrainingId,
+        organisationId,
+        userId: newUserId,
+        trainingTitle: 'Food Safety & Hygiene Induction (FoSTaC)',
+        dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        status: 'ASSIGNED',
+      });
+      await training.save(session ? { session } : undefined);
+
+      const document = new EmployeeDocument({
+        documentId: onboardingDocumentId,
+        organisationId,
+        userId: newUserId,
+        category: 'POLICY_ACKNOWLEDGEMENT',
+        documentName: 'Employee Handbook & Code of Conduct Acknowledgement',
+        status: 'PENDING_ACKNOWLEDGEMENT',
+      });
+      await document.save(session ? { session } : undefined);
+
+      await recordRequestAudit({
+        request: req,
+        module: 'EMPLOYEES',
+        action: 'ONBOARD_EMPLOYEE',
+        entityType: 'EMPLOYEE',
+        entityId: newUserId,
+        cafeId: effectivePrimaryCafeId,
+        after: {
+          userId: newUserId,
+          role: effectiveRole,
+          primaryCafeId: effectivePrimaryCafeId,
+          assignedCafeIds: effectiveAssignedCafeIds,
+          employmentStatus,
+          onboardingTrainingId,
+          onboardingDocumentId,
+          hasOperatorPin: Boolean(operatorPinHash),
+        },
+        metadata: {
+          role: effectiveRole,
+          primaryCafeId: effectivePrimaryCafeId,
+          employmentStatus,
+          hasOperatorPin: Boolean(operatorPinHash),
+        },
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+      }, { session });
+    } catch (error) {
+      if (!session) {
+        await compensateStandaloneOnboarding();
+      }
+      throw error;
+    }
   });
-
-  // Seed default onboarding training & documents checklist using
-  // authoritative sequence IDs. ID allocation failure blocks onboarding.
-  const onboardingYear = new Date().getFullYear();
-  const [onboardingTrainingId, onboardingDocumentId] = await Promise.all([
-    SequenceCounter.generateId({
-      organisationId,
-      sequenceKey: `EMPLOYEE_TRAINING_${onboardingYear}`,
-      prefix: `TRN-${onboardingYear}`,
-      minimumDigits: 4,
-    }),
-    SequenceCounter.generateId({
-      organisationId,
-      sequenceKey: `EMPLOYEE_DOCUMENT_${onboardingYear}`,
-      prefix: `DOC-${onboardingYear}`,
-      minimumDigits: 4,
-    }),
-  ]);
-
-  await EmployeeTraining.create({
-    trainingId: onboardingTrainingId,
-    organisationId,
-    userId: newUserId,
-    trainingTitle: 'Food Safety & Hygiene Induction (FoSTaC)',
-    dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    status: 'ASSIGNED',
-  });
-
-  await EmployeeDocument.create({
-    documentId: onboardingDocumentId,
-    organisationId,
-    userId: newUserId,
-    category: 'POLICY_ACKNOWLEDGEMENT',
-    documentName: 'Employee Handbook & Code of Conduct Acknowledgement',
-    status: 'PENDING_ACKNOWLEDGEMENT',
-  });
-
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'ONBOARD_EMPLOYEE',
-      entityType: 'EMPLOYEE',
-      entityId: newUserId,
-      metadata: { name, email, role, primaryCafeId, employmentStatus, hasOperatorPin: Boolean(operatorPinHash) },
-    });
-  } catch (e) {
-    // Non-blocking audit
-  }
 
   return res.status(201).json({
     success: true,
@@ -700,24 +764,23 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
   }
 
   let effectivePassword = null;
+  let nextPasswordHash = null;
+
   if (password && String(password).trim().length > 0) {
     effectivePassword = String(password).trim();
     if (effectivePassword.length < 8) {
       throw new ApiError(400, 'INVALID_PASSWORD', 'Password must be at least 8 characters.');
     }
-    user.passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
-    user.mustChangePassword = true;
-    user.failedLoginAttempts = 0;
-    user.accountLockUntil = null;
+    nextPasswordHash = await hashPassword(effectivePassword, { minLength: 8 });
   } else if (generatePassword) {
     effectivePassword = generateTemporaryEmployeePassword();
-    user.passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
-    user.mustChangePassword = true;
-    user.failedLoginAttempts = 0;
-    user.accountLockUntil = null;
+    nextPasswordHash = await hashPassword(effectivePassword, { minLength: 8 });
   }
 
   let pinSet = false;
+  let nextOperatorPinHash = null;
+  let nextOperatorPinSetAt = null;
+
   if (operatorPin !== undefined && operatorPin !== null && String(operatorPin).trim().length > 0) {
     const pinStr = String(operatorPin).trim();
     if (!/^\d{6}$/.test(pinStr)) {
@@ -727,43 +790,149 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
     if (weakPins.includes(pinStr)) {
       throw new ApiError(400, 'WEAK_OPERATOR_PIN', 'Please choose a stronger, non-sequential 6-digit PIN.');
     }
-    user.operatorPinHash = await operatorSessionService.hashPin(pinStr);
-    user.operatorPinSetAt = new Date();
-    user.operatorPinFailedAttempts = 0;
-    user.operatorPinLockedUntil = null;
+    nextOperatorPinHash = await operatorSessionService.hashPin(pinStr);
+    nextOperatorPinSetAt = new Date();
     pinSet = true;
   }
 
-  await user.save();
+  const before = {
+    passwordHash: user.passwordHash,
+    mustChangePassword: Boolean(user.mustChangePassword),
+    failedLoginAttempts: Number(user.failedLoginAttempts || 0),
+    accountLockUntil: user.accountLockUntil || null,
+    operatorPinHash: user.operatorPinHash || null,
+    operatorPinSetAt: user.operatorPinSetAt || null,
+    operatorPinFailedAttempts: Number(user.operatorPinFailedAttempts || 0),
+    operatorPinLockedUntil: user.operatorPinLockedUntil || null,
+    version: Number(user.__v || 0),
+  };
 
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'SET_EMPLOYEE_CREDENTIALS',
-      entityType: 'USER',
-      entityId: user.userId,
-      metadata: {
-        targetUserId: user.userId,
-        passwordUpdated: Boolean(effectivePassword),
-        operatorPinUpdated: pinSet,
+  let updatedUser = null;
+
+  await executeTransactionWithRetry(async (session) => {
+    const set = {};
+
+    if (nextPasswordHash) {
+      set.passwordHash = nextPasswordHash;
+      set.mustChangePassword = true;
+      set.failedLoginAttempts = 0;
+      set.accountLockUntil = null;
+    }
+
+    if (pinSet) {
+      set.operatorPinHash = nextOperatorPinHash;
+      set.operatorPinSetAt = nextOperatorPinSetAt;
+      set.operatorPinFailedAttempts = 0;
+      set.operatorPinLockedUntil = null;
+    }
+
+    const changed = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        organisationId: organisationId.trim().toUpperCase(),
+        userId: user.userId,
+        __v: before.version,
       },
-    });
-  } catch (e) {
-    // Non-blocking audit
-  }
+      {
+        $set: set,
+        $inc: { __v: 1 },
+      },
+      {
+        new: true,
+        ...(session ? { session } : {}),
+      }
+    );
+
+    if (!changed) {
+      throw new ApiError(
+        409,
+        'EMPLOYEE_CREDENTIAL_STATE_CONFLICT',
+        'Employee credentials changed concurrently. Reload the employee and retry.'
+      );
+    }
+
+    try {
+      await recordRequestAudit({
+        request: req,
+        module: 'EMPLOYEES',
+        action: 'SET_EMPLOYEE_CREDENTIALS',
+        entityType: 'USER',
+        entityId: changed.userId,
+        cafeId: changed.primaryCafeId || null,
+        before: {
+          mustChangePassword: before.mustChangePassword,
+          failedLoginAttempts: before.failedLoginAttempts,
+          accountLocked: Boolean(before.accountLockUntil),
+          operatorPinConfigured: Boolean(before.operatorPinHash),
+          operatorPinFailedAttempts: before.operatorPinFailedAttempts,
+          operatorPinLocked: Boolean(before.operatorPinLockedUntil),
+        },
+        after: {
+          mustChangePassword: changed.mustChangePassword,
+          failedLoginAttempts: changed.failedLoginAttempts || 0,
+          accountLocked: Boolean(changed.accountLockUntil),
+          operatorPinConfigured: Boolean(changed.operatorPinHash),
+          operatorPinFailedAttempts: changed.operatorPinFailedAttempts || 0,
+          operatorPinLocked: Boolean(changed.operatorPinLockedUntil),
+        },
+        metadata: {
+          targetUserId: changed.userId,
+          passwordUpdated: Boolean(nextPasswordHash),
+          operatorPinUpdated: pinSet,
+        },
+        result: 'SUCCESS',
+        riskClassification: 'CRITICAL',
+      }, { session });
+    } catch (auditError) {
+      if (!session) {
+        const rollback = await User.findOneAndUpdate(
+          {
+            _id: changed._id,
+            organisationId: organisationId.trim().toUpperCase(),
+            userId: changed.userId,
+            __v: before.version + 1,
+          },
+          {
+            $set: {
+              passwordHash: before.passwordHash,
+              mustChangePassword: before.mustChangePassword,
+              failedLoginAttempts: before.failedLoginAttempts,
+              accountLockUntil: before.accountLockUntil,
+              operatorPinHash: before.operatorPinHash,
+              operatorPinSetAt: before.operatorPinSetAt,
+              operatorPinFailedAttempts: before.operatorPinFailedAttempts,
+              operatorPinLockedUntil: before.operatorPinLockedUntil,
+            },
+            $inc: { __v: 1 },
+          },
+          { new: true }
+        );
+
+        if (!rollback) {
+          throw new ApiError(
+            503,
+            'EMPLOYEE_CREDENTIAL_AUDIT_ROLLBACK_FAILED',
+            'Credential audit failed and the credential mutation could not be safely rolled back.'
+          );
+        }
+      }
+      throw auditError;
+    }
+
+    updatedUser = changed;
+  });
 
   return res.status(200).json({
     success: true,
-    message: `Credentials updated successfully for ${user.name} (${user.userId}).`,
+    message: `Credentials updated successfully for ${updatedUser.name} (${updatedUser.userId}).`,
     data: {
-      userId: user.userId,
-      name: user.name,
-      email: user.email,
+      userId: updatedUser.userId,
+      name: updatedUser.name,
+      email: updatedUser.email,
       temporaryPassword: effectivePassword,
       operatorPin: pinSet ? String(operatorPin).trim() : null,
-      operatorPinConfigured: Boolean(user.operatorPinHash),
-      mustChangePassword: user.mustChangePassword,
+      operatorPinConfigured: Boolean(updatedUser.operatorPinHash),
+      mustChangePassword: updatedUser.mustChangePassword,
     },
   });
 });
