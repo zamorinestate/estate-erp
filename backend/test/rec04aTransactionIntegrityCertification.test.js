@@ -88,7 +88,15 @@ test('REC-04A — POS Transaction-Integrity Reconciliation & Certification', asy
       return { success: true, alreadyDepleted: true, processedItemsCount: 0, consumedLots: [],
                existingMovementId: 'SM-MOCK-EXISTING' };
     }
-    return { depleted: true, alreadyDepleted: false, processedItemsCount: 1, consumedLots: [], billId };
+    return {
+      success: true,
+      depleted: true,
+      alreadyDepleted: false,
+      allDeductionsSucceeded: true,
+      processedItemsCount: 1,
+      consumedLots: [],
+      billId,
+    };
   });
 
   // ─── SEQUENCE COUNTER (static) ────────────────────────────────────────────
@@ -99,9 +107,34 @@ test('REC-04A — POS Transaction-Integrity Reconciliation & Certification', asy
 
   // ─── CAFE (static) ────────────────────────────────────────────────────────
   t.mock.method(Cafe, 'findOne', async (q = {}) => ({
-    cafeId: q?.cafeId || CAFE, organisationId: ORG,
-    displayName: 'Zamorin REC-04A Branch', gstin: '32AAACZ1234K1Z5',
-    cafeCode: 'C01', status: 'ACTIVE',
+    cafeId: q?.cafeId || CAFE,
+    organisationId: ORG,
+    name: 'Zamorin REC-04A Branch',
+    displayName: 'Zamorin REC-04A Branch',
+    legalName: 'Zamorin Hospitality Private Limited',
+    cafeCode: 'C01',
+    status: 'ACTIVE',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '32AAACZ1234K1Z5',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin REC-04A Branch',
+        principalPlace: 'Mavoor Road, Kozhikode, Kerala 673004',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '22334455667788',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin REC-04A Branch',
+      street: 'Mavoor Road',
+      city: 'Kozhikode',
+      state: 'Kerala',
+      pinCode: '673004',
+    },
     toObject() { return this; },
   }));
 
