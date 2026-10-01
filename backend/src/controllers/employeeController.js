@@ -954,10 +954,11 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
     employmentStatus,
   } = req.body;
 
-  const normalizedUserId = String(userId).trim().toUpperCase();
+  const cleanOrg = String(organisationId || '').trim().toUpperCase();
+  const normalizedUserId = String(userId || '').trim().toUpperCase();
 
   const user = await User.findOne({
-    organisationId: organisationId.trim().toUpperCase(),
+    organisationId: cleanOrg,
     userId: normalizedUserId,
   });
 
@@ -976,42 +977,86 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
     req.auth?.isPrimaryMaster === true ||
     String(req.auth?.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
 
+  if (isTargetPM && !isCallerPM) {
+    throw new ApiError(
+      403,
+      'CANNOT_EDIT_PRIMARY_MASTER',
+      'The Primary Master account is protected and cannot be modified by other users.'
+    );
+  }
+
+  const before = {
+    name: user.name,
+    preferredName: user.preferredName || '',
+    phone: user.phone || '',
+    primaryCafeId: user.primaryCafeId || null,
+    assignedCafeIds: Array.isArray(user.assignedCafeIds) ? [...user.assignedCafeIds] : [],
+    department: user.department || '',
+    designation: user.designation || '',
+    role: user.role,
+    workerType: user.workerType || '',
+    employmentStatus: user.employmentStatus || '',
+    isPrimaryMaster: Boolean(user.isPrimaryMaster),
+    version: Number(user.__v || 0),
+  };
+
+  const set = {};
+
+  if (name && String(name).trim()) set.name = String(name).trim();
+  if (preferredName !== undefined) set.preferredName = String(preferredName || '').trim();
+  if (phone !== undefined) set.phone = String(phone || '').trim();
+
   if (isTargetPM) {
-    if (!isCallerPM) {
+    set.role = 'MASTER';
+    set.isPrimaryMaster = true;
+    set.designation = 'Primary Master';
+    set.position = 'Primary Master';
+  } else {
+    const nextAssignedCafeIds = assignedCafeIds !== undefined
+      ? Array.from(new Set(
+          (Array.isArray(assignedCafeIds) ? assignedCafeIds : [])
+            .map((id) => String(id || '').trim().toUpperCase())
+            .filter(Boolean)
+        ))
+      : before.assignedCafeIds.map((id) => String(id || '').trim().toUpperCase()).filter(Boolean);
+
+    const nextPrimaryCafeId = primaryCafeId !== undefined && primaryCafeId !== null
+      ? String(primaryCafeId || '').trim().toUpperCase() || null
+      : before.primaryCafeId;
+
+    if (nextPrimaryCafeId && !nextAssignedCafeIds.includes(nextPrimaryCafeId)) {
       throw new ApiError(
-        403,
-        'CANNOT_EDIT_PRIMARY_MASTER',
-        'The Primary Master account is protected and cannot be modified by other users.'
+        400,
+        'PRIMARY_CAFE_NOT_ASSIGNED',
+        'The primary café must be included in the assigned cafés.'
       );
     }
-    // Primary Master editing his own profile
-    if (name && String(name).trim()) user.name = String(name).trim();
-    if (preferredName !== undefined) user.preferredName = String(preferredName).trim();
-    if (phone !== undefined) user.phone = String(phone).trim();
-    // Role, designation and isPrimaryMaster remain immutably Primary Master
-    user.role = 'MASTER';
-    user.isPrimaryMaster = true;
-    user.designation = 'Primary Master';
-    user.position = 'Primary Master';
-  } else {
-    // Normal employee profile update
-    if (name && String(name).trim()) user.name = String(name).trim();
-    if (preferredName !== undefined) user.preferredName = String(preferredName).trim();
-    if (phone !== undefined) user.phone = String(phone).trim();
-    if (primaryCafeId !== undefined && primaryCafeId !== null) {
-      user.primaryCafeId = String(primaryCafeId).trim().toUpperCase();
+
+    if (nextAssignedCafeIds.length > 0) {
+      const existingCafeCount = await Cafe.countDocuments({
+        organisationId: cleanOrg,
+        cafeId: { $in: nextAssignedCafeIds },
+        status: { $ne: 'ARCHIVED' },
+      });
+
+      if (existingCafeCount !== nextAssignedCafeIds.length) {
+        throw new ApiError(
+          400,
+          'INVALID_CAFE_ASSIGNMENT',
+          'One or more assigned cafés are invalid or archived.'
+        );
+      }
     }
-    if (assignedCafeIds !== undefined && Array.isArray(assignedCafeIds)) {
-      user.assignedCafeIds = assignedCafeIds.map((c) => String(c).trim().toUpperCase());
-    }
-    if (department !== undefined) user.department = String(department).trim();
-    if (designation !== undefined) user.designation = String(designation).trim();
-    if (workerType !== undefined) user.workerType = String(workerType).trim();
-    if (employmentStatus !== undefined) user.employmentStatus = String(employmentStatus).trim();
+
+    if (primaryCafeId !== undefined) set.primaryCafeId = nextPrimaryCafeId;
+    if (assignedCafeIds !== undefined) set.assignedCafeIds = nextAssignedCafeIds;
+    if (department !== undefined) set.department = String(department || '').trim();
+    if (designation !== undefined) set.designation = String(designation || '').trim();
+    if (workerType !== undefined) set.workerType = String(workerType || '').trim();
+    if (employmentStatus !== undefined) set.employmentStatus = String(employmentStatus || '').trim();
 
     if (role !== undefined) {
-      const validRoles = ['STAFF', 'CAFE_ADMIN', 'OWNER'];
-      const candidateRole = String(role).trim().toUpperCase();
+      const candidateRole = String(role || '').trim().toUpperCase();
       if (candidateRole === 'MASTER') {
         throw new ApiError(
           400,
@@ -1019,38 +1064,141 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
           'The Master role is reserved exclusively for the Primary Master. Permitted roles are STAFF, CAFE_ADMIN, and OWNER.'
         );
       }
-      if (validRoles.includes(candidateRole)) {
-        user.role = candidateRole;
-        // Never allow granting Primary Master to another employee
-        user.isPrimaryMaster = false;
+
+      const validRoles = ['STAFF', 'CAFE_ADMIN', 'OWNER'];
+      if (!validRoles.includes(candidateRole)) {
+        throw new ApiError(
+          400,
+          'INVALID_USER_ROLE',
+          'Role must be STAFF, CAFE_ADMIN, or OWNER.'
+        );
       }
+
+      set.role = candidateRole;
+      set.isPrimaryMaster = false;
     }
   }
 
-  await user.save();
+  let updatedUser = null;
 
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'UPDATE_EMPLOYEE_PROFILE',
-      entityType: 'USER',
-      entityId: user.userId,
-      metadata: {
-        updatedUserId: user.userId,
-        designation: user.designation,
-        role: user.role,
-        department: user.department,
-        primaryCafeId: user.primaryCafeId,
+  await executeTransactionWithRetry(async (session) => {
+    const changed = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        organisationId: cleanOrg,
+        userId: normalizedUserId,
+        __v: before.version,
       },
-    });
-  } catch (e) {}
+      {
+        $set: set,
+        $inc: { __v: 1 },
+      },
+      {
+        new: true,
+        runValidators: true,
+        ...(session ? { session } : {}),
+      }
+    );
+
+    if (!changed) {
+      throw new ApiError(
+        409,
+        'EMPLOYEE_PROFILE_STATE_CONFLICT',
+        'Employee profile changed concurrently. Reload the employee and retry.'
+      );
+    }
+
+    try {
+      await recordRequestAudit({
+        request: req,
+        module: 'EMPLOYEES',
+        action: 'UPDATE_EMPLOYEE_PROFILE',
+        entityType: 'USER',
+        entityId: changed.userId,
+        cafeId: changed.primaryCafeId || null,
+        before: {
+          name: before.name,
+          preferredName: before.preferredName,
+          phone: before.phone,
+          primaryCafeId: before.primaryCafeId,
+          assignedCafeIds: before.assignedCafeIds,
+          department: before.department,
+          designation: before.designation,
+          role: before.role,
+          workerType: before.workerType,
+          employmentStatus: before.employmentStatus,
+          isPrimaryMaster: before.isPrimaryMaster,
+        },
+        after: {
+          name: changed.name,
+          preferredName: changed.preferredName || '',
+          phone: changed.phone || '',
+          primaryCafeId: changed.primaryCafeId || null,
+          assignedCafeIds: changed.assignedCafeIds || [],
+          department: changed.department || '',
+          designation: changed.designation || '',
+          role: changed.role,
+          workerType: changed.workerType || '',
+          employmentStatus: changed.employmentStatus || '',
+          isPrimaryMaster: Boolean(changed.isPrimaryMaster),
+        },
+        metadata: {
+          updatedUserId: changed.userId,
+          roleChanged: before.role !== changed.role,
+          cafeScopeChanged:
+            String(before.primaryCafeId || '') !== String(changed.primaryCafeId || '') ||
+            JSON.stringify(before.assignedCafeIds || []) !== JSON.stringify(changed.assignedCafeIds || []),
+        },
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+      }, { session });
+    } catch (auditError) {
+      if (!session) {
+        const rollback = await User.findOneAndUpdate(
+          {
+            _id: changed._id,
+            organisationId: cleanOrg,
+            userId: normalizedUserId,
+            __v: before.version + 1,
+          },
+          {
+            $set: {
+              name: before.name,
+              preferredName: before.preferredName,
+              phone: before.phone,
+              primaryCafeId: before.primaryCafeId,
+              assignedCafeIds: before.assignedCafeIds,
+              department: before.department,
+              designation: before.designation,
+              role: before.role,
+              workerType: before.workerType,
+              employmentStatus: before.employmentStatus,
+              isPrimaryMaster: before.isPrimaryMaster,
+            },
+            $inc: { __v: 1 },
+          },
+          { new: true }
+        );
+
+        if (!rollback) {
+          throw new ApiError(
+            503,
+            'EMPLOYEE_PROFILE_AUDIT_ROLLBACK_FAILED',
+            'Profile audit failed and the employee mutation could not be safely rolled back.'
+          );
+        }
+      }
+      throw auditError;
+    }
+
+    updatedUser = changed;
+  });
 
   return res.status(200).json({
     success: true,
-    message: `Profile for ${user.name} (${user.userId}) has been updated successfully.`,
+    message: `Profile for ${updatedUser.name} (${updatedUser.userId}) has been updated successfully.`,
     data: {
-      employee: user,
+      employee: updatedUser,
     },
   });
 });
