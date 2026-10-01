@@ -14,6 +14,7 @@ function evaluateMasterCafeOperationsAccess({ device, master, now = new Date() }
 
   if (!master) return deny(DENIAL_REASON.MASTER_AUTH_FAILED);
   if (master.isActive === false) return deny(DENIAL_REASON.MASTER_INACTIVE);
+  if (master.role !== 'MASTER_PRIMARY') return deny(DENIAL_REASON.MASTER_AUTH_FAILED);
 
   // Master spec Section 106: a Master account from Organisation A must be
   // denied on an Organisation B device, regardless of how broad their
