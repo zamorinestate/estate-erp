@@ -288,16 +288,13 @@ test('Stage 10 — Explicit Safe Post-Release Systems Test Suite', async (t) => 
       assert.strictEqual(execution.consecutiveFailures, 0);
     });
 
-    await st.test('reports only the genuinely unwired attendance rollover job as unhealthy', () => {
+    await st.test('reports all registered scheduled jobs as runtime-wired', () => {
       const health = scheduledJobRegistry.auditJobHealth();
 
       assert.ok(Array.isArray(health.unwiredJobs));
-      assert.deepEqual(
-        health.unwiredJobs.map((job) => job.jobId).sort(),
-        ['JOB-ATTENDANCE-AUTO-CHECKOUT']
-      );
-      assert.equal(health.wiredJobs, 5);
-      assert.equal(health.isAllHealthy, false);
+      assert.deepEqual(health.unwiredJobs, []);
+      assert.equal(health.wiredJobs, 6);
+      assert.equal(health.isAllHealthy, true);
     });
 
     await st.test('enforces idempotency key checks', () => {
