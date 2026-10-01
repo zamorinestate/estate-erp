@@ -506,23 +506,6 @@ const login = asyncHandler(
       : null;
 
     if (requiresMfa) {
-      let autoCode = undefined;
-      if (!mfaSetupRequired) {
-        try {
-          const fullUser = await User.findOne({
-            organisationId: user.organisationId,
-            userId: user.userId,
-          }).select('+mfaSecretEncrypted');
-          if (fullUser?.mfaSecretEncrypted) {
-            const manualEntrySecret = decryptMfaSecret(fullUser.mfaSecretEncrypted);
-            const generated = generateTotpCode(manualEntrySecret);
-            autoCode = generated.code;
-          }
-        } catch {
-          // fallback
-        }
-      }
-
       return response.status(403).json({
         success: false,
 
@@ -543,7 +526,6 @@ const login = asyncHandler(
           mfaRequired: true,
           mfaSetupRequired,
           rememberDevice: loginInput.rememberDevice,
-          autoCode,
           mfaSetupToken: mfaSetupRequired ? mfaToken : undefined,
           mfaChallengeToken: !mfaSetupRequired ? mfaToken : undefined,
         },
