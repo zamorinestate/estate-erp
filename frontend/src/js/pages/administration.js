@@ -1842,7 +1842,7 @@ async function openCafeEditModal(root, cafeId) {
       mount.innerHTML = "";
       await loadAdminData(root);
     } catch (err) {
-      showToast(err.message || "Failed to update café.", "danger");
+      showToast(err.message || "Unable to save Café changes.", "danger");\n      if (saveBtn) saveBtn.disabled = false;
     }
   });
 }
