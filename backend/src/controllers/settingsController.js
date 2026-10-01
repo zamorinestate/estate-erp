@@ -1567,7 +1567,7 @@ async function getDiagnostics(req, res) {
       status: redisHealth?.isConnected ? 'READY' : 'DEGRADED',
     },
     documentStorage: {
-      status: storageHealth?.status === 'OK' || storageHealth?.status === 'READY'
+      status: ['OK', 'READY', 'HEALTHY'].includes(storageHealth?.status)
         ? 'READY'
         : 'DEGRADED',
     },
