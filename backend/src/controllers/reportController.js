@@ -1112,50 +1112,13 @@ const getPortfolioAnalytics = asyncHandler(async (request, response) => {
     direction: request.query?.direction || 'HIGH_TO_LOW',
   });
 
-  let portfolio = result.portfolioOverview || [];
-  let overallLikeForLikeGrowthPct = result.sameStoreAnalysis?.overallLikeForLikeGrowthPct ?? null;
+  const portfolio = result.portfolioOverview || [];
+  const overallLikeForLikeGrowthPct =
+    result.sameStoreAnalysis?.overallLikeForLikeGrowthPct ?? null;
 
-  if (portfolio.length === 0 && mongoose.connection?.readyState !== 1 && Cafe.find === mongoose.Model.find) {
-    portfolio = [
-      {
-        cafeId: 'CAFE-01',
-        name: 'Primary Hub',
-        category: 'MATURE',
-        openedAt: '2024-06-01',
-        operatingDays: 30,
-        netSales: 215420,
-        priorYearNetSales: 198000,
-        likeForLikeGrowthPct: 8.8,
-        labourCostPct: 19.5,
-        marginPct: 71.2,
-      },
-      {
-        cafeId: 'CAFE-02',
-        name: 'Secondary Hub',
-        category: 'MATURE',
-        openedAt: '2024-11-15',
-        operatingDays: 30,
-        netSales: 127430,
-        priorYearNetSales: 114000,
-        likeForLikeGrowthPct: 11.7,
-        labourCostPct: 20.8,
-        marginPct: 69.4,
-      },
-      {
-        cafeId: 'CAFE-03',
-        name: 'Roastery Reserve',
-        category: 'RAMPING',
-        openedAt: '2026-05-10',
-        operatingDays: 30,
-        netSales: 68500,
-        priorYearNetSales: 0,
-        likeForLikeGrowthPct: null,
-        labourCostPct: 26.4,
-        marginPct: 67.8,
-      },
-    ];
-    overallLikeForLikeGrowthPct = 9.89;
-  }
+  // Never manufacture portfolio cafés or KPI values when the authoritative
+  // source is unavailable. Empty/unavailable is materially different from zero
+  // performance and must remain visible to the caller.
 
   return response.status(200).json({
     success: true,
@@ -1185,17 +1148,19 @@ const getPortfolioAnalytics = asyncHandler(async (request, response) => {
 const getGoalsAndScorecards = asyncHandler(async (request, response) => {
   buildBaseFilter(request, validateAndParseDateFilters(request));
 
-  const scorecards = [
-    { goalId: 'G-2026-01', metric: 'Gross Margin %', target: '>= 68.0%', actual: 'Unavailable', status: 'UNASSESSED', owner: 'Finance & Accounts' },
-    { goalId: 'G-2026-02', metric: 'Labour Cost % of Sales', target: '<= 22.0%', actual: '20.0%', status: 'ACHIEVED', owner: 'People & Workforce' },
-    { goalId: 'G-2026-03', metric: 'Like-for-Like Sales Growth %', target: '>= 8.0%', actual: '9.89%', status: 'ACHIEVED', owner: 'Executive Management' },
-    { goalId: 'G-2026-04', metric: 'Wastage & Spoilage Valuation', target: '<= 1.5% of Sales', actual: '1.2%', status: 'ON_TRACK', owner: 'Supply Chain' },
-  ];
-
+  // The repository currently has DashboardTarget for café sales/order/AOV/
+  // expense ceilings, but no governed cross-domain Goal/Scorecard definition
+  // model with metric formula, owner, approval, effective dates and status
+  // evaluation. Returning pre-labelled ACHIEVED/ON_TRACK rows would therefore
+  // fabricate operational performance.
   return response.status(200).json({
     success: true,
     data: {
-      scorecards,
+      scorecards: [],
+      capabilityStatus: 'NOT_CONFIGURED',
+      sourceStatus: 'GOAL_SCORECARD_DEFINITION_SOURCE_MISSING',
+      message:
+        'Cross-domain goals and scorecards are unavailable until a governed goal-definition and metric-evaluation source is configured. Café sales targets remain available through the existing DashboardTarget workflow.',
     },
     correlationId: request.correlationId || null,
   });
@@ -1206,22 +1171,18 @@ const getGoalsAndScorecards = asyncHandler(async (request, response) => {
 const getScheduledReportsAndAlerts = asyncHandler(async (request, response) => {
   buildBaseFilter(request, validateAndParseDateFilters(request));
 
-  const subscriptions = [
-    { subId: 'SUB-01', report: 'Daily Operations Digest', frequency: 'Daily (23:00 IST)', recipients: 'Store Managers', status: 'ACTIVE', nextRun: 'Today 23:00' },
-    { subId: 'SUB-02', report: 'Weekly Executive Brief', frequency: 'Mondays (08:00 IST)', recipients: 'Primary Master & Owner', status: 'ACTIVE', nextRun: 'Mon 08:00' },
-    { subId: 'SUB-03', report: 'Monthly Statutory P&L Pack', frequency: '1st of Month (09:00 IST)', recipients: 'Finance Controller', status: 'ACTIVE', nextRun: '01 Sep 09:00' },
-  ];
-
-  const alerts = [
-    { alertId: 'ALT-01', name: 'Cash Register Variance > ₹100', condition: 'Blind count diff > 100', triggerCount: 1, lastTriggered: 'Yesterday 22:45', status: 'ACTIVE' },
-    { alertId: 'ALT-02', name: 'Cold-Chain Chiller Temp > 4°C', condition: 'Chiller probe > 4.0°C for > 30m', triggerCount: 0, lastTriggered: 'None', status: 'ACTIVE' },
-  ];
-
+  // No durable report-subscription scheduler or governed alert-rule model is
+  // present in the current repository. Do not present fictional ACTIVE jobs,
+  // trigger counts or next-run timestamps as live system state.
   return response.status(200).json({
     success: true,
     data: {
-      subscriptions,
-      alerts,
+      subscriptions: [],
+      alerts: [],
+      subscriptionCapabilityStatus: 'NOT_IMPLEMENTED_SOURCE_MISSING',
+      alertCapabilityStatus: 'NOT_IMPLEMENTED_SOURCE_MISSING',
+      message:
+        'Scheduled report delivery and governed alert rules are not configured in the current runtime.',
     },
     correlationId: request.correlationId || null,
   });
