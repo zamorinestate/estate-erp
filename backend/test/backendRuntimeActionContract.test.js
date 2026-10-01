@@ -204,6 +204,7 @@ test('BACKEND-RUNTIME-006: diagnostics report real core dependency state instead
   const controllerSource = read('backend/src/controllers/settingsController.js');
   assert.ok(controllerSource.includes('redisClientFactory.getHealthStatus()'));
   assert.ok(controllerSource.includes('documentStorageAdapter.healthCheck()'));
+  assert.ok(controllerSource.includes("['OK', 'READY', 'HEALTHY'].includes(storageHealth?.status)"));
   assert.ok(controllerSource.includes('mongoose.connection.readyState === 1'));
   assert.equal(controllerSource.includes("serviceHealth: 'CONNECTED'"), false);
   assert.ok(settingsFrontend.includes('settings-service-health-chip'));
