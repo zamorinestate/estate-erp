@@ -9,6 +9,7 @@ const {
   requestPasswordReset,
   verifyPasswordResetCode,
   resetPassword,
+  beginAuthenticatedMfaSetup,
   mfaSetup,
   mfaConfirm,
   mfaVerify,
@@ -496,7 +497,8 @@ router.post('/mfa/setup', mfaIpRateLimiter, mfaAccountRateLimiter, mfaSetup);
 router.post('/mfa/confirm', mfaIpRateLimiter, mfaAccountRateLimiter, mfaConfirm);
 router.post('/mfa/verify', mfaIpRateLimiter, mfaAccountRateLimiter, mfaVerify);
 
-// Authenticated MFA status and recovery code regeneration routes
+// Authenticated MFA setup/status and recovery-code management routes
+router.post('/mfa/setup/authenticated', authenticate, mfaIpRateLimiter, beginAuthenticatedMfaSetup);
 router.get('/mfa/status', authenticate, getMfaStatus);
 router.post('/mfa/recovery-codes/regenerate', authenticate, mfaIpRateLimiter, regenerateRecoveryCodes);
 
