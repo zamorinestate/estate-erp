@@ -55,6 +55,18 @@ const DEFAULT_QUALITY_CAPAS = [];
 const DEFAULT_QUALITY_TRACEABILITY = null;
 const DEFAULT_QUALITY_COMPLIANCE = [];
 
+function renderQualityLoadError(container, error, { title, message, retryId }, retry) {
+  container.innerHTML = renderModuleErrorState({
+    title,
+    message,
+    error,
+    retryActionId: retryId,
+    retryLabel: 'Retry',
+    type: error?.status >= 500 ? 'server' : undefined,
+  });
+  container.querySelector(`#${retryId}`)?.addEventListener('click', retry);
+}
+
 export function setQualityActiveTab(tab) {
   const norm = (tab || 'overview').toLowerCase().replace(/_/g, '-');
   const aliasMap = {
@@ -717,11 +729,15 @@ async function renderHoldsSubtab(root, container) {
   container.innerHTML = skeleton('240px');
   try {
     const res = await apiGet('/quality/holds');
-    cachedHolds = res?.data?.holds || DEFAULT_QUALITY_HOLDS;
-    if (!cachedHolds.length) cachedHolds = DEFAULT_QUALITY_HOLDS;
+    cachedHolds = res?.data?.holds || [];
   } catch (err) {
-    console.warn("Quality holds API offline, using fallback data:", err);
-    cachedHolds = DEFAULT_QUALITY_HOLDS;
+    cachedHolds = [];
+    renderQualityLoadError(container, err, {
+      title: 'Quality Holds Unavailable',
+      message: 'The quarantine register could not be verified. No zero-hold assumption has been made.',
+      retryId: 'quality-holds-retry',
+    }, () => renderHoldsSubtab(root, container));
+    return;
   }
 
   container.innerHTML = `
@@ -789,6 +805,12 @@ async function renderNcrsSubtab(root, container) {
     cachedNcrs = res?.data?.ncrs || [];
   } catch (err) {
     cachedNcrs = [];
+    renderQualityLoadError(container, err, {
+      title: 'Non-Conformance Register Unavailable',
+      message: 'Open NCR status could not be verified. The system will not report zero NCRs while the backend is unavailable.',
+      retryId: 'quality-ncr-retry',
+    }, () => renderNcrsSubtab(root, container));
+    return;
   }
 
   if (!cachedNcrs.length) {
@@ -809,11 +831,15 @@ async function renderCapasSubtab(root, container) {
   container.innerHTML = skeleton('240px');
   try {
     const res = await apiGet('/quality/capas');
-    cachedCapas = res?.data?.capas || DEFAULT_QUALITY_CAPAS;
-    if (!cachedCapas.length) cachedCapas = DEFAULT_QUALITY_CAPAS;
+    cachedCapas = res?.data?.capas || [];
   } catch (err) {
-    console.warn("Quality CAPAs API offline, using fallback data:", err);
-    cachedCapas = DEFAULT_QUALITY_CAPAS;
+    cachedCapas = [];
+    renderQualityLoadError(container, err, {
+      title: 'CAPA Register Unavailable',
+      message: 'Corrective and preventive action status could not be verified.',
+      retryId: 'quality-capa-retry',
+    }, () => renderCapasSubtab(root, container));
+    return;
   }
 
   container.innerHTML = `
@@ -876,10 +902,15 @@ async function renderTraceabilitySubtab(root, container) {
   container.innerHTML = skeleton('240px');
   try {
     const res = await apiGet('/quality/traceability');
-    cachedTrace = res?.data?.trace || DEFAULT_QUALITY_TRACEABILITY;
+    cachedTrace = res?.data?.trace || {};
   } catch (err) {
-    console.warn("Quality traceability API offline, using fallback data:", err);
-    cachedTrace = DEFAULT_QUALITY_TRACEABILITY;
+    cachedTrace = null;
+    renderQualityLoadError(container, err, {
+      title: 'Traceability Engine Unavailable',
+      message: 'Batch lineage cannot be verified while the backend is unavailable.',
+      retryId: 'quality-trace-retry',
+    }, () => renderTraceabilitySubtab(root, container));
+    return;
   }
 
   const { searchedLot, backwardTrace, forwardTrace, traceGapCheck, recallReadiness } = cachedTrace;
@@ -892,7 +923,7 @@ async function renderTraceabilitySubtab(root, container) {
           <p style="font-size:11px;color:var(--muted);margin:2px 0 0 0;">End-to-End Backward &amp; Forward Food Safety Lineage Verification</p>
         </div>
         <div style="display:flex;gap:6px;">
-          <input type="text" id="trace-search-lot" class="glass-input" value="${searchedLot || 'LOT-20260815-MILK'}" style="font-size:12px;width:180px;padding:4px 8px;" />
+          <input type="text" id="trace-search-lot" class="glass-input" value="${searchedLot || ''}" placeholder="Enter lot / batch number" style="font-size:12px;width:180px;padding:4px 8px;" />
           <button class="btn btn-sm btn-primary" id="trace-btn" style="font-size:12px;" type="button">Trace Batch</button>
         </div>
       </div>
@@ -947,6 +978,12 @@ async function renderAuditsSubtab(root, container) {
     cachedAudits = res?.data?.audits || [];
   } catch (err) {
     cachedAudits = [];
+    renderQualityLoadError(container, err, {
+      title: 'Audit Register Unavailable',
+      message: 'Audit history could not be verified.',
+      retryId: 'quality-audit-retry',
+    }, () => renderAuditsSubtab(root, container));
+    return;
   }
 
   if (!cachedAudits.length) {
@@ -965,11 +1002,15 @@ async function renderComplianceSubtab(root, container) {
   container.innerHTML = skeleton('240px');
   try {
     const res = await apiGet('/quality/compliance');
-    cachedCompliance = res?.data?.compliance || DEFAULT_QUALITY_COMPLIANCE;
-    if (!cachedCompliance.length) cachedCompliance = DEFAULT_QUALITY_COMPLIANCE;
+    cachedCompliance = res?.data?.compliance || [];
   } catch (err) {
-    console.warn("Quality compliance API offline, using fallback data:", err);
-    cachedCompliance = DEFAULT_QUALITY_COMPLIANCE;
+    cachedCompliance = [];
+    renderQualityLoadError(container, err, {
+      title: 'Compliance Register Unavailable',
+      message: 'Statutory licence and obligation status could not be verified.',
+      retryId: 'quality-compliance-retry',
+    }, () => renderComplianceSubtab(root, container));
+    return;
   }
 
   container.innerHTML = `
@@ -1015,11 +1056,15 @@ async function renderHistorySubtab(root, container) {
   container.innerHTML = skeleton('240px');
   try {
     const res = await apiGet('/quality/checklists?limit=50');
-    cachedChecklists = res?.data?.checklists || DEFAULT_QUALITY_CHECKLISTS;
-    if (!cachedChecklists.length) cachedChecklists = DEFAULT_QUALITY_CHECKLISTS;
+    cachedChecklists = res?.data?.checklists || [];
   } catch (err) {
-    console.warn("Quality history API offline, using fallback data:", err);
-    cachedChecklists = DEFAULT_QUALITY_CHECKLISTS;
+    cachedChecklists = [];
+    renderQualityLoadError(container, err, {
+      title: 'Inspection History Unavailable',
+      message: 'Signed inspection history could not be verified.',
+      retryId: 'quality-history-retry',
+    }, () => renderHistorySubtab(root, container));
+    return;
   }
 
   container.innerHTML = `
