@@ -1478,6 +1478,16 @@ const mfaVerify = asyncHandler(
 
     await user.save();
 
+    const mfaReenrollmentAuthorizationToken =
+      recoveryCode
+        ? generateMfaToken({
+            user,
+            purpose: 'mfa_reenroll_authorized',
+            rememberDevice: false,
+            expiresIn: '10m',
+          })
+        : null;
+
     const device = buildDeviceMetadata(request);
     const network = buildNetworkMetadata(request);
 
@@ -1529,6 +1539,8 @@ const mfaVerify = asyncHandler(
         accessTokenExpiresAt: sessionData.accessTokenExpiresAt,
         refreshTokenExpiresAt: sessionData.refreshTokenExpiresAt,
         trustedDevice: Boolean(registeredTrustedDevice),
+        mfaReenrollmentRequired: Boolean(recoveryCode),
+        mfaReenrollmentAuthorizationToken,
       },
       correlationId:
         request.correlationId || null,
@@ -1847,16 +1859,32 @@ const beginMfaReenrollment = asyncHandler(
         ? request.body.password
         : '';
 
-    const recoveryCode =
-      typeof request.body?.recoveryCode === 'string'
-        ? request.body.recoveryCode.trim()
-        : '';
+    const authorizationToken =
+      request.body?.mfaReenrollmentAuthorizationToken ||
+      request.get('x-mfa-reenrollment-authorization-token');
 
-    if (!password || !recoveryCode) {
+    if (!password || !authorizationToken) {
       throw new ApiError(
         400,
         'MFA_REENROLLMENT_FIELDS_REQUIRED',
-        'Current password and an unused recovery code are required.'
+        'Current password and recovery authorization are required.'
+      );
+    }
+
+    const authorizationPayload =
+      verifyMfaToken(
+        authorizationToken,
+        'mfa_reenroll_authorized'
+      );
+
+    if (
+      authorizationPayload.sub !== request.auth.userId ||
+      authorizationPayload.org !== request.auth.organisationId
+    ) {
+      throw new ApiError(
+        403,
+        'MFA_REENROLLMENT_AUTHORIZATION_MISMATCH',
+        'The MFA replacement authorization does not belong to this session.'
       );
     }
 
@@ -1866,7 +1894,7 @@ const beginMfaReenrollment = asyncHandler(
       accountStatus: 'ACTIVE',
       archivedAt: null,
     }).select(
-      '+passwordHash +pendingMfaSecretEncrypted +recoveryCodeHashes'
+      '+passwordHash +pendingMfaSecretEncrypted'
     );
 
     if (!user || !user.mfaEnabled) {
@@ -1890,24 +1918,6 @@ const beginMfaReenrollment = asyncHandler(
       );
     }
 
-    const hashedRecoveryCode =
-      hashRecoveryCode(recoveryCode);
-
-    const recoveryIndex =
-      (user.recoveryCodeHashes || [])
-        .indexOf(hashedRecoveryCode);
-
-    if (recoveryIndex === -1) {
-      throw new ApiError(
-        400,
-        'INVALID_RECOVERY_CODE',
-        'The recovery code is invalid or has already been used.'
-      );
-    }
-
-    // Consume the recovery credential before issuing replacement material.
-    user.recoveryCodeHashes.splice(recoveryIndex, 1);
-
     const manualEntrySecret =
       generateTotpSecret();
 
@@ -1921,6 +1931,7 @@ const beginMfaReenrollment = asyncHandler(
         user,
         purpose: 'mfa_reenroll',
         rememberDevice: false,
+        expiresIn: '10m',
       });
 
     try {
@@ -1930,11 +1941,11 @@ const beginMfaReenrollment = asyncHandler(
         action: 'MFA_REENROLLMENT_STARTED',
         entityType: 'USER',
         entityId: user.userId,
-        reason: 'MFA replacement initiated with password and recovery-code proof.',
+        reason: 'MFA replacement initiated after recovery-code verification and password confirmation.',
         result: 'SUCCESS',
         riskClassification: 'HIGH',
         metadata: {
-          recoveryCredentialConsumed: true,
+          recoveryAuthorizationVerified: true,
         },
       });
     } catch (_error) {}
