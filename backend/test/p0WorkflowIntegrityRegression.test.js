@@ -105,7 +105,11 @@ test('P0-WF-007: company identity lookup is strictly organisation scoped', () =>
 });
 
 test('P0-WF-008: outlet branding lookup cannot resolve a cafe from another organisation', () => {
-  assert.ok(companyIdentityService.includes("Cafe.findOne({ organisationId: normalizedOrganisationId, cafeId })"));
+  const start = companyIdentityService.indexOf('const outletQuery = Cafe.findOne({');
+  const block = companyIdentityService.slice(start, start + 300);
+  assert.ok(start >= 0, 'Outlet branding must query Cafe');
+  assert.ok(block.includes('organisationId: normalizedOrganisationId'));
+  assert.ok(block.includes('cafeId: normalizedCafeId'));
   assert.equal(companyIdentityService.includes("Cafe.findOne({ cafeId })"), false);
   assert.ok(companyIdentityService.includes("'ORGANISATION_REQUIRED'"));
 });
