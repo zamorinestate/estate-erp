@@ -396,6 +396,37 @@ async function verifyPassword(
   return false;
 }
 
+function getEffectiveAuthSecurityPolicy() {
+  return {
+    password: {
+      minimumLengthWithoutMfa: 15,
+      minimumLengthWithMfa: 8,
+      maximumLength: 128,
+      compositionRulesRequired: false,
+      commonPasswordBlocklistEnabled: true,
+    },
+    mfa: {
+      requiredRoles: [...MFA_REQUIRED_ROLES],
+    },
+    session: {
+      accessTokenTtlMinutes: getPositiveIntegerEnvironmentValue(
+        'JWT_ACCESS_TTL_MINUTES',
+        15
+      ),
+      refreshTokenTtlDays: getPositiveIntegerEnvironmentValue(
+        'REFRESH_TOKEN_TTL_DAYS',
+        7
+      ),
+      absoluteSessionTtlDays: getPositiveIntegerEnvironmentValue(
+        'SESSION_ABSOLUTE_TTL_DAYS',
+        7
+      ),
+    },
+    source: 'AUTH_RUNTIME_CONFIGURATION',
+    runtimeMutable: false,
+  };
+}
+
 function calculateTokenDates() {
   const now = new Date();
 
@@ -1168,6 +1199,7 @@ async function revokeUserSession({
 
 module.exports = {
   MFA_REQUIRED_ROLES,
+  getEffectiveAuthSecurityPolicy,
   SCRYPT_PREFIX,
   normalizePassword,
   needsPasswordRehash,
