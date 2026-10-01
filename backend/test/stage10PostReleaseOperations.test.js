@@ -288,6 +288,26 @@ test('Stage 10 — Explicit Safe Post-Release Systems Test Suite', async (t) => 
       assert.strictEqual(execution.consecutiveFailures, 0);
     });
 
+    await st.test('reports registered-but-unwired cron jobs as unhealthy instead of silently healthy', () => {
+      const health = scheduledJobRegistry.auditJobHealth();
+
+      assert.ok(Array.isArray(health.unwiredJobs));
+      assert.ok(
+        health.unwiredJobs.some((job) => job.jobId === 'JOB-DOCUMENT-INTEGRITY-RECONCILIATION')
+      );
+      assert.ok(
+        health.unwiredJobs.some((job) => job.jobId === 'JOB-ATTENDANCE-AUTO-CHECKOUT')
+      );
+      assert.ok(
+        health.unwiredJobs.some((job) => job.jobId === 'JOB-BACKUP-PRECONDITION-AUDIT')
+      );
+      assert.ok(
+        health.unwiredJobs.some((job) => job.jobId === 'JOB-ASSET-MAINTENANCE-SCHEDULER')
+      );
+      assert.equal(health.wiredJobs, 1);
+      assert.equal(health.isAllHealthy, false);
+    });
+
     await st.test('enforces idempotency key checks', () => {
       const key = `INVOICE_JOB_${Date.now()}_BATCH_UNIQUE`;
       // First attempt succeeds
