@@ -1714,15 +1714,16 @@ function openStaffingRequestModal() {
       reason: payload.reason,
       status: "SUBMITTED"
     };
-    liveStaffingRequests.unshift(newReq);
-
     try {
-      await apiPost("/employees/staffing-requests", payload).catch(() => null);
-    } catch {}
-
-    showToast(`Staffing requisition ${newReqId} submitted for ${payload.positionTitle}!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost("/employees/staffing-requests", payload);
+      const created = res?.data?.staffingRequest || res?.data?.request || newReq;
+      liveStaffingRequests.unshift(created);
+      showToast(res?.message || `Staffing requisition ${created.requestId || newReqId} submitted for ${payload.positionTitle}!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || "Failed to submit staffing requisition.", "error");
+    }
   });
 }
 
@@ -1796,15 +1797,16 @@ function openCreatePositionModal() {
       status: "OPEN",
       isCritical: payload.isCritical
     };
-    livePositions.unshift(newPos);
-
     try {
-      await apiPost("/employees/positions", payload).catch(() => null);
-    } catch {}
-
-    showToast(`Position ${payload.positionTitle} created successfully.`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost("/employees/positions", payload);
+      const created = res?.data?.position || newPos;
+      livePositions.unshift(created);
+      showToast(res?.message || `Position ${payload.positionTitle} created successfully.`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || "Failed to create sanctioned position.", "error");
+    }
   });
 }
 
@@ -1989,30 +1991,30 @@ function openVerifySkillModal() {
       proficiency: document.getElementById("vs-prof").value,
     };
 
-    let existingEmp = liveSkills.find(s => s.userId === userId);
-    if (!existingEmp) {
-      existingEmp = {
-        userId,
-        employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
-        designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
-        cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
-        skills: []
-      };
-      liveSkills.unshift(existingEmp);
-    }
-    existingEmp.skills.unshift({
-      name: payload.skillName,
-      proficiency: payload.proficiency,
-      status: "VERIFIED"
-    });
-
     try {
-      await apiPost(`/employees/${userId}/skills`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`Skill "${payload.skillName}" (${payload.proficiency}) verified for ${userId}!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost(`/employees/${userId}/skills`, payload);
+      let existingEmp = liveSkills.find(s => s.userId === userId);
+      if (!existingEmp) {
+        existingEmp = {
+          userId,
+          employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
+          designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
+          cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
+          skills: []
+        };
+        liveSkills.unshift(existingEmp);
+      }
+      existingEmp.skills.unshift(res?.data?.skill || {
+        name: payload.skillName,
+        proficiency: payload.proficiency,
+        status: "VERIFIED"
+      });
+      showToast(res?.message || `Skill "${payload.skillName}" (${payload.proficiency}) verified for ${userId}!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || `Failed to verify skill for ${userId}.`, "error");
+    }
   });
 }
 
@@ -2063,30 +2065,30 @@ function openAssignTrainingModal() {
       dueDate: document.getElementById("at-due").value,
     };
 
-    let existingEmp = liveSkills.find(s => s.userId === userId);
-    if (!existingEmp) {
-      existingEmp = {
-        userId,
-        employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
-        designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
-        cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
-        skills: []
-      };
-      liveSkills.unshift(existingEmp);
-    }
-    existingEmp.skills.unshift({
-      name: `${payload.trainingTitle} (Due: ${payload.dueDate})`,
-      proficiency: "Assigned",
-      status: "IN_PROGRESS"
-    });
-
     try {
-      await apiPost(`/employees/${userId}/training`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`Training "${payload.trainingTitle}" assigned to ${userId}!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost(`/employees/${userId}/training`, payload);
+      let existingEmp = liveSkills.find(s => s.userId === userId);
+      if (!existingEmp) {
+        existingEmp = {
+          userId,
+          employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
+          designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
+          cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
+          skills: []
+        };
+        liveSkills.unshift(existingEmp);
+      }
+      existingEmp.skills.unshift({
+        name: `${payload.trainingTitle} (Due: ${payload.dueDate})`,
+        proficiency: "Assigned",
+        status: res?.data?.training?.status || "IN_PROGRESS"
+      });
+      showToast(res?.message || `Training "${payload.trainingTitle}" assigned to ${userId}!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || `Failed to assign training to ${userId}.`, "error");
+    }
   });
 }
 
@@ -2305,15 +2307,16 @@ function openLetterGeneratorModal() {
       date: new Date().toISOString().split("T")[0],
       status: "ISSUED"
     };
-    liveDocuments.unshift(newDoc);
-
     try {
-      await apiPost(`/employees/${userId}/documents/generate`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`HR Document "${payload.documentName}" generated successfully (${docId})!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost(`/employees/${userId}/documents/generate`, payload);
+      const created = res?.data?.document || newDoc;
+      liveDocuments.unshift(created);
+      showToast(res?.message || `HR Document "${payload.documentName}" generated successfully (${created.docId || created.documentId || docId})!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || `Failed to generate HR document for ${userId}.`, "error");
+    }
   });
 }
 
