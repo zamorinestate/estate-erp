@@ -317,7 +317,6 @@ function createApp(environment) {
         request.correlationId || null,
     });
 
-  app.get('/api/v1/health', healthHandler);
   app.get('/api/health', healthHandler);
   app.get('/health', healthHandler);
 
@@ -383,6 +382,12 @@ function createApp(environment) {
         correlationId: request.correlationId || null,
       });
   };
+
+  app.get('/api/v1/health', (request, response) =>
+    process.env.NODE_ENV === 'production'
+      ? readinessHandler(request, response)
+      : healthHandler(request, response)
+  );
 
   app.get('/health/ready', readinessHandler);
   app.get('/api/health/ready', readinessHandler);
