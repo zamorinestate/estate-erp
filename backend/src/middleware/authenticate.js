@@ -228,13 +228,18 @@ async function authenticate(
         ''
       ).split('?')[0];
 
-      const allowedDuringReenrollment = [
-        '/auth/mfa/re-enroll/start',
-        '/auth/mfa/re-enroll/confirm',
-        '/auth/logout',
-      ].some((suffix) =>
-        requestPath.endsWith(suffix)
-      );
+      const canonicalPath =
+        requestPath.replace(
+          /^\/api\/v1(?=\/)/,
+          ''
+        );
+
+      const allowedDuringReenrollment =
+        new Set([
+          '/auth/mfa/re-enroll/start',
+          '/auth/mfa/re-enroll/confirm',
+          '/auth/logout',
+        ]).has(canonicalPath);
 
       if (!allowedDuringReenrollment) {
         return response.status(403).json({
