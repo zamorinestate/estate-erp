@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { validateStartupConfiguration } = require('../src/config/startupValidator');
+const { encryptMfaSecret, decryptMfaSecret } = require('../src/services/mfaService');
 
 const root = path.resolve(__dirname, '../..');
 const read = (relativePath) =>
@@ -172,6 +173,38 @@ test('BACKEND-RUNTIME-010: Render binds REDIS_URL to the managed Key Value conne
   assert.ok(renderYaml.includes('name: zamorin-cafe-erp-redis-production'));
   assert.ok(renderYaml.includes('property: connectionString'));
   assert.equal(renderYaml.includes('key: REDIS_URL\n        sync: false'), false);
+});
+
+test('BACKEND-RUNTIME-011: quoted 64-hex MFA keys normalize without changing key material', () => {
+  const quotedKey = `"${'a'.repeat(64)}"`;
+  const report = validateStartupConfiguration(
+    productionEnv({ MFA_ENCRYPTION_KEY: quotedKey }),
+    { failClosed: true }
+  );
+  assert.equal(report.isSafe, true);
+
+  const previous = process.env.MFA_ENCRYPTION_KEY;
+  try {
+    process.env.MFA_ENCRYPTION_KEY = quotedKey;
+    const encrypted = encryptMfaSecret('ZAMORIN-MFA-NORMALIZATION-TEST');
+    assert.notEqual(encrypted, 'ZAMORIN-MFA-NORMALIZATION-TEST');
+    assert.equal(
+      decryptMfaSecret(encrypted),
+      'ZAMORIN-MFA-NORMALIZATION-TEST'
+    );
+  } finally {
+    if (previous === undefined) delete process.env.MFA_ENCRYPTION_KEY;
+    else process.env.MFA_ENCRYPTION_KEY = previous;
+  }
+
+  assert.throws(
+    () => validateStartupConfiguration(
+      productionEnv({ MFA_ENCRYPTION_KEY: '"not-a-valid-hex-key"' }),
+      { failClosed: true }
+    ),
+    (error) => error?.code === 'STARTUP_CONFIGURATION_FAILED' &&
+      String(error.message).includes('MFA_ENCRYPTION_KEY')
+  );
 });
 
 test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
