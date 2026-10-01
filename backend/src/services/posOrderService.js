@@ -1240,7 +1240,10 @@ class PosOrderService {
         if (bomResult?.noInventoryRequirements) {
           billDoc.bomDepletionStatus = 'NOT_ATTEMPTED';
         } else if (bomResult?.alreadyDepleted) {
-          billDoc.bomDepletionStatus = 'DEPLETED';
+          // Preserve the idempotent guard outcome distinctly from a depletion
+          // performed by this request. This makes replay/reconciliation state
+          // observable without implying that stock moved twice.
+          billDoc.bomDepletionStatus = 'ALREADY_DEPLETED';
         } else if (bomResult?.allDeductionsSucceeded === true) {
           billDoc.bomDepletionStatus = 'DEPLETED';
         } else {
