@@ -11,6 +11,11 @@ const root = path.resolve(__dirname, '../..');
 const read = (relativePath) =>
   fs.readFileSync(path.join(root, relativePath), 'utf8').replace(/\r\n/g, '\n');
 
+function hasDirectExpressRoute(source, method, routePath) {
+  const compact = String(source).replace(/\s+/g, '');
+  return compact.includes(`router.${method}('${routePath}'`) || compact.includes(`router.${method}(\"${routePath}\"`);
+}
+
 const serverSource = read('backend/src/server.js');
 const renderYaml = read('render.yaml');
 const deployCheckSource = read('scripts/check_deploy_readiness.mjs');
@@ -132,24 +137,27 @@ test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
     assert.ok(posFrontend.includes(frontendCall), `POS frontend missing expected call ${frontendCall}`);
   }
 
-  for (const backendRoute of [
-    "router.post('/orders/commit'",
-    "router.get('/orders/last/:cafeId'",
-    "router.get('/register/session/current'",
-    "router.post('/register/session/open'",
-    "router.post('/register/session/close'",
-    "router.post('/tickets/hold'",
-    "router.get('/tickets/open'",
-    "router.get('/history/calendar'",
-    "router.get('/history/stats'",
-    "router.get('/items'",
-    "router.get('/simulator'",
-    "router.post('/tickets/:ticketId/bump'",
+  for (const [method, routePath] of [
+    ['post', '/orders/commit'],
+    ['get', '/orders/last/:cafeId'],
+    ['get', '/register/session/current'],
+    ['post', '/register/session/open'],
+    ['post', '/register/session/close'],
+    ['post', '/tickets/hold'],
+    ['get', '/tickets/open'],
+    ['get', '/history/calendar'],
+    ['get', '/history/stats'],
+    ['get', '/items'],
+    ['get', '/simulator'],
+    ['post', '/tickets/:ticketId/bump'],
   ]) {
     assert.ok(
-      [posRoutes, billRoutes, menuRoutes, kdsRoutes].some((source) => source.includes(backendRoute)),
-      `Backend missing POS support route ${backendRoute}`
+      [posRoutes, billRoutes, menuRoutes, kdsRoutes].some((source) =>
+        hasDirectExpressRoute(source, method, routePath)
+      ),
+      `Backend missing POS support route ${method.toUpperCase()} ${routePath}`
     );
+  }
   }
 });
 
@@ -303,24 +311,25 @@ test('BACKEND-ACTION-003: administration and login actions map to live backend r
     );
   }
 
-  for (const backendRoute of [
-    "router.get('/overview'",
-    "router.get('/work-queue'",
-    "router.get('/requests'",
-    "router.post('/requests'",
-    "router.patch('/requests/:requestId/decision'",
-    "router.post('/:userId/role-impact'",
-    "router.patch('/:userId/status'",
-    "router.post('/:userId/archive'",
-    "router.get('/cafe-operations/cafes'",
-    "router.post('/cafe-operations/login'",
+  for (const [method, routePath] of [
+    ['get', '/overview'],
+    ['get', '/work-queue'],
+    ['get', '/requests'],
+    ['post', '/requests'],
+    ['patch', '/requests/:requestId/decision'],
+    ['post', '/:userId/role-impact'],
+    ['patch', '/:userId/status'],
+    ['post', '/:userId/archive'],
+    ['get', '/cafe-operations/cafes'],
+    ['post', '/cafe-operations/login'],
   ]) {
     assert.ok(
-      adminRoutes.includes(backendRoute) ||
-      userRoutes.includes(backendRoute) ||
-      authRoutes.includes(backendRoute),
-      `Backend missing administration/login route ${backendRoute}`
+      [adminRoutes, userRoutes, authRoutes].some((source) =>
+        hasDirectExpressRoute(source, method, routePath)
+      ),
+      `Backend missing administration/login route ${method.toUpperCase()} ${routePath}`
     );
+  }
   }
 
   assert.ok(cafeRoutes.includes(".route('/')"));
