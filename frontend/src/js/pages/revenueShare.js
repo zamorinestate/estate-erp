@@ -186,12 +186,12 @@ export async function wireRevenueShare(container, subroute) {
       e.preventDefault();
       const id = btn.dataset.id;
       apiPost(`/revenue-share/sales/${id}/approve`, { isCertified: true })
-        .catch(() => {})
-        .finally(() => {
-          const item = salesList.find((s) => s.submissionId === id);
-          if (item) item.status = 'APPROVED';
-          showToast(`Sales report ${id} approved & certified.`, 'success');
-          renderActiveTab();
+        .then(async (res) => {
+          showToast(res?.message || `Sales report ${id} approved & certified.`, 'success');
+          await loadAllData();
+        })
+        .catch((err) => {
+          showToast(err?.message || `Failed to approve sales report ${id}.`, 'error');
         });
     } else if (btn.classList.contains('btn-approve-settlement')) {
       e.preventDefault();
@@ -202,17 +202,12 @@ export async function wireRevenueShare(container, subroute) {
         confirmLabel: "Approve & Post",
         onConfirm: async () => {
           try {
-            await apiPost(`/revenue-share/settlements/${id}/approve`, { notes: 'Approved by Master / Finance Head' });
-          } catch {
-            // fallback
+            const res = await apiPost(`/revenue-share/settlements/${id}/approve`, { notes: 'Approved by Master / Finance Head' });
+            showToast(res?.message || `Settlement ${id} approved and posted to Finance ledger.`, 'success');
+            await loadAllData();
+          } catch (err) {
+            showToast(err?.message || `Failed to approve Settlement ${id}.`, 'error');
           }
-          const item = settlementsList.find((s) => s.settlementId === id);
-          if (item) {
-            item.status = 'APPROVED';
-            item.financePosting = { financeInvoiceId: 'INV-2026-08' };
-          }
-          showToast(`Settlement ${id} approved and posted to Finance ledger.`, 'success');
-          renderActiveTab();
         }
       });
     }
@@ -255,61 +250,87 @@ export async function wireRevenueShare(container, subroute) {
     }
   });
 
-  if (!overviewData) {
+  if (!overviewData && isRevenueDevPreview()) {
     _loadSampleFixture();
+    renderActiveTab();
   }
-  renderActiveTab();
   loadAllData();
 }
 
 async function loadAllData() {
-  const safeGet = (path) => apiGet(path).catch(() => ({ data: null }));
-
   try {
     const [ovRes, outRes, opRes, agRes, rrRes, ssRes, stRes, pyRes, recRes, depRes, dspRes] =
       await Promise.all([
-        safeGet('/revenue-share/overview'),
-        safeGet('/revenue-share/outlets'),
-        safeGet('/revenue-share/operators'),
-        safeGet('/revenue-share/agreements'),
-        safeGet('/revenue-share/rate-rules'),
-        safeGet('/revenue-share/sales'),
-        safeGet('/revenue-share/settlements'),
-        safeGet('/revenue-share/payments'),
-        safeGet('/revenue-share/recoveries'),
-        safeGet('/revenue-share/deposits'),
-        safeGet('/revenue-share/disputes'),
+        apiGet('/revenue-share/overview'),
+        apiGet('/revenue-share/outlets'),
+        apiGet('/revenue-share/operators'),
+        apiGet('/revenue-share/agreements'),
+        apiGet('/revenue-share/rate-rules'),
+        apiGet('/revenue-share/sales'),
+        apiGet('/revenue-share/settlements'),
+        apiGet('/revenue-share/payments'),
+        apiGet('/revenue-share/recoveries'),
+        apiGet('/revenue-share/deposits'),
+        apiGet('/revenue-share/disputes'),
       ]);
 
-    // ── If ALL API calls returned null data, load canonical sample fixture
-    const allNull = [ovRes, outRes, opRes, agRes, rrRes, ssRes, stRes, pyRes, recRes, depRes, dspRes]
-      .every((r) => r.data === null);
-    if (allNull) {
-      _loadSampleFixture();
-      return;
-    }
-
-    overviewData    = ovRes.data  || _SAMPLE_OVERVIEW;
-    outletsList     = outRes.data?.outlets    || _SAMPLE_OUTLETS;
-    operatorsList   = opRes.data?.operators   || _SAMPLE_OPERATORS;
-    agreementsList  = agRes.data?.agreements  || _SAMPLE_AGREEMENTS;
-    rateRulesList   = rrRes.data?.rateRules   || [];
-    salesList       = ssRes.data?.submissions || _SAMPLE_SALES;
-    settlementsList = stRes.data?.settlements || _SAMPLE_SETTLEMENTS;
-    paymentsList    = pyRes.data?.payments    || [];
-    recoveriesList  = recRes.data?.recoveries || [];
-    depositsList    = depRes.data?.deposits   || _SAMPLE_DEPOSITS;
-    disputesList    = dspRes.data?.disputes   || [];
+    overviewData    = ovRes?.data || { metrics: {} };
+    outletsList     = outRes?.data?.outlets || [];
+    operatorsList   = opRes?.data?.operators || [];
+    agreementsList  = agRes?.data?.agreements || [];
+    rateRulesList   = rrRes?.data?.rateRules || [];
+    salesList       = ssRes?.data?.submissions || [];
+    settlementsList = stRes?.data?.settlements || [];
+    paymentsList    = pyRes?.data?.payments || [];
+    recoveriesList  = recRes?.data?.recoveries || [];
+    depositsList    = depRes?.data?.deposits || [];
+    disputesList    = dspRes?.data?.disputes || [];
 
     updateKpis();
     renderActiveTab();
   } catch (err) {
-    console.warn('[Revenue Share] API unreachable — loading sample data:', err.message);
-    _loadSampleFixture();
+    if (isRevenueDevPreview()) {
+      _loadSampleFixture();
+      return;
+    }
+
+    overviewData = null;
+    outletsList = [];
+    operatorsList = [];
+    agreementsList = [];
+    rateRulesList = [];
+    salesList = [];
+    settlementsList = [];
+    paymentsList = [];
+    recoveriesList = [];
+    depositsList = [];
+    disputesList = [];
+
+    const content = document.getElementById('rs-tab-content');
+    if (content) {
+      content.innerHTML = renderModuleErrorState({
+        title: 'Revenue Share Backend Unavailable',
+        message: 'Commercial and settlement records could not be verified. No local or sample records have been substituted.',
+        error: err,
+        retryActionId: 'revenue-share-retry',
+        retryLabel: 'Retry',
+        type: err?.status >= 500 ? 'server' : undefined,
+      });
+      content.querySelector('#revenue-share-retry')?.addEventListener('click', loadAllData);
+    }
+    showToast(err?.message || 'Revenue Share data could not be loaded.', 'error');
   }
 }
 
-// ── Canonical sample fixtures (dev / staging / offline fallback) ──────────────
+function isRevenueDevPreview() {
+  return Boolean(
+    state.user?.isDevPreview ||
+    (typeof location !== 'undefined' &&
+      (location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
+  );
+}
+
+// ── Canonical sample fixtures (explicit dev preview only) ────────────────────
 const _SAMPLE_OVERVIEW = {
   metrics: {
     totalGrossSalesPaisa: 0,
@@ -784,24 +805,10 @@ function showCreateOutletModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newOutlet = {
-          outletId: 'OUT-' + String(outletsList.length + 1).padStart(4, '0'),
-          name: payload.name,
-          spaceType: payload.spaceType,
-          areaSqFt: payload.areaSqFt,
-          zoneFloor: payload.zoneFloor,
-          stallNumber: payload.stallNumber,
-          currentOperatorId: null,
-          status: 'AVAILABLE',
-        };
-        outletsList.push(newOutlet);
-        showToast('Commercial space registered successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -916,23 +923,10 @@ function showCreateOperatorModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newOp = {
-          operatorId: 'OP-' + String(operatorsList.length + 1).padStart(4, '0'),
-          legalName: payload.legalName,
-          name: payload.legalName,
-          tradeName: payload.tradeName,
-          gstin: payload.gstin,
-          panNumber: payload.panNumber,
-          status: 'ACTIVE',
-        };
-        operatorsList.push(newOp);
-        showToast('Operator onboarded successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -1117,26 +1111,10 @@ function showCreateAgreementModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newAg = {
-          agreementId: 'AGR-' + String(agreementsList.length + 1).padStart(4, '0'),
-          agreementVersion: 1,
-          outletId: payload.outletId,
-          operatorId: payload.operatorId,
-          partnerName: payload.operatorId,
-          commencementDate: payload.commencementDate,
-          expiryDate: payload.expiryDate,
-          sharePercentage: payload.sharePercentage,
-          minimumGuaranteeMonthlyPaisa: payload.minimumGuaranteeMonthlyPaisa,
-          status: 'ACTIVE',
-        };
-        agreementsList.push(newAg);
-        showToast('Revenue share agreement created successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -1197,23 +1175,10 @@ function showAddRateRuleModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newRr = {
-          rateRuleId: 'RR-' + String(rateRulesList.length + 1).padStart(4, '0'),
-          outletId: payload.outletId,
-          calculationMethod: payload.calculationMethod,
-          calculationBasis: payload.calculationBasis,
-          effectiveFrom: payload.effectiveFrom,
-          effectiveTo: null,
-          status: 'ACTIVE',
-        };
-        rateRulesList.push(newRr);
-        showToast('Rate rule added successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -1369,23 +1334,10 @@ function showSubmitSalesModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newSale = {
-          submissionId: 'SS-' + dateVal.replace(/-/g, '') + '-00' + (salesList.length + 1),
-          outletId: payload.outletId,
-          businessDate: payload.businessDate,
-          grossSalesPaisa: payload.grossSalesPaisa,
-          netEligibleRevenuePaisa: payload.grossSalesPaisa - payload.discountsPaisa,
-          source: 'PORTAL_ENTRY',
-          status: 'SUBMITTED',
-        };
-        salesList.push(newSale);
-        showToast('Sales report submitted successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -1534,39 +1486,17 @@ function showSimulateSettlementModal() {
         const periodStart = document.getElementById('sim-start').value;
         const periodEnd = document.getElementById('sim-end').value;
 
-        let simData = null;
         try {
           const json = await apiPost('/revenue-share/settlements/simulate', { outletId, periodStart, periodEnd });
-          if (json && json.success && json.data) {
-            simData = json.data.simulation || json.data;
+          const simData = json?.data?.simulation || json?.data;
+          if (!json?.success || !simData) {
+            throw new Error(json?.message || 'The backend did not return a settlement simulation.');
           }
-        } catch {
-          console.warn('[Revenue Share] Simulating locally for offline/mock...');
+          close();
+          renderSimulationBanner(simData);
+        } catch (err) {
+          showToast(err?.message || 'Settlement simulation failed.', 'error');
         }
-
-        if (!simData) {
-          const outlet = outletsList.find((o) => o.outletId === outletId) || outletsList[0];
-          const grossPaisa = 48500000;
-          const sharePaisa = Math.round(grossPaisa * 0.12);
-          const mgPaisa = 4500000;
-          const shortfall = Math.max(0, mgPaisa - sharePaisa);
-          const netPayable = Math.max(sharePaisa, mgPaisa);
-
-          simData = {
-            outletId,
-            outletName: outlet?.name || 'Selected Outlet',
-            periodStart,
-            periodEnd,
-            totalGrossSalesPaisa: grossPaisa,
-            eligibleRevenuePaisa: grossPaisa,
-            baseRevenueSharePaisa: sharePaisa,
-            minimumGuaranteeShortfallPaisa: shortfall,
-            netPayablePaisa: netPayable,
-          };
-        }
-
-        close();
-        renderSimulationBanner(simData);
       });
     }
   });
@@ -1662,25 +1592,10 @@ function showCreateSettlementModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newSt = {
-          settlementId: 'SET-' + payload.periodKey.replace(/-/g, '') + '-00' + (settlementsList.length + 1),
-          outletId: payload.outletId,
-          periodKey: payload.periodKey,
-          periodFrom: payload.periodStart,
-          periodTo: payload.periodEnd,
-          totalGrossSalesPaisa: 48500000,
-          netPayablePaisa: 5820000,
-          balanceOutstandingPaisa: 5820000,
-          status: 'CALCULATED',
-        };
-        settlementsList.push(newSt);
-        showToast('Settlement draft calculated successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -1813,23 +1728,10 @@ function showRecordPaymentModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newPay = {
-          paymentId: 'PAY-' + payload.paymentDate.replace(/-/g, '') + '-00' + (paymentsList.length + 1),
-          operatorId: payload.operatorId,
-          paymentDate: payload.paymentDate,
-          amountPaisa: payload.amountPaisa,
-          paymentMode: payload.paymentMode,
-          transactionReferenceUtr: payload.transactionReferenceUtr,
-          status: 'CLEARED',
-        };
-        paymentsList.push(newPay);
-        showToast('Payment recorded successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -1961,23 +1863,10 @@ function showLogRecoveryModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newRec = {
-          recoveryId: 'REC-' + payload.periodKey.replace(/-/g, '') + '-00' + (recoveriesList.length + 1),
-          outletId: payload.outletId,
-          utilityType: payload.utilityType,
-          periodKey: payload.periodKey,
-          unitsConsumed: payload.unitsConsumed,
-          amountPaisa: payload.amountPaisa,
-          status: 'BILLED',
-        };
-        recoveriesList.push(newRec);
-        showToast('Utility recovery logged successfully.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -2138,22 +2027,10 @@ function showRecordDepositModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newDep = {
-          depositId: 'DEP-00' + (depositsList.length + 1),
-          agreementId: agreementsList[0]?.agreementId || 'AGR-0001',
-          operatorId: payload.operatorId,
-          requiredAmountPaisa: payload.requiredAmountPaisa,
-          heldBalancePaisa: payload.heldBalancePaisa,
-          status: 'HELD',
-        };
-        depositsList.push(newDep);
-        showToast('Security deposit recorded.', 'success');
-        close();
-        renderActiveTab();
       });
     }
   });
@@ -2218,22 +2095,10 @@ function showAddDisputeModal() {
             await loadAllData();
             return;
           }
+          throw new Error(json?.message || 'The backend did not confirm the Revenue Share action.');
         } catch (err) {
-          console.warn('[Revenue Share] API error, using optimistic local update:', err);
+          showToast(err?.message || 'Revenue Share action failed. No local changes were made.', 'error');
         }
-
-        const newDisp = {
-          disputeId: 'DISP-00' + (disputesList.length + 1),
-          outletId: payload.outletId,
-          caseType: payload.caseType,
-          disputedAmountPaisa: payload.disputedAmountPaisa,
-          reason: payload.reason,
-          status: 'OPEN',
-        };
-        disputesList.push(newDisp);
-        showToast('Dispute case registered and flagged for legal review.', 'info');
-        close();
-        renderActiveTab();
       });
     }
   });
