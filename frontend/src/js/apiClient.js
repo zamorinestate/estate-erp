@@ -962,8 +962,8 @@ const NON_REFRESHABLE_AUTH_PATHS = new Set([
   "/auth/passkeys/register/options",
   "/auth/passkeys/register/verify",
   "/auth/app-pin/login",
-  "/auth/password/reset-request",
-  "/auth/password/reset-verify",
+  "/auth/password/forgot",
+  "/auth/password/reset/verify",
   "/auth/password/reset",
 ]);
 
