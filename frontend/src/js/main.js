@@ -191,7 +191,11 @@ export function getRequestedDevRole() {
   }
 
 
-  return "master";
+  if (requested === "master") {
+    return "master";
+  }
+
+  return null;
 }
 
 // =============================================================================
@@ -1143,8 +1147,12 @@ async function boot() {
     // Local development / automated testing persona resolution
     if (isDirectDashboardAllowed() && (params?.get("role") || params?.get("devRole") || (typeof localStorage !== "undefined" && localStorage.getItem("zamorin-dev-role")))) {
       const devKey = getRequestedDevRole();
-      const devUser = DEV_PREVIEW_USERS[devKey] || DEV_PREVIEW_USERS.master;
-      const canonicalRole = devKey === "master_normal" ? "master" : devKey;
+      const devUser = devKey ? DEV_PREVIEW_USERS[devKey] : null;
+      if (!devUser) {
+        mountAuthScreen("login", { notice: "This development role is not available." });
+        return;
+      }
+      const canonicalRole = devKey;
       const isPrimary = Boolean(devUser?.isPrimaryMaster);
       const roleNavigation = NAVIGATION[canonicalRole] || NAVIGATION.master;
       const defaultRoute = roleNavigation?.items?.[0]?.route || (canonicalRole === "staff" ? "staff-home" : "dashboard");
