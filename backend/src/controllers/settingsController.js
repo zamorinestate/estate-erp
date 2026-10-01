@@ -1574,52 +1574,155 @@ async function getDiagnostics(req, res) {
  */
 async function submitSupportTicket(req, res) {
   const user = req.user || req.auth || {};
-  const { userId, organisationId, primaryCafeId, email } = user;
-  const { category = 'GENERAL_INQUIRY', severity = 'NORMAL', summary, description } = req.body || {};
+  const { userId, organisationId, primaryCafeId } = user;
+  const {
+    category = 'GENERAL_INQUIRY',
+    severity = 'NORMAL',
+    summary,
+    description,
+  } = req.body || {};
 
-  if (!summary || !String(summary).trim()) {
-    throw new ApiError(400, 'SUMMARY_REQUIRED', 'A brief summary of the issue is required.');
+  const summaryText = String(summary || '').trim();
+  const descriptionText = String(description || '').trim();
+
+  if (!summaryText) {
+    throw new ApiError(
+      400,
+      'SUMMARY_REQUIRED',
+      'A brief summary of the issue is required.'
+    );
   }
 
-  if (!description || !String(description).trim()) {
-    throw new ApiError(400, 'DESCRIPTION_REQUIRED', 'A detailed description of the issue is required.');
+  if (!descriptionText) {
+    throw new ApiError(
+      400,
+      'DESCRIPTION_REQUIRED',
+      'A detailed description of the issue is required.'
+    );
   }
 
-  const { SupportCase, SUPPORT_CATEGORIES, SUPPORT_SEVERITIES } = require('../models/SupportCase');
+  if (!userId || !organisationId) {
+    throw new ApiError(
+      401,
+      'AUTHENTICATED_IDENTITY_REQUIRED',
+      'Authenticated user and organisation identity are required.'
+    );
+  }
 
-  const validCategory = SUPPORT_CATEGORIES.includes(category) ? category : 'GENERAL_INQUIRY';
-  const validSeverity = SUPPORT_SEVERITIES.includes(severity) ? severity : 'NORMAL';
+  const {
+    SupportCase,
+    SUPPORT_CATEGORIES,
+    SUPPORT_SEVERITIES,
+  } = require('../models/SupportCase');
 
-  const year = new Date().getFullYear();
-  const randSeq = Math.floor(1000 + Math.random() * 9000);
-  const caseId = `CASE-${year}-${randSeq}`;
+  const validCategory = SUPPORT_CATEGORIES.includes(category)
+    ? category
+    : 'GENERAL_INQUIRY';
+  const validSeverity = SUPPORT_SEVERITIES.includes(severity)
+    ? severity
+    : 'NORMAL';
 
-  const senderEmail = email || `${String(userId).toLowerCase()}@zamorincafe.com`;
+  let authoritativeUser = null;
+  let senderEmail = String(user.email || '').trim().toLowerCase();
+  let actorRole = safeStr(user.role).toUpperCase();
 
-  const supportCase = await SupportCase.create({
-    caseId,
+  if (!senderEmail || !actorRole) {
+    const profileQuery = User.findOne({
+      organisationId,
+      userId,
+    }).select('email role primaryCafeId assignedCafeIds');
+
+    authoritativeUser =
+      profileQuery && typeof profileQuery.lean === 'function'
+        ? await profileQuery.lean()
+        : await profileQuery;
+
+    if (!senderEmail) {
+      senderEmail = String(authoritativeUser?.email || '').trim().toLowerCase();
+    }
+    if (!actorRole) {
+      actorRole = safeStr(authoritativeUser?.role).toUpperCase();
+    }
+  }
+
+  if (!senderEmail) {
+    throw new ApiError(
+      409,
+      'SUPPORT_EMAIL_REQUIRED',
+      'A verified account email is required before an in-app support ticket can be submitted.'
+    );
+  }
+
+  if (!actorRole) {
+    throw new ApiError(
+      409,
+      'SUPPORT_ACTOR_ROLE_REQUIRED',
+      'The authenticated role could not be verified for this support request.'
+    );
+  }
+
+  const effectiveCafeId = safeStr(
+    primaryCafeId ||
+    authoritativeUser?.primaryCafeId ||
+    (authoritativeUser?.assignedCafeIds || [])[0] ||
+    ''
+  ).toUpperCase() || null;
+
+  const year = new Date().getUTCFullYear();
+  const caseId = await SequenceCounter.generateId({
     organisationId,
-    cafeId: primaryCafeId || null,
-    category: validCategory,
-    severity: validSeverity,
-    status: 'OPEN',
-    source: 'IN_APP',
-    reportedByUserId: userId,
-    senderEmail,
-    summary: String(summary).trim().slice(0, 300),
-    description: String(description).trim().slice(0, 5000),
+    sequenceKey: `SUPPORT_CASE_${year}`,
+    prefix: `CASE-${year}`,
+    minimumDigits: 5,
   });
 
-  try {
-    await auditService.log({
+  const createOperation = async (session) => {
+    const supportCase = new SupportCase({
+      caseId,
       organisationId,
-      action: 'SETTINGS_SUPPORT_TICKET_SUBMITTED',
-      performedByUserId: userId,
-      metadata: { caseId, category: validCategory, severity: validSeverity },
+      cafeId: effectiveCafeId,
+      category: validCategory,
+      severity: validSeverity,
+      status: 'OPEN',
+      source: 'IN_APP',
+      reportedByUserId: userId,
+      senderEmail,
+      correlationId: req.correlationId || null,
+      summary: summaryText.slice(0, 300),
+      description: descriptionText.slice(0, 5000),
+      appVersion: process.env.APP_VERSION || null,
+      deviceClass: user.deviceContext?.deviceClass || null,
     });
-  } catch (e) {}
 
-  res.status(201).json({
+    await supportCase.save(session ? { session } : undefined);
+
+    await auditService.recordAuditEvent({
+      organisationId,
+      cafeId: effectiveCafeId,
+      actorUserId: userId,
+      actorRole,
+      module: 'SETTINGS',
+      action: 'SETTINGS_SUPPORT_TICKET_SUBMITTED',
+      entityType: 'SUPPORT_CASE',
+      entityId: caseId,
+      reason: summaryText,
+      result: 'SUCCESS',
+      riskClassification: validSeverity === 'CRITICAL' ? 'HIGH' : 'LOW',
+      correlationId: req.correlationId || null,
+      metadata: {
+        category: validCategory,
+        severity: validSeverity,
+        source: 'IN_APP',
+      },
+      session,
+    });
+
+    return supportCase;
+  };
+
+  const supportCase = await executeTransactionWithRetry(createOperation);
+
+  return res.status(201).json({
     success: true,
     message: 'Support ticket submitted successfully.',
     data: { ticket: supportCase },
