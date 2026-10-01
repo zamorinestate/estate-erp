@@ -150,7 +150,6 @@ const sessionSchema = new mongoose.Schema(
     mfaReenrollmentRequired: {
       type: Boolean,
       default: false,
-      index: true,
     },
 
     stepUpVerifiedAt: {
