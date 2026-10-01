@@ -15,13 +15,16 @@ async function startProductionServer() {
   console.log(' ZAMORIN CAFE ERP — PRODUCTION SERVER BOOTSTRAP (v1.1.0)');
   console.log('================================================================');
 
-  // Seed default data & permissions if missing (idempotent)
-  console.log('[INIT] Verifying database seeding and permission rules...');
+  // Seed only the production-safe bootstrap data & permissions.
+  // Any failure is fatal: starting with incomplete permission/bootstrap state
+  // makes UI actions appear broken or authorization-inconsistent.
+  console.log('[INIT] Verifying production bootstrap data and permission rules...');
   try {
     await runSeed();
-    console.log('[INIT] Database seeding verified.');
+    console.log('[INIT] Production bootstrap and permission rules verified.');
   } catch (seedErr) {
-    console.warn('[INIT] Database seed note (may already be initialized):', seedErr.message);
+    console.error('[FATAL] Production bootstrap verification failed:', seedErr.message);
+    throw seedErr;
   }
 
   process.env.RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX || '10000';
