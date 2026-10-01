@@ -993,7 +993,8 @@ async function runSeed() {
       masterEmail,
     });
 
-    const isMinimalSeed = process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false';
+    const isProductionSeed = environment.production || process.env.NODE_ENV === 'production';
+    const isMinimalSeed = isProductionSeed || process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false';
 
     if (!isMinimalSeed) {
       await seedDepartmentOrdersData({
@@ -1030,10 +1031,7 @@ async function runSeed() {
         organisationId,
         masterUserId: masterUser.userId,
       });
-      await seedCafeOperationsData({
-        organisationId,
-        masterUserId: masterUser.userId,
-      });
+      console.log('Minimal/production seed mode: demo Café Operations users, devices, PINs, and sample cafés are not created.');
     }
 
     console.log(
@@ -1043,8 +1041,7 @@ async function runSeed() {
     console.error(
       `Initial data seed failed: ${error.message}`
     );
-
-    process.exitCode = 1;
+    throw error;
   } finally {
     await disconnectDatabase();
   }
@@ -1057,7 +1054,7 @@ async function seedSystemCommunicationSettings({ organisationId, masterEmail }) 
     settings = await SystemCommunicationSettings.create({
       organisationId,
       operationsEmail: 'zamorinestatepvtltd.erp@gmail.com',
-      primaryMasterEmail: masterEmail || 'pradeeshk331@gmail.com',
+      primaryMasterEmail: masterEmail,
       identityType: 'SYSTEM_OPERATIONS_MAILBOX',
       applicationRole: 'NONE',
       canLoginToERP: false,
@@ -1928,15 +1925,37 @@ async function seedLoansData(orgOrObj, mUserId) {
 }
 
 async function seedCafeOperationsData(orgOrObj, mUserId) {
-  const organisationId = (typeof orgOrObj === 'object' ? orgOrObj.organisationId : orgOrObj) || 'ZAMORIN';
-  const masterUserId = (typeof orgOrObj === 'object' ? orgOrObj.masterUserId : mUserId) || 'MU-0001';
+  const organisationId = normalizeIdentifier(
+    String(typeof orgOrObj === 'object' && orgOrObj !== null ? orgOrObj.organisationId : orgOrObj || '')
+  );
+  const masterUserId = String(
+    typeof orgOrObj === 'object' && orgOrObj !== null ? orgOrObj.masterUserId : mUserId || ''
+  ).trim();
+
+  if (!organisationId || !masterUserId) {
+    throw new Error('seedCafeOperationsData requires explicit organisationId and masterUserId; authority fallbacks are forbidden.');
+  }
   const { Cafe } = require('../models/Cafe');
   const { DeviceRegistration } = require('../models/DeviceRegistration');
   const { User } = require('../models/User');
   const bcrypt = require('bcrypt');
+  const demoPassword = requireEnvironmentValue('SEED_DEMO_PASSWORD');
+  const cafeOperationsPin = requireEnvironmentValue('SEED_CAFE_OPERATIONS_PIN');
+  const operatorPin1 = requireEnvironmentValue('SEED_OPERATOR_PIN_1');
+  const operatorPin2 = requireEnvironmentValue('SEED_OPERATOR_PIN_2');
 
-  // 0. Seed Active Cafes with 6-digit Operations PIN (default: 123456)
-  const defaultCafePinHash = await bcrypt.hash('123456', 10);
+  for (const [name, value] of [
+    ['SEED_CAFE_OPERATIONS_PIN', cafeOperationsPin],
+    ['SEED_OPERATOR_PIN_1', operatorPin1],
+    ['SEED_OPERATOR_PIN_2', operatorPin2],
+  ]) {
+    if (!/^\d{6}$/.test(value)) {
+      throw new Error(`${name} must contain exactly 6 digits.`);
+    }
+  }
+
+  // 0. Seed Active Cafes with environment-supplied 6-digit Operations PIN
+  const defaultCafePinHash = await bcrypt.hash(cafeOperationsPin, 10);
 
   const cafe1 = await Cafe.findOne({ organisationId, cafeId: 'ZC-0001' });
   if (!cafe1) {
@@ -2052,8 +2071,8 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   }
 
   // 2. Seed Sample Operator Users with 6-digit PIN
-  const pin1Hash = await bcrypt.hash('147258', 10);
-  const pin2Hash = await bcrypt.hash('258369', 10);
+  const pin1Hash = await bcrypt.hash(operatorPin1, 10);
+  const pin2Hash = await bcrypt.hash(operatorPin2, 10);
 
   const existingAdmin1 = await User.findOne({ organisationId, userId: 'AD-0001' });
   if (!existingAdmin1) {
@@ -2066,7 +2085,7 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       accountStatus: 'ACTIVE',
       primaryCafeId: 'ZC-0001',
       assignedCafeIds: ['ZC-0001'],
-      passwordHash: await bcrypt.hash('PK@NilaVega_8427!Cedar', 10),
+      passwordHash: await bcrypt.hash(demoPassword, 10),
       operatorPinHash: pin1Hash,
       operatorPinSetAt: new Date(),
       isPrimaryMaster: false,
@@ -2090,7 +2109,7 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
       accountStatus: 'ACTIVE',
       primaryCafeId: 'ZC-0002',
       assignedCafeIds: ['ZC-0002'],
-      passwordHash: await bcrypt.hash('PK@NilaVega_8427!Cedar', 10),
+      passwordHash: await bcrypt.hash(demoPassword, 10),
       operatorPinHash: pin2Hash,
       operatorPinSetAt: new Date(),
       isPrimaryMaster: false,
@@ -2104,10 +2123,9 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   }
 
   // 3. Seed Canonical Role Accounts for Complete Role Recognition
-  const defaultPasswordHash = await bcrypt.hash('PK@NilaVega_8427!Cedar', 10);
+  const defaultPasswordHash = await bcrypt.hash(demoPassword, 10);
 
-  // Note: Normal Master role and window have been abolished.
-  // There is strictly only one Master: the Primary Master (MU-0001 / Pradeesh K).
+  // There is strictly one MASTER account: the designated Primary Master.
 
 
   // Owner Account (Distinct from Primary Master Pradeesh K)
@@ -2133,8 +2151,10 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   } else {
     let changed = false;
     if (!existingOwner.assignedCafeIds || existingOwner.assignedCafeIds.length === 0) {
-      existingOwner.primaryCafeId = existingOwner.primaryCafeId || 'ZC-0001';
       existingOwner.assignedCafeIds = ['ZC-0001', 'ZC-0002'];
+      if (!existingOwner.primaryCafeId) {
+        existingOwner.primaryCafeId = existingOwner.assignedCafeIds[0];
+      }
       changed = true;
     }
     if (!existingOwner.designation) {
@@ -2185,38 +2205,10 @@ async function seedCafeOperationsData(orgOrObj, mUserId) {
   }
 }
 
-async function runSeed() {
-  const env = loadEnvironment();
-  await connectDatabase({ uri: env.mongodbUri });
-  try {
-    const organisationId = env.initialOrganisationId || 'ZAMORIN';
-    const master = await seedMasterUser({
-      organisationId,
-      masterName: env.initialMasterName || 'Zamorin Master',
-      masterEmail: env.initialMasterEmail || 'master@example.com',
-      masterPassword: env.initialMasterPassword || 'PK@NilaVega_8427!Cedar',
-    });
-    await seedPermissionRules({ organisationId, masterUserId: master.userId });
-    await seedSystemCommunicationSettings({ organisationId, masterEmail: env.initialMasterEmail || 'master@example.com' });
-
-    const isMinimal = process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false' || process.env.NODE_ENV === 'production';
-    if (!isMinimal) {
-      await seedDepartmentOrdersData({ organisationId, masterUserId: master.userId });
-      await seedWorkforceData({ organisationId, masterUserId: master.userId });
-      await seedExpensePolicyData({ organisationId, masterUserId: master.userId });
-      await seedFinanceData({ organisationId, masterUserId: master.userId });
-      await seedInventoryData({ organisationId, masterUserId: master.userId });
-      await seedMenuData({ organisationId, masterUserId: master.userId });
-      await seedLoansData({ organisationId, masterUserId: master.userId });
-      await seedCafeOperationsData(organisationId, master.userId);
-    }
-  } finally {
-    await disconnectDatabase();
-  }
-}
-
 if (require.main === module) {
-  runSeed();
+  runSeed().catch(() => {
+    process.exitCode = 1;
+  });
 }
 
 module.exports = {

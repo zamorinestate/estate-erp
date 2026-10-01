@@ -4,7 +4,7 @@
 
 'use strict';
 
-import { apiGet, getAccessToken, getOrCreateDeviceId, API_BASE_URL } from '../../apiClient.js';
+import { apiGet, apiPost, getAccessToken, getOrCreateDeviceId, API_BASE_URL } from '../../apiClient.js';
 import { showToast } from '../../components.js';
 import { CANONICAL_ZAMORIN_COMPANY_LOGO_SVG } from '../../utils/qrCodeGen.js';
 
@@ -31,7 +31,23 @@ async function fetchEvidencePhotoBlob(mediaId) {
     headers,
   });
   if (!res.ok) {
-    throw new Error(`Failed to load evidence photograph (${res.status})`);
+    let code = '';
+    let message = '';
+    try {
+      const payload = await res.json();
+      code = String(payload?.code || payload?.error?.code || '').trim();
+      message = String(payload?.message || payload?.error?.message || '').trim();
+    } catch (_) {}
+
+    if ([409, 423].includes(res.status) && code.startsWith('ATTENDANCE_EVIDENCE_')) {
+      throw new Error(
+        message || 'Attendance evidence failed its integrity verification and cannot be displayed.'
+      );
+    }
+
+    throw new Error(
+      message || `Failed to load evidence photograph (${res.status})`
+    );
   }
   return await res.blob();
 }
@@ -157,6 +173,59 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
               </div>
             </div>
 
+            ${ 
+              evidence?.integrityState === 'QUARANTINED' || evidence?.verificationStatus === 'FLAGGED'
+                ? `
+              <div style="background:rgba(239,68,68,0.12);border:1px solid #ef4444;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#fca5a5;">
+                <strong>🔒 Evidence Quarantined:</strong>
+                <span>This attendance photograph failed one or more integrity checks and cannot be displayed until investigated.</span>
+                ${ 
+                  Array.isArray(evidence?.integrityFailedChecks) && evidence.integrityFailedChecks.length
+                    ? `<div style="margin-top:6px;color:var(--muted);">Failed checks: ${evidence.integrityFailedChecks.map(escHtml).join(', ')}</div>`
+                    : ''
+                }
+                ${ 
+                  evidence?.integrityAuditEventId
+                    ? `<div style="margin-top:4px;color:var(--muted);">Failure audit event: ${escHtml(evidence.integrityAuditEventId)}</div>`
+                    : ''
+                }
+                ${data.canReleaseQuarantine ? `
+                  <button class="btn btn-sm btn-danger" id="release-evidence-quarantine-btn" type="button" style="margin-top:10px;">
+                    Re-verify &amp; Release Quarantine
+                  </button>
+                ` : ''}
+              </div>
+            `
+                : ''
+            }
+
+            ${data.canManageRetentionHold && evidence?.selfieMediaId ? `
+              <div style="background:${evidence?.retentionHoldStatus === 'HELD' ? 'rgba(59,130,246,0.12)' : 'rgba(148,163,184,0.08)'};border:1px solid ${evidence?.retentionHoldStatus === 'HELD' ? '#3b82f6' : 'var(--border-subtle, #3d3935)'};border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;">
+                <div style="font-weight:800;color:${evidence?.retentionHoldStatus === 'HELD' ? '#93c5fd' : 'var(--ink)'};">
+                  ${evidence?.retentionHoldStatus === 'HELD' ? '🛡️ Retention Hold Active' : '🗂️ Retention Hold'}
+                </div>
+                <div style="margin-top:4px;color:var(--muted);">
+                  ${evidence?.retentionHoldStatus === 'HELD'
+                    ? 'This committed selfie is explicitly protected from any future retention purge until the hold is released.'
+                    : 'No retention hold is active. Committed-evidence purge is still disabled until a formal retention policy is approved.'}
+                </div>
+                ${evidence?.retentionHoldStatus === 'HELD' && evidence?.retentionHoldReason
+                  ? `<div style="margin-top:6px;color:var(--muted);">Reason: ${escHtml(evidence.retentionHoldReason)}</div>`
+                  : ''}
+                ${evidence?.retentionHoldStatus === 'HELD' && evidence?.retentionHoldPlacedByUserId
+                  ? `<div style="margin-top:4px;color:var(--muted);">Placed by: ${escHtml(evidence.retentionHoldPlacedByUserId)}</div>`
+                  : ''}
+                <button
+                  class="btn btn-sm ${evidence?.retentionHoldStatus === 'HELD' ? 'btn-secondary' : 'btn-primary'}"
+                  id="evidence-retention-hold-btn"
+                  type="button"
+                  style="margin-top:10px;"
+                >
+                  ${evidence?.retentionHoldStatus === 'HELD' ? 'Release Retention Hold' : 'Place Retention Hold'}
+                </button>
+              </div>
+            ` : ''}
+
             <!-- Management Correction Warning -->
             ${
               data.isCorrection
@@ -193,6 +262,87 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
       modalMount.querySelector('#evidence-close-x')?.addEventListener('click', cleanup);
       modalMount.querySelector('#evidence-close-btn')?.addEventListener('click', cleanup);
 
+      modalMount.querySelector('#evidence-retention-hold-btn')?.addEventListener('click', async () => {
+        const currentlyHeld = evidence?.retentionHoldStatus === 'HELD';
+        const action = currentlyHeld ? 'RELEASE' : 'HOLD';
+        const reason = String(
+          window.prompt(
+            currentlyHeld
+              ? 'Enter the reason for releasing this retention hold (minimum 10 characters):'
+              : 'Enter the legal/administrative reason for placing this retention hold (minimum 10 characters):',
+            ''
+          ) || ''
+        ).trim();
+
+        if (reason.length < 10) {
+          showToast('A specific hold reason of at least 10 characters is required.', 'warning');
+          return;
+        }
+
+        const confirmationMessage = currentlyHeld
+          ? 'Release this retention hold? This does not delete the selfie or enable purge.'
+          : 'Place a retention hold on this committed selfie?';
+        if (!window.confirm(confirmationMessage)) {
+          return;
+        }
+
+        try {
+          await apiPost('/attendance/evidence/retention/hold', {
+            attendanceId,
+            punchType: currentPunch,
+            action,
+            reason,
+            confirmation: currentlyHeld
+              ? 'RELEASE_ATTENDANCE_EVIDENCE_HOLD'
+              : 'PLACE_ATTENDANCE_EVIDENCE_HOLD',
+          });
+          showToast(
+            currentlyHeld
+              ? 'Retention hold released. Evidence remains stored; committed purge is still disabled.'
+              : 'Retention hold placed. Evidence is protected from future purge.',
+            'success'
+          );
+          const reopenType = currentPunch;
+          cleanup();
+          await openAttendanceEvidenceViewer({ attendanceId, initialType: reopenType });
+        } catch (err) {
+          showToast(err?.message || 'Retention hold change failed.', 'error');
+        }
+      });
+
+      modalMount.querySelector('#release-evidence-quarantine-btn')?.addEventListener('click', async () => {
+        const reason = String(
+          window.prompt(
+            'Enter the investigation reason for releasing this quarantine (minimum 10 characters):',
+            ''
+          ) || ''
+        ).trim();
+
+        if (reason.length < 10) {
+          showToast('A specific release reason of at least 10 characters is required.', 'warning');
+          return;
+        }
+
+        if (!window.confirm('Run a fresh full forensic verification and release this evidence only if every applicable integrity check passes?')) {
+          return;
+        }
+
+        try {
+          await apiPost('/attendance/evidence/integrity/release', {
+            attendanceId,
+            punchType: currentPunch,
+            reason,
+            confirmation: 'RELEASE_QUARANTINED_ATTENDANCE_EVIDENCE',
+          });
+          showToast('Evidence quarantine released after a fresh forensic integrity pass.', 'success');
+          const reopenType = currentPunch;
+          cleanup();
+          await openAttendanceEvidenceViewer({ attendanceId, initialType: reopenType });
+        } catch (err) {
+          showToast(err?.message || 'Evidence remains quarantined because release verification did not pass.', 'error');
+        }
+      });
+
       modalMount.querySelector('#btn-select-checkin')?.addEventListener('click', () => {
         if (currentPunch !== 'CHECK_IN') {
           currentPunch = 'CHECK_IN';
@@ -209,7 +359,19 @@ export async function openAttendanceEvidenceViewer({ attendanceId, initialType =
 
       // Load authenticated selfie image
       const photoContainer = modalMount.querySelector('#evidence-photo-container');
-      if (evidence?.selfieMediaId) {
+      const evidenceQuarantined =
+        evidence?.integrityState === 'QUARANTINED' ||
+        evidence?.verificationStatus === 'FLAGGED';
+
+      if (evidenceQuarantined) {
+        if (photoContainer) {
+          photoContainer.innerHTML = `
+            <div style="color:var(--coral-400, #f87171);font-size:13px;padding:32px;max-width:460px;">
+              🔒 Photograph blocked by attendance evidence quarantine. Review the integrity failure details and immutable audit event before taking further action.
+            </div>
+          `;
+        }
+      } else if (evidence?.selfieMediaId) {
         fetchEvidencePhotoBlob(evidence.selfieMediaId)
           .then((blob) => {
             if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);

@@ -27,6 +27,44 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[m]);
 }
 
+function secureRandomInt(maxExclusive) {
+  const max = Number(maxExclusive);
+  const cryptoApi = globalThis.crypto;
+  if (!Number.isInteger(max) || max <= 0 || max > 0x100000000) {
+    throw new TypeError("maxExclusive must be a positive 32-bit integer.");
+  }
+  if (!cryptoApi?.getRandomValues) {
+    throw new Error("SECURE_RANDOM_UNAVAILABLE");
+  }
+
+  const limit = Math.floor(0x100000000 / max) * max;
+  const sample = new Uint32Array(1);
+  do {
+    cryptoApi.getRandomValues(sample);
+  } while (sample[0] >= limit);
+  return sample[0] % max;
+}
+
+function generateSecureEmployeePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  let value = "";
+  for (let i = 0; i < 10; i += 1) {
+    value += chars.charAt(secureRandomInt(chars.length));
+  }
+  return "Zamorin@" + value + "!";
+}
+
+function generateSecureSixDigitPin() {
+  return String(100000 + secureRandomInt(900000));
+}
+
+function handleSecureCredentialGenerationError(error, credentialName) {
+  console.error("Secure " + credentialName + " generation unavailable:", error);
+  showToast(
+    "Secure " + credentialName + " generation is unavailable in this browser. Leave the field blank to let the server generate it securely.",
+    "coral"
+  );
+}
 export function getActiveViewer() {
   let u = state.auth?.user || state.user;
   if (!u || (!u.userId && !u.email)) {
@@ -505,7 +543,9 @@ function renderDirectoryRows(filtered) {
           <button class="btn btn-ghost view-emp-attendance-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:var(--brand-gold, #c89d5c);">Attendance</button>
           <button class="btn btn-ghost open-transfer-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px;">Transfer</button>
           <button class="btn btn-ghost open-offboard-modal-btn" data-user-id="${emp.userId}" style="font-size:12px; padding:4px 8px; color:#dc2626;">Offboard</button>
-          <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Permanently Delete Account &amp; Revoke Access">🗑️ Delete</button>
+          ${isViewerPrimaryMaster ? `
+            <button class="btn btn-ghost delete-employee-btn" data-user-id="${emp.userId}" data-name="${escapeHtml(emp.name)}" style="font-size:12px; padding:4px 8px; color:#dc2626; font-weight:600;" title="Primary Master only: permanently delete account after audited confirmation">🗑️ Delete</button>
+          ` : ''}
         `}
       </td>
     </tr>
@@ -1170,68 +1210,68 @@ function attachDirectoryRowListeners() {
 }
 
 function confirmAndDeleteEmployee(userId, name) {
+  if (!isCurrentViewerPrimaryMaster()) {
+    showToast("Only the Primary Master may permanently delete an employee identity.", "coral");
+    return;
+  }
+
   openModal(`
-    <div style="padding:24px; max-width:480px; width:100%; color:var(--ink);">
+    <div style="padding:24px; max-width:520px; width:100%; color:var(--ink);">
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
-        <div style="width:40px; height:40px; border-radius:50%; background:rgba(220,38,38,0.12); display:flex; align-items:center; justify-content:center; font-size:20px; color:#dc2626;">
-          ⚠️
-        </div>
+        <div style="width:40px; height:40px; border-radius:50%; background:rgba(220,38,38,0.12); display:flex; align-items:center; justify-content:center; font-size:20px; color:#dc2626;">⚠️</div>
         <div>
-          <h2 style="font-size:18px; font-weight:700; margin:0; color:#dc2626;">Permanently Delete Account</h2>
+          <h2 style="font-size:18px; font-weight:700; margin:0; color:#dc2626;">Primary Master Permanent Deletion</h2>
           <div style="font-size:12px; color:var(--muted);">${escapeHtml(name)} (${escapeHtml(userId)})</div>
         </div>
       </div>
-      <p style="font-size:13.5px; line-height:1.5; color:var(--ink); margin:0 0 16px;">
-        Are you sure you want to permanently delete the account for <strong>${escapeHtml(name)}</strong> (<code>${escapeHtml(userId)}</code>)?
-      </p>
-      <div style="background:rgba(220,38,38,0.06); border:1px solid rgba(220,38,38,0.2); border-radius:8px; padding:12px; font-size:12px; color:#991b1b; margin-bottom:20px;">
-        <strong>Warning:</strong> This will permanently delete the employee record from the database, instantly terminate all active sessions, and revoke all login credentials. The employee will not be able to log in or access the ERP again.
+      <div style="background:rgba(220,38,38,0.06); border:1px solid rgba(220,38,38,0.2); border-radius:8px; padding:12px; font-size:12px; color:#991b1b; margin-bottom:16px;">
+        <strong>Irreversible:</strong> authentication credentials and preferences are revoked first; the employee identity is deleted only after those revocations succeed and an immutable authorization audit is confirmed.
       </div>
-      <div style="display:flex; justify-content:flex-end; gap:10px;">
+      <label style="font-size:12px;font-weight:700;display:block;margin-bottom:5px;">Deletion reason *</label>
+      <textarea id="delete-employee-reason" rows="3" placeholder="Enter a specific reason (minimum 10 characters)" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;resize:vertical;margin-bottom:12px;"></textarea>
+      <label style="font-size:12px;font-weight:700;display:block;margin-bottom:5px;">Type confirmation exactly *</label>
+      <input id="delete-employee-confirmation" type="text" autocomplete="off" placeholder="PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;font-family:var(--font-mono, monospace);" />
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
         <button class="btn btn-ghost" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
-        <button class="btn btn-primary" id="confirm-delete-emp-btn" type="button" style="background:#dc2626; border-color:#dc2626; color:#fff; font-weight:600;">
-          🗑️ Permanently Delete
-        </button>
+        <button class="btn btn-primary" id="confirm-delete-emp-btn" type="button" style="background:#dc2626;border-color:#dc2626;color:#fff;font-weight:600;">🗑️ Permanently Delete</button>
       </div>
     </div>
   `);
 
   document.getElementById("confirm-delete-emp-btn")?.addEventListener("click", async () => {
     const btn = document.getElementById("confirm-delete-emp-btn");
+    const reason = String(document.getElementById("delete-employee-reason")?.value || "").trim();
+    const confirmation = String(document.getElementById("delete-employee-confirmation")?.value || "").trim();
+
+    if (reason.length < 10) {
+      showToast("Enter a specific deletion reason of at least 10 characters.", "warning");
+      return;
+    }
+    if (confirmation !== "PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT") {
+      showToast("The permanent-deletion confirmation phrase does not match.", "warning");
+      return;
+    }
+
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Deleting...";
     }
+
     try {
-      try {
-        await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
-      } catch (postErr) {
-        if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-          try {
-            await apiDelete(`/employees/${encodeURIComponent(userId)}`);
-          } catch (delErr) {
-            if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
-              console.warn("Backend deletion endpoint unavailable or record already purged from database:", delErr);
-            } else {
-              throw delErr;
-            }
-          }
-        } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-          console.warn("Employee record already purged from database.");
-        } else {
-          throw postErr;
-        }
-      }
-      liveEmployees = liveEmployees.filter(e => e.userId !== userId);
+      await apiPost(`/employees/${encodeURIComponent(userId)}/delete`, {
+        reason,
+        confirmation,
+      });
+      liveEmployees = liveEmployees.filter((employee) => employee.userId !== userId);
       document.getElementById("modal-root").innerHTML = "";
-      showToast(`Account for ${name} (${userId}) has been permanently deleted and access revoked.`, "success");
+      showToast(`Account for ${name} (${userId}) was permanently deleted after credential revocation.`, "success");
       rerenderCurrentSubpanel();
     } catch (err) {
       if (btn) {
         btn.disabled = false;
         btn.textContent = "🗑️ Permanently Delete";
       }
-      showToast(err?.userMessage || err?.message || "Failed to delete employee account", "coral");
+      showToast(err?.userMessage || err?.message || "Failed to permanently delete employee account", "coral");
     }
   });
 }
@@ -1269,11 +1309,7 @@ function exportDirectoryCSV() {
 
 // ─── MODAL WIZARDS ────────────────────────────────────────────────────────────
 function openOnboardingWizard() {
-  const defaultCafes = [
-    { cafeId: "ZC-0001", name: "Calicut Flagship (ZC-0001)" },
-    { cafeId: "ZC-0002", name: "Kochi Hub (ZC-0002)" },
-  ];
-  const cafesToRender = (Array.isArray(liveCafes) && liveCafes.length > 0) ? liveCafes : defaultCafes;
+  const cafesToRender = Array.isArray(liveCafes) ? liveCafes.filter((c) => c?.cafeId) : [];
 
   openModal(`
     <div style="padding:24px; max-width:640px; width:100%; color:var(--ink);">
@@ -1307,7 +1343,7 @@ function openOnboardingWizard() {
           <div>
             <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Primary Café Location *</label>
             <select id="ob-cafe" style="width:100%; padding:8px 12px; border:1px solid rgba(0,0,0,0.15); border-radius:6px; font-size:13px;">
-              ${cafesToRender.map(c => `<option value="${escapeHtml(c.cafeId)}">${escapeHtml(c.name || c.displayName || c.cafeId)}</option>`).join('')}
+              ${cafesToRender.map(c => `<option value="${escapeHtml(c.cafeId)}">${escapeHtml(c.name || c.displayName || c.cafeId)}</option>`).join('') || '<option value="" disabled selected>No authorized cafés available</option>'}
             </select>
           </div>
           <div>
@@ -1466,10 +1502,13 @@ function openOnboardingWizard() {
     updateObRoleBadge();
 
     modalRoot.querySelector("#ob-gen-pwd-btn")?.addEventListener("click", () => {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-      let rand = "";
-      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-      const pwd = `Zamorin@${rand}!`;
+      let pwd;
+      try {
+        pwd = generateSecureEmployeePassword();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "password");
+        return;
+      }
       const pwdInput = modalRoot.querySelector("#ob-password");
       if (pwdInput) {
         pwdInput.value = pwd;
@@ -1483,7 +1522,13 @@ function openOnboardingWizard() {
     });
 
     modalRoot.querySelector("#ob-gen-pin-btn")?.addEventListener("click", () => {
-      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      let randomPin;
+      try {
+        randomPin = generateSecureSixDigitPin();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "PIN");
+        return;
+      }
       const pinInput = modalRoot.querySelector("#ob-pin");
       if (pinInput) {
         pinInput.value = randomPin;
@@ -1512,6 +1557,12 @@ function openOnboardingWizard() {
       return;
     }
 
+    const selectedCafeId = document.getElementById("ob-cafe")?.value?.trim() || "";
+    if (!selectedCafeId) {
+      showToast("Select an authorized café before onboarding the employee.", "coral");
+      return;
+    }
+
     if (submitBtn) {
       submitBtn.disabled = true;
       submitBtn.textContent = "Onboarding...";
@@ -1534,7 +1585,7 @@ function openOnboardingWizard() {
       preferredName: document.getElementById("ob-preferred").value.trim(),
       email: document.getElementById("ob-email").value.trim().toLowerCase(),
       phone: document.getElementById("ob-phone").value.trim(),
-      primaryCafeId: document.getElementById("ob-cafe")?.value?.trim() || "ZC-0001",
+      primaryCafeId: selectedCafeId,
       department: document.getElementById("ob-dept")?.value || "Barista",
       designation: effectiveDesignation,
       workerType: document.getElementById("ob-worker-type")?.value || "PERMANENT",
@@ -1663,15 +1714,16 @@ function openStaffingRequestModal() {
       reason: payload.reason,
       status: "SUBMITTED"
     };
-    liveStaffingRequests.unshift(newReq);
-
     try {
-      await apiPost("/employees/staffing-requests", payload).catch(() => null);
-    } catch {}
-
-    showToast(`Staffing requisition ${newReqId} submitted for ${payload.positionTitle}!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost("/employees/staffing-requests", payload);
+      const created = res?.data?.staffingRequest || res?.data?.request || newReq;
+      liveStaffingRequests.unshift(created);
+      showToast(res?.message || `Staffing requisition ${created.requestId || newReqId} submitted for ${payload.positionTitle}!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || "Failed to submit staffing requisition.", "error");
+    }
   });
 }
 
@@ -1745,15 +1797,16 @@ function openCreatePositionModal() {
       status: "OPEN",
       isCritical: payload.isCritical
     };
-    livePositions.unshift(newPos);
-
     try {
-      await apiPost("/employees/positions", payload).catch(() => null);
-    } catch {}
-
-    showToast(`Position ${payload.positionTitle} created successfully.`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost("/employees/positions", payload);
+      const created = res?.data?.position || newPos;
+      livePositions.unshift(created);
+      showToast(res?.message || `Position ${payload.positionTitle} created successfully.`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || "Failed to create sanctioned position.", "error");
+    }
   });
 }
 
@@ -1938,30 +1991,30 @@ function openVerifySkillModal() {
       proficiency: document.getElementById("vs-prof").value,
     };
 
-    let existingEmp = liveSkills.find(s => s.userId === userId);
-    if (!existingEmp) {
-      existingEmp = {
-        userId,
-        employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
-        designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
-        cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
-        skills: []
-      };
-      liveSkills.unshift(existingEmp);
-    }
-    existingEmp.skills.unshift({
-      name: payload.skillName,
-      proficiency: payload.proficiency,
-      status: "VERIFIED"
-    });
-
     try {
-      await apiPost(`/employees/${userId}/skills`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`Skill "${payload.skillName}" (${payload.proficiency}) verified for ${userId}!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost(`/employees/${userId}/skills`, payload);
+      let existingEmp = liveSkills.find(s => s.userId === userId);
+      if (!existingEmp) {
+        existingEmp = {
+          userId,
+          employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
+          designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
+          cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
+          skills: []
+        };
+        liveSkills.unshift(existingEmp);
+      }
+      existingEmp.skills.unshift(res?.data?.skill || {
+        name: payload.skillName,
+        proficiency: payload.proficiency,
+        status: "VERIFIED"
+      });
+      showToast(res?.message || `Skill "${payload.skillName}" (${payload.proficiency}) verified for ${userId}!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || `Failed to verify skill for ${userId}.`, "error");
+    }
   });
 }
 
@@ -2012,30 +2065,30 @@ function openAssignTrainingModal() {
       dueDate: document.getElementById("at-due").value,
     };
 
-    let existingEmp = liveSkills.find(s => s.userId === userId);
-    if (!existingEmp) {
-      existingEmp = {
-        userId,
-        employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
-        designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
-        cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
-        skills: []
-      };
-      liveSkills.unshift(existingEmp);
-    }
-    existingEmp.skills.unshift({
-      name: `${payload.trainingTitle} (Due: ${payload.dueDate})`,
-      proficiency: "Assigned",
-      status: "IN_PROGRESS"
-    });
-
     try {
-      await apiPost(`/employees/${userId}/training`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`Training "${payload.trainingTitle}" assigned to ${userId}!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost(`/employees/${userId}/training`, payload);
+      let existingEmp = liveSkills.find(s => s.userId === userId);
+      if (!existingEmp) {
+        existingEmp = {
+          userId,
+          employeeName: liveEmployees.find(e => e.userId === userId)?.name || userId,
+          designation: liveEmployees.find(e => e.userId === userId)?.designation || "Staff Member",
+          cafeName: liveEmployees.find(e => e.userId === userId)?.cafeName || "—",
+          skills: []
+        };
+        liveSkills.unshift(existingEmp);
+      }
+      existingEmp.skills.unshift({
+        name: `${payload.trainingTitle} (Due: ${payload.dueDate})`,
+        proficiency: "Assigned",
+        status: res?.data?.training?.status || "IN_PROGRESS"
+      });
+      showToast(res?.message || `Training "${payload.trainingTitle}" assigned to ${userId}!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || `Failed to assign training to ${userId}.`, "error");
+    }
   });
 }
 
@@ -2111,36 +2164,19 @@ function openOffboardModal(targetUserId) {
     };
 
     try {
-      if (payload.accessRevoked || payload.exitType === "TERMINATION") {
-        try {
-          await apiPost(`/employees/${encodeURIComponent(userId)}/delete`);
-        } catch (postErr) {
-          if (postErr?.status === 404 || postErr?.code === 'ROUTE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-            try {
-              await apiDelete(`/employees/${encodeURIComponent(userId)}`);
-            } catch (delErr) {
-              if (delErr?.status === 404 || delErr?.code === 'ROUTE_NOT_FOUND' || delErr?.code === 'EMPLOYEE_NOT_FOUND' || String(delErr?.message || '').includes('was not found')) {
-                console.warn("Backend deletion endpoint unavailable or record already purged:", delErr);
-              } else {
-                throw delErr;
-              }
-            }
-          } else if (postErr?.code === 'EMPLOYEE_NOT_FOUND' || String(postErr?.message || '').includes('was not found')) {
-            console.warn("Employee record already purged from database.");
-          } else {
-            throw postErr;
-          }
-        }
-        liveEmployees = liveEmployees.filter(e => e.userId !== userId);
-        showToast(`Account for ${userId} has been permanently deleted and access revoked.`, "success");
-      } else {
-        await apiPost(`/employees/${encodeURIComponent(userId)}/offboard`, payload);
-        const emp = liveEmployees.find(e => e.userId === userId);
-        if (emp) {
-          emp.employmentStatus = "NOTICE_PERIOD";
-        }
-        showToast(`Offboarding clearance initiated for ${userId} (${payload.exitType}).`, "success");
+      const res = await apiPost(`/employees/${encodeURIComponent(userId)}/offboard`, payload);
+      const emp = liveEmployees.find((employee) => employee.userId === userId);
+      if (emp) {
+        const accessRevokedNow = Boolean(res?.data?.accessRevoked);
+        emp.employmentStatus = accessRevokedNow ? "EXITED" : "NOTICE_PERIOD";
+        if (accessRevokedNow) emp.accountStatus = "DISABLED";
       }
+      showToast(
+        res?.data?.accessRevoked
+          ? `Access revoked for ${userId}; employee identity and HR history were preserved.`
+          : `Offboarding clearance initiated for ${userId} (${payload.exitType}).`,
+        "success"
+      );
     } catch (err) {
       showToast(err?.message || "Failed to process offboarding", "coral");
     }
@@ -2271,15 +2307,16 @@ function openLetterGeneratorModal() {
       date: new Date().toISOString().split("T")[0],
       status: "ISSUED"
     };
-    liveDocuments.unshift(newDoc);
-
     try {
-      await apiPost(`/employees/${userId}/documents/generate`, payload).catch(() => null);
-    } catch {}
-
-    showToast(`HR Document "${payload.documentName}" generated successfully (${docId})!`, "success");
-    document.getElementById("modal-root").innerHTML = "";
-    rerenderCurrentSubpanel();
+      const res = await apiPost(`/employees/${userId}/documents/generate`, payload);
+      const created = res?.data?.document || newDoc;
+      liveDocuments.unshift(created);
+      showToast(res?.message || `HR Document "${payload.documentName}" generated successfully (${created.docId || created.documentId || docId})!`, "success");
+      document.getElementById("modal-root").innerHTML = "";
+      rerenderCurrentSubpanel();
+    } catch (err) {
+      showToast(err?.message || `Failed to generate HR document for ${userId}.`, "error");
+    }
   });
 }
 
@@ -2377,7 +2414,7 @@ export function openOnboardEmployeeModal() {
             <div>
               <label style="font-size:11.5px; font-weight:600; display:block; margin-bottom:4px;">Primary Café</label>
               <select id="oe-cafe" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
-                ${liveCafes.map(c => `<option value="${c.cafeId}">${c.name || c.cafeId}</option>`).join('') || '<option value="ZC-0001">Kozhikode Roastery</option>'}
+                ${liveCafes.map(c => `<option value="${c.cafeId}">${c.name || c.cafeId}</option>`).join('') || '<option value="" disabled selected>No authorized cafés available</option>'}
               </select>
             </div>
             <div>
@@ -2461,10 +2498,13 @@ export function openOnboardEmployeeModal() {
     wireVisibilityToggles(modalRoot);
 
     modalRoot.querySelector("#oe-gen-pwd-btn")?.addEventListener("click", () => {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-      let rand = "";
-      for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-      const pwd = `Zamorin@${rand}!`;
+      let pwd;
+      try {
+        pwd = generateSecureEmployeePassword();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "password");
+        return;
+      }
       const pwdInput = modalRoot.querySelector("#oe-password");
       if (pwdInput) {
         pwdInput.value = pwd;
@@ -2478,7 +2518,13 @@ export function openOnboardEmployeeModal() {
     });
 
     modalRoot.querySelector("#oe-gen-pin-btn")?.addEventListener("click", () => {
-      const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+      let randomPin;
+      try {
+        randomPin = generateSecureSixDigitPin();
+      } catch (error) {
+        handleSecureCredentialGenerationError(error, "PIN");
+        return;
+      }
       const pinInput = modalRoot.querySelector("#oe-pin");
       if (pinInput) {
         pinInput.value = randomPin;
@@ -2797,10 +2843,13 @@ export function openManageCredentialsModal(userId, empName, empEmail) {
   wireVisibilityToggles(modalRoot);
 
   modalRoot.querySelector("#btn-gen-manage-pwd")?.addEventListener("click", () => {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-    let rand = "";
-    for (let i = 0; i < 6; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-    const pwd = `Zamorin@${rand}!`;
+    let pwd;
+    try {
+      pwd = generateSecureEmployeePassword();
+    } catch (error) {
+      handleSecureCredentialGenerationError(error, "password");
+      return;
+    }
     const pwdInput = modalRoot.querySelector("#mcred-password");
     if (pwdInput) {
       pwdInput.value = pwd;
@@ -2814,7 +2863,13 @@ export function openManageCredentialsModal(userId, empName, empEmail) {
   });
 
   modalRoot.querySelector("#btn-gen-manage-pin")?.addEventListener("click", () => {
-    const randomPin = String(Math.floor(100000 + Math.random() * 900000));
+    let randomPin;
+    try {
+      randomPin = generateSecureSixDigitPin();
+    } catch (error) {
+      handleSecureCredentialGenerationError(error, "PIN");
+      return;
+    }
     const pinInput = modalRoot.querySelector("#mcred-pin");
     if (pinInput) {
       pinInput.value = randomPin;

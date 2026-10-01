@@ -2,6 +2,9 @@ services:
   - type: web
     name: zamorin-cafe-erp-backend
     runtime: node
+    repo: https://github.com/zamorinestate/estate-erp
+    branch: main
+    autoDeploy: true
     rootDir: backend
     buildCommand: npm ci --only=production
     startCommand: node src/scripts/startProd.js
@@ -23,8 +26,18 @@ services:
         value: 8.8.8.8,1.1.1.1
       - key: MONGODB_URI
         sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_KEY_PREFIX
+        value: zamorin:
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: QR_SIGNING_SECRET
+        sync: false
+      - key: ATTENDANCE_QR_SECRET
+        sync: false
+      - key: PUBLIC_APP_ORIGIN
+        value: https://zamorin-cafe-erp.vercel.app
       - key: JWT_ACCESS_SECRET
         sync: false
       - key: JWT_ACCESS_TTL_MINUTES
@@ -39,6 +52,12 @@ services:
         value: 10
       - key: MFA_ENCRYPTION_KEY
         sync: false
+      - key: ZAMORIN_ANDROID_APP_PACKAGE
+        value: com.zamorin.cafe.erp
+      - key: ZAMORIN_ANDROID_APP_CERT_SHA256
+        sync: false
+      - key: ZAMORIN_PRINT_DISPATCH_PRIVATE_KEY_PKCS8_B64
+        sync: false
       - key: INITIAL_ORGANISATION_ID
         value: ZAMORIN
       - key: INITIAL_MASTER_NAME
@@ -47,6 +66,10 @@ services:
         sync: false
       - key: INITIAL_MASTER_PASSWORD
         sync: false
+      - key: SEED_MINIMAL
+        value: "true"
+      - key: SEED_DEMO_DATA
+        value: "false"
       - key: MONGODB_MAX_POOL_SIZE
         value: 50
       - key: MONGODB_MIN_POOL_SIZE
@@ -73,4 +96,12 @@ services:
         value: zamorinDocuments
       - key: DOCUMENT_STORAGE_MAX_BYTES
         value: 15728640
+      - key: REQUIRE_DOCUMENT_SCANNER
+        value: "false"
+      - key: CLAMAV_HOST
+        sync: false
+      - key: CLAMAV_PORT
+        value: 3310
+      - key: ATTENDANCE_ORPHAN_GRACE_MINUTES
+        value: 60
 

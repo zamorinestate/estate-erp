@@ -53,6 +53,10 @@ const {
 } = require('../models/PurchaseRequisition');
 
 const {
+  RequestForQuotation,
+} = require('../models/RequestForQuotation');
+
+const {
   IncomingInspection,
 } = require('../models/IncomingInspection');
 
@@ -94,6 +98,10 @@ const {
 } = require('../utils/ApiError');
 
 const {
+  generateSecureString,
+} = require('../utils/secureRandom');
+
+const {
   recordRequestAudit,
 } = require('../services/auditService');
 
@@ -120,6 +128,30 @@ function parsePositiveInteger(value, fallback, maximum) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, maximum);
+}
+
+async function generateProcurementEntityId({
+  organisationId,
+  sequenceKey,
+  prefix,
+  minimumDigits = 4,
+}) {
+  const sequenceAvailable = Boolean(
+    mongoose.connection?.readyState === 1 ||
+    SequenceCounter.generateId?.mock ||
+    typeof SequenceCounter.generateId?.restore === 'function'
+  );
+
+  if (sequenceAvailable) {
+    return SequenceCounter.generateId({
+      organisationId,
+      sequenceKey,
+      prefix,
+      minimumDigits,
+    });
+  }
+
+  return `${prefix}-${generateSecureString(8, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789')}`;
 }
 
 async function notifyMasterOfOrderEvent({
@@ -751,7 +783,14 @@ const submitOrder = asyncHandler(async (request, response) => {
  */
 const approveOrder = asyncHandler(async (request, response) => {
   if (request.auth?.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to approve purchase orders.');
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Primary Master has authority to approve purchase orders.');
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to approve purchase orders.'
+    );
   }
 
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
@@ -1803,7 +1842,14 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
  */
 const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
   if (request.auth?.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to approve purchase orders.');
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Primary Master has authority to approve purchase orders.');
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to finalize purchase-order approval.'
+    );
   }
 
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
@@ -2235,7 +2281,10 @@ const createPurchaseRequisition = asyncHandler(async (request, response) => {
   }
 
   const effectiveCafe = resolveEffectiveCafeScope(request);
-  const cafeId = effectiveCafe || normalizeId(rawCafeId) || 'ZC-0001';
+  const cafeId = effectiveCafe || normalizeId(rawCafeId);
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required for a purchase requisition.');
+  }
   assertCafeAccess(request, cafeId);
 
   const datePart = getIstBusinessDate().replace(/-/g, '');
@@ -2498,10 +2547,60 @@ const convertRequisitionToPo = asyncHandler(async (request, response) => {
  * List RFQs and supplier quotes.
  */
 const listRfqs = asyncHandler(async (request, response) => {
+  const organisationId = request.auth.organisationId;
+  const { status, cafeId: requestedCafeId, limit = 100 } = request.query || {};
+  const filter = { organisationId };
+
+  const effectiveCafe = resolveEffectiveCafeScope(request);
+  if (effectiveCafe) {
+    filter.cafeId = effectiveCafe;
+  } else if (request.auth.role === 'OWNER') {
+    const ownerCafeIds = [
+      ...new Set(
+        [
+          ...(request.auth.assignedCafeIds || []),
+          request.auth.primaryCafeId,
+          request.auth.cafeId,
+        ]
+          .filter(Boolean)
+          .map(normalizeId)
+      ),
+    ];
+
+    filter.$or = [
+      { cafeId: null },
+      { cafeId: { $in: ownerCafeIds } },
+    ];
+  } else if (
+    requestedCafeId &&
+    normalizeId(requestedCafeId) !== 'ALL'
+  ) {
+    filter.cafeId = normalizeId(requestedCafeId);
+  }
+
+  if (status) {
+    const normalizedStatus = normalizeId(status);
+    if (!['OPEN', 'CLOSED', 'AWARDED', 'CANCELLED'].includes(normalizedStatus)) {
+      throw new ApiError(
+        400,
+        'INVALID_RFQ_STATUS',
+        'RFQ status filter is invalid.'
+      );
+    }
+    filter.status = normalizedStatus;
+  }
+
+  const rfqs = await RequestForQuotation.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(parsePositiveInteger(limit, 100, 500))
+    .lean();
+
   return response.status(200).json({
     success: true,
     data: {
-      rfqs: [],
+      rfqs,
+      count: rfqs.length,
+      sourceStatus: 'DURABLE',
     },
     correlationId: request.correlationId || null,
   });
@@ -2512,35 +2611,145 @@ const listRfqs = asyncHandler(async (request, response) => {
  * Create a new RFQ.
  */
 const createRfq = asyncHandler(async (request, response) => {
-  const { title, deadline, invitedVendorIds = [], notes = '' } = request.body || {};
-  if (!title) {
+  const {
+    title,
+    deadline,
+    invitedVendorIds = [],
+    notes = '',
+    cafeId: requestedCafeId = null,
+  } = request.body || {};
+
+  const titleText = String(title || '').trim();
+  if (!titleText) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'RFQ title is required.');
   }
 
-  const rfqId = `RFQ-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const deadlineDate = deadline ? new Date(deadline) : null;
+  if (
+    !deadlineDate ||
+    Number.isNaN(deadlineDate.getTime()) ||
+    deadlineDate.getTime() <= Date.now()
+  ) {
+    throw new ApiError(
+      400,
+      'RFQ_DEADLINE_INVALID',
+      'RFQ deadline is required and must be a valid future date.'
+    );
+  }
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'CREATE_RFQ',
-    entityType: 'RFQ',
-    entityId: rfqId,
-    reason: notes || 'Supplier competitive sourcing RFQ',
-    result: 'SUCCESS',
-    riskClassification: 'LOW',
+  const organisationId = request.auth.organisationId;
+  let cafeId = null;
+
+  if (request.auth.role === 'CAFE_ADMIN') {
+    cafeId = resolveEffectiveCafeScope(request);
+    if (!cafeId) {
+      throw new ApiError(
+        403,
+        'CAFE_SCOPE_REQUIRED',
+        'Café Admin RFQs require an authorized café scope.'
+      );
+    }
+  } else if (requestedCafeId && normalizeId(requestedCafeId) !== 'ALL') {
+    cafeId = resolveEffectiveCafeScope(request);
+  }
+
+  const vendorIds = [
+    ...new Set(
+      (Array.isArray(invitedVendorIds) ? invitedVendorIds : [])
+        .map(normalizeId)
+        .filter(Boolean)
+    ),
+  ];
+
+  if (vendorIds.length > 100) {
+    throw new ApiError(
+      400,
+      'RFQ_VENDOR_LIMIT_EXCEEDED',
+      'An RFQ may invite at most 100 vendors.'
+    );
+  }
+
+  if (
+    vendorIds.length > 0 &&
+    (mongoose.connection?.readyState === 1 || Vendor.find?.mock)
+  ) {
+    const vendorQuery = Vendor.find({
+      organisationId,
+      vendorId: { $in: vendorIds },
+    }).select('vendorId');
+    const existingVendors =
+      vendorQuery && typeof vendorQuery.lean === 'function'
+        ? await vendorQuery.lean()
+        : await vendorQuery;
+    const existingIds = new Set(
+      (existingVendors || []).map((vendor) => normalizeId(vendor.vendorId))
+    );
+    const invalidVendorIds = vendorIds.filter((vendorId) => !existingIds.has(vendorId));
+
+    if (invalidVendorIds.length > 0) {
+      throw new ApiError(
+        400,
+        'RFQ_VENDOR_NOT_FOUND',
+        'One or more invited vendors are not valid organisation vendors.',
+        { invalidVendorIds }
+      );
+    }
+  }
+
+  const year = new Date().getUTCFullYear();
+  const rfqId = await generateProcurementEntityId({
+    organisationId,
+    sequenceKey: `RFQ_${year}`,
+    prefix: `RFQ-${year}`,
+    minimumDigits: 4,
   });
+
+  const createOperation = async (session) => {
+    const rfq = new RequestForQuotation({
+      rfqId,
+      organisationId,
+      cafeId,
+      scopeType: cafeId ? 'CAFE' : 'ORGANISATION',
+      title: titleText,
+      deadline: deadlineDate,
+      invitedVendorIds: vendorIds,
+      status: 'OPEN',
+      notes: String(notes || '').trim(),
+      createdByUserId: request.auth.userId,
+    });
+
+    await rfq.save(session ? { session } : undefined);
+
+    await recordRequestAudit({
+      request,
+      module: 'PROCUREMENT',
+      action: 'CREATE_RFQ',
+      entityType: 'RFQ',
+      entityId: rfqId,
+      cafeId,
+      reason: notes || 'Supplier competitive sourcing RFQ',
+      after: {
+        rfqId,
+        cafeId,
+        scopeType: rfq.scopeType,
+        deadline: deadlineDate,
+        invitedVendorIds: vendorIds,
+        status: 'OPEN',
+      },
+      result: 'SUCCESS',
+      riskClassification: 'LOW',
+      session,
+    });
+
+    return rfq;
+  };
+
+  const rfq = await executeTransactionWithRetry(createOperation);
 
   return response.status(201).json({
     success: true,
     data: {
-      rfq: {
-        rfqId,
-        title,
-        deadline: deadline || '2026-08-30',
-        invitedVendorIds,
-        status: 'OPEN',
-        createdAt: new Date().toISOString(),
-      },
+      rfq: typeof rfq.toObject === 'function' ? rfq.toObject() : rfq,
     },
     correlationId: request.correlationId || null,
   });
@@ -3168,6 +3377,38 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
           );
         }
 
+        if (deliveredQty <= 0) {
+          throw new ApiError(
+            400,
+            'RECEIVING_QUANTITY_REQUIRED',
+            `Delivered quantity must be greater than zero for item ${itemId}.`
+          );
+        }
+
+        const supplierLot = String(item.lotNumber || '').trim();
+        const expiryDate = String(item.expiryDate || '').trim();
+        if (!supplierLot) {
+          throw new ApiError(
+            400,
+            'SUPPLIER_LOT_REQUIRED',
+            `Supplier lot/batch number is required for received item ${itemId}.`
+          );
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate) || Number.isNaN(new Date(`${expiryDate}T00:00:00Z`).getTime())) {
+          throw new ApiError(
+            400,
+            'EXPIRY_DATE_REQUIRED',
+            `A valid expiryDate (YYYY-MM-DD) is required for received item ${itemId}.`
+          );
+        }
+        if (acceptedQty > 0 && expiryDate < getIstBusinessDate()) {
+          throw new ApiError(
+            409,
+            'EXPIRED_STOCK_CANNOT_BE_ACCEPTED',
+            `Accepted quantity for item ${itemId} cannot be posted from an already expired lot.`
+          );
+        }
+
         // Invariant: CONCURRENT_GRN_OVER_RECEIVES_PO = 0
         const currentReceived = Number(poLine.receivedQuantityBase) || 0;
         const ordered = Number(poLine.orderedQuantityBase) || 0;
@@ -3349,13 +3590,10 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
               organisationId: request.auth.organisationId,
               cafeId: po.cafeId,
               itemId,
-              movementType: 'RECEIPT',
+              movementType: 'PROCUREMENT_RECEIPT',
               quantityBase: acceptedQty,
               balanceBeforeBase: balanceBefore,
               balanceAfterBase: balanceAfter,
-              quantityDelta: acceptedQty,
-              balanceBefore,
-              balanceAfter,
               businessDate,
               serverTimestamp: now,
               status: 'ACTIVE',
@@ -3387,14 +3625,14 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
               minimumDigits: 4,
             });
 
-            const expiry = item.expiryDate
-              ? new Date(item.expiryDate).toISOString().slice(0, 10)
-              : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            const expiry = new Date(`${item.expiryDate}T00:00:00Z`)
+              .toISOString()
+              .slice(0, 10);
 
             const lotRecord = new InventoryLot({
               organisationId: request.auth.organisationId,
               lotId,
-              supplierLot: item.lotNumber || `SLOT-${Date.now().toString().slice(-6)}`,
+              supplierLot: String(item.lotNumber).trim(),
               itemId,
               cafeId: po.cafeId,
               vendorId: po.vendorId,
@@ -3429,14 +3667,14 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
             const qLotDoc = new InventoryLot({
               organisationId: request.auth.organisationId,
               lotId: qLotId,
-              supplierLot: item.lotNumber || `REJ-${Date.now().toString().slice(-6)}`,
+              supplierLot: String(item.lotNumber).trim(),
               itemId,
               cafeId: po.cafeId,
               vendorId: po.vendorId,
               procurementReference: po.purchaseOrderId,
               receivingInspectionId: inspectionId,
               storageLocation: 'Quarantine Holding Bay',
-              expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : businessDate,
+              expiryDate: new Date(`${item.expiryDate}T00:00:00Z`).toISOString().slice(0, 10),
               unit: poLine.baseUnit || 'units',
               initialQuantity: rejectedQty,
               quantityBase: rejectedQty,
@@ -3891,21 +4129,6 @@ const attachOrderDocument = asyncHandler(async (request, response) => {
     await po.save();
   }
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'PO_DOCUMENT_ATTACHED',
-    entityType: 'PURCHASE_ORDER',
-    entityId: purchaseOrderId,
-    cafeId: po.cafeId,
-    metadata: {
-      documentId: doc.documentId,
-      documentType: docType,
-      documentNumber: docNum,
-      reconciliationStatus: matchResult.reconciliationStatus,
-      warnings: doc.metadata?.warnings || [],
-    },
-  }).catch(() => {});
 
   return response.status(201).json({
     success: true,
@@ -3983,7 +4206,7 @@ const previewOrderDocument = asyncHandler(async (request, response) => {
     entityId: documentId,
     cafeId: po.cafeId,
     metadata: { purchaseOrderId, documentType: doc.documentType },
-  }).catch(() => {});
+  });
 
   const stream = await documentStorageAdapter.getStream({ storageKey: key });
   return stream.pipe(response);
@@ -4062,7 +4285,7 @@ const downloadOrderDocument = asyncHandler(async (request, response) => {
     entityId: documentId,
     cafeId: po.cafeId,
     metadata: { purchaseOrderId, documentType: doc.documentType, exportId },
-  }).catch(() => {});
+  });
 
   const stream = await documentStorageAdapter.getStream({ storageKey: key });
   return stream.pipe(response);
@@ -4111,19 +4334,6 @@ const replaceOrderDocumentVersion = asyncHandler(async (request, response) => {
     auth: request.auth,
   });
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'PO_DOCUMENT_VERSION_REPLACED',
-    entityType: 'BUSINESS_DOCUMENT',
-    entityId: documentId,
-    cafeId: po.cafeId,
-    metadata: {
-      purchaseOrderId,
-      newVersion: updatedDoc.currentVersion,
-      changeReason: body.changeReason,
-    },
-  }).catch(() => {});
 
   return response.status(200).json({
     success: true,
@@ -4167,15 +4377,6 @@ const archiveOrderDocument = asyncHandler(async (request, response) => {
     auth: request.auth,
   });
 
-  await recordRequestAudit({
-    request,
-    module: 'PROCUREMENT',
-    action: 'PO_DOCUMENT_ARCHIVED',
-    entityType: 'BUSINESS_DOCUMENT',
-    entityId: documentId,
-    cafeId: po.cafeId,
-    metadata: { purchaseOrderId, reason: request.body?.reason },
-  }).catch(() => {});
 
   return response.status(200).json({
     success: true,

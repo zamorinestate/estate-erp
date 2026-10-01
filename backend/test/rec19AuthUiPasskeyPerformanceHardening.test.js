@@ -753,9 +753,13 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
     assert.ok(!loginJs.includes('JSON.stringify({ email, password'), 'Zero password storage in remember device');
   });
 
-  await t.test('71. Login rate limiting: express-rate-limit protects login endpoint from brute force', () => {
+  await t.test('71. Login rate limiting: failed attempts are throttled without locking out successful sign-ins', () => {
     const authRoutes = fs.readFileSync(path.resolve(__dirname, '../src/routes/authRoutes.js'), 'utf-8');
     assert.match(authRoutes, /rateLimit|loginLimiter|authLimiter/, 'Rate limiter applied on auth routes');
+    assert.match(authRoutes, /skipSuccessfulRequests:\s*true/, 'Successful password sign-ins must not consume local brute-force quota');
+    assert.match(authRoutes, /requestWasSuccessful:\s*isSuccessfulAuthenticationAttempt/, 'MFA challenge success must use explicit credential-verification semantics');
+    assert.match(authRoutes, /AUTH_LOGIN_FAILURES_V2/, 'Distributed limiter namespace must rotate away from stale success-counting buckets');
+    assert.match(authRoutes, /releaseSuccessfulRequests:\s*true/, 'Distributed login reservations must be released after successful authentication');
   });
 
   await t.test('72. Session creation: valid access token generated with role and org claims', async () => {
@@ -799,7 +803,7 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
   // 75 - 82: Absolute Invariant Regressions (Role Matrix, PO, PL, QR, REC-13)
   // ---------------------------------------------------------------------------
 
-  await t.test('75. Personal Ledger absolute regression: Primary Master & Owner ALLOW; Normal Master, Admin, Staff DENY', () => {
+  await t.test('75. Personal Ledger absolute regression: Primary Master & Owner ALLOW; Admin, Staff DENY', () => {
     function canAccessPersonalLedger(role, isPrimaryMaster) {
       if (role === 'MASTER' && isPrimaryMaster === true) return true;
       if (role === 'OWNER') return true;
@@ -807,19 +811,18 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
     }
     assert.strictEqual(canAccessPersonalLedger('MASTER', true), true, 'Primary Master must be ALLOWED');
     assert.strictEqual(canAccessPersonalLedger('OWNER', false), true, 'Owner must be ALLOWED');
-    assert.strictEqual(canAccessPersonalLedger('MASTER', false), false, 'Normal Master must be DENIED');
     assert.strictEqual(canAccessPersonalLedger('CAFE_ADMIN', false), false, 'Cafe Admin must be DENIED');
     assert.strictEqual(canAccessPersonalLedger('STAFF', false), false, 'Staff must be DENIED');
   });
 
-  await t.test('76. PO Approval absolute regression: Primary Master & Normal Master ALLOW; Owner, Admin, Staff DENY', () => {
-    function canApprovePO(role) {
-      return role === 'MASTER';
+  await t.test('76. PO Approval absolute regression: Primary Master ALLOW; Owner, Admin, Staff DENY', () => {
+    function canApprovePO(role, isPrimaryMaster) {
+      return role === 'MASTER' && isPrimaryMaster === true;
     }
-    assert.strictEqual(canApprovePO('MASTER'), true, 'Master can approve PO');
-    assert.strictEqual(canApprovePO('OWNER'), false, 'Owner cannot approve PO');
-    assert.strictEqual(canApprovePO('CAFE_ADMIN'), false, 'Cafe Admin cannot approve PO');
-    assert.strictEqual(canApprovePO('STAFF'), false, 'Staff cannot approve PO');
+    assert.strictEqual(canApprovePO('MASTER', true), true, 'Primary Master can approve PO');
+    assert.strictEqual(canApprovePO('OWNER', false), false, 'Owner cannot approve PO');
+    assert.strictEqual(canApprovePO('CAFE_ADMIN', false), false, 'Cafe Admin cannot approve PO');
+    assert.strictEqual(canApprovePO('STAFF', false), false, 'Staff cannot approve PO');
   });
 
   await t.test('77. Owner regression: Owner authority preserved', async () => {

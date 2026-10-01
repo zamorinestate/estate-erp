@@ -454,7 +454,7 @@ function generate152RouteMatrix(records) {
 ${table}
 
 ## 3. Certification
-All 152 routes across all 5 personas have been verified and certified 100% operational with complete supporting file closure.
+The configured 152-route browser matrix completed for all 4 supported personas. This is browser-route evidence only and is not a production certification.
 `;
 
   const outPath = path.join(DOCS_DIR, 'SUPPORTING_FILES_152_ROUTE_RUNTIME_MATRIX.md');

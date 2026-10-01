@@ -1,5 +1,7 @@
 using System;
 using System.Text.Json;
+using System.Text;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
@@ -123,13 +125,47 @@ namespace Zamorin.Cafe.ERP
                         return CreateResponse(requestId, false, null, writeRes.ErrorCode ?? "WRITE_FAILED", writeRes.ErrorMessage ?? "Failed to write file.");
                     }
 
+                    case "GET_DEVICE_ATTESTATION_KEY":
+                    {
+                        using var signer = OpenOrCreateAttestationSigner(out var providerLabel);
+                        var parameters = signer.ExportParameters(false);
+                        var jwk = PublicJwk(parameters);
+                        var res = new JsonObject
+                        {
+                            ["algorithm"] = "ES256",
+                            ["provider"] = providerLabel,
+                            ["publicKeyJwk"] = jwk,
+                            ["keyThumbprint"] = KeyThumbprint(jwk)
+                        };
+                        return CreateResponse(requestId, true, res);
+                    }
+
+                    case "SIGN_DEVICE_ATTESTATION":
+                    {
+                        return CreateResponse(
+                            requestId,
+                            false,
+                            null,
+                            "DEVICE_ATTESTATION_DIRECT_SIGNING_DISABLED",
+                            "Arbitrary device-key signing is disabled. Use a purpose-bound attestation action."
+                        );
+                    }
+
                     case "OPEN_SYSTEM_PRINT":
                     {
                         var jobName = payload["jobName"]?.GetValue<string>() ?? "Zamorin_Print_Job";
                         var printSuccess = await _callbacks.OnOpenSystemPrintAsync(requestId, jobName);
                         var res = new JsonObject
                         {
-                            ["printed"] = printSuccess,
+                            ["printed"] = false,
+                            ["printDispatched"] = printSuccess,
+                            ["status"] = printSuccess ? "SYSTEM_DIALOG_OPENED" : "FAILED",
+                            ["systemPrintCompleted"] = false,
+                            ["spoolerCompletionVerified"] = false,
+                            ["contentBindingVerified"] = false,
+                            ["printerIdentityVerified"] = false,
+                            ["physicalCompletionVerified"] = false,
+                            ["printEvidencePolicy"] = "SYSTEM_PRINT_UNVERIFIED",
                             ["jobName"] = jobName
                         };
                         return CreateResponse(requestId, printSuccess, res);
@@ -169,6 +205,76 @@ namespace Zamorin.Cafe.ERP
                 return CreateResponse(requestId, false, null, "BRIDGE_EXECUTION_ERROR", ex.Message);
             }
         }
+
+        private const string AttestationKeyName = "zamorin_device_attestation_v1";
+
+        private static ECDsaCng OpenOrCreateAttestationSigner(out string providerLabel)
+        {
+            var providers = new[]
+            {
+                (Provider: new CngProvider("Microsoft Platform Crypto Provider"), Label: "WINDOWS_CNG"),
+                (Provider: CngProvider.MicrosoftSoftwareKeyStorageProvider, Label: "WINDOWS_CNG")
+            };
+
+            Exception? lastError = null;
+            foreach (var candidate in providers)
+            {
+                try
+                {
+                    CngKey key;
+                    if (CngKey.Exists(AttestationKeyName, candidate.Provider))
+                    {
+                        key = CngKey.Open(AttestationKeyName, candidate.Provider);
+                    }
+                    else
+                    {
+                        key = CngKey.Create(
+                            CngAlgorithm.ECDsaP256,
+                            AttestationKeyName,
+                            new CngKeyCreationParameters
+                            {
+                                Provider = candidate.Provider,
+                                KeyUsage = CngKeyUsages.Signing,
+                                ExportPolicy = CngExportPolicies.None
+                            }
+                        );
+                    }
+                    providerLabel = candidate.Label;
+                    return new ECDsaCng(key);
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
+            }
+
+            throw new CryptographicException("Unable to initialize persistent Windows CNG signing key.", lastError);
+        }
+
+        private static JsonObject PublicJwk(ECParameters parameters)
+        {
+            if (parameters.Q.X == null || parameters.Q.Y == null)
+            {
+                throw new CryptographicException("ECDSA public key coordinates are unavailable.");
+            }
+
+            return new JsonObject
+            {
+                ["kty"] = "EC",
+                ["crv"] = "P-256",
+                ["x"] = Base64Url(parameters.Q.X),
+                ["y"] = Base64Url(parameters.Q.Y)
+            };
+        }
+
+        private static string KeyThumbprint(JsonObject jwk)
+        {
+            var canonical = $"{{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"{jwk["x"]?.GetValue<string>()}\",\"y\":\"{jwk["y"]?.GetValue<string>()}\"}}";
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        }
+
+        private static string Base64Url(byte[] bytes) =>
+            Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
         private static string CreateResponse(string requestId, bool success, JsonNode? result, string? errorCode = null, string? errorMessage = null)
         {

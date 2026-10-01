@@ -671,7 +671,7 @@ const billSchema = new mongoose.Schema(
 
     printStatus: {
       type: String,
-      enum: ['NOT_REQUESTED', 'PRINT_PENDING', 'PRINT_DISPATCHED', 'PRINTED', 'PRINT_FAILED'],
+      enum: ['NOT_REQUESTED', 'PRINT_PENDING', 'PRINT_DISPATCHED', 'PRINTED', 'PRINT_FAILED', 'PRINT_CANCELLED'],
       default: 'NOT_REQUESTED',
       index: true,
     },
@@ -682,8 +682,30 @@ const billSchema = new mongoose.Schema(
         jobType: { type: String, default: 'RECEIPT' },
         status: { type: String, default: 'QUEUED' },
         dispatchedAt: { type: Date, default: Date.now },
+        dispatchedDeviceId: { type: String, default: null, trim: true, uppercase: true },
+        acknowledgedByDeviceId: { type: String, default: null, trim: true, uppercase: true },
+        acknowledgedAt: { type: Date, default: null },
+        attestationRequired: { type: Boolean, default: false },
+        attestationVersion: { type: String, default: null },
+        attestationKeyThumbprint: { type: String, default: null },
+        attestationKeyProvider: { type: String, default: null },
+        attestationKeyHardwareBackedVerified: { type: Boolean, default: false },
+        attestationKeyHardwareSecurityLevel: { type: String, default: 'UNKNOWN' },
+        attestationVerifiedAt: { type: Date, default: null },
+        ackSignatureHash: { type: String, default: null },
+        payloadSha256: { type: String, default: null, lowercase: true },
+        payloadBytes: { type: Number, default: null },
+        printerTarget: { type: String, default: 'DEFAULT_THERMAL' },
+        transportMode: { type: String, default: 'UNBOUND' },
+        platformJobId: { type: String, default: null },
+        evidenceLevel: { type: String, default: 'NONE' },
+        contentBindingVerified: { type: Boolean, default: false },
+        actualPrinterId: { type: String, default: null },
+        printerIdentityVerified: { type: Boolean, default: false },
         completedAt: { type: Date, default: null },
         failureCode: { type: String, default: null },
+        drawerKickRequested: { type: Boolean, default: false },
+        drawerKickStatus: { type: String, default: 'NOT_REQUESTED' },
       },
     ],
 
@@ -764,9 +786,19 @@ const billSchema = new mongoose.Schema(
     // 'ALREADY_DEPLETED' = idempotent replay; depletion skipped safely.
     bomDepletionStatus: {
       type: String,
-      enum: ['NOT_ATTEMPTED', 'DEPLETED', 'FAILED', 'ALREADY_DEPLETED'],
+      enum: ['NOT_ATTEMPTED', 'PROCESSING', 'DEPLETED', 'FAILED', 'ALREADY_DEPLETED'],
       default: 'NOT_ATTEMPTED',
       index: true,
+    },
+
+    bomDepletionStartedAt: {
+      type: Date,
+      default: null,
+    },
+
+    bomDepletionCompletedAt: {
+      type: Date,
+      default: null,
     },
 
     bomDepletionError: {
@@ -791,6 +823,7 @@ const billSchema = new mongoose.Schema(
     // Database-level uniqueness prevents multi-process / multi-worker duplicate sale creation.
     saleAttemptId: {
       type: String,
+      immutable: true,
       trim: true,
       index: true,
       sparse: true,

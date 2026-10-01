@@ -9,15 +9,21 @@ function requireCafeOperationsDevice(req, res, next) {
     return res.status(401).json({ error: 'UNAUTHENTICATED' });
   }
 
-  // MASTER retains global governance authority
+  // Only the designated Primary Master retains global governance authority.
   if (req.auth.role === 'MASTER') {
-    return next();
+    if (req.auth.isPrimaryMaster === true) {
+      return next();
+    }
+    return res.status(403).json({
+      error: 'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      message: 'Primary Master authority is required for MASTER device access.',
+    });
   }
 
   if (req.auth.role !== 'CAFE_ADMIN') {
     return res.status(403).json({
       error: 'FORBIDDEN_ROLE',
-      message: 'Operation requires CAFE_ADMIN or MASTER role',
+      message: 'Operation requires CAFE_ADMIN or Primary Master authority',
     });
   }
 

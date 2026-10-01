@@ -2,7 +2,7 @@
 // PAGE: Trash Bin, Recovery & Data Disposition — SCR-024
 //
 // Enterprise Soft-Delete Recovery, Retention Governance, Preservation Holds,
-// Disposition Review, Multi-Store Deletion Propagation & ZURF Certificates.
+// Disposition Review, Verified-Stage Disposition Proof & ZURF Certificates.
 //
 // LOCATION: Administration → Data Management → Trash Bin & Recovery
 // PERMISSIONS: MASTER ONLY (Or explicitly authorized governance auditors)
@@ -45,8 +45,12 @@ function statusPill(status, isHoldActive) {
       return `<span class="pill pill-mint" style="font-size:10px;">Recoverable</span>`;
     case 'EXPIRING_SOON':
       return `<span class="pill pill-coral" style="font-size:10px;">Expiring Soon</span>`;
+    case 'RETENTION_COMPLETE':
+      return `<span class="pill pill-amber" style="font-size:10px;">Retention Complete</span>`;
     case 'DISPOSITION_REVIEW':
       return `<span class="pill pill-amber" style="font-size:10px;">Review Queue</span>`;
+    case 'DISPOSITION_PROCESSING':
+      return `<span class="pill pill-amber" style="font-size:10px;">Disposition Processing</span>`;
     case 'DISPOSITION_APPROVED':
       return `<span class="pill pill-mint" style="font-size:10px;">Ready for Purge</span>`;
     case 'DISPOSED':
@@ -71,7 +75,7 @@ export function renderTrashBin() {
             <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-028 TRASH</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0 0;">
-            Administration → Data Management · Governed recovery, retention holds &amp; multi-store purge
+            Administration → Data Management · Governed recovery, retention holds &amp; verified-stage disposition
           </p>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -384,8 +388,14 @@ async function _renderTrashListTab(root, container) {
                   ${i.isHoldActive ? `
                     <button class="btn btn-ghost btn-sm" data-trash-action="release-hold" data-trash-id="${escHtml(i.trashId)}" data-hold-id="${escHtml(i.holds?.[0]?.holdId || '')}" type="button" style="padding:4px 8px; font-size:11px;">Release</button>
                   ` : ''}
+                  ${!i.isHoldActive && i.lifecycleStatus === 'RETENTION_COMPLETE' ? `
+                    <button class="btn btn-secondary btn-sm" data-trash-action="request-disposition" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px;font-size:11px;">Submit for Review</button>
+                  ` : ''}
+                  ${!i.isHoldActive && i.lifecycleStatus === 'DISPOSITION_REVIEW' ? `
+                    <button class="btn btn-secondary btn-sm" data-trash-action="approve-disposition" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px;font-size:11px;">Approve</button>
+                  ` : ''}
                   ${i.lifecycleStatus === 'DISPOSITION_APPROVED' ? `
-                    <button class="btn btn-ghost btn-sm" data-trash-action="purge" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px; font-size:11px; border-color:var(--color-accent-coral); color:var(--color-accent-coral);">Purge</button>
+                    <button class="btn btn-ghost btn-sm" data-trash-action="purge" data-trash-id="${escHtml(i.trashId)}" type="button" style="padding:4px 8px; font-size:11px; border-color:var(--color-accent-coral); color:var(--color-accent-coral);">Execute Disposition</button>
                   ` : ''}
                 </div>
               </td>
@@ -460,17 +470,87 @@ function _wireRowActions(root) {
     });
   });
 
-  // Purge execution
+  // Submit retention-complete record for governed disposition review.
+  root.querySelectorAll('[data-trash-action="request-disposition"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const trashId = btn.dataset.trashId;
+      const justification = String(
+        window.prompt('Enter the disposition-review justification (minimum 10 characters):', '') || ''
+      ).trim();
+      if (justification.length < 10) {
+        showToast('A specific disposition justification of at least 10 characters is required.', 'coral');
+        return;
+      }
+      try {
+        const res = await apiPost(`/trash/${trashId}/disposition-request`, { justification });
+        showToast(res?.message || 'Disposition review requested.', 'mint');
+        _loadTabContent(root);
+      } catch (err) {
+        showToast(err?.message || 'Could not submit disposition review.', 'coral');
+      }
+    });
+  });
+
+  // Approve only an already-reviewed record. Policies requiring a distinct
+  // maker/checker will remain blocked until a distinct checker workflow exists.
+  root.querySelectorAll('[data-trash-action="approve-disposition"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const trashId = btn.dataset.trashId;
+      const reason = String(
+        window.prompt('Enter the disposition approval reason (minimum 10 characters):', '') || ''
+      ).trim();
+      if (reason.length < 10) {
+        showToast('A specific approval reason of at least 10 characters is required.', 'coral');
+        return;
+      }
+      if (!window.confirm('Approve this reviewed record for permanent disposition? Final execution will still re-check retention, holds, policy and transaction safety.')) {
+        return;
+      }
+      try {
+        const res = await apiPost(`/trash/${trashId}/approve-disposition`, {
+          reason,
+          confirmation: 'APPROVE_PERMANENT_DISPOSITION',
+        });
+        showToast(res?.message || 'Disposition approved.', 'mint');
+        _loadTabContent(root);
+      } catch (err) {
+        showToast(err?.message || 'Could not approve disposition.', 'coral');
+      }
+    });
+  });
+
+  // Permanent disposition execution. The server certifies only stages it
+  // actually executes and verifies; unsupported external-store stages are never
+  // represented as completed.
   root.querySelectorAll('[data-trash-action="purge"]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const trashId = btn.dataset.trashId;
       confirmAction({
         title: 'PERMANENT DATA DISPOSITION',
-        message: 'This will permanently destroy the business record across primary database, search index, and object storage. A ZURF compliance certificate will be issued. Proceed?',
+        message: 'This permanently erases the governed Trash payload only after final server-side retention, approval, hold, policy, transaction, and storage-capability checks. The certificate records verified stages only. Proceed to authorization?',
         onConfirm: async () => {
+          const reason = String(
+            window.prompt('Enter the permanent-disposition reason (minimum 10 characters):', '') || ''
+          ).trim();
+          if (reason.length < 10) {
+            showToast('A specific permanent-disposition reason of at least 10 characters is required.', 'coral');
+            return;
+          }
+
+          const confirmation = String(
+            window.prompt('Type PERMANENTLY_DISPOSE_TRASH_RECORD exactly to confirm:', '') || ''
+          ).trim();
+          if (confirmation !== 'PERMANENTLY_DISPOSE_TRASH_RECORD') {
+            showToast('Permanent-disposition confirmation phrase does not match.', 'coral');
+            return;
+          }
+
           try {
-            const res = await apiPost(`/trash/${trashId}/purge`);
-            showToast(res?.message || 'Permanent disposition completed.', 'mint');
+            const res = await apiPost(`/trash/${trashId}/purge`, {
+              reason,
+              confirmation,
+            });
+            showToast(res?.message || 'Verified-stage permanent disposition completed.', 'mint');
             _loadTabContent(root);
           } catch (err) {
             showToast(err?.message || 'Disposition purge failed.', 'coral');
@@ -498,7 +578,7 @@ async function _renderCertificatesTab(root, container) {
         <div style="font-size:28px; margin-bottom:8px;">📜</div>
         <div style="color:var(--ink); font-weight:600; font-size:14px;">No disposition certificates issued yet</div>
         <div style="color:var(--muted); font-size:12px; margin-top:4px;">
-          Governed permanent purges produce immutable ZURF v1 compliance certificates recorded here.
+          Governed permanent disposition produces immutable ZURF v1 certificates that record only server-verified disposition stages.
         </div>
       </div>`;
     return;

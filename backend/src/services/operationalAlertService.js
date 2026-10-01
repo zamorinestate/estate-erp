@@ -10,6 +10,7 @@
 
 const { OperationalAlert } = require('../models/OperationalAlert');
 const { ApiError } = require('../middleware/errorHandler');
+const { SequenceCounter } = require('../models/SequenceCounter');
 
 class OperationalAlertService {
   /**
@@ -60,8 +61,12 @@ class OperationalAlertService {
 
     // Generate unique alert ID
     const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
-    const alertId = `ALT-${dateStr}-${rand}`;
+    const alertId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `OPERATIONAL_ALERT_${dateStr}`,
+      prefix: `ALT-${dateStr}`,
+      minimumDigits: 5,
+    });
 
     const newAlert = await OperationalAlert.create({
       alertId,

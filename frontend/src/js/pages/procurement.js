@@ -1357,20 +1357,24 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
     } catch (_) {}
   }
   if (!activeCafes.length) {
-    activeCafes = [
-      { cafeId: 'ZC-0001', name: 'Koramangala Main Branch' },
-      { cafeId: 'ZC-0002', name: 'Indiranagar Central Branch' },
-    ];
+    showToast('No authorized café is available for this order request.', 'error');
+    return;
   }
 
-  // Authoritative default cafe: NEVER 'ALL'
-  let defaultCafeId = 'ZC-0001';
+  // Authoritative default café: derive only from authenticated/runtime scope.
+  // Never fabricate a café identifier and never use the portfolio selector ALL.
+  let defaultCafeId = '';
   if (state.selectedCafeId && state.selectedCafeId !== 'ALL') {
     defaultCafeId = state.selectedCafeId;
   } else if (state.currentCafeId && state.currentCafeId !== 'ALL') {
     defaultCafeId = state.currentCafeId;
-  } else if (activeCafes[0]?.cafeId) {
-    defaultCafeId = activeCafes[0].cafeId;
+  } else if (activeCafes[0]?.cafeId || activeCafes[0]?.code) {
+    defaultCafeId = activeCafes[0].cafeId || activeCafes[0].code;
+  }
+
+  if (!defaultCafeId) {
+    showToast('A valid café context is required before placing an order request.', 'error');
+    return;
   }
 
   const defaultVendorId = preselectedVendorId || activeVendors[0]?.vendorId || 'VEN-0001';

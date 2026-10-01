@@ -45,7 +45,7 @@ function enumerateDates(startDate, endDate) {
  * @param {string}  params.action         'APPROVE' | 'REJECT' | 'CANCEL' | 'REVOKE'
  * @param {string}  params.actorUserId    User performing the action (for audit)
  */
-async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action, actorUserId }) {
+async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action, actorUserId, session = null, skipAudit = false }) {
   const {
     userId,
     cafeId,
@@ -76,7 +76,7 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
         organisationId,
         userId,
         businessDate: date,
-      });
+      }).session(session);
 
       if (existing) {
         const hasPunch = existing.checkInAt || existing.checkOutAt;
@@ -91,6 +91,7 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
             type: 'LEAVE_PUNCH_CONFLICT',
             severity: 'MEDIUM',
             description: `Approved leave ${requestId} conflicts with real attendance punch on ${date}.`,
+            session,
           });
           continue; // Do not overwrite punch
         }
@@ -99,7 +100,7 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
         existing.isManualEntry = true;
         existing.leaveId = requestId;
         existing.updatedBy = actorUserId || 'SYSTEM';
-        await existing.save();
+        await existing.save({ session });
         reconciledCount++;
       } else {
         // Create a new Attendance record for the leave day
@@ -108,6 +109,7 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
           sequenceKey: 'ATTENDANCE',
           prefix: `AT-${date.replace(/-/g, '')}`,
           minimumDigits: 3,
+          session,
         });
         const newRecord = new Attendance({
           attendanceId,
@@ -122,7 +124,7 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
           createdBy: actorUserId || 'SYSTEM',
           rawTimeEvents: [],
         });
-        await newRecord.save();
+        await newRecord.save({ session });
         reconciledCount++;
       }
     }
@@ -133,7 +135,7 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
         organisationId,
         userId,
         businessDate: date,
-      });
+      }).session(session);
       if (!existing) continue;
 
       // Only revert if the record was a leave-derived record (no real punch)
@@ -142,31 +144,33 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
         existing.status = 'ABSENT';
         existing.updatedBy = actorUserId || 'SYSTEM';
         existing.notes = `Leave ${requestId} ${action.toLowerCase()} — status reverted to ABSENT.`;
-        await existing.save();
+        await existing.save({ session });
         reconciledCount++;
       }
     }
   }
 
-  await recordAuditEvent({
-    organisationId,
-    actorUserId: actorUserId || 'SYSTEM',
-    actorRole: 'SYSTEM',
-    module: 'ATTENDANCE',
-    action: 'ATTENDANCE_LEAVE_RECONCILED',
-    entityType: 'LeaveRequest',
-    entityId: requestId || 'LEAVE',
-    cafeId,
-    metadata: {
-      userId,
+  if (!skipAudit) {
+    await recordAuditEvent({
+      organisationId,
+      actorUserId: actorUserId || 'SYSTEM',
+      actorRole: 'SYSTEM',
+      module: 'ATTENDANCE',
+      action: 'ATTENDANCE_LEAVE_RECONCILED',
+      entityType: 'LeaveRequest',
+      entityId: requestId || 'LEAVE',
       cafeId,
-      leaveType,
-      startDate,
-      endDate,
-      reconcileAction: action,
-      actorUserId,
-    },
-  });
+      metadata: {
+        userId,
+        cafeId,
+        leaveType,
+        startDate,
+        endDate,
+        reconcileAction: action,
+        actorUserId,
+      },
+    });
+  }
 
   return {
     success: true,
@@ -175,10 +179,10 @@ async function reconcileLeaveToAttendance({ organisationId, leaveRequest, action
   };
 }
 
-async function _upsertException({ organisationId, cafeId, userId, attendanceId, businessDate, type, severity, description }) {
+async function _upsertException({ organisationId, cafeId, userId, attendanceId, businessDate, type, severity, description, session = null }) {
   const existing = await AttendanceException.findOne({
     organisationId, userId, businessDate, type,
-  });
+  }).session(session);
   if (existing) return; // Already exists — idempotent
 
   const exceptionId = `EXC-${businessDate.replace(/-/g, '')}-${userId}-${type.slice(0, 4)}`;
@@ -196,7 +200,7 @@ async function _upsertException({ organisationId, cafeId, userId, attendanceId, 
     generatedByService: 'leaveReconciliationService',
   });
   try {
-    await exc.save();
+    await exc.save({ session });
   } catch (e) {
     // Duplicate key — idempotent, ignore
     if (e.code !== 11000) throw e;

@@ -5,8 +5,180 @@ const { DEVICE_STATUS, SESSION_END_REASON, SECURITY_EVENT_TYPE } = require('../u
 const sessionService = require('./cafeOpsSessionService');
 const auditService = require('./auditService');
 const { logSecurityEvent, SECURITY_ACTIONS } = require('../../services/securityLogger');
+const {
+  ATTESTATION_ALGORITHM,
+  canonicalPublicJwk,
+  publicKeyThumbprint,
+} = require('../../services/deviceAttestationService');
+const {
+  verifyAndroidHardwareAttestation,
+  applyVerifiedAndroidHardwareEvidence,
+} = require('./androidHardwareAttestationService');
 
-async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVersion, osVersion }) {
+const ANDROID_HARDWARE_ATTESTATION_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
+function resolveCanonicalDevicePlatform(platform, signingKeyProvider = null) {
+  const provider = String(signingKeyProvider || '').trim().toUpperCase();
+  if (provider === 'ANDROID_KEYSTORE') return 'ANDROID';
+  if (provider === 'WINDOWS_CNG') return 'DESKTOP';
+
+  const value = String(platform || '').trim().toLowerCase();
+  if (value === 'android') return 'ANDROID';
+  if (value === 'ios' || value === 'ipados') return 'IOS';
+  if (value === 'macos' || value === 'windows' || value === 'desktop') return 'DESKTOP';
+  if (value === 'web' || value === 'web_pos' || value === 'pwa') return 'WEB_POS';
+  return 'UNKNOWN';
+}
+
+function assertSigningProviderMatchesPlatform(platform, signingKeyProvider) {
+  const declaredPlatform = resolveCanonicalDevicePlatform(platform, null);
+  const provider = String(signingKeyProvider || '').trim().toUpperCase();
+
+  const allowed = {
+    ANDROID: new Set(['ANDROID_KEYSTORE']),
+    IOS: new Set(['APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN']),
+    DESKTOP: new Set(['WINDOWS_CNG', 'APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN']),
+    WEB_POS: new Set(['WEB_CRYPTO']),
+  };
+
+  if (!allowed[declaredPlatform] || !allowed[declaredPlatform].has(provider)) {
+    const err = new Error('DEVICE_SIGNING_PROVENANCE_MISMATCH');
+    err.code = 'DEVICE_SIGNING_PROVENANCE_MISMATCH';
+    throw err;
+  }
+
+  return {
+    platform: declaredPlatform,
+    provider,
+  };
+}
+
+async function resolveCanonicalDeviceScope(device) {
+  const rawCafeId = String(device?.cafeId || '').trim();
+  const rawOrganisationId = String(device?.organisationId || '').trim();
+
+  if (/^ZC-(?:CAF-)?\d{4,}$/i.test(rawCafeId) && rawOrganisationId) {
+    return {
+      cafeId: rawCafeId.toUpperCase(),
+      organisationId: rawOrganisationId.toUpperCase(),
+    };
+  }
+
+  const models = require('../models');
+  const CafeModel = models.getExternalCafeModel();
+  if (!CafeModel) {
+    const err = new Error('CANONICAL_CAFE_MODEL_UNAVAILABLE');
+    err.code = 'CANONICAL_CAFE_MODEL_UNAVAILABLE';
+    throw err;
+  }
+
+  let cafe = null;
+  try {
+    cafe = await CafeModel.findById(device.cafeId).lean();
+  } catch (_) {
+    cafe = null;
+  }
+
+  if (!cafe && rawCafeId) {
+    cafe = await CafeModel.findOne({ cafeId: rawCafeId.toUpperCase() }).lean();
+  }
+
+  if (!cafe?.cafeId || !cafe?.organisationId) {
+    const err = new Error('CANONICAL_CAFE_SCOPE_NOT_FOUND');
+    err.code = 'CANONICAL_CAFE_SCOPE_NOT_FOUND';
+    throw err;
+  }
+
+  return {
+    cafeId: String(cafe.cafeId).trim().toUpperCase(),
+    organisationId: String(cafe.organisationId).trim().toUpperCase(),
+  };
+}
+
+async function issueHardwareAttestationChallenge({
+  enrollmentCodePlain,
+  platform,
+}) {
+  const repos = getRepositories();
+  if (resolveCanonicalDevicePlatform(platform, null) !== 'ANDROID') {
+    const err = new Error('ANDROID_HARDWARE_ATTESTATION_ONLY');
+    err.code = 'ANDROID_HARDWARE_ATTESTATION_ONLY';
+    throw err;
+  }
+
+  const enrollment = await repos.enrollmentTokens.findByHash(
+    sha256Hex(enrollmentCodePlain)
+  );
+  if (
+    !enrollment ||
+    enrollment.status !== 'PENDING' ||
+    new Date() > new Date(enrollment.expiresAt)
+  ) {
+    const err = new Error('ENROLLMENT_UNAVAILABLE');
+    err.code = 'ENROLLMENT_UNAVAILABLE';
+    throw err;
+  }
+
+  const challenge = generateOpaqueToken();
+  const challengeId = generateOpaqueToken();
+  const issuedAt = new Date();
+  const expiresAt = new Date(
+    issuedAt.getTime() + ANDROID_HARDWARE_ATTESTATION_CHALLENGE_TTL_MS
+  );
+
+  const updated = await repos.enrollmentTokens.issueHardwareAttestationChallenge(
+    enrollment.id,
+    {
+      hardwareAttestationChallengeId: challengeId,
+      hardwareAttestationChallengeHash: sha256Hex(challenge),
+      hardwareAttestationChallengeIssuedAt: issuedAt,
+      hardwareAttestationChallengeExpiresAt: expiresAt,
+      hardwareAttestationChallengePlatform: 'ANDROID',
+      hardwareAttestationChallengeConsumedAt: null,
+    }
+  );
+
+  if (!updated) {
+    const latest = await repos.enrollmentTokens.findByHash(
+      sha256Hex(enrollmentCodePlain)
+    );
+    const activeChallenge =
+      latest?.status === 'PENDING' &&
+      latest?.hardwareAttestationChallengeId &&
+      !latest?.hardwareAttestationChallengeConsumedAt &&
+      latest?.hardwareAttestationChallengeExpiresAt &&
+      new Date(latest.hardwareAttestationChallengeExpiresAt) > new Date();
+
+    if (activeChallenge) {
+      const err = new Error('ANDROID_HARDWARE_ATTESTATION_CHALLENGE_IN_PROGRESS');
+      err.code = 'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_IN_PROGRESS';
+      throw err;
+    }
+
+    const err = new Error('ENROLLMENT_UNAVAILABLE');
+    err.code = 'ENROLLMENT_UNAVAILABLE';
+    throw err;
+  }
+
+  return {
+    challengeId,
+    challenge,
+    expiresAt: expiresAt.toISOString(),
+    algorithm: 'ANDROID_KEY_ATTESTATION_V1',
+  };
+}
+
+async function enrollDevice({
+  enrollmentCodePlain,
+  displayName,
+  platform,
+  appVersion,
+  osVersion,
+  publicSigningKey,
+  signingKeyAlgorithm,
+  signingKeyProvider,
+  hardwareAttestation,
+}) {
   const repos = getRepositories();
   const tokenHash = sha256Hex(enrollmentCodePlain);
   const enrollment = await repos.enrollmentTokens.findByHash(tokenHash);
@@ -22,8 +194,74 @@ async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVer
     await auditService.record({ eventType: SECURITY_EVENT_TYPE.DEVICE_ENROLLMENT_FAILED, metadata: { reason: !enrollment ? 'NOT_FOUND' : enrollment.status } });
     const err = new Error('ENROLLMENT_UNAVAILABLE'); err.code = 'ENROLLMENT_UNAVAILABLE'; throw err;
   }
+  const declaredPlatform = resolveCanonicalDevicePlatform(platform, null);
+  const nativeEnrollment = ['ANDROID', 'IOS', 'DESKTOP'].includes(declaredPlatform);
+
+  let canonicalSigningKey = null;
+  let signingKeyThumbprint = null;
+  let normalizedSigningKeyProvider = null;
+  if (publicSigningKey) {
+    if (String(signingKeyAlgorithm || ATTESTATION_ALGORITHM).toUpperCase() !== ATTESTATION_ALGORITHM) {
+      const err = new Error('UNSUPPORTED_DEVICE_SIGNING_ALGORITHM');
+      err.code = 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM';
+      throw err;
+    }
+
+    const provenance = assertSigningProviderMatchesPlatform(platform, signingKeyProvider);
+    canonicalSigningKey = canonicalPublicJwk(publicSigningKey);
+    signingKeyThumbprint = publicKeyThumbprint(canonicalSigningKey);
+    normalizedSigningKeyProvider = provenance.provider;
+  } else if (nativeEnrollment) {
+    const err = new Error('NATIVE_DEVICE_ATTESTATION_REQUIRED');
+    err.code = 'NATIVE_DEVICE_ATTESTATION_REQUIRED';
+    throw err;
+  }
+
+  let hardwareEvidence = {
+    verified: false,
+    reason: declaredPlatform === 'ANDROID'
+      ? 'ANDROID_HARDWARE_ATTESTATION_NOT_SUBMITTED'
+      : 'NOT_APPLICABLE',
+    securityLevel: 'UNKNOWN',
+    verifiedAt: null,
+  };
+
+  if (declaredPlatform === 'ANDROID' && hardwareAttestation) {
+    if (
+      !enrollment.hardwareAttestationChallengeId ||
+      !enrollment.hardwareAttestationChallengeHash ||
+      !enrollment.hardwareAttestationChallengeExpiresAt ||
+      enrollment.hardwareAttestationChallengeConsumedAt ||
+      String(enrollment.hardwareAttestationChallengePlatform || '').toUpperCase() !== 'ANDROID' ||
+      String(hardwareAttestation.challengeId || '') !==
+        String(enrollment.hardwareAttestationChallengeId)
+    ) {
+      const err = new Error('ANDROID_HARDWARE_ATTESTATION_CHALLENGE_INVALID');
+      err.code = 'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_INVALID';
+      throw err;
+    }
+
+    if (new Date() >= new Date(enrollment.hardwareAttestationChallengeExpiresAt)) {
+      const err = new Error('ANDROID_HARDWARE_ATTESTATION_CHALLENGE_EXPIRED');
+      err.code = 'ANDROID_HARDWARE_ATTESTATION_CHALLENGE_EXPIRED';
+      throw err;
+    }
+
+    if (!Array.isArray(hardwareAttestation.certificateChain)) {
+      const err = new Error('ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID');
+      err.code = 'ANDROID_ATTESTATION_CERTIFICATE_CHAIN_INVALID';
+      throw err;
+    }
+
+    hardwareEvidence = await verifyAndroidHardwareAttestation({
+      certificateChain: hardwareAttestation.certificateChain,
+      expectedChallengeHash: enrollment.hardwareAttestationChallengeHash,
+      expectedPublicSigningKey: canonicalSigningKey,
+    });
+  }
+
   const deviceToken = generateOpaqueToken();
-  const device = await repos.devices.create({
+  let device = await repos.devices.create({
     deviceCode: generateDeviceCode(),
     displayName: displayName || enrollment.intendedDisplayName || 'Cafe Operations Device',
     organisationId: enrollment.organisationId,
@@ -33,28 +271,124 @@ async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVer
     appVersion, osVersion,
     lifecycleStatus: DEVICE_STATUS.ACTIVE,
     deviceTokenHash: sha256Hex(deviceToken),
+    signingKeyThumbprint,
+    signingKeyAlgorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
+    signingKeyProvider: normalizedSigningKeyProvider,
+    signingKeyHardwareBackedVerified: false,
+    signingKeyHardwareSecurityLevel: 'UNKNOWN',
+    signingKeyHardwareAttestationVerifiedAt: null,
+    attestationCapable: Boolean(canonicalSigningKey),
+    integrityState: canonicalSigningKey ? 'READY' : 'UNKNOWN',
     enrolledAt: new Date(),
   });
-  await repos.enrollmentTokens.update(enrollment.id, { status: 'USED', usedAt: new Date(), usedByDeviceId: device.id });
+
+  const consumedAt = new Date();
+  const consumed = await repos.enrollmentTokens.consumeIfPending(enrollment.id, {
+    usedAt: consumedAt,
+    usedByDeviceId: device.id,
+    hardwareAttestationChallengeConsumedAt:
+      hardwareAttestation ? consumedAt : null,
+  });
+
+  if (!consumed) {
+    try { await repos.devices.delete(device.id); } catch (_) {}
+    const err = new Error('ENROLLMENT_UNAVAILABLE');
+    err.code = 'ENROLLMENT_UNAVAILABLE';
+    throw err;
+  }
+
+  const { DeviceRegistration } = require('../../models/DeviceRegistration');
   try {
-    const { DeviceRegistration } = require('../../models/DeviceRegistration');
+    const canonicalScope = await resolveCanonicalDeviceScope(device);
     await DeviceRegistration.findOneAndUpdate(
       { deviceId: String(device.id) },
       {
         deviceId: String(device.id),
-        organisationId: device.organisationId,
+        organisationId: canonicalScope.organisationId,
         deviceClass: 'CAFE_OWNED',
-        assignedCafeId: device.cafeId,
+        assignedCafeId: canonicalScope.cafeId,
         deviceName: device.displayName,
-        platform: 'WEB_POS',
+        platform: resolveCanonicalDevicePlatform(device.platform || platform, normalizedSigningKeyProvider),
         status: 'ACTIVE',
+        publicSigningKey: canonicalSigningKey,
+        signingKeyThumbprint,
+        signingKeyAlgorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
+        signingKeyProvider: normalizedSigningKeyProvider,
+        signingKeyHardwareBackedVerified: false,
+        signingKeyHardwareSecurityLevel: 'UNKNOWN',
+        signingKeyHardwareAttestationVerifiedAt: null,
+        signingKeyCreatedAt: canonicalSigningKey ? new Date() : null,
         trustLevel: 'ENROLLED',
         lastSeenAt: new Date(),
-        metadata: { deviceCode: device.deviceCode },
+        metadata: {
+          deviceCode: device.deviceCode,
+          cafeOpsOrganisationRef: String(device.organisationId || ''),
+          cafeOpsCafeRef: String(device.cafeId || ''),
+          attestationCapable: Boolean(canonicalSigningKey),
+          hardwareBackedSigningKeyVerified: false,
+          hardwareAttestationSecurityLevel: 'UNKNOWN',
+          hardwareAttestationVerificationReason:
+            hardwareEvidence.reason || null,
+        },
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, runValidators: true }
     );
-  } catch (_) {}
+
+    if (hardwareEvidence.verified === true) {
+      await applyVerifiedAndroidHardwareEvidence({
+        deviceId: device.id,
+        organisationId: canonicalScope.organisationId,
+        cafeId: canonicalScope.cafeId,
+        signingKeyThumbprint,
+        evidence: hardwareEvidence,
+      });
+
+      device = await repos.devices.update(device.id, {
+        signingKeyHardwareBackedVerified: true,
+        signingKeyHardwareSecurityLevel: hardwareEvidence.securityLevel,
+        signingKeyHardwareAttestationVerifiedAt: hardwareEvidence.verifiedAt,
+      });
+      if (!device) {
+        const err = new Error('ANDROID_HARDWARE_ATTESTATION_DEVICE_SYNC_FAILED');
+        err.code = 'ANDROID_HARDWARE_ATTESTATION_DEVICE_SYNC_FAILED';
+        throw err;
+      }
+    }
+  } catch (canonicalErr) {
+    const rollbackErrors = [];
+    try {
+      await DeviceRegistration.deleteOne({ deviceId: String(device.id) });
+    } catch (canonicalRollbackErr) {
+      rollbackErrors.push(canonicalRollbackErr);
+    }
+    try {
+      await repos.devices.delete(device.id);
+    } catch (deviceRollbackErr) {
+      rollbackErrors.push(deviceRollbackErr);
+    }
+    try {
+      const restored = await repos.enrollmentTokens.restoreIfUsedByDevice(
+        enrollment.id,
+        device.id
+      );
+      if (!restored) {
+        const restoreErr = new Error('ENROLLMENT_TOKEN_COMPENSATION_NOT_APPLIED');
+        restoreErr.code = 'ENROLLMENT_TOKEN_COMPENSATION_NOT_APPLIED';
+        rollbackErrors.push(restoreErr);
+      }
+    } catch (tokenRollbackErr) {
+      rollbackErrors.push(tokenRollbackErr);
+    }
+
+    if (rollbackErrors.length) {
+      canonicalErr.code = 'DEVICE_ENROLLMENT_ROLLBACK_FAILED';
+      canonicalErr.rollbackErrors = rollbackErrors;
+    } else if (!canonicalErr.code) {
+      canonicalErr.code = 'CANONICAL_DEVICE_REGISTRATION_FAILED';
+    }
+    throw canonicalErr;
+  }
+
   try {
     logSecurityEvent({
       action: SECURITY_ACTIONS.DEVICE_ENROLLED,
@@ -66,7 +400,25 @@ async function enrollDevice({ enrollmentCodePlain, displayName, platform, appVer
     });
   } catch (_) {}
   await auditService.record({ eventType: SECURITY_EVENT_TYPE.DEVICE_ENROLLED, deviceId: device.id, cafeId: device.cafeId, organisationId: device.organisationId });
-  return { device, deviceToken };
+  return {
+    device,
+    deviceToken,
+    attestation: {
+      capable: Boolean(canonicalSigningKey),
+      algorithm: canonicalSigningKey ? ATTESTATION_ALGORITHM : null,
+      keyThumbprint: signingKeyThumbprint,
+      provider: normalizedSigningKeyProvider,
+      hardwareBackedSigningKeyVerified: hardwareEvidence.verified === true,
+      hardwareAttestationSecurityLevel:
+        hardwareEvidence.securityLevel || 'UNKNOWN',
+      hardwareAttestationVerifiedAt:
+        hardwareEvidence.verifiedAt || null,
+      hardwareAttestationVerificationReason:
+        hardwareEvidence.reason || null,
+      hardwareAttestationRootSha256:
+        hardwareEvidence.rootSha256 || null,
+    },
+  };
 }
 
 const LIFECYCLE_END_REASON = {
@@ -154,7 +506,146 @@ async function getDiagnostics(device) {
     lastSyncAt: device.lastSyncAt,
     appVersion: device.appVersion,
     integrityState: device.integrityState || 'UNKNOWN',
+    signingKeyHardwareBackedVerified: device.signingKeyHardwareBackedVerified === true,
+    signingKeyHardwareSecurityLevel: device.signingKeyHardwareSecurityLevel || 'UNKNOWN',
+    signingKeyHardwareAttestationVerifiedAt: device.signingKeyHardwareAttestationVerifiedAt || null,
   };
 }
 
-module.exports = { enrollDevice, transitionLifecycle, reassignCafe, getDiagnostics };
+
+async function bindAttestationKey(device, {
+  publicSigningKey,
+  signingKeyAlgorithm,
+  signingKeyProvider,
+} = {}) {
+  if (!device?.id) {
+    const err = new Error('DEVICE_CONTEXT_REQUIRED');
+    err.code = 'DEVICE_CONTEXT_REQUIRED';
+    throw err;
+  }
+
+  if (!publicSigningKey) {
+    const err = new Error('DEVICE_SIGNING_KEY_REQUIRED');
+    err.code = 'DEVICE_SIGNING_KEY_REQUIRED';
+    throw err;
+  }
+
+  if (String(signingKeyAlgorithm || ATTESTATION_ALGORITHM).toUpperCase() !== ATTESTATION_ALGORITHM) {
+    const err = new Error('UNSUPPORTED_DEVICE_SIGNING_ALGORITHM');
+    err.code = 'UNSUPPORTED_DEVICE_SIGNING_ALGORITHM';
+    throw err;
+  }
+
+  const canonicalSigningKey = canonicalPublicJwk(publicSigningKey);
+  const keyThumbprint = publicKeyThumbprint(canonicalSigningKey);
+  const provider = String(signingKeyProvider || 'UNKNOWN').trim().toUpperCase();
+  const existingThumbprint = String(device.signingKeyThumbprint || '').trim().toLowerCase();
+
+  if (existingThumbprint && existingThumbprint !== keyThumbprint.toLowerCase()) {
+    const err = new Error('DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT');
+    err.code = 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT';
+    throw err;
+  }
+
+  const repos = getRepositories();
+  const { DeviceRegistration } = require('../../models/DeviceRegistration');
+  const canonical = await DeviceRegistration.findOne({
+    $or: [
+      { deviceId: String(device.id) },
+      { 'metadata.deviceCode': String(device.deviceCode || '') },
+    ],
+  });
+
+  if (!canonical) {
+    const err = new Error('CANONICAL_DEVICE_REGISTRATION_NOT_FOUND');
+    err.code = 'CANONICAL_DEVICE_REGISTRATION_NOT_FOUND';
+    throw err;
+  }
+
+  const canonicalThumbprint = String(canonical.signingKeyThumbprint || '').trim().toLowerCase();
+  const canonicalProvider = String(canonical.signingKeyProvider || '').trim().toUpperCase();
+  const canonicalAlgorithm = String(canonical.signingKeyAlgorithm || '').trim().toUpperCase();
+  const deviceProvider = String(device.signingKeyProvider || '').trim().toUpperCase();
+  const deviceAlgorithm = String(device.signingKeyAlgorithm || '').trim().toUpperCase();
+
+  if (
+    !canonical.publicSigningKey ||
+    !canonicalThumbprint ||
+    !existingThumbprint
+  ) {
+    const err = new Error('DEVICE_ATTESTATION_REENROLLMENT_REQUIRED');
+    err.code = 'DEVICE_ATTESTATION_REENROLLMENT_REQUIRED';
+    throw err;
+  }
+
+  if (
+    canonicalThumbprint !== keyThumbprint.toLowerCase() ||
+    existingThumbprint !== keyThumbprint.toLowerCase()
+  ) {
+    const err = new Error('DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT');
+    err.code = 'DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT';
+    throw err;
+  }
+
+  const provenance = assertSigningProviderMatchesPlatform(device.platform, provider);
+  if (
+    canonicalProvider !== provider ||
+    (deviceProvider && deviceProvider !== provider) ||
+    canonicalAlgorithm !== ATTESTATION_ALGORITHM ||
+    (deviceAlgorithm && deviceAlgorithm !== ATTESTATION_ALGORITHM) ||
+    String(canonical.platform || 'UNKNOWN').trim().toUpperCase() !== provenance.platform ||
+    canonical.metadata?.attestationCapable !== true ||
+    device.attestationCapable !== true
+  ) {
+    const err = new Error('DEVICE_ATTESTATION_PROVENANCE_MISMATCH');
+    err.code = 'DEVICE_ATTESTATION_PROVENANCE_MISMATCH';
+    throw err;
+  }
+
+  // Verification is deliberately read-only. Enrollment is the only ceremony
+  // allowed to establish or mutate the signing identity.
+  const updated = device;
+
+  try {
+    await auditService.record({
+      eventType: SECURITY_EVENT_TYPE.DEVICE_LIFECYCLE_EVENT,
+      deviceId: device.id,
+      cafeId: device.cafeId,
+      organisationId: device.organisationId,
+      reasonCode: 'DEVICE_SIGNING_KEY_IDENTITY_VERIFIED',
+      metadata: {
+        keyThumbprint,
+        algorithm: ATTESTATION_ALGORITHM,
+        provider,
+        hardwareBackedSigningKeyVerified: canonical.signingKeyHardwareBackedVerified === true,
+        hardwareAttestationSecurityLevel: canonical.signingKeyHardwareSecurityLevel || 'UNKNOWN',
+        idempotentReplay: true,
+      },
+    });
+  } catch (_) {
+    // Security audit delivery is non-fatal after both authoritative registries agree.
+  }
+
+  return {
+    device: updated,
+    attestation: {
+      capable: true,
+      algorithm: ATTESTATION_ALGORITHM,
+      keyThumbprint,
+      provider,
+      hardwareBackedSigningKeyVerified: canonical.signingKeyHardwareBackedVerified === true,
+      hardwareAttestationSecurityLevel: canonical.signingKeyHardwareSecurityLevel || 'UNKNOWN',
+      hardwareAttestationVerifiedAt: canonical.signingKeyHardwareAttestationVerifiedAt || null,
+      idempotentReplay: true,
+    },
+  };
+}
+
+module.exports = {
+  issueHardwareAttestationChallenge,
+  enrollDevice,
+  bindAttestationKey,
+  transitionLifecycle,
+  reassignCafe,
+  getDiagnostics,
+};

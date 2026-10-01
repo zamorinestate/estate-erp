@@ -3,13 +3,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const bcrypt = require('bcrypt');
 
 const { Cafe } = require('../src/models/Cafe');
 const { CafeAccess } = require('../src/models/CafeAccess');
 const { User } = require('../src/models/User');
 const { AuditEvent } = require('../src/models/AuditEvent');
+const { UniversalQrRecord } = require('../src/models/UniversalQrRecord');
 const cafeAccessCryptoService = require('../src/services/cafeAccessCryptoService');
 const cafeService = require('../src/services/cafeService');
 const { ApiError } = require('../src/utils/ApiError');
@@ -38,8 +39,22 @@ test('REC-03: Per-Café Unique QR, Secure Deep-Link, Gateway & Access-Credential
   let cafeAAccess;
 
   t.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
-    await mongoose.connect(mongoServer.getUri());
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+    await mongoose.connect(mongoServer.getUri(), {
+      autoIndex: true,
+      autoCreate: true,
+    });
+
+    // QR rotation/revocation uses a multi-document transaction spanning Café,
+    // CafeAccess and UniversalQrRecord. Build their collections/indexes before
+    // the first transaction so catalog DDL cannot race transaction execution.
+    await Promise.all([
+      Cafe.init(),
+      CafeAccess.init(),
+      UniversalQrRecord.init(),
+      User.init(),
+      AuditEvent.init(),
+    ]);
 
     cafeAccessCryptoService.verifySecretKeys();
 
@@ -278,7 +293,7 @@ test('REC-03: Per-Café Unique QR, Secure Deep-Link, Gateway & Access-Credential
     const rotationResult = await cafeService.rotateQrCredential({
       organisationId: 'ZAMORIN',
       cafeId: 'ZC-0001',
-      auth: { userId: 'MU-0001', role: 'MASTER' },
+      auth: { userId: 'MU-0001', role: 'MASTER', isPrimaryMaster: true },
       currentPassword: 'SecurePassword!123',
     });
 
@@ -336,7 +351,7 @@ test('REC-03: Per-Café Unique QR, Secure Deep-Link, Gateway & Access-Credential
     const revokeResult = await cafeService.revokeQrCredential({
       organisationId: 'ZAMORIN',
       cafeId: 'ZC-0001',
-      auth: { userId: 'MU-0001', role: 'MASTER' },
+      auth: { userId: 'MU-0001', role: 'MASTER', isPrimaryMaster: true },
       reason: 'Physical QR card damaged at reception',
       currentPassword: 'SecurePassword!123',
     });
@@ -383,7 +398,7 @@ test('REC-03: Per-Café Unique QR, Secure Deep-Link, Gateway & Access-Credential
     const restoreResult = await cafeService.rotateQrCredential({
       organisationId: 'ZAMORIN',
       cafeId: 'ZC-0001',
-      auth: { userId: 'MU-0001', role: 'MASTER' },
+      auth: { userId: 'MU-0001', role: 'MASTER', isPrimaryMaster: true },
       currentPassword: 'SecurePassword!123',
     });
 

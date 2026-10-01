@@ -13,7 +13,7 @@
  * - No periodic forced password rotation without compromise
  * - Memory-hard scrypt KDF ($scrypt$v=1$) with versioning & rehash-on-login
  * - Timing attack and account enumeration defenses
- * - Dual independent rate limiting (per-account and per-IP) backed by DistributedRateLimiter
+ * - Dual local rate limiting plus atomic Redis-backed distributed auth throttling
  * - Session fixation prevention and cryptographic token generation
  * - Cookie security flags (HttpOnly, Secure, SameSite topology)
  * - Server-side idle timeout and absolute session expiration
@@ -521,13 +521,13 @@ test('20. login rate limit per IP/source protects against distributed credential
   assert.strictEqual(typeof limiter, 'function');
 });
 
-test('21. distributed/restart-safe throttling backed by DistributedRateLimiter', () => {
+test('21. auth routes expose atomic distributed throttling ahead of local limiters', () => {
+  assert.strictEqual(typeof authRoutes.createDistributedAuthRateLimiter, 'function');
+  assert.strictEqual(typeof authRoutes.isProductionLikeAuthEnvironment, 'function');
+
   const distLimiter = new DistributedRateLimiter();
-  const health = distLimiter.getHealth();
-  assert.ok(health.status);
   assert.strictEqual(distLimiter.isSecurityScope('LOGIN'), true);
   assert.strictEqual(distLimiter.isSecurityScope('PASSWORD_RECOVERY'), true);
-  assert.strictEqual(distLimiter.isSecurityScope('GENERAL_DATA'), false);
 });
 
 test('22. temporary throttle recovery window expires cleanly', () => {

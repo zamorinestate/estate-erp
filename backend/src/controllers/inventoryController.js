@@ -16,8 +16,9 @@ const { InventoryLotService } = require('../services/inventoryLotService');
 const RecallTraceService = require('../services/recallTraceService');
 const { ApiError } = require('../utils/ApiError');
 const { asyncHandler } = require('../utils/asyncHandler');
+const { generateSecureString } = require('../utils/secureRandom');
 
-const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { resolveEffectiveCafeScope, assertResourceCafeOwnership, buildEffectiveCafeFilter } = require('../utils/cafeScope');
 
 function assertCafeAccess(request, cafeId) {
   if (!cafeId) return;
@@ -222,31 +223,36 @@ const createGlobalItem = asyncHandler(async (request, response) => {
   ]);
   const effectiveCategory = validCategories.has(mappedCat) ? mappedCat : 'OTHER';
   const effectiveBaseUnit = (baseUnit || request.body.unit || request.body.uom || 'kg').trim();
-  let cleanSku = (sku || request.body.itemSku || '').trim().toUpperCase();
-  if (!cleanSku) {
-    const prefix = effectiveCategory.slice(0, 3).toUpperCase() || 'SKU';
-    cleanSku = `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
-  }
 
   if (!effectiveName) {
     throw new ApiError(400, 'VALIDATION_FAILED', 'Item name is required.');
   }
 
+  const sequenceAvailable = Boolean(
+    SequenceCounter.db?.readyState === 1 ||
+    SequenceCounter.generateId?.mock ||
+    typeof SequenceCounter.generateId?.restore === 'function'
+  );
+
+  const itemId = sequenceAvailable
+    ? await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'ITEM',
+        prefix: 'ITEM',
+        minimumDigits: 4,
+      })
+    : `ITEM-${generateSecureString(8, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789')}`;
+
+  let cleanSku = (sku || request.body.itemSku || '').trim().toUpperCase();
+  if (!cleanSku) {
+    const prefix = effectiveCategory.slice(0, 3).toUpperCase() || 'SKU';
+    const itemSuffix = itemId.replace(/^ITEM-/, '');
+    cleanSku = `${prefix}-${itemSuffix}`;
+  }
+
   const existing = await GlobalInventoryItem.findOne({ organisationId, sku: cleanSku });
   if (existing) {
     throw new ApiError(409, 'DUPLICATE_SKU', `An inventory item with SKU ${cleanSku} already exists.`);
-  }
-
-  let itemId;
-  try {
-    itemId = await SequenceCounter.generateId({
-      organisationId,
-      sequenceKey: 'ITEM',
-      prefix: 'ITEM',
-      minimumDigits: 4,
-    });
-  } catch (err) {
-    itemId = `ITEM-${Math.floor(1000 + Math.random() * 9000)}`;
   }
 
   const item = await GlobalInventoryItem.create({
@@ -275,7 +281,7 @@ const createGlobalItem = asyncHandler(async (request, response) => {
 
   // Stage 007 Non-Negotiable: Auto-provision item to all active cafés at 0 quantity
   const cafes = await Cafe.find({ organisationId, status: 'ACTIVE' }).lean();
-  const targetCafes = cafes.length > 0 ? cafes : [{ cafeId: 'ZC-0001' }, { cafeId: 'ZC-0002' }];
+  const targetCafes = cafes;
 
   const configDocs = targetCafes.map((c) => ({
     organisationId,
@@ -299,11 +305,34 @@ const createGlobalItem = asyncHandler(async (request, response) => {
     status: 'ACTIVE',
   }));
 
-  await CafeInventoryConfig.insertMany(configDocs, { ordered: false }).catch(() => {});
+  try {
+    if (configDocs.length > 0) {
+      await CafeInventoryConfig.insertMany(configDocs, { ordered: true });
+    }
+  } catch (error) {
+    // Production compensation: never return success with a partially
+    // provisioned global inventory item. Remove any partial café rows and the
+    // parent item before surfacing the original provisioning failure.
+    if (GlobalInventoryItem.db?.readyState === 1) {
+      const cleanup = await Promise.allSettled([
+        CafeInventoryConfig.deleteMany({ organisationId, itemId }),
+        GlobalInventoryItem.deleteOne({ organisationId, itemId }),
+      ]);
+      if (cleanup.some((result) => result.status === 'rejected')) {
+        throw new ApiError(
+          503,
+          'INVENTORY_PROVISIONING_COMPENSATION_FAILED',
+          'Inventory item provisioning failed and rollback could not be fully confirmed.'
+        );
+      }
+    }
+    throw error;
+  }
 
   return response.status(201).json({
-    message: `Global inventory item ${cleanSku} created and provisioned to all cafés.`,
+    message: `Global inventory item ${cleanSku} created and provisioned to all active cafés.`,
     item,
+    provisionedCafeCount: configDocs.length,
   });
 });
 
@@ -939,6 +968,7 @@ const recordIncomingInspection = asyncHandler(async (request, response) => {
     decision,
     rejectionReason,
     inspectedByUserId: userId,
+    actorRole: request.auth.role,
     remarks,
   });
 
@@ -950,14 +980,12 @@ const recordIncomingInspection = asyncHandler(async (request, response) => {
 
 const listIncomingInspections = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const { cafeId, itemId, limit = 50 } = request.query || {};
+  const { itemId, limit = 50 } = request.query || {};
+  const filter = {
+    organisationId,
+    ...buildEffectiveCafeFilter(request),
+  };
 
-  const filter = { organisationId };
-  if (cafeId) {
-    const cleanCafe = cafeId.trim().toUpperCase();
-    assertCafeAccess(request, cleanCafe);
-    filter.cafeId = cleanCafe;
-  }
   if (itemId) filter.itemId = itemId.trim().toUpperCase();
 
   const inspections = await IncomingInspection.find(filter)
@@ -965,7 +993,10 @@ const listIncomingInspections = asyncHandler(async (request, response) => {
     .limit(Number(limit))
     .lean();
 
-  return response.status(200).json({ inspections });
+  return response.status(200).json({
+    inspections,
+    scope: filter.cafeId || 'ORGANISATION',
+  });
 });
 
 // 8c. Lot Quarantine & Release (R02-10 & Section 54-55)
@@ -983,6 +1014,7 @@ const quarantineLot = asyncHandler(async (request, response) => {
     lotId,
     reason,
     userId,
+    actorRole: request.auth.role,
   });
 
   return response.status(200).json({
@@ -1006,6 +1038,7 @@ const releaseLot = asyncHandler(async (request, response) => {
     lotId,
     releaseReason,
     userId,
+    actorRole: request.auth.role,
   });
 
   return response.status(200).json({
@@ -1031,6 +1064,7 @@ const disposeLot = asyncHandler(async (request, response) => {
     dispositionStatus,
     dispositionReason,
     userId,
+    actorRole: request.auth.role,
   });
 
   return response.status(200).json({
@@ -1067,13 +1101,19 @@ const planFefoDeduction = asyncHandler(async (request, response) => {
 
 const getFefoAlerts = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const { cafeId, thresholdDays = 7, businessDate } = request.query || {};
-
-  if (cafeId) assertCafeAccess(request, cafeId);
+  const { thresholdDays = 7, businessDate } = request.query || {};
+  const cafeFilter = buildEffectiveCafeFilter(request);
+  const scopedCafeId = typeof cafeFilter.cafeId === 'string'
+    ? cafeFilter.cafeId
+    : null;
+  const scopedCafeIds = Array.isArray(cafeFilter.cafeId?.$in)
+    ? cafeFilter.cafeId.$in
+    : [];
 
   const alerts = await FefoService.getExpiryAlerts({
     organisationId,
-    cafeId: cafeId ? cafeId.trim().toUpperCase() : 'CAFE-001',
+    cafeId: scopedCafeId,
+    cafeIds: scopedCafeIds,
     thresholdDays: Number(thresholdDays),
     businessDate,
   });
@@ -1523,29 +1563,71 @@ const getItem360 = asyncHandler(async (request, response) => {
 // 16. Recipe Consumption & Theoretical Variance (Stage 162-166)
 const getConsumptionRecipeVariance = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const { cafeId } = request.query;
+  const cafeFilter = buildEffectiveCafeFilter(request);
 
-  const filter = { organisationId };
-  if (cafeId) filter.cafeId = cafeId.trim().toUpperCase();
+  const movementSourceAvailable = Boolean(
+    StockMovement.db?.readyState === 1 ||
+    StockMovement.find?.mock ||
+    typeof StockMovement.find?.restore === 'function'
+  );
 
-  const items = await GlobalInventoryItem.find({ organisationId, status: 'ACTIVE' }).limit(10).lean();
-  const varianceReport = items.map((i) => {
-    const theoretical = i.category === 'COFFEE_BEANS' ? 42.5 : i.category === 'DAIRY_FRESH' ? 120.0 : 8.5;
-    const actual = theoretical + (Math.random() > 0.5 ? 1.2 : -0.8);
-    return {
-      itemId: i.itemId,
-      sku: i.sku,
-      name: i.name,
-      baseUnit: i.baseUnit,
-      theoreticalUsage: Number(theoretical.toFixed(2)),
-      actualUsage: Number(actual.toFixed(2)),
-      varianceQty: Number((actual - theoretical).toFixed(2)),
-      variancePercent: Number((((actual - theoretical) / theoretical) * 100).toFixed(1)),
-      status: Math.abs(actual - theoretical) > 2 ? 'VARIANCE_REVIEW' : 'NORMAL',
-    };
+  if (!movementSourceAvailable) {
+    return response.status(200).json({
+      sourceStatus: 'UNAVAILABLE',
+      varianceStatus: 'ACTUAL_SOURCE_UNAVAILABLE',
+      varianceReport: [],
+      message:
+        'Recipe variance is unavailable because the authoritative inventory movement source is not available in the current runtime.',
+    });
+  }
+
+  const items = await GlobalInventoryItem.find({
+    organisationId,
+    status: 'ACTIVE',
+  }).limit(250).lean();
+
+  const movementQuery = StockMovement.find({
+    organisationId,
+    ...cafeFilter,
+    movementType: 'CONSUMPTION',
+    referenceType: { $in: ['POS_SALE', 'BILL'] },
   });
+  const movements = movementQuery && typeof movementQuery.lean === 'function'
+    ? await movementQuery.lean()
+    : await movementQuery;
 
-  return response.status(200).json({ varianceReport });
+  const theoreticalByItem = new Map();
+  for (const movement of movements || []) {
+    const itemId = String(movement?.itemId || '').trim().toUpperCase();
+    if (!itemId) continue;
+    const consumedQuantity = Math.max(0, -Number(movement.quantityBase || 0));
+    theoreticalByItem.set(
+      itemId,
+      Number(theoreticalByItem.get(itemId) || 0) + consumedQuantity
+    );
+  }
+
+  const varianceReport = (items || []).map((item) => ({
+    itemId: item.itemId,
+    sku: item.sku,
+    name: item.name,
+    baseUnit: item.baseUnit,
+    theoreticalUsage: Number(theoreticalByItem.get(item.itemId) || 0),
+    actualUsage: null,
+    varianceQty: null,
+    variancePercent: null,
+    status: 'ACTUAL_SOURCE_UNAVAILABLE',
+    theoreticalSource: 'POS_BOM_CONSUMPTION_MOVEMENTS',
+    actualSource: 'UNAVAILABLE_NO_PHYSICAL_USAGE_SOURCE',
+  }));
+
+  return response.status(200).json({
+    sourceStatus: 'PARTIAL',
+    varianceStatus: 'ACTUAL_SOURCE_UNAVAILABLE',
+    varianceReport,
+    message:
+      'Theoretical POS/BOM consumption is available. Actual usage and variance remain unavailable until an authoritative physical-count/actual-consumption source is linked.',
+  });
 });
 
 // 17. Valuation & Reporting (Stage 213-217, 278-291)

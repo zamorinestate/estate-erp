@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { BusinessDocument } = require('../models/BusinessDocument');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const auditService = require('./auditService');
+const canonicalRecordAuditEvent = auditService.recordAuditEvent;
 const { DocumentMalwareScanner, defaultMalwareScanner, StaticFileSecurityValidator, getScannerRuntimeStatus } = require('./security/DocumentMalwareScanner');
 const { documentStorageAdapter } = require('./documentStorageAdapter');
 const { ApiError } = require('../utils/ApiError');
@@ -45,6 +46,34 @@ const DANGEROUS_EXTENSIONS = new Set([
 ]);
 
 const DEFAULT_DOCUMENT_MAX_BYTES = 15 * 1024 * 1024; // 15MB hard boundary
+
+function hasPrimaryMasterAuthority(auth = {}) {
+  return auth.role === 'MASTER' && auth.isPrimaryMaster === true;
+}
+
+function rejectMalformedMasterContext(auth = {}) {
+  if (auth.role === 'MASTER' && !hasPrimaryMasterAuthority(auth)) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER document access.'
+    );
+  }
+}
+
+function durableDocumentAuditAvailable() {
+  return Boolean(
+    BusinessDocument.db?.readyState === 1 ||
+    auditService.recordAuditEvent !== canonicalRecordAuditEvent ||
+    auditService.recordAuditEvent?.mock ||
+    typeof auditService.recordAuditEvent?.restore === 'function'
+  );
+}
+
+async function recordDocumentAudit(payload) {
+  if (!durableDocumentAuditAvailable()) return null;
+  return auditService.recordAuditEvent(payload);
+}
 
 class DocumentAttachmentService {
   static getStorageAdapter() {
@@ -197,7 +226,8 @@ class DocumentAttachmentService {
     }
 
     const role = auth.role;
-    const isMaster = role === 'MASTER';
+    rejectMalformedMasterContext(auth);
+    const isMaster = hasPrimaryMasterAuthority(auth);
     const isOwner = role === 'OWNER';
     const isRegional = role === 'REGIONAL_MANAGER';
     const isCafeAdmin = role === 'CAFE_ADMIN';
@@ -501,7 +531,7 @@ class DocumentAttachmentService {
       uploadedAt: new Date(),
     });
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -518,7 +548,7 @@ class DocumentAttachmentService {
         expectedSizeBytes,
         declaredMimeType: normMime,
       },
-    }).catch(() => {});
+    });
 
     return {
       documentId,
@@ -601,7 +631,7 @@ class DocumentAttachmentService {
 
       await documentStorageAdapter.delete({ storageKey: quarantineKey }).catch(() => {});
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -611,14 +641,14 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Static security validation failed: ${staticResult.threatName || staticResult.details}`,
-        result: 'REJECTED',
+        result: 'DENIED',
         metadata: {
           documentId: doc.documentId,
           threatName: staticResult.threatName,
           classification: 'STATIC_FILE_SECURITY_VALIDATION',
           sha256,
         },
-      }).catch(() => {});
+      });
 
       throw new ApiError(400, 'MALWARE_DETECTED', `File rejected by static security validator: ${staticResult.details}`);
     }
@@ -648,7 +678,7 @@ class DocumentAttachmentService {
       // Clean up infected object from quarantine
       await documentStorageAdapter.delete({ storageKey: quarantineKey }).catch(() => {});
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -658,13 +688,13 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Malware detected by scanner: ${scanResult.threatName || scanResult.details}`,
-        result: 'REJECTED',
+        result: 'DENIED',
         metadata: {
           documentId: doc.documentId,
           threatName: scanResult.threatName,
           sha256,
         },
-      }).catch(() => {});
+      });
 
       throw new ApiError(400, 'MALWARE_DETECTED', `File rejected by malware scanner: ${scanResult.details}`);
     }
@@ -677,7 +707,7 @@ class DocumentAttachmentService {
       doc.securityScanDetails = scanResult.details;
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -687,12 +717,12 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Malware scanner unavailable or error: ${scanResult.details}`,
-        result: 'SCAN_FAILED',
+        result: 'FAILURE',
         metadata: {
           documentId: doc.documentId,
           error: scanResult.details,
         },
-      }).catch(() => {});
+      });
 
       throw new ApiError(503, 'SCANNER_UNAVAILABLE', 'Malware scanning service unavailable. Document cannot be promoted to AVAILABLE.');
     }
@@ -773,7 +803,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -790,7 +820,7 @@ class DocumentAttachmentService {
         sha256,
         sizeBytes: binaryBuffer.length,
       },
-    }).catch(() => {});
+    });
 
     return doc;
   }
@@ -1161,7 +1191,7 @@ class DocumentAttachmentService {
         availableAt: new Date(),
       });
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -1180,7 +1210,7 @@ class DocumentAttachmentService {
           storageObjectKey: storedResult?.storageKey || canonicalKey,
           sha256: checksum,
         },
-      }).catch(() => {});
+      });
 
       return doc;
     } catch (error) {
@@ -1220,7 +1250,7 @@ class DocumentAttachmentService {
     });
 
     // Audit download access (zero secrets or signed URLs in audit!)
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1239,7 +1269,7 @@ class DocumentAttachmentService {
         grantType: grant.grantType,
         expiresAt: grant.expiresAt,
       },
-    }).catch(() => {});
+    });
 
     return {
       downloadUrl: grant.downloadUrl,
@@ -1452,7 +1482,7 @@ class DocumentAttachmentService {
 
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -1469,7 +1499,7 @@ class DocumentAttachmentService {
           originalFilename: normFilenameInfo.sanitizedName,
           sha256,
         },
-      }).catch(() => {});
+      });
 
       return doc;
     } catch (error) {
@@ -1484,8 +1514,9 @@ class DocumentAttachmentService {
    * Verify or reject a business document.
    */
   static async verifyDocument({ documentId, organisationId, decision, reason = '', auth }) {
-    if (auth.role !== 'MASTER' && auth.role !== 'OWNER') {
-      throw new ApiError(403, 'VERIFICATION_DENIED', 'Only Master and Owner can verify business documents.');
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth) && auth.role !== 'OWNER') {
+      throw new ApiError(403, 'VERIFICATION_DENIED', 'Only Primary Master and Owner can verify business documents.');
     }
 
     const doc = await BusinessDocument.findOne({
@@ -1516,7 +1547,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1527,7 +1558,7 @@ class DocumentAttachmentService {
       entityId: doc.documentId,
       reason,
       result: 'SUCCESS',
-    }).catch(() => {});
+    });
 
     return doc;
   }
@@ -1536,8 +1567,9 @@ class DocumentAttachmentService {
    * Soft delete a document with mandatory reason.
    */
   static async deleteDocument({ documentId, organisationId, reason, auth }) {
-    if (auth.role !== 'MASTER' && auth.role !== 'OWNER') {
-      throw new ApiError(403, 'DELETE_DENIED', 'Only Master and Owner can remove business documents.');
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth) && auth.role !== 'OWNER') {
+      throw new ApiError(403, 'DELETE_DENIED', 'Only Primary Master and Owner can remove business documents.');
     }
 
     if (!reason || reason.trim().length < 5) {
@@ -1564,7 +1596,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1575,7 +1607,7 @@ class DocumentAttachmentService {
       entityId: doc.documentId,
       reason,
       result: 'SUCCESS',
-    }).catch(() => {});
+    });
 
     return { success: true, message: 'Document soft-deleted and archived.' };
   }
@@ -1583,13 +1615,22 @@ class DocumentAttachmentService {
   /**
    * Permanent deletion of a business document enforcing statutory retention & legal hold.
    */
-  static async permanentDeleteDocument({ documentId, organisationId, reason, auth }) {
-    if (!reason || reason.trim().length < 5) {
-      throw new ApiError(400, 'REASON_REQUIRED', 'A detailed reason (min 5 chars) is mandatory for permanent deletion.');
+  static async permanentDeleteDocument({
+    documentId,
+    organisationId,
+    reason,
+    confirmation = '',
+    auth,
+  }) {
+    const normalizedDocumentId = String(documentId || '').trim().toUpperCase();
+    const dispositionReason = String(reason || '').trim();
+
+    if (!normalizedDocumentId) {
+      throw new ApiError(400, 'DOCUMENT_ID_REQUIRED', 'documentId is required.');
     }
 
     const doc = await BusinessDocument.findOne({
-      documentId: documentId.trim().toUpperCase(),
+      documentId: normalizedDocumentId,
       organisationId,
     });
 
@@ -1597,72 +1638,334 @@ class DocumentAttachmentService {
       throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'Business document not found.');
     }
 
-    // Authorize role and verify statutory retention / legal hold policies
+    // Authorization, tenant/café scope, legal holds, proceeding holds,
+    // investigation holds and statutory retention are rechecked immediately
+    // before any irreversible storage mutation.
     this.assertDocumentAuthorization(doc, auth, 'PERMANENT_DELETE');
 
-    // Physical cleanup from storage provider
-    const key = doc.storageObjectKey || doc.storageKey;
-    if (key) {
-      await documentStorageAdapter.delete({ storageKey: key }).catch(() => {});
-    }
-    if (doc.storagePath && fs.existsSync(doc.storagePath)) {
-      await fs.promises.unlink(doc.storagePath).catch(() => {});
-    }
-    if (Array.isArray(doc.versions)) {
-      for (const v of doc.versions) {
-        const vKey = v.storageObjectKey || v.storageKey;
-        if (vKey) {
-          await documentStorageAdapter.delete({ storageKey: vKey }).catch(() => {});
-        }
-      }
+    if (String(confirmation || '').trim() !== 'PERMANENTLY_DISPOSE_DOCUMENT') {
+      throw new ApiError(
+        400,
+        'DOCUMENT_DISPOSITION_CONFIRMATION_REQUIRED',
+        'Permanent document disposition requires confirmation PERMANENTLY_DISPOSE_DOCUMENT.'
+      );
     }
 
-    // Immutable audit tombstone recording (zero secret content retained)
-    await auditService.recordAuditEvent({
+    if (dispositionReason.length < 10) {
+      throw new ApiError(
+        400,
+        'REASON_REQUIRED',
+        'A detailed reason of at least 10 characters is mandatory for permanent deletion.'
+      );
+    }
+
+    if (
+      doc.dispositionState === 'COMPLETED' &&
+      (doc.documentStatus === 'DISPOSED' || doc.status === 'DISPOSED')
+    ) {
+      return {
+        success: true,
+        message: 'Document was already permanently disposed.',
+        documentId: doc.documentId,
+        disposedAt: doc.disposedAt,
+        idempotent: true,
+      };
+    }
+
+    const authorizationAudit = await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
       actorRole: auth.role,
       module: 'DOCUMENT_ATTACHMENT',
-      action: 'DOCUMENT_PERMANENTLY_DISPOSED',
+      action: 'DOCUMENT_PERMANENT_DISPOSITION_AUTHORIZED',
       entityType: 'BUSINESS_DOCUMENT',
       entityId: doc.documentId,
-      reason: reason.trim(),
+      reason: dispositionReason,
       result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
       metadata: {
         documentId: doc.documentId,
         classification: doc.classification,
         documentType: doc.documentType,
-        sha256: doc.sha256,
-        checksum: doc.checksum || doc.sha256,
-        originalFilename: doc.originalFilename,
-        sizeBytes: doc.sizeBytes,
+        storageProvider: doc.storageProvider || doc.storageDriver || null,
+        currentVersion: doc.currentVersion || null,
+      },
+    });
+
+    if (!authorizationAudit?.auditEventId) {
+      throw new ApiError(
+        503,
+        'DOCUMENT_DISPOSITION_AUDIT_NOT_CONFIRMED',
+        'Permanent deletion was not started because immutable authorization audit could not be confirmed.'
+      );
+    }
+
+    const now = new Date();
+    const currentState = String(doc.dispositionState || 'NONE').trim().toUpperCase();
+    const staleDispositionCutoff = new Date(now.getTime() - 15 * 60 * 1000);
+
+    if (
+      currentState === 'STORAGE_DELETING' &&
+      doc.dispositionStartedAt &&
+      new Date(doc.dispositionStartedAt) > staleDispositionCutoff
+    ) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_ALREADY_IN_PROGRESS',
+        'A permanent document disposition attempt is already in progress.'
+      );
+    }
+
+    const claimFilter = {
+      _id: doc._id,
+      organisationId,
+      documentId: doc.documentId,
+      documentStatus: { $ne: 'DISPOSED' },
+    };
+
+    if (currentState === 'NONE') {
+      claimFilter.dispositionState = { $in: ['NONE', null] };
+    } else {
+      claimFilter.dispositionState = currentState;
+    }
+
+    if (doc.dispositionStartedAt) {
+      claimFilter.dispositionStartedAt = doc.dispositionStartedAt;
+    }
+
+    if (currentState === 'STORAGE_DELETING') {
+      claimFilter.dispositionStartedAt = { $lte: staleDispositionCutoff };
+    }
+
+    const claimed = await BusinessDocument.findOneAndUpdate(
+      claimFilter,
+      {
+        $set: {
+          dispositionState: 'STORAGE_DELETING',
+          dispositionAuthorizationAuditEventId: authorizationAudit.auditEventId,
+          dispositionStartedAt: now,
+          dispositionStartedByUserId: String(auth.userId || '').trim().toUpperCase(),
+          dispositionLastAttemptAt: now,
+          dispositionLastError: '',
+          dispositionReason,
+        },
+      },
+      { new: true }
+    );
+
+    if (!claimed) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_STATE_CONFLICT',
+        'Document disposition state changed before execution; no new deletion attempt was started.'
+      );
+    }
+
+    const storageObjects = new Map();
+    const localPaths = new Set();
+
+    const addStorageObject = ({ storageKey = null, fileId = null } = {}) => {
+      if (!storageKey && !fileId) return;
+      const identity = storageKey
+        ? `KEY:${String(storageKey)}`
+        : `FILE_ID:${String(fileId)}`;
+      if (!storageObjects.has(identity)) {
+        storageObjects.set(identity, {
+          storageKey: storageKey ? String(storageKey) : null,
+          fileId: fileId || null,
+        });
+      }
+    };
+
+    addStorageObject({
+      storageKey: claimed.storageObjectKey || claimed.storageKey,
+      fileId: claimed.gridFsFileId || null,
+    });
+    addStorageObject({ storageKey: claimed.quarantineObjectKey || null });
+    if (claimed.storagePath) localPaths.add(String(claimed.storagePath));
+
+    for (const version of claimed.versions || []) {
+      addStorageObject({
+        storageKey: version?.storageObjectKey || version?.storageKey || null,
+        fileId: version?.gridFsFileId || null,
+      });
+      addStorageObject({ storageKey: version?.quarantineObjectKey || null });
+      if (version?.storagePath) localPaths.add(String(version.storagePath));
+    }
+
+    const storageSummary = {
+      storageObjectsChecked: storageObjects.size,
+      objectsDeleted: 0,
+      objectsAlreadyMissing: 0,
+      localPathsChecked: localPaths.size,
+      localPathsDeleted: 0,
+      localPathsAlreadyMissing: 0,
+    };
+
+    try {
+      for (const storageObject of storageObjects.values()) {
+        const existedBefore = await documentStorageAdapter.exists(storageObject);
+        if (existedBefore) {
+          await documentStorageAdapter.delete(storageObject);
+          storageSummary.objectsDeleted += 1;
+        } else {
+          storageSummary.objectsAlreadyMissing += 1;
+        }
+
+        const existsAfter = await documentStorageAdapter.exists(storageObject);
+        if (existsAfter) {
+          throw new ApiError(
+            503,
+            'DOCUMENT_STORAGE_DELETE_UNVERIFIED',
+            'A document storage object still exists after permanent-deletion attempt.'
+          );
+        }
+      }
+
+      for (const storagePath of localPaths) {
+        if (fs.existsSync(storagePath)) {
+          await fs.promises.unlink(storagePath);
+          storageSummary.localPathsDeleted += 1;
+        } else {
+          storageSummary.localPathsAlreadyMissing += 1;
+        }
+
+        if (fs.existsSync(storagePath)) {
+          throw new ApiError(
+            503,
+            'DOCUMENT_LOCAL_DELETE_UNVERIFIED',
+            'A local document path still exists after permanent-deletion attempt.'
+          );
+        }
+      }
+    } catch (error) {
+      await BusinessDocument.updateOne(
+        {
+          _id: claimed._id,
+          organisationId,
+          dispositionState: 'STORAGE_DELETING',
+          dispositionStartedAt: now,
+        },
+        {
+          $set: {
+            dispositionState: 'FAILED',
+            dispositionLastAttemptAt: new Date(),
+            dispositionLastError: String(error?.code || error?.message || 'DOCUMENT_STORAGE_DELETE_FAILED').slice(0, 1000),
+          },
+        }
+      );
+      throw error;
+    }
+
+    const pendingMetadata = await BusinessDocument.findOneAndUpdate(
+      {
+        _id: claimed._id,
+        organisationId,
+        dispositionState: 'STORAGE_DELETING',
+        dispositionStartedAt: now,
+      },
+      {
+        $set: {
+          dispositionState: 'STORAGE_DELETED_PENDING_METADATA',
+          dispositionLastAttemptAt: new Date(),
+          dispositionLastError: '',
+        },
+      },
+      { new: true }
+    );
+
+    if (!pendingMetadata) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_METADATA_STATE_CONFLICT',
+        'Storage objects were deleted, but the metadata state changed before finalization. The document remains blocked for reconciliation.'
+      );
+    }
+
+    const completionAudit = await recordDocumentAudit({
+      organisationId,
+      cafeId: pendingMetadata.cafeId || 'GLOBAL',
+      actorUserId: auth.userId,
+      actorRole: auth.role,
+      module: 'DOCUMENT_ATTACHMENT',
+      action: 'DOCUMENT_PERMANENTLY_DISPOSED',
+      entityType: 'BUSINESS_DOCUMENT',
+      entityId: pendingMetadata.documentId,
+      reason: dispositionReason,
+      result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
+      metadata: {
+        authorizationAuditEventId: authorizationAudit.auditEventId,
+        documentId: pendingMetadata.documentId,
+        classification: pendingMetadata.classification,
+        documentType: pendingMetadata.documentType,
+        sha256: pendingMetadata.sha256,
+        checksum: pendingMetadata.checksum || pendingMetadata.sha256,
+        originalFilename: pendingMetadata.originalFilename,
+        sizeBytes: pendingMetadata.sizeBytes,
+        storageSummary,
         disposedAt: new Date().toISOString(),
         disposedBy: auth.userId,
-        dispositionReason: reason.trim(),
       },
-    }).catch(() => {});
+    });
 
-    // Update BusinessDocument to permanent DISPOSED tombstone state
-    doc.documentStatus = 'DISPOSED';
-    doc.status = 'DISPOSED';
-    doc.isDeleted = true;
-    doc.fileBuffer = null;
-    doc.fileData = null;
-    doc.storageKey = null;
-    doc.storageObjectKey = null;
-    doc.storagePath = null;
-    doc.versions = [];
-    doc.disposedAt = new Date();
-    doc.disposedBy = auth.name || auth.userId || 'Master';
-    doc.dispositionReason = reason.trim();
-    await doc.save();
+    if (!completionAudit?.auditEventId) {
+      throw new ApiError(
+        503,
+        'DOCUMENT_DISPOSITION_COMPLETION_AUDIT_FAILED',
+        'Storage deletion was verified, but metadata was not marked disposed because the immutable completion audit could not be confirmed.'
+      );
+    }
+
+    const disposedAt = new Date();
+    const finalized = await BusinessDocument.findOneAndUpdate(
+      {
+        _id: pendingMetadata._id,
+        organisationId,
+        dispositionState: 'STORAGE_DELETED_PENDING_METADATA',
+        dispositionStartedAt: now,
+      },
+      {
+        $set: {
+          documentStatus: 'DISPOSED',
+          status: 'DISPOSED',
+          isDeleted: true,
+          fileBuffer: null,
+          fileData: null,
+          storageKey: null,
+          storageObjectKey: null,
+          quarantineObjectKey: null,
+          gridFsFileId: null,
+          storagePath: null,
+          versions: [],
+          disposedAt,
+          disposedBy: auth.name || auth.userId || 'Master',
+          dispositionReason,
+          dispositionState: 'COMPLETED',
+          dispositionLastAttemptAt: disposedAt,
+          dispositionLastError: '',
+        },
+      },
+      { new: true }
+    );
+
+    if (!finalized) {
+      throw new ApiError(
+        409,
+        'DOCUMENT_DISPOSITION_FINALIZE_CONFLICT',
+        'Storage deletion and audit completed, but document metadata changed before finalization. Reconciliation is required.'
+      );
+    }
 
     return {
       success: true,
-      message: 'Document permanently disposed and scrubbed under retention policy.',
-      documentId: doc.documentId,
-      disposedAt: doc.disposedAt,
+      message: 'Document permanently disposed after verified storage deletion and immutable auditing.',
+      documentId: finalized.documentId,
+      disposedAt: finalized.disposedAt,
+      storageSummary,
+      authorizationAuditEventId: authorizationAudit.auditEventId,
+      completionAuditEventId: completionAudit.auditEventId,
     };
   }
 
@@ -1678,26 +1981,92 @@ class DocumentAttachmentService {
     reason,
     auth,
   }) {
-    if (!auth || auth.role !== 'MASTER') {
-      throw new ApiError(403, 'UNAUTHORIZED_RETENTION_CHANGE', 'Only MASTER can update statutory retention policies or legal holds.');
+    if (!auth) {
+      throw new ApiError(403, 'UNAUTHORIZED_RETENTION_CHANGE', 'Only Primary Master can update statutory retention policies or legal holds.');
     }
-    if (!reason || reason.trim().length < 5) {
-      throw new ApiError(400, 'REASON_REQUIRED', 'A detailed audit reason (min 5 chars) is mandatory to modify retention policy.');
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth)) {
+      throw new ApiError(403, 'UNAUTHORIZED_RETENTION_CHANGE', 'Only Primary Master can update statutory retention policies or legal holds.');
+    }
+
+    const auditReason = String(reason || '').trim();
+    if (auditReason.length < 10) {
+      throw new ApiError(
+        400,
+        'REASON_REQUIRED',
+        'A detailed audit reason of at least 10 characters is mandatory to modify retention policy.'
+      );
     }
 
     const doc = await BusinessDocument.findOne({
-      documentId: documentId.trim().toUpperCase(),
+      documentId: String(documentId || '').trim().toUpperCase(),
       organisationId,
     });
     if (!doc) {
       throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'Business document not found.');
     }
 
+    let newDate = null;
     if (newRetentionUntil) {
-      const newDate = new Date(newRetentionUntil);
-      if (doc.statutoryRecord && doc.retentionUntil && newDate < new Date(doc.retentionUntil)) {
-        throw new ApiError(400, 'CANNOT_SHORTEN_STATUTORY_RETENTION', 'Changing document metadata cannot fraudulently shorten an already-established statutory retention period without privileged audited policy change.');
+      newDate = new Date(newRetentionUntil);
+      if (Number.isNaN(newDate.getTime())) {
+        throw new ApiError(400, 'INVALID_RETENTION_DATE', 'newRetentionUntil must be a valid date.');
       }
+      if (doc.statutoryRecord && doc.retentionUntil && newDate < new Date(doc.retentionUntil)) {
+        throw new ApiError(
+          400,
+          'CANNOT_SHORTEN_STATUTORY_RETENTION',
+          'Statutory retention cannot be shortened through document metadata.'
+        );
+      }
+    }
+
+    const currentEffectiveRetention =
+      doc.effectiveRetentionUntil ||
+      doc.retentionUntil ||
+      doc.dispositionEligibleAt ||
+      null;
+    const shortensRetention = Boolean(
+      newDate &&
+      currentEffectiveRetention &&
+      newDate.getTime() < new Date(currentEffectiveRetention).getTime()
+    );
+    const releasesActiveHold = legalHold === false && doc.legalHold === true;
+    const relaxesProtection = shortensRetention || releasesActiveHold;
+
+    let authorizationAudit = null;
+    if (relaxesProtection) {
+      authorizationAudit = await recordDocumentAudit({
+        organisationId,
+        cafeId: doc.cafeId || 'GLOBAL',
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        module: 'DOCUMENT_ATTACHMENT',
+        action: 'RETENTION_PROTECTION_RELAXATION_AUTHORIZED',
+        entityType: 'BUSINESS_DOCUMENT',
+        entityId: doc.documentId,
+        reason: auditReason,
+        result: 'SUCCESS',
+        riskClassification: 'CRITICAL',
+        metadata: {
+          releasesActiveHold,
+          shortensRetention,
+          previousRetentionUntil: currentEffectiveRetention,
+          proposedRetentionUntil: newDate,
+          previousLegalHold: Boolean(doc.legalHold),
+        },
+      });
+
+      if (!authorizationAudit?.auditEventId) {
+        throw new ApiError(
+          503,
+          'RETENTION_RELAXATION_AUDIT_NOT_CONFIRMED',
+          'Retention protection was not relaxed because immutable authorization audit could not be confirmed.'
+        );
+      }
+    }
+
+    if (newDate) {
       doc.retentionUntil = newDate;
       doc.dispositionEligibleAt = newDate;
       doc.effectiveRetentionUntil = newDate;
@@ -1706,7 +2075,7 @@ class DocumentAttachmentService {
     if (legalHold !== undefined) {
       doc.legalHold = Boolean(legalHold);
       if (doc.legalHold) {
-        doc.legalHoldReason = (legalHoldReason || reason).trim();
+        doc.legalHoldReason = String(legalHoldReason || auditReason).trim();
         doc.legalHoldPlacedAt = new Date();
         doc.legalHoldPlacedBy = auth.userId || 'MASTER';
       } else {
@@ -1716,22 +2085,42 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
-      organisationId,
-      cafeId: doc.cafeId || 'GLOBAL',
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      module: 'DOCUMENT_ATTACHMENT',
-      action: 'RETENTION_POLICY_UPDATED',
-      entityType: 'BUSINESS_DOCUMENT',
-      entityId: doc.documentId,
-      reason: reason.trim(),
-      result: 'SUCCESS',
-      metadata: {
-        legalHold: doc.legalHold,
-        retentionUntil: doc.retentionUntil,
-      },
-    }).catch(() => {});
+    let auditWarning = null;
+    try {
+      await recordDocumentAudit({
+        organisationId,
+        cafeId: doc.cafeId || 'GLOBAL',
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        module: 'DOCUMENT_ATTACHMENT',
+        action: 'RETENTION_POLICY_UPDATED',
+        entityType: 'BUSINESS_DOCUMENT',
+        entityId: doc.documentId,
+        reason: auditReason,
+        result: 'SUCCESS',
+        riskClassification: relaxesProtection ? 'CRITICAL' : 'HIGH',
+        metadata: {
+          authorizationAuditEventId: authorizationAudit?.auditEventId || null,
+          legalHold: doc.legalHold,
+          retentionUntil: doc.retentionUntil,
+          relaxesProtection,
+        },
+      });
+    } catch (_auditError) {
+      if (relaxesProtection) {
+        // Pre-authorization was durably recorded before the mutation. Surface
+        // the reporting failure without pretending the authorized change failed.
+        auditWarning = 'Retention change was applied after immutable pre-authorization, but completion audit reporting failed.';
+      } else {
+        // Protective changes (placing a hold or extending retention) stay in
+        // effect if post-write audit reporting is temporarily unavailable.
+        auditWarning = 'Protective retention change is active, but its post-write audit event could not be confirmed.';
+      }
+    }
+
+    doc.$locals = doc.$locals || {};
+    doc.$locals.retentionAuditWarning = auditWarning;
+    doc.$locals.retentionAuthorizationAuditEventId = authorizationAudit?.auditEventId || null;
 
     return doc;
   }
@@ -1783,7 +2172,7 @@ class DocumentAttachmentService {
       doc.rejectedAt = new Date();
       await doc.save();
 
-      await documentStorageAdapter.delete({ storageKey: quarantineKey }).catch(() => {});
+      await documentStorageAdapter.delete({ storageKey: quarantineKey });
       return doc;
     }
 
@@ -1896,8 +2285,9 @@ class DocumentAttachmentService {
    * Restores a historical document revision without mutating the historical GridFS binary.
    */
   static async restoreVersion({ documentId, organisationId, versionNumber, reason, auth }) {
-    if (auth.role !== 'MASTER' && auth.role !== 'OWNER') {
-      throw new ApiError(403, 'RESTORE_DENIED', 'Only Master and Owner can restore document revisions.');
+    rejectMalformedMasterContext(auth);
+    if (!hasPrimaryMasterAuthority(auth) && auth.role !== 'OWNER') {
+      throw new ApiError(403, 'RESTORE_DENIED', 'Only Primary Master and Owner can restore document revisions.');
     }
     if (!reason || reason.trim().length < 5) {
       throw new ApiError(400, 'REASON_REQUIRED', 'A detailed reason (min 5 chars) is mandatory to restore a version.');
@@ -1962,7 +2352,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1979,7 +2369,7 @@ class DocumentAttachmentService {
         newVersion: nextVersion,
         gridFsFileId: targetVer.gridFsFileId,
       },
-    }).catch(() => {});
+    });
 
     return doc;
   }
@@ -2036,7 +2426,7 @@ class DocumentAttachmentService {
     }
 
     // Record scan started audit
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2046,13 +2436,13 @@ class DocumentAttachmentService {
       entityType: 'BUSINESS_DOCUMENT',
       entityId: doc.documentId,
       reason: 'Malware scan started via ClamAV INSTREAM',
-      result: 'IN_PROGRESS',
+      result: 'PARTIAL',
       metadata: {
         documentId: doc.documentId,
         gridFsFileId: targetFileId,
         version: versionNumber || doc.currentVersion,
       },
-    }).catch(() => {});
+    });
 
     // Open stream directly from GridFS
     const stream = await documentStorageAdapter.getStream({
@@ -2082,7 +2472,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2092,14 +2482,14 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: 'Document verified clean by ClamAV INSTREAM',
-        result: 'CLEAN',
+        result: 'SUCCESS',
         metadata: {
           documentId: doc.documentId,
           version: versionNumber || doc.currentVersion,
           engineVersion: scanResult.engineVersion,
           signatureVersion: scanResult.signatureVersion,
         },
-      }).catch(() => {});
+      });
     } else if (scanResult.status === 'INFECTED') {
       if (targetVer) {
         targetVer.scanStatus = 'INFECTED';
@@ -2113,7 +2503,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2123,13 +2513,13 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Malware detected by ClamAV: ${scanResult.threatName || scanResult.details}`,
-        result: 'INFECTED',
+        result: 'DENIED',
         metadata: {
           documentId: doc.documentId,
           threatName: scanResult.threatName,
           version: versionNumber || doc.currentVersion,
         },
-      }).catch(() => {});
+      });
     } else if (scanResult.status === 'SCANNER_UNAVAILABLE' || scanResult.status === 'UNAVAILABLE') {
       if (targetVer) {
         targetVer.scanStatus = 'SCANNER_UNAVAILABLE';
@@ -2142,7 +2532,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2152,12 +2542,12 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `ClamAV daemon unreachable: ${scanResult.details}`,
-        result: 'SCANNER_UNAVAILABLE',
+        result: 'FAILURE',
         metadata: {
           documentId: doc.documentId,
           version: versionNumber || doc.currentVersion,
         },
-      }).catch(() => {});
+      });
     } else {
       // SCAN_FAILED / error
       if (targetVer) {
@@ -2172,7 +2562,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2182,12 +2572,12 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `ClamAV scan error: ${scanResult.details}`,
-        result: 'SCAN_FAILED',
+        result: 'FAILURE',
         metadata: {
           documentId: doc.documentId,
           version: versionNumber || doc.currentVersion,
         },
-      }).catch(() => {});
+      });
     }
 
     return {

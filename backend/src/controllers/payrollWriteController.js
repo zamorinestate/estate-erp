@@ -97,7 +97,7 @@ function requirePayrollManagementAccess(
     );
   }
 
-  // Normal Master cannot manage organisational payroll.
+  // MASTER payroll administration requires Primary Master authority.
   if (
     request.auth.role === 'MASTER' &&
     !request.auth.isPrimaryMaster

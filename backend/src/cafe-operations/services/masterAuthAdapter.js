@@ -4,7 +4,7 @@
  *
  * The master-access spec (Section 15) is explicit: Cafe Operations must call
  * the SAME canonical Master authentication system Zamorin already uses for
- * normal Master login — password verification, MFA, passkey where present —
+ * Primary Master login — password verification, MFA, passkey where present —
  * never a second, weaker, parallel implementation built just for this
  * shared device. That real system isn't available in this environment, so
  * this file does NOT attempt to reimplement it. It defines the three calls
@@ -21,7 +21,7 @@
  *     { ok:false } |
  *     { ok:true, requiresMfa:true, mfaChallengeId } |
  *     { ok:true, requiresMfa:false, employeeId, organisationId, role }
- *       // role must be 'MASTER_PRIMARY' | 'MASTER_NORMAL'
+ *       // role must be 'MASTER_PRIMARY'
  *   completeMfa({ mfaChallengeId, code }) →
  *     { ok:false } | { ok:true, employeeId, organisationId, role }
  *   reauth({ employeeId, password, mfaCode }) →   // for unlock / step-up on an ALREADY-KNOWN master
@@ -45,8 +45,8 @@ const productionAdapter = {
       const authResult = await authService.authenticatePassword({ email: identifier, password });
       if (!authResult || !authResult.user) return { ok: false };
       const user = authResult.user;
-      if (user.role !== 'MASTER') return { ok: false };
-      const role = user.isPrimaryMaster ? 'MASTER_PRIMARY' : 'MASTER_NORMAL';
+      if (user.role !== 'MASTER' || user.isPrimaryMaster !== true) return { ok: false };
+      const role = 'MASTER_PRIMARY';
       const employeeId = String(user.userId || user._id);
       const organisationId = String(user.organisationId || '');
 
@@ -80,14 +80,14 @@ const productionAdapter = {
       if (!decoded || !decoded.userId) return { ok: false };
       const User = require('mongoose').model('User');
       const user = await User.findOne({ userId: decoded.userId });
-      if (!user || user.role !== 'MASTER') return { ok: false };
+      if (!user || user.role !== 'MASTER' || user.isPrimaryMaster !== true) return { ok: false };
       const isValid = await mfaService.verifyTotpCode(user, code);
       if (!isValid) return { ok: false };
       return {
         ok: true,
         employeeId: String(user.userId || user._id),
         organisationId: String(user.organisationId || ''),
-        role: user.isPrimaryMaster ? 'MASTER_PRIMARY' : 'MASTER_NORMAL',
+        role: 'MASTER_PRIMARY',
       };
     } catch (_) {
       return { ok: false };
@@ -99,7 +99,7 @@ const productionAdapter = {
     try {
       const User = require('mongoose').model('User');
       const user = await User.findOne({ $or: [{ userId: employeeId }, { _id: employeeId }] });
-      if (!user || user.role !== 'MASTER') return { ok: false };
+      if (!user || user.role !== 'MASTER' || user.isPrimaryMaster !== true) return { ok: false };
       const authResult = await authService.authenticatePassword({ email: user.email, password });
       if (!authResult || !authResult.user) return { ok: false };
       if (authResult.requiresMfa && mfaCode) {
@@ -109,7 +109,7 @@ const productionAdapter = {
       return {
         ok: true,
         organisationId: String(user.organisationId || ''),
-        role: user.isPrimaryMaster ? 'MASTER_PRIMARY' : 'MASTER_NORMAL',
+        role: 'MASTER_PRIMARY',
       };
     } catch (_) {
       return { ok: false };
@@ -155,7 +155,7 @@ const DUMMY_HASH = bcrypt.hashSync('__no_such_master_account__', MASTER_SALT_ROU
 const referenceAdapter = {
   async identify({ identifier, password }) {
     const rec = demoMastersByIdentifier.get(identifier);
-    if (!rec) { await bcrypt.compare(String(password || ''), DUMMY_HASH); return { ok: false }; }
+    if (!rec || rec.role !== 'MASTER_PRIMARY') { await bcrypt.compare(String(password || ''), DUMMY_HASH); return { ok: false }; }
     const ok = await bcrypt.compare(String(password || ''), rec.passwordHash);
     if (!ok) return { ok: false };
     if (rec.mfaCode) {
@@ -169,13 +169,13 @@ const referenceAdapter = {
     const pending = pendingMfa.get(mfaChallengeId);
     if (!pending || Date.now() > pending.expiresAt) return { ok: false };
     const rec = demoMastersByIdentifier.get(pending.identifier);
-    if (!rec || rec.mfaCode !== code) return { ok: false };
+    if (!rec || rec.role !== 'MASTER_PRIMARY' || rec.mfaCode !== code) return { ok: false };
     pendingMfa.delete(mfaChallengeId);
     return { ok: true, employeeId: rec.employeeId, organisationId: rec.organisationId, role: rec.role };
   },
   async reauth({ employeeId, password, mfaCode }) {
     const rec = demoMastersByEmployeeId.get(String(employeeId));
-    if (!rec) { await bcrypt.compare(String(password || ''), DUMMY_HASH); return { ok: false }; }
+    if (!rec || rec.role !== 'MASTER_PRIMARY') { await bcrypt.compare(String(password || ''), DUMMY_HASH); return { ok: false }; }
     const ok = await bcrypt.compare(String(password || ''), rec.passwordHash);
     if (!ok) return { ok: false };
     if (rec.mfaCode && rec.mfaCode !== mfaCode) return { ok: false };

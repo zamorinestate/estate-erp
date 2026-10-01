@@ -16,6 +16,7 @@ class HardwareBridgeClient {
     this.barcodeBuffer = '';
     this.barcodeLastCharTime = 0;
     this.scannerCallbacks = new Set();
+    this.scannerLastDetectedAt = null;
     this.activeUsbDevice = null;
   }
 
@@ -39,6 +40,16 @@ class HardwareBridgeClient {
       localBridgeConfigured: true,
       localBridgeStatus,
       browserPrintSupported: typeof window !== 'undefined' && typeof window.print === 'function',
+      barcodeScannerListenerSupported:
+        typeof window !== 'undefined' && typeof window.addEventListener === 'function',
+      barcodeScannerListenerActive: Boolean(this._scannerListenerAttached),
+      barcodeScannerLastDetectedAt: this.scannerLastDetectedAt,
+      barcodeScannerStatus: this.scannerLastDetectedAt
+        ? 'DETECTED'
+        : (this._scannerListenerAttached ? 'LISTENING' : 'NOT_INITIALIZED'),
+      cameraScannerSupported:
+        typeof navigator !== 'undefined' &&
+        Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function'),
       activePaperWidth: (typeof localStorage !== 'undefined' && localStorage.getItem('zamorin_pos_paper_width')) || '80',
     };
   }
@@ -59,9 +70,9 @@ class HardwareBridgeClient {
       clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
-        this.bridgeAvailable = true;
         this.bridgeInfo = data;
-        return true;
+        this.bridgeAvailable = data?.hardwareReady === true;
+        return this.bridgeAvailable;
       }
     } catch (_) {
       // Bridge daemon not running on localhost — normal fallback condition
@@ -97,6 +108,7 @@ class HardwareBridgeClient {
         if (this.barcodeBuffer.length >= 3 && diff < 100) {
           const scannedCode = this.barcodeBuffer.trim();
           this.barcodeBuffer = '';
+          this.scannerLastDetectedAt = new Date().toISOString();
           this.scannerCallbacks.forEach((cb) => cb(scannedCode));
           e.preventDefault();
         } else {
@@ -137,6 +149,62 @@ class HardwareBridgeClient {
   }
 
   /**
+   * Sends the exact server-generated ESC/POS buffer to the local bridge.
+   * A successful response proves content-bound transport only; it does not
+   * prove printer identity or physical paper output.
+   */
+  async printCanonicalEscPos(dispatch = {}) {
+    if (
+      dispatch?.printDispatchAuthorized !== true ||
+      dispatch?.printTrackingPersisted !== true ||
+      !dispatch?.printJobId ||
+      !dispatch?.printBuffer ||
+      !dispatch?.payloadSha256 ||
+      !dispatch?.printDispatchAuthorization ||
+      !Number.isSafeInteger(Number(dispatch?.payloadBytes))
+    ) {
+      return null;
+    }
+
+    const isAlive = await this.checkBridgeHealth(9199, 500);
+    if (!isAlive) return null;
+
+    const bridgeRes = await fetch('http://127.0.0.1:9199/print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printJobId: dispatch.printJobId,
+        printBufferBase64: dispatch.printBuffer,
+        expectedPayloadSha256: dispatch.payloadSha256,
+        expectedPayloadBytes: Number(dispatch.payloadBytes),
+        printerTarget: dispatch.printerTarget || 'DEFAULT_THERMAL',
+        drawerKickRequested: dispatch.drawerKickRequested === true,
+        printDispatchAuthorization: dispatch.printDispatchAuthorization,
+      }),
+    });
+
+    if (!bridgeRes.ok) return null;
+    const result = await bridgeRes.json();
+    if (
+      result?.success !== true ||
+      result?.transportAccepted !== true ||
+      result?.contentBindingVerified !== true ||
+      result?.printerEndpointPinned !== true ||
+      result?.payloadSha256 !== dispatch.payloadSha256 ||
+      Number(result?.payloadBytes) !== Number(dispatch.payloadBytes)
+    ) {
+      return null;
+    }
+
+    return {
+      ...result,
+      success: true,
+      method: 'LOCAL_RAW_ESC_POS',
+      physicalCompletionVerified: false,
+    };
+  }
+
+  /**
    * Dispatches a print job.
    * Cascading order:
    * 1. Local WebSocket Proxy / Bridge (if connected)
@@ -148,19 +216,10 @@ class HardwareBridgeClient {
   async printThermalReceipt(orderData, terminalId, cafeId, options = {}) {
     const paperWidth = options.paperWidth || orderData?.paperWidth || (typeof localStorage !== 'undefined' && localStorage.getItem('zamorin_pos_paper_width')) || '80';
 
-    // 1. Try local proxy socket if connected
+    // 1. A connected socket is not print acknowledgement. REC-04E keeps this
+    // path disabled until a content-bound request/ack protocol is implemented.
     if (this.proxyConnected && this.proxyWs && this.proxyWs.readyState === WebSocket.OPEN) {
-      try {
-        this.proxyWs.send(JSON.stringify({
-          action: 'PRINT_RECEIPT',
-          orderData: { ...orderData, paperWidth },
-          terminalId,
-          paperWidth,
-        }));
-        return { success: true, method: 'LOCAL_PROXY' };
-      } catch (err) {
-        // Fall through to HTTP / WebUSB / browser fallback
-      }
+      // Deliberately do not send an unacknowledged print command.
     }
 
     // 2. Try Local HTTP Bridge daemon if available
@@ -177,24 +236,29 @@ class HardwareBridgeClient {
           }),
         });
         if (bridgeRes.ok) {
-          return { success: true, method: 'LOCAL_HTTP_BRIDGE' };
+          const bridgeResult = await bridgeRes.json();
+          if (
+            bridgeResult?.success === true &&
+            bridgeResult?.contentBindingVerified === true &&
+            bridgeResult?.printerIdentityVerified === true
+          ) {
+            return {
+              ...bridgeResult,
+              success: true,
+              method: 'LOCAL_HTTP_BRIDGE',
+            };
+          }
         }
       }
     } catch (_) {
       // Bridge not reachable, continue cascade
     }
 
-    // 3. Try WebUSB if active
+    // 3. Merely having an opened WebUSB device is not evidence that receipt
+    // bytes were transferred or accepted. Keep this path non-authoritative
+    // until transferOut + device-bound acknowledgement are implemented.
     if (typeof navigator !== 'undefined' && navigator.usb && (this.activeUsbDevice || (typeof window !== 'undefined' && window._activeUsbPrinter))) {
-      try {
-        const device = this.activeUsbDevice || window._activeUsbPrinter;
-        if (device && device.opened) {
-          // ESC/POS transfer via USB endpoint
-          return { success: true, method: 'WEB_USB' };
-        }
-      } catch (err) {
-        // Fall through
-      }
+      // Deliberately fall through to a visibly unverified browser fallback.
     }
 
     // 4. Graceful fallback: render clean thermal HTML preview for window.print()
@@ -211,7 +275,13 @@ class HardwareBridgeClient {
         if (printWindow) {
           printWindow.document.write(htmlContent);
           printWindow.document.close();
-          return { success: true, method: 'WINDOW_PRINT_FALLBACK' };
+          return {
+            success: true,
+            method: 'WINDOW_PRINT_FALLBACK',
+            physicalCompletionVerified: false,
+            contentBindingVerified: false,
+            printerIdentityVerified: false,
+          };
         }
       }
     } catch (fallbackErr) {
@@ -239,13 +309,13 @@ class HardwareBridgeClient {
   }
 
   /**
-   * Dispatches diagnostic test print for hardware readiness verification.
+   * Prepares a diagnostic ESC/POS payload. Physical readiness is not inferred.
    */
   async runDiagnosticTestPrint(terminalId) {
     try {
       const res = await apiPost('/hardware/test-print', { terminalId, format: 'json' });
       if (typeof showToast === 'function') {
-        showToast('Diagnostic test ticket dispatched to terminal.', 'success');
+        showToast('Diagnostic ESC/POS payload prepared. Physical printer readiness is not yet verified.', 'info');
       }
       return res.data;
     } catch (err) {

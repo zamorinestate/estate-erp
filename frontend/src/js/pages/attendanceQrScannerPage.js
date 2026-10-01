@@ -51,7 +51,7 @@ let pageState = {
 // ─── Main Render ──────────────────────────────────────────────────────────────
 
 export function renderAttendanceQrScannerPage() {
-  const role = state.role || state.user?.role || 'MASTER';
+  const role = state.role || state.user?.role || '';
   const isPrimary = state.user?.isPrimaryMaster === true;
   const isMaster = role === 'MASTER';
   const isOwner = role === 'OWNER';
@@ -59,7 +59,7 @@ export function renderAttendanceQrScannerPage() {
 
   // Cafe selection rules:
   // Ops is strictly locked to their bound cafe; Masters/Owners can select
-  const boundCafeId = state.user?.primaryCafeId || state.currentCafeId || 'ZC-0001';
+  const boundCafeId = state.user?.primaryCafeId || state.currentCafeId || null;
   if (isCafeOps) {
     pageState.selectedCafeId = boundCafeId;
   } else if (!pageState.selectedCafeId) {
@@ -147,7 +147,7 @@ export function renderAttendanceQrScannerPage() {
               ${_getCafeDisplayName(pageState.selectedCafeId)}
             </div>
             <div style="font-size:11.5px; font-family:var(--font-mono); color:var(--muted); margin-top:2px;" id="qr-cafe-id-display">
-              Reference: ${pageState.selectedCafeId || 'ZC-0001'} · 45s Rotation
+              Reference: ${pageState.selectedCafeId || 'No café selected'} · 45s Rotation
             </div>
             <div style="margin-top:10px; font-size:13px; font-weight:700; color:var(--bronze-600);" id="qr-countdown-display">
               Refreshes in ${pageState.countdownSec} sec
@@ -412,7 +412,7 @@ function _renderDiagnosticLastTestHtml() {
 
 function _getCafeDisplayName(cafeId) {
   const found = (pageState.cafesList || []).find(c => c.cafeId === cafeId);
-  return found?.name || `Zamorin Café (${cafeId || 'ZC-0001'})`;
+  return found?.name || (cafeId ? `Zamorin Café (${cafeId})` : 'No café selected');
 }
 
 // ─── Wiring & Lifecycle ───────────────────────────────────────────────────────
@@ -456,7 +456,13 @@ async function _loadCafesList(container) {
       pageState.cafesList = res.data;
     }
   } catch (err) {
-    pageState.cafesList = [{ cafeId: 'ZC-0001', name: 'Zamorin Koramangala' }];
+    pageState.cafesList = [];
+  }
+
+  const role = state.role || state.user?.role || '';
+  const isCafeOps = role === 'CAFE_ADMIN' || role === 'CAFE_OPS';
+  if (!isCafeOps && !pageState.selectedCafeId && pageState.cafesList.length > 0) {
+    pageState.selectedCafeId = pageState.cafesList[0]?.cafeId || null;
   }
 
   // Load Geofence Info for selected café
@@ -464,8 +470,18 @@ async function _loadCafesList(container) {
 }
 
 async function _fetchGeofenceDetails(container) {
+  const cafeId = pageState.selectedCafeId;
+  if (!cafeId) {
+    pageState.geofenceData = { configured: false };
+    const geoBox = container.querySelector('#geofence-details-content');
+    if (geoBox) {
+      const role = state.role || state.user?.role || '';
+      geoBox.innerHTML = _renderGeofenceDetailsHtml(role === 'MASTER', role === 'OWNER');
+    }
+    return;
+  }
+
   try {
-    const cafeId = pageState.selectedCafeId || 'ZC-0001';
     const res = await apiGet(`/api/v1/cafes/${cafeId}`);
     if (res?.data) {
       const c = res.data;
@@ -498,11 +514,22 @@ async function _fetchAndRenderActiveQr(container) {
   const cafeIdEl = container.querySelector('#qr-cafe-id-display');
   const countdownEl = container.querySelector('#qr-countdown-display');
 
+  const cafeId = pageState.selectedCafeId;
+  if (!cafeId) {
+    pageState.qrStatus = 'UNAVAILABLE';
+    pageState.activeChallenge = null;
+    if (qrBox) qrBox.innerHTML = '<div style="color:var(--color-danger); padding:20px;">No authorized café context is available.</div>';
+    if (statusBadge) statusBadge.innerHTML = _renderStatusBadge('UNAVAILABLE');
+    if (cafeNameEl) cafeNameEl.textContent = 'No café selected';
+    if (cafeIdEl) cafeIdEl.textContent = 'Reference: unavailable';
+    if (countdownEl) countdownEl.textContent = 'Waiting for café context';
+    return;
+  }
+
   try {
     pageState.qrStatus = 'REFRESHING';
     if (statusBadge) statusBadge.innerHTML = _renderStatusBadge('REFRESHING');
 
-    const cafeId = pageState.selectedCafeId || 'ZC-0001';
     const res = await apiGet(`/api/v1/attendance/qr/active?cafeId=${cafeId}`);
 
     if (res?.success && res.data) {
@@ -510,7 +537,7 @@ async function _fetchAndRenderActiveQr(container) {
       pageState.qrStatus = 'ACTIVE';
       pageState.countdownSec = res.data.remainingSeconds || 45;
 
-      const payload = res.data.opaqueToken || res.data.qrToken;
+      const payload = res.data.attendanceUrl || res.data.opaqueToken || res.data.qrToken;
       const svg = generateQrSvg(payload, { size: 260, margin: 4, includeLogo: true });
 
       if (qrBox) qrBox.innerHTML = svg;
@@ -598,10 +625,15 @@ function _bindEvents(container) {
 // ─── AREA F: ATTENDANCE DISPLAY MODE (FULL SCREEN KIOSK) ──────────────────────
 
 function _openDisplayModeModal(container) {
+  const cleanCafeId = pageState.selectedCafeId;
+  const payload = pageState.activeChallenge?.attendanceUrl || pageState.activeChallenge?.opaqueToken || pageState.activeChallenge?.qrToken;
+  if (!cleanCafeId || !payload) {
+    alert('No active café-scoped attendance QR is available.');
+    return;
+  }
+
   const mount = container.querySelector('#attendance-display-mode-mount') || document.body;
-  const payload = pageState.activeChallenge?.opaqueToken || pageState.activeChallenge?.qrToken || 'ZAMORIN_ATTENDANCE';
-  const cafeName = pageState.activeChallenge?.cafeName || _getCafeDisplayName(pageState.selectedCafeId);
-  const cleanCafeId = pageState.selectedCafeId || 'ZC-0001';
+  const cafeName = pageState.activeChallenge?.cafeName || _getCafeDisplayName(cleanCafeId);
 
   const svgLarge = generateQrSvg(payload, {
     size: Math.min(480, Math.floor(window.innerWidth * 0.82)),

@@ -21,6 +21,7 @@ const {
   listPaymentRuns,
   createPaymentRun,
   decidePaymentRun,
+  executePaymentRun,
   listReceivables,
   recordCustomerReceipt,
   listMarketplaceSettlements,
@@ -137,6 +138,12 @@ router.post(
   '/payments/runs/:paymentRunId/decision',
   authorize('FINANCE:POST', { allowedRoles: ['MASTER', 'CAFE_ADMIN'] }),
   decidePaymentRun
+);
+
+router.post(
+  '/payments/runs/:paymentRunId/execute',
+  authorize('FINANCE:POST', { allowedRoles: ['MASTER'] }),
+  executePaymentRun
 );
 
 // 7. Accounts Receivable (AR) & Collections

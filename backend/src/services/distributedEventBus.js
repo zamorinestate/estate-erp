@@ -18,8 +18,11 @@ class DistributedEventBus extends EventEmitter {
     super();
     this.redisPublisher = options.redisPublisher || null;
     this.redisSubscriber = options.redisSubscriber || null;
+    this.keyPrefix = options.keyPrefix || '';
     this.isDistributed = Boolean(this.redisPublisher && this.redisSubscriber);
     this.subscribers = new Map(); // topic -> Set(callbacks)
+    this.redisSubscriptions = new Set();
+    this.instanceId = process.env.INSTANCE_ID || `inst-${process.pid}`;
     this.checkpointService = options.checkpointService || changeStreamCheckpointService;
     this.metrics = {
       publishedEvents: 0,
@@ -28,20 +31,32 @@ class DistributedEventBus extends EventEmitter {
     };
   }
 
-  setRedisBrokers(publisher, subscriber) {
+  setRedisBrokers(publisher, subscriber, keyPrefix = this.keyPrefix || '') {
     this.redisPublisher = publisher;
     this.redisSubscriber = subscriber;
+    this.keyPrefix = keyPrefix || '';
     this.isDistributed = Boolean(publisher && subscriber);
+    this.redisSubscriptions.clear();
 
-    if (this.isDistributed && this.redisSubscriber) {
-      this.redisSubscriber.on('message', (channel, messageStr) => {
-        try {
-          const payload = JSON.parse(messageStr);
-          this.metrics.crossInstanceEvents++;
-          this.emitLocal(channel, payload);
-        } catch (_) {}
-      });
+    if (this.isDistributed) {
+      for (const topic of this.subscribers.keys()) {
+        this.subscribeRedisTopic(topic).catch(() => {});
+      }
     }
+  }
+
+  async subscribeRedisTopic(topic) {
+    if (!this.isDistributed || !this.redisSubscriber || this.redisSubscriptions.has(topic)) return;
+    const channel = `${this.keyPrefix}events:${topic}`;
+    await this.redisSubscriber.subscribe(channel, (messageStr) => {
+      try {
+        const eventEnvelope = typeof messageStr === 'string' ? JSON.parse(messageStr) : messageStr;
+        if (eventEnvelope?.sourceInstanceId === this.instanceId) return;
+        this.metrics.crossInstanceEvents++;
+        this.emitLocal(topic, eventEnvelope);
+      } catch (_) {}
+    });
+    this.redisSubscriptions.add(topic);
   }
 
   /**
@@ -53,7 +68,7 @@ class DistributedEventBus extends EventEmitter {
       topic,
       payload,
       timestamp: new Date().toISOString(),
-      sourceInstanceId: process.env.INSTANCE_ID || `inst-${process.pid}`,
+      sourceInstanceId: this.instanceId,
     };
 
     // Deliver locally
@@ -62,7 +77,7 @@ class DistributedEventBus extends EventEmitter {
     // Broadcast across cluster if distributed
     if (this.isDistributed && this.redisPublisher) {
       try {
-        await this.redisPublisher.publish(topic, JSON.stringify(eventEnvelope));
+        await this.redisPublisher.publish(`${this.keyPrefix}events:${topic}`, JSON.stringify(eventEnvelope));
       } catch (err) {
         console.warn(`[EventBus] Distributed publish failed: ${err.message}`);
       }
@@ -82,7 +97,7 @@ class DistributedEventBus extends EventEmitter {
     if (!this.subscribers.has(topic)) {
       this.subscribers.set(topic, new Set());
       if (this.isDistributed && this.redisSubscriber) {
-        this.redisSubscriber.subscribe(topic).catch(() => {});
+        this.subscribeRedisTopic(topic).catch(() => {});
       }
     }
     this.subscribers.get(topic).add(callback);
@@ -99,7 +114,8 @@ class DistributedEventBus extends EventEmitter {
       if (this.subscribers.get(topic).size === 0) {
         this.subscribers.delete(topic);
         if (this.isDistributed && this.redisSubscriber) {
-          this.redisSubscriber.unsubscribe(topic).catch(() => {});
+          this.redisSubscriptions.delete(topic);
+          this.redisSubscriber.unsubscribe(`${this.keyPrefix}events:${topic}`).catch(() => {});
         }
       }
     }

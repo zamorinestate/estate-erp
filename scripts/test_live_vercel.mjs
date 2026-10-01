@@ -1,5 +1,10 @@
 import puppeteer from 'puppeteer-core';
-const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+import path from 'path';
+import fs from 'fs';
+const CHROME_PATH = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const ARTIFACTS_DIR = process.env.E2E_ARTIFACTS_DIR || path.join(process.cwd(), 'artifacts', 'e2e');
+const LIVE_URL = process.env.E2E_FRONTEND_BASE_URL || LIVE_URL;
+fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
 
 async function test() {
   const browser = await puppeteer.launch({ executablePath: CHROME_PATH, headless: true, args: ['--no-sandbox'] });
@@ -11,7 +16,7 @@ async function test() {
 
   const start = Date.now();
   console.log('Navigating to https://zamorin-cafe-erp.vercel.app ...');
-  const res = await page.goto('https://zamorin-cafe-erp.vercel.app', { waitUntil: 'networkidle2', timeout: 30000 });
+  const res = await page.goto(LIVE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
   const duration = Date.now() - start;
   console.log('Loaded status:', res.status(), 'in', duration, 'ms');
   console.log('Title:', await page.title());
@@ -20,7 +25,7 @@ async function test() {
   console.log('Login card rendered:', !!card);
   const bg = await page.evaluate(() => window.getComputedStyle(document.body).backgroundColor);
   console.log('Body bg:', bg);
-  await page.screenshot({ path: 'C:/Users/chris/.gemini/antigravity-ide/brain/cedd1918-3cd9-4d7d-8bda-d4aa3c824eb9/live_vercel_load.png' });
+  await page.screenshot({ path: path.join(ARTIFACTS_DIR, 'live_vercel_load.png') });
   await browser.close();
 }
 

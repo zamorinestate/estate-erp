@@ -85,11 +85,14 @@ function normalizeCafeIds(value) {
 }
 
 function requireMaster(request) {
-  if (request.auth.role !== 'MASTER') {
+  if (
+    request.auth.role !== 'MASTER' ||
+    request.auth.isPrimaryMaster !== true
+  ) {
     throw new ApiError(
       403,
-      'MASTER_ACCESS_REQUIRED',
-      'Only the MASTER role may perform this action.'
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may perform this action.'
     );
   }
 }
@@ -579,7 +582,7 @@ const updateUser = asyncHandler(
     // Primary Master protection — no admin updates to PM
     await assertNotPrimaryMasterTarget(user, 'profile cannot be administratively modified', { request, actorDocument });
 
-    // Secondary Master cannot modify another Master
+    // Malformed non-primary MASTER cannot administer a MASTER target
     assertMayActOnMasterTarget(actorDocument, user);
 
     const allowedTextFields = [
@@ -834,7 +837,7 @@ const changeUserStatus = asyncHandler(
       { request, actorDocument }
     );
 
-    // Secondary Master cannot deactivate/suspend another Master
+    // Malformed non-primary MASTER cannot deactivate or suspend a MASTER target
     assertMayActOnMasterTarget(actorDocument, user);
 
     // Check restoration authority for accounts suspended due to Primary Master security events
@@ -994,7 +997,7 @@ const archiveUser = asyncHandler(
       { request, actorDocument }
     );
 
-    // Secondary Master cannot archive another Master
+    // Malformed non-primary MASTER cannot archive a MASTER target
     assertMayActOnMasterTarget(actorDocument, user);
 
     const beforeSnapshot = buildUserSnapshot(user);

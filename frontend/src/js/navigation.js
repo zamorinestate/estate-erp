@@ -6,8 +6,8 @@
 //   - Items not listed for a role here are unreachable by that role anywhere.
 //   - Navigation is structured in logical groups (COMMAND, OPERATIONS, PEOPLE,
 //     FINANCE, COMMERCIAL, INSIGHTS, ADMINISTRATION, SYSTEM).
-//   - Primary Master vs Normal Master distinction is enforced here and in
-//     router.js — no 5th/6th role is created.
+//   - MASTER navigation is reserved for the designated Primary Master and
+//     is enforced again in router.js.
 //   - User-facing CAFE_ADMIN terminology is "Cafe Operations" / "Operator".
 //   - My Profile, My Payslip → Avatar menu / Settings (not main sidebar).
 //   - My Payslips, My Loans & Advances → Settings → My Employment (not STAFF sidebar).
@@ -54,7 +54,7 @@ const PRIMARY_MASTER_ITEMS = [
   { id: 'staff-home',    label: 'Staff Self-Service',     icon: 'user',         route: 'staff-home',        group: 'PEOPLE' },
 
   // ── COMMERCIAL & REVENUE ─────────────────────────────────────────────────────
-  { id: 'menu',          label: 'Menu Management',        icon: 'menuItem',     route: 'menu',              group: 'COMMERCIAL' },
+  { id: 'menu',          label: 'POS Menu & Recipes',     icon: 'menuItem',     route: 'menu',              group: 'COMMERCIAL' },
   { id: 'customers',     label: 'Customers & Loyalty',    icon: 'customers',    route: 'customers',         group: 'COMMERCIAL' },
   { id: 'vendors',       label: 'Vendors',                icon: 'vendors',      route: 'vendors',           group: 'COMMERCIAL' },
   { id: 'reports',       label: 'Reports & Analytics',    icon: 'reports',      route: 'reports',           group: 'COMMERCIAL' },
@@ -292,6 +292,13 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
     return VENDOR_ALLOWED_ROUTES.has(route);
   }
 
+  // A MASTER context is valid only when explicitly identified as the Primary Master.
+  // Fail closed before implicit/internal route handling so stale or malformed
+  // MASTER client state cannot inherit any authenticated workspace routes.
+  if ((role === ROLES.MASTER || role === 'master') && isPrimaryMaster !== true) {
+    return false;
+  }
+
   // Implicit routes allowed for all authenticated internal roles
   if (IMPLICIT_ROUTES_ALL.has(route)) return true;
 
@@ -396,6 +403,10 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
 
 // ─── Grouped navigation for sidebar rendering ─────────────────────────────────
 export function getGroupedNavItems(role, isPrimaryMaster = false) {
+  if ((role === ROLES.MASTER || role === 'master') && isPrimaryMaster !== true) {
+    return {};
+  }
+
   const navConfig = NAVIGATION[role];
   if (!navConfig) return {};
 

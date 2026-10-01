@@ -96,7 +96,7 @@ export const DEV_PREVIEW_USERS = Object.freeze({
     _id: "MU-0001",
     id: "MU-0001",
     name: "Zamorin Primary Master",
-    email: "pradeeshk331@gmail.com",
+    email: "primary-master@local.zamorin.test",
     role: "MASTER",
     designation: "Primary Master",
     position: "Primary Master",
@@ -366,18 +366,52 @@ export function getSafeInternalRedirect(target) {
   return null;
 }
 
+function capturePendingAttendanceQrIntent(role, targetRoute) {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search || "");
+  const attendanceQr = String(params.get("attendanceQr") || "").trim();
+  if (!attendanceQr) return;
+
+  const normalizedRoute = String(targetRoute || "")
+    .replace(/^#\/?/, "")
+    .split("?")[0]
+    .trim();
+
+  const isValidOpaqueChallenge = /^ZAM_ATT_[a-f0-9]{64}$/i.test(attendanceQr);
+  if (role === "staff" && normalizedRoute === "staff-attendance" && isValidOpaqueChallenge) {
+    try {
+      sessionStorage.setItem("zamorin.pendingAttendanceQr", attendanceQr);
+    } catch {}
+
+    try {
+      if (window.history?.replaceState) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("attendanceQr");
+        cleanUrl.searchParams.delete("returnTo");
+        cleanUrl.searchParams.delete("redirect");
+        cleanUrl.searchParams.delete("next");
+        window.history.replaceState(null, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+      }
+    } catch {}
+  }
+}
+
 function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
   if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
-    // ⚠️ PRIMARY MASTER LOCK: Only the single administrator account
-    // (MU-0001 / pradeeshk331@gmail.com) holds the MASTER role and window.
-    const isHardcodedPrimaryMaster =
-      user?.userId === "MU-0001" &&
-      String(user?.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+    // MASTER is a singleton authority. A malformed/non-primary MASTER context
+    // must never enter the Master navigation window.
+    if (user?.isPrimaryMaster !== true) {
+      return {
+        role: "staff",
+        isPrimaryMaster: false,
+      };
+    }
+
     return {
       role: "master",
-      isPrimaryMaster: isHardcodedPrimaryMaster,
+      isPrimaryMaster: user?.isPrimaryMaster === true,
     };
   }
 
@@ -709,6 +743,8 @@ function handleAuthenticatedUserSession(user) {
     }
   }
 
+  capturePendingAttendanceQrIntent(role, targetRoute);
+
   // Clear any residual dev/preview role overrides so the authenticated employee profile is strictly authoritative
   try {
     if (typeof localStorage !== "undefined") {
@@ -919,15 +955,27 @@ function applyAuthenticatedUser(
         : "dashboard"
     );
 
+  let effectiveRequestedRoute = requestedRoute;
+  if (!effectiveRequestedRoute && typeof window !== "undefined") {
+    const searchParams = new URLSearchParams(window.location.search || "");
+    const candidate = searchParams.get("returnTo") || searchParams.get("redirect") || searchParams.get("next");
+    const safeTarget = getSafeInternalRedirect(candidate);
+    if (safeTarget && isRouteAllowed(role, safeTarget, isPrimaryMaster)) {
+      effectiveRequestedRoute = safeTarget;
+    }
+  }
+
   const initialRoute =
-    requestedRoute &&
+    effectiveRequestedRoute &&
     isRouteAllowed(
       role,
-      requestedRoute,
+      effectiveRequestedRoute,
       isPrimaryMaster
     )
-      ? requestedRoute
+      ? effectiveRequestedRoute
       : defaultRoute;
+
+  capturePendingAttendanceQrIntent(role, initialRoute);
 
   setState({
     auth: {
@@ -1072,7 +1120,7 @@ async function boot() {
     if (isDirectDashboardAllowed() && (params?.get("role") || params?.get("devRole") || (typeof localStorage !== "undefined" && localStorage.getItem("zamorin-dev-role")))) {
       const devKey = getRequestedDevRole();
       const devUser = DEV_PREVIEW_USERS[devKey] || DEV_PREVIEW_USERS.master;
-      const canonicalRole = devKey === "master_normal" ? "master" : devKey;
+      const canonicalRole = DEV_PREVIEW_USERS[devKey] ? devKey : "master";
       const isPrimary = Boolean(devUser?.isPrimaryMaster);
       const roleNavigation = NAVIGATION[canonicalRole] || NAVIGATION.master;
       const defaultRoute = roleNavigation?.items?.[0]?.route || (canonicalRole === "staff" ? "staff-home" : "dashboard");
@@ -1094,8 +1142,8 @@ async function boot() {
 
       renderShell();
 
-      // Local preview never embeds or submits real credentials.
-      // Backend-authenticated development sessions must be obtained through the normal login flow.
+      // Local preview state is UI-only. Real authenticated browser tests must
+      // sign in explicitly with environment-supplied credentials.
       loadAvailableCafes().catch(() => {});
       registerServiceWorker().catch(() => {});
       return;

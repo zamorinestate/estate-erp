@@ -30,6 +30,8 @@ const { resolveEmployeeShiftForDate, getWeekStartDate } = require('../services/s
 const employeeService = require('../services/employeeService');
 const { hashPassword } = require('../services/authService');
 const operatorSessionService = require('../services/operatorSessionService');
+const { generateTemporaryEmployeePassword } = require('../utils/secureRandom');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 
 // ─── 1. OVERVIEW & WORKFORCE KPIS ─────────────────────────────────────────────
 const getWorkforceOverview = asyncHandler(async (req, res) => {
@@ -243,7 +245,7 @@ const listEmployees = asyncHandler(async (req, res) => {
       .lean(),
   ]);
 
-  // Field-level privacy masking for Normal Master / non-Primary & Primary Master Designation Lock
+  // Field-level privacy masking for non-primary callers & Primary Master designation lock
   const sanitizedUsers = users.map((u) => {
     const userCopy = { ...u };
     if (
@@ -402,15 +404,6 @@ const getEmployee360 = asyncHandler(async (req, res) => {
   });
 });
 
-function generateTemporaryPassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-  let rand = '';
-  for (let i = 0; i < 6; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `Zamorin@${rand}!`;
-}
-
 // ─── 4. ONBOARD NEW EMPLOYEE ──────────────────────────────────────────────────
 const onboardEmployee = asyncHandler(async (req, res) => {
   const { organisationId, userId: actorId } = req.auth;
@@ -424,8 +417,8 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     designation = 'Junior Barista',
     employmentType = 'Full Time',
     workerType = 'PERMANENT',
-    primaryCafeId = 'ZC-0001',
-    assignedCafeIds = ['ZC-0001'],
+    primaryCafeId = null,
+    assignedCafeIds = [],
     positionId = null,
     managerUserId = null,
     joiningDate = new Date().toISOString().split('T')[0],
@@ -459,12 +452,15 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   };
 
   const effectiveWorkerType = normalizeWorkerType(workerType);
+  const normalizedAssignedCafeIds = (Array.isArray(assignedCafeIds) ? assignedCafeIds : [])
+    .map(c => String(c || '').trim().toUpperCase())
+    .filter(Boolean);
   const effectivePrimaryCafeId = (primaryCafeId && String(primaryCafeId).trim())
     ? String(primaryCafeId).trim().toUpperCase()
-    : 'ZC-0001';
-  const effectiveAssignedCafeIds = (Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0)
-    ? assignedCafeIds.map(c => String(c).trim().toUpperCase()).filter(Boolean)
-    : [effectivePrimaryCafeId];
+    : (normalizedAssignedCafeIds[0] || null);
+  const effectiveAssignedCafeIds = normalizedAssignedCafeIds.length > 0
+    ? normalizedAssignedCafeIds
+    : (effectivePrimaryCafeId ? [effectivePrimaryCafeId] : []);
 
   // Reject assigning MASTER role to any new employee
   const candidateRole = String(rawRole || 'STAFF').trim().toUpperCase();
@@ -476,6 +472,14 @@ const onboardEmployee = asyncHandler(async (req, res) => {
     );
   }
   const effectiveRole = ['STAFF', 'CAFE_ADMIN', 'OWNER'].includes(candidateRole) ? candidateRole : 'STAFF';
+
+  if (['STAFF', 'CAFE_ADMIN'].includes(effectiveRole) && !effectivePrimaryCafeId) {
+    throw new ApiError(
+      400,
+      'CAFE_ASSIGNMENT_REQUIRED',
+      'Staff and Café Operations employees require an explicit primary café assignment.'
+    );
+  }
 
   // Duplicate check - strictly query non-empty values
   const orConditions = [{ email: effectiveEmail }];
@@ -535,7 +539,7 @@ const onboardEmployee = asyncHandler(async (req, res) => {
   let rawPassword = (password || initialPassword || '').trim();
   let effectivePassword = rawPassword;
   if (!effectivePassword) {
-    effectivePassword = generateTemporaryPassword();
+    effectivePassword = generateTemporaryEmployeePassword();
   } else if (effectivePassword.length < 8) {
     throw new ApiError(400, 'INVALID_PASSWORD', 'Password must be at least 8 characters long.');
   }
@@ -563,64 +567,144 @@ const onboardEmployee = asyncHandler(async (req, res) => {
 
   const employmentStatus = isPreboarding ? 'PREBOARDING' : 'PROBATION';
 
-  const newUser = await User.create({
-    userId: newUserId,
-    organisationId,
-    name: effectiveName,
-    preferredName: effectivePreferredName,
-    email: effectiveEmail,
-    phone: effectivePhone,
-    role: effectiveRole,
-    department,
-    designation: effectiveDesignation,
-    employmentType,
-    workerType: effectiveWorkerType,
-    employmentStatus,
-    probationStatus: 'PENDING',
-    primaryCafeId: effectivePrimaryCafeId,
-    assignedCafeIds: effectiveAssignedCafeIds,
-    positionId,
-    managerUserId,
-    joiningDate: new Date(joiningDate),
-    accountStatus: 'ACTIVE',
-    passwordHash,
-    mustChangePassword: true,
-    operatorPinHash,
-    operatorPinSetAt,
-    createdBy: actorId,
-  });
+  let newUser = null;
+  let onboardingTrainingId = null;
+  let onboardingDocumentId = null;
 
-  // Seed default onboarding training & documents checklist
-  await EmployeeTraining.create({
-    trainingId: `TRN-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
-    organisationId,
-    userId: newUserId,
-    trainingTitle: 'Food Safety & Hygiene Induction (FoSTaC)',
-    dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    status: 'ASSIGNED',
-  });
+  const compensateStandaloneOnboarding = async () => {
+    try {
+      if (onboardingDocumentId) {
+        await EmployeeDocument.deleteOne({
+          organisationId,
+          userId: newUserId,
+          documentId: onboardingDocumentId,
+        });
+      }
+      if (onboardingTrainingId) {
+        await EmployeeTraining.deleteOne({
+          organisationId,
+          userId: newUserId,
+          trainingId: onboardingTrainingId,
+        });
+      }
+      if (newUser?._id) {
+        await User.deleteOne({
+          _id: newUser._id,
+          organisationId,
+          userId: newUserId,
+        });
+      }
+    } catch (compensationError) {
+      throw new ApiError(
+        503,
+        'EMPLOYEE_ONBOARDING_COMPENSATION_FAILED',
+        'Employee onboarding failed and its partial records could not be safely compensated.',
+        { cause: String(compensationError?.message || 'UNKNOWN_COMPENSATION_FAILURE') }
+      );
+    }
+  };
 
-  await EmployeeDocument.create({
-    documentId: `DOC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
-    organisationId,
-    userId: newUserId,
-    category: 'POLICY_ACKNOWLEDGEMENT',
-    documentName: 'Employee Handbook & Code of Conduct Acknowledgement',
-    status: 'PENDING_ACKNOWLEDGEMENT',
-  });
+  await executeTransactionWithRetry(async (session) => {
+    try {
+      newUser = new User({
+        userId: newUserId,
+        organisationId,
+        name: effectiveName,
+        preferredName: effectivePreferredName,
+        email: effectiveEmail,
+        phone: effectivePhone,
+        role: effectiveRole,
+        department,
+        designation: effectiveDesignation,
+        employmentType,
+        workerType: effectiveWorkerType,
+        employmentStatus,
+        probationStatus: 'PENDING',
+        primaryCafeId: effectivePrimaryCafeId,
+        assignedCafeIds: effectiveAssignedCafeIds,
+        positionId,
+        managerUserId,
+        joiningDate: new Date(joiningDate),
+        accountStatus: 'ACTIVE',
+        passwordHash,
+        mustChangePassword: true,
+        operatorPinHash,
+        operatorPinSetAt,
+        createdBy: actorId,
+      });
+      await newUser.save(session ? { session } : undefined);
 
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'ONBOARD_EMPLOYEE',
-      entityType: 'EMPLOYEE',
-      entityId: newUserId,
-      metadata: { name, email, role, primaryCafeId, employmentStatus, hasOperatorPin: Boolean(operatorPinHash) },
-    });
-  } catch (e) {
-    // Non-blocking audit
-  }
+      // Seed default onboarding training & documents checklist using
+      // authoritative sequence IDs in the same transaction when available.
+      const onboardingYear = new Date().getFullYear();
+      onboardingTrainingId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `EMPLOYEE_TRAINING_${onboardingYear}`,
+        prefix: `TRN-${onboardingYear}`,
+        minimumDigits: 4,
+        session,
+      });
+      onboardingDocumentId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `EMPLOYEE_DOCUMENT_${onboardingYear}`,
+        prefix: `DOC-${onboardingYear}`,
+        minimumDigits: 4,
+        session,
+      });
+
+      const training = new EmployeeTraining({
+        trainingId: onboardingTrainingId,
+        organisationId,
+        userId: newUserId,
+        trainingTitle: 'Food Safety & Hygiene Induction (FoSTaC)',
+        dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        status: 'ASSIGNED',
+      });
+      await training.save(session ? { session } : undefined);
+
+      const document = new EmployeeDocument({
+        documentId: onboardingDocumentId,
+        organisationId,
+        userId: newUserId,
+        category: 'POLICY_ACKNOWLEDGEMENT',
+        documentName: 'Employee Handbook & Code of Conduct Acknowledgement',
+        status: 'PENDING_ACKNOWLEDGEMENT',
+      });
+      await document.save(session ? { session } : undefined);
+
+      await recordRequestAudit({
+        request: req,
+        module: 'EMPLOYEES',
+        action: 'ONBOARD_EMPLOYEE',
+        entityType: 'EMPLOYEE',
+        entityId: newUserId,
+        cafeId: effectivePrimaryCafeId,
+        after: {
+          userId: newUserId,
+          role: effectiveRole,
+          primaryCafeId: effectivePrimaryCafeId,
+          assignedCafeIds: effectiveAssignedCafeIds,
+          employmentStatus,
+          onboardingTrainingId,
+          onboardingDocumentId,
+          hasOperatorPin: Boolean(operatorPinHash),
+        },
+        metadata: {
+          role: effectiveRole,
+          primaryCafeId: effectivePrimaryCafeId,
+          employmentStatus,
+          hasOperatorPin: Boolean(operatorPinHash),
+        },
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+      }, { session });
+    } catch (error) {
+      if (!session) {
+        await compensateStandaloneOnboarding();
+      }
+      throw error;
+    }
+  });
 
   return res.status(201).json({
     success: true,
@@ -680,24 +764,23 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
   }
 
   let effectivePassword = null;
+  let nextPasswordHash = null;
+
   if (password && String(password).trim().length > 0) {
     effectivePassword = String(password).trim();
     if (effectivePassword.length < 8) {
       throw new ApiError(400, 'INVALID_PASSWORD', 'Password must be at least 8 characters.');
     }
-    user.passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
-    user.mustChangePassword = true;
-    user.failedLoginAttempts = 0;
-    user.accountLockUntil = null;
+    nextPasswordHash = await hashPassword(effectivePassword, { minLength: 8 });
   } else if (generatePassword) {
-    effectivePassword = generateTemporaryPassword();
-    user.passwordHash = await hashPassword(effectivePassword, { minLength: 8 });
-    user.mustChangePassword = true;
-    user.failedLoginAttempts = 0;
-    user.accountLockUntil = null;
+    effectivePassword = generateTemporaryEmployeePassword();
+    nextPasswordHash = await hashPassword(effectivePassword, { minLength: 8 });
   }
 
   let pinSet = false;
+  let nextOperatorPinHash = null;
+  let nextOperatorPinSetAt = null;
+
   if (operatorPin !== undefined && operatorPin !== null && String(operatorPin).trim().length > 0) {
     const pinStr = String(operatorPin).trim();
     if (!/^\d{6}$/.test(pinStr)) {
@@ -707,43 +790,149 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
     if (weakPins.includes(pinStr)) {
       throw new ApiError(400, 'WEAK_OPERATOR_PIN', 'Please choose a stronger, non-sequential 6-digit PIN.');
     }
-    user.operatorPinHash = await operatorSessionService.hashPin(pinStr);
-    user.operatorPinSetAt = new Date();
-    user.operatorPinFailedAttempts = 0;
-    user.operatorPinLockedUntil = null;
+    nextOperatorPinHash = await operatorSessionService.hashPin(pinStr);
+    nextOperatorPinSetAt = new Date();
     pinSet = true;
   }
 
-  await user.save();
+  const before = {
+    passwordHash: user.passwordHash,
+    mustChangePassword: Boolean(user.mustChangePassword),
+    failedLoginAttempts: Number(user.failedLoginAttempts || 0),
+    accountLockUntil: user.accountLockUntil || null,
+    operatorPinHash: user.operatorPinHash || null,
+    operatorPinSetAt: user.operatorPinSetAt || null,
+    operatorPinFailedAttempts: Number(user.operatorPinFailedAttempts || 0),
+    operatorPinLockedUntil: user.operatorPinLockedUntil || null,
+    version: Number(user.__v || 0),
+  };
 
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'SET_EMPLOYEE_CREDENTIALS',
-      entityType: 'USER',
-      entityId: user.userId,
-      metadata: {
-        targetUserId: user.userId,
-        passwordUpdated: Boolean(effectivePassword),
-        operatorPinUpdated: pinSet,
+  let updatedUser = null;
+
+  await executeTransactionWithRetry(async (session) => {
+    const set = {};
+
+    if (nextPasswordHash) {
+      set.passwordHash = nextPasswordHash;
+      set.mustChangePassword = true;
+      set.failedLoginAttempts = 0;
+      set.accountLockUntil = null;
+    }
+
+    if (pinSet) {
+      set.operatorPinHash = nextOperatorPinHash;
+      set.operatorPinSetAt = nextOperatorPinSetAt;
+      set.operatorPinFailedAttempts = 0;
+      set.operatorPinLockedUntil = null;
+    }
+
+    const changed = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        organisationId: organisationId.trim().toUpperCase(),
+        userId: user.userId,
+        __v: before.version,
       },
-    });
-  } catch (e) {
-    // Non-blocking audit
-  }
+      {
+        $set: set,
+        $inc: { __v: 1 },
+      },
+      {
+        new: true,
+        ...(session ? { session } : {}),
+      }
+    );
+
+    if (!changed) {
+      throw new ApiError(
+        409,
+        'EMPLOYEE_CREDENTIAL_STATE_CONFLICT',
+        'Employee credentials changed concurrently. Reload the employee and retry.'
+      );
+    }
+
+    try {
+      await recordRequestAudit({
+        request: req,
+        module: 'EMPLOYEES',
+        action: 'SET_EMPLOYEE_CREDENTIALS',
+        entityType: 'USER',
+        entityId: changed.userId,
+        cafeId: changed.primaryCafeId || null,
+        before: {
+          mustChangePassword: before.mustChangePassword,
+          failedLoginAttempts: before.failedLoginAttempts,
+          accountLocked: Boolean(before.accountLockUntil),
+          operatorPinConfigured: Boolean(before.operatorPinHash),
+          operatorPinFailedAttempts: before.operatorPinFailedAttempts,
+          operatorPinLocked: Boolean(before.operatorPinLockedUntil),
+        },
+        after: {
+          mustChangePassword: changed.mustChangePassword,
+          failedLoginAttempts: changed.failedLoginAttempts || 0,
+          accountLocked: Boolean(changed.accountLockUntil),
+          operatorPinConfigured: Boolean(changed.operatorPinHash),
+          operatorPinFailedAttempts: changed.operatorPinFailedAttempts || 0,
+          operatorPinLocked: Boolean(changed.operatorPinLockedUntil),
+        },
+        metadata: {
+          targetUserId: changed.userId,
+          passwordUpdated: Boolean(nextPasswordHash),
+          operatorPinUpdated: pinSet,
+        },
+        result: 'SUCCESS',
+        riskClassification: 'CRITICAL',
+      }, { session });
+    } catch (auditError) {
+      if (!session) {
+        const rollback = await User.findOneAndUpdate(
+          {
+            _id: changed._id,
+            organisationId: organisationId.trim().toUpperCase(),
+            userId: changed.userId,
+            __v: before.version + 1,
+          },
+          {
+            $set: {
+              passwordHash: before.passwordHash,
+              mustChangePassword: before.mustChangePassword,
+              failedLoginAttempts: before.failedLoginAttempts,
+              accountLockUntil: before.accountLockUntil,
+              operatorPinHash: before.operatorPinHash,
+              operatorPinSetAt: before.operatorPinSetAt,
+              operatorPinFailedAttempts: before.operatorPinFailedAttempts,
+              operatorPinLockedUntil: before.operatorPinLockedUntil,
+            },
+            $inc: { __v: 1 },
+          },
+          { new: true }
+        );
+
+        if (!rollback) {
+          throw new ApiError(
+            503,
+            'EMPLOYEE_CREDENTIAL_AUDIT_ROLLBACK_FAILED',
+            'Credential audit failed and the credential mutation could not be safely rolled back.'
+          );
+        }
+      }
+      throw auditError;
+    }
+
+    updatedUser = changed;
+  });
 
   return res.status(200).json({
     success: true,
-    message: `Credentials updated successfully for ${user.name} (${user.userId}).`,
+    message: `Credentials updated successfully for ${updatedUser.name} (${updatedUser.userId}).`,
     data: {
-      userId: user.userId,
-      name: user.name,
-      email: user.email,
+      userId: updatedUser.userId,
+      name: updatedUser.name,
+      email: updatedUser.email,
       temporaryPassword: effectivePassword,
       operatorPin: pinSet ? String(operatorPin).trim() : null,
-      operatorPinConfigured: Boolean(user.operatorPinHash),
-      mustChangePassword: user.mustChangePassword,
+      operatorPinConfigured: Boolean(updatedUser.operatorPinHash),
+      mustChangePassword: updatedUser.mustChangePassword,
     },
   });
 });
@@ -765,10 +954,11 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
     employmentStatus,
   } = req.body;
 
-  const normalizedUserId = String(userId).trim().toUpperCase();
+  const cleanOrg = String(organisationId || '').trim().toUpperCase();
+  const normalizedUserId = String(userId || '').trim().toUpperCase();
 
   const user = await User.findOne({
-    organisationId: organisationId.trim().toUpperCase(),
+    organisationId: cleanOrg,
     userId: normalizedUserId,
   });
 
@@ -787,42 +977,86 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
     req.auth?.isPrimaryMaster === true ||
     String(req.auth?.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
 
+  if (isTargetPM && !isCallerPM) {
+    throw new ApiError(
+      403,
+      'CANNOT_EDIT_PRIMARY_MASTER',
+      'The Primary Master account is protected and cannot be modified by other users.'
+    );
+  }
+
+  const before = {
+    name: user.name,
+    preferredName: user.preferredName || '',
+    phone: user.phone || '',
+    primaryCafeId: user.primaryCafeId || null,
+    assignedCafeIds: Array.isArray(user.assignedCafeIds) ? [...user.assignedCafeIds] : [],
+    department: user.department || '',
+    designation: user.designation || '',
+    role: user.role,
+    workerType: user.workerType || '',
+    employmentStatus: user.employmentStatus || '',
+    isPrimaryMaster: Boolean(user.isPrimaryMaster),
+    version: Number(user.__v || 0),
+  };
+
+  const set = {};
+
+  if (name && String(name).trim()) set.name = String(name).trim();
+  if (preferredName !== undefined) set.preferredName = String(preferredName || '').trim();
+  if (phone !== undefined) set.phone = String(phone || '').trim();
+
   if (isTargetPM) {
-    if (!isCallerPM) {
+    set.role = 'MASTER';
+    set.isPrimaryMaster = true;
+    set.designation = 'Primary Master';
+    set.position = 'Primary Master';
+  } else {
+    const nextAssignedCafeIds = assignedCafeIds !== undefined
+      ? Array.from(new Set(
+          (Array.isArray(assignedCafeIds) ? assignedCafeIds : [])
+            .map((id) => String(id || '').trim().toUpperCase())
+            .filter(Boolean)
+        ))
+      : before.assignedCafeIds.map((id) => String(id || '').trim().toUpperCase()).filter(Boolean);
+
+    const nextPrimaryCafeId = primaryCafeId !== undefined && primaryCafeId !== null
+      ? String(primaryCafeId || '').trim().toUpperCase() || null
+      : before.primaryCafeId;
+
+    if (nextPrimaryCafeId && !nextAssignedCafeIds.includes(nextPrimaryCafeId)) {
       throw new ApiError(
-        403,
-        'CANNOT_EDIT_PRIMARY_MASTER',
-        'The Primary Master account is protected and cannot be modified by other users.'
+        400,
+        'PRIMARY_CAFE_NOT_ASSIGNED',
+        'The primary café must be included in the assigned cafés.'
       );
     }
-    // Primary Master editing his own profile
-    if (name && String(name).trim()) user.name = String(name).trim();
-    if (preferredName !== undefined) user.preferredName = String(preferredName).trim();
-    if (phone !== undefined) user.phone = String(phone).trim();
-    // Role, designation and isPrimaryMaster remain immutably Primary Master
-    user.role = 'MASTER';
-    user.isPrimaryMaster = true;
-    user.designation = 'Primary Master';
-    user.position = 'Primary Master';
-  } else {
-    // Normal employee profile update
-    if (name && String(name).trim()) user.name = String(name).trim();
-    if (preferredName !== undefined) user.preferredName = String(preferredName).trim();
-    if (phone !== undefined) user.phone = String(phone).trim();
-    if (primaryCafeId !== undefined && primaryCafeId !== null) {
-      user.primaryCafeId = String(primaryCafeId).trim().toUpperCase();
+
+    if (nextAssignedCafeIds.length > 0) {
+      const existingCafeCount = await Cafe.countDocuments({
+        organisationId: cleanOrg,
+        cafeId: { $in: nextAssignedCafeIds },
+        status: { $ne: 'ARCHIVED' },
+      });
+
+      if (existingCafeCount !== nextAssignedCafeIds.length) {
+        throw new ApiError(
+          400,
+          'INVALID_CAFE_ASSIGNMENT',
+          'One or more assigned cafés are invalid or archived.'
+        );
+      }
     }
-    if (assignedCafeIds !== undefined && Array.isArray(assignedCafeIds)) {
-      user.assignedCafeIds = assignedCafeIds.map((c) => String(c).trim().toUpperCase());
-    }
-    if (department !== undefined) user.department = String(department).trim();
-    if (designation !== undefined) user.designation = String(designation).trim();
-    if (workerType !== undefined) user.workerType = String(workerType).trim();
-    if (employmentStatus !== undefined) user.employmentStatus = String(employmentStatus).trim();
+
+    if (primaryCafeId !== undefined) set.primaryCafeId = nextPrimaryCafeId;
+    if (assignedCafeIds !== undefined) set.assignedCafeIds = nextAssignedCafeIds;
+    if (department !== undefined) set.department = String(department || '').trim();
+    if (designation !== undefined) set.designation = String(designation || '').trim();
+    if (workerType !== undefined) set.workerType = String(workerType || '').trim();
+    if (employmentStatus !== undefined) set.employmentStatus = String(employmentStatus || '').trim();
 
     if (role !== undefined) {
-      const validRoles = ['STAFF', 'CAFE_ADMIN', 'OWNER'];
-      const candidateRole = String(role).trim().toUpperCase();
+      const candidateRole = String(role || '').trim().toUpperCase();
       if (candidateRole === 'MASTER') {
         throw new ApiError(
           400,
@@ -830,38 +1064,141 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
           'The Master role is reserved exclusively for the Primary Master. Permitted roles are STAFF, CAFE_ADMIN, and OWNER.'
         );
       }
-      if (validRoles.includes(candidateRole)) {
-        user.role = candidateRole;
-        // Never allow granting Primary Master to another employee
-        user.isPrimaryMaster = false;
+
+      const validRoles = ['STAFF', 'CAFE_ADMIN', 'OWNER'];
+      if (!validRoles.includes(candidateRole)) {
+        throw new ApiError(
+          400,
+          'INVALID_USER_ROLE',
+          'Role must be STAFF, CAFE_ADMIN, or OWNER.'
+        );
       }
+
+      set.role = candidateRole;
+      set.isPrimaryMaster = false;
     }
   }
 
-  await user.save();
+  let updatedUser = null;
 
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'UPDATE_EMPLOYEE_PROFILE',
-      entityType: 'USER',
-      entityId: user.userId,
-      metadata: {
-        updatedUserId: user.userId,
-        designation: user.designation,
-        role: user.role,
-        department: user.department,
-        primaryCafeId: user.primaryCafeId,
+  await executeTransactionWithRetry(async (session) => {
+    const changed = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        organisationId: cleanOrg,
+        userId: normalizedUserId,
+        __v: before.version,
       },
-    });
-  } catch (e) {}
+      {
+        $set: set,
+        $inc: { __v: 1 },
+      },
+      {
+        new: true,
+        runValidators: true,
+        ...(session ? { session } : {}),
+      }
+    );
+
+    if (!changed) {
+      throw new ApiError(
+        409,
+        'EMPLOYEE_PROFILE_STATE_CONFLICT',
+        'Employee profile changed concurrently. Reload the employee and retry.'
+      );
+    }
+
+    try {
+      await recordRequestAudit({
+        request: req,
+        module: 'EMPLOYEES',
+        action: 'UPDATE_EMPLOYEE_PROFILE',
+        entityType: 'USER',
+        entityId: changed.userId,
+        cafeId: changed.primaryCafeId || null,
+        before: {
+          name: before.name,
+          preferredName: before.preferredName,
+          phone: before.phone,
+          primaryCafeId: before.primaryCafeId,
+          assignedCafeIds: before.assignedCafeIds,
+          department: before.department,
+          designation: before.designation,
+          role: before.role,
+          workerType: before.workerType,
+          employmentStatus: before.employmentStatus,
+          isPrimaryMaster: before.isPrimaryMaster,
+        },
+        after: {
+          name: changed.name,
+          preferredName: changed.preferredName || '',
+          phone: changed.phone || '',
+          primaryCafeId: changed.primaryCafeId || null,
+          assignedCafeIds: changed.assignedCafeIds || [],
+          department: changed.department || '',
+          designation: changed.designation || '',
+          role: changed.role,
+          workerType: changed.workerType || '',
+          employmentStatus: changed.employmentStatus || '',
+          isPrimaryMaster: Boolean(changed.isPrimaryMaster),
+        },
+        metadata: {
+          updatedUserId: changed.userId,
+          roleChanged: before.role !== changed.role,
+          cafeScopeChanged:
+            String(before.primaryCafeId || '') !== String(changed.primaryCafeId || '') ||
+            JSON.stringify(before.assignedCafeIds || []) !== JSON.stringify(changed.assignedCafeIds || []),
+        },
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
+      }, { session });
+    } catch (auditError) {
+      if (!session) {
+        const rollback = await User.findOneAndUpdate(
+          {
+            _id: changed._id,
+            organisationId: cleanOrg,
+            userId: normalizedUserId,
+            __v: before.version + 1,
+          },
+          {
+            $set: {
+              name: before.name,
+              preferredName: before.preferredName,
+              phone: before.phone,
+              primaryCafeId: before.primaryCafeId,
+              assignedCafeIds: before.assignedCafeIds,
+              department: before.department,
+              designation: before.designation,
+              role: before.role,
+              workerType: before.workerType,
+              employmentStatus: before.employmentStatus,
+              isPrimaryMaster: before.isPrimaryMaster,
+            },
+            $inc: { __v: 1 },
+          },
+          { new: true }
+        );
+
+        if (!rollback) {
+          throw new ApiError(
+            503,
+            'EMPLOYEE_PROFILE_AUDIT_ROLLBACK_FAILED',
+            'Profile audit failed and the employee mutation could not be safely rolled back.'
+          );
+        }
+      }
+      throw auditError;
+    }
+
+    updatedUser = changed;
+  });
 
   return res.status(200).json({
     success: true,
-    message: `Profile for ${user.name} (${user.userId}) has been updated successfully.`,
+    message: `Profile for ${updatedUser.name} (${updatedUser.userId}) has been updated successfully.`,
     data: {
-      employee: user,
+      employee: updatedUser,
     },
   });
 });
@@ -889,7 +1226,13 @@ const createEmployeeMovement = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
-  const movementId = `MVT-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const movementYear = new Date().getFullYear();
+  const movementId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_MOVEMENT_${movementYear}`,
+    prefix: `MVT-${movementYear}`,
+    minimumDigits: 4,
+  });
 
   const movement = await EmployeeMovement.create({
     movementId,
@@ -970,7 +1313,13 @@ const submitProbationReview = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
-  const reviewId = `PRB-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const reviewYear = new Date().getFullYear();
+  const reviewId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `PROBATION_REVIEW_${reviewYear}`,
+    prefix: `PRB-${reviewYear}`,
+    minimumDigits: 4,
+  });
 
   const review = await ProbationReview.create({
     reviewId,
@@ -1080,7 +1429,13 @@ const assignEmployeeTraining = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'trainingTitle and dueDate are required.');
   }
 
-  const trainingId = `TRN-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const trainingYear = new Date().getFullYear();
+  const trainingId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_TRAINING_${trainingYear}`,
+    prefix: `TRN-${trainingYear}`,
+    minimumDigits: 4,
+  });
 
   const training = await EmployeeTraining.create({
     trainingId,
@@ -1153,7 +1508,13 @@ const generateEmployeeLetter = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${userId} was not found.`);
   }
 
-  const documentId = `DOC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const documentYear = new Date().getFullYear();
+  const documentId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_DOCUMENT_${documentYear}`,
+    prefix: `DOC-${documentYear}`,
+    minimumDigits: 4,
+  });
 
   const generatedPayload = {
     employeeName: user.name,
@@ -1197,18 +1558,81 @@ const generateEmployeeLetter = asyncHandler(async (req, res) => {
 });
 
 // ─── 9. OFFBOARDING & IMMEDIATE ACCOUNT DELETION WORKFLOW ─────────────────────
+function isProtectedPrimaryMasterAccount(user) {
+  return Boolean(
+    user?.isPrimaryMaster === true ||
+    String(user?.email || '').trim().toLowerCase() === 'pradeeshk331@gmail.com' ||
+    String(user?.userId || '').trim().toUpperCase() === 'MU-0001' ||
+    (String(user?.role || '').trim().toUpperCase() === 'MASTER' && user?.isPrimaryMaster !== false)
+  );
+}
+
+function assertPrimaryMasterPermanentDeletionAuthority(req) {
+  if (req.auth?.role !== 'MASTER' || req.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may permanently delete an employee identity.'
+    );
+  }
+}
+
+async function revokeEmployeeAuthenticationArtifacts({ organisationId, userId, includePreferences = false }) {
+  const orgId = String(organisationId || '').trim().toUpperCase();
+  const normalizedUserId = String(userId || '').trim().toUpperCase();
+
+  const operations = [
+    Session.deleteMany({ organisationId: orgId, userId: normalizedUserId }),
+    PasskeyCredential.deleteMany({ organisationId: orgId, userId: normalizedUserId }),
+    OperatorSession.deleteMany({ organisationId: orgId, userId: normalizedUserId }),
+  ];
+
+  if (includePreferences) {
+    operations.push(
+      UserPreference.deleteMany({ organisationId: orgId, userId: normalizedUserId })
+    );
+  }
+
+  // Do not suppress failures. A destructive workflow must never report full
+  // revocation/deletion when any required credential store failed.
+  return Promise.all(operations);
+}
+
+// ─── 9. OFFBOARDING & PRIMARY-MASTER-ONLY PERMANENT ACCOUNT DELETION ─────────
 const deleteEmployeeAccount = asyncHandler(async (req, res) => {
-  const { organisationId } = req.auth;
+  assertPrimaryMasterPermanentDeletionAuthority(req);
+
+  const organisationId = String(req.auth.organisationId || '').trim().toUpperCase();
   const { userId } = req.params;
+  const {
+    confirmation = '',
+    reason = '',
+  } = req.body || {};
 
   if (!userId) {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'userId parameter is required.');
   }
 
-  const normalizedUserId = String(userId).trim().toUpperCase();
+  if (String(confirmation || '').trim() !== 'PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT') {
+    throw new ApiError(
+      400,
+      'PERMANENT_EMPLOYEE_DELETE_CONFIRMATION_REQUIRED',
+      'Permanent deletion requires confirmation PERMANENTLY_DELETE_EMPLOYEE_ACCOUNT.'
+    );
+  }
 
+  const deletionReason = String(reason || '').trim();
+  if (deletionReason.length < 10) {
+    throw new ApiError(
+      400,
+      'PERMANENT_EMPLOYEE_DELETE_REASON_REQUIRED',
+      'A specific permanent-deletion reason of at least 10 characters is required.'
+    );
+  }
+
+  const normalizedUserId = String(userId).trim().toUpperCase();
   const user = await User.findOne({
-    organisationId: organisationId.trim().toUpperCase(),
+    organisationId,
     userId: normalizedUserId,
   });
 
@@ -1216,76 +1640,100 @@ const deleteEmployeeAccount = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
   }
 
-  // Absolute safety guard: NEVER permit deleting Primary Master
-  if (
-    user.isPrimaryMaster === true ||
-    user.email === 'pradeeshk331@gmail.com' ||
-    user.userId === 'MU-0001' ||
-    (user.role === 'MASTER' && user.isPrimaryMaster !== false)
-  ) {
-    throw new ApiError(403, 'CANNOT_DELETE_PRIMARY_MASTER', 'The Primary Master account is protected and cannot be deleted.');
+  if (isProtectedPrimaryMasterAccount(user)) {
+    throw new ApiError(
+      403,
+      'CANNOT_DELETE_PRIMARY_MASTER',
+      'The Primary Master account is protected and cannot be deleted.'
+    );
   }
 
-  // 1. Permanently delete user document from User collection
-  await User.deleteOne({
-    organisationId: organisationId.trim().toUpperCase(),
+  // Immutable authorization evidence must exist before any destructive write.
+  const authorizationAudit = await recordRequestAudit({
+    request: req,
+    module: 'EMPLOYEES',
+    action: 'DELETE_EMPLOYEE_ACCOUNT_AUTHORIZED',
+    entityType: 'EMPLOYEE',
+    entityId: normalizedUserId,
+    reason: deletionReason,
+    result: 'SUCCESS',
+    riskClassification: 'CRITICAL',
+    metadata: {
+      deletedUserEmail: user.email,
+      deletedUserName: user.name,
+      role: user.role,
+      primaryCafeId: user.primaryCafeId,
+      authorizedByUserId: req.auth.userId,
+    },
+  });
+
+  if (!authorizationAudit?.auditEventId) {
+    throw new ApiError(
+      503,
+      'EMPLOYEE_DELETE_AUDIT_NOT_CONFIRMED',
+      'Permanent deletion was not started because immutable authorization audit could not be confirmed.'
+    );
+  }
+
+  // Revoke authentication artifacts BEFORE deleting the identity. If any
+  // credential-store mutation fails, the user record remains and the request
+  // fails instead of falsely claiming a complete deletion.
+  await revokeEmployeeAuthenticationArtifacts({
+    organisationId,
+    userId: normalizedUserId,
+    includePreferences: true,
+  });
+
+  const deletion = await User.deleteOne({
+    organisationId,
     userId: normalizedUserId,
   });
 
-  // 2. Immediately purge all active sessions to invalidate all JWT tokens
-  await Session.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
+  if (!deletion || deletion.deletedCount !== 1) {
+    throw new ApiError(
+      409,
+      'EMPLOYEE_DELETE_STATE_CONFLICT',
+      'Employee identity changed while permanent deletion was executing. Credentials were revoked, but the identity was not deleted.'
+    );
+  }
 
-  // 3. Purge all registered passkeys & WebAuthn credentials
-  await PasskeyCredential.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
-
-  // 4. Purge Operator sessions and preferences
-  await OperatorSession.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
-
-  await UserPreference.deleteMany({
-    organisationId: organisationId.trim().toUpperCase(),
-    userId: normalizedUserId,
-  }).catch(() => null);
-
-  // 5. Record immutable audit event
   try {
     await recordRequestAudit({
       request: req,
       module: 'EMPLOYEES',
-      action: 'DELETE_EMPLOYEE_ACCOUNT',
+      action: 'DELETE_EMPLOYEE_ACCOUNT_COMPLETED',
       entityType: 'EMPLOYEE',
       entityId: normalizedUserId,
+      reason: deletionReason,
+      result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
       metadata: {
+        authorizationAuditEventId: authorizationAudit.auditEventId,
         deletedUserEmail: user.email,
         deletedUserName: user.name,
         role: user.role,
         primaryCafeId: user.primaryCafeId,
       },
     });
-  } catch (e) {
-    // Non-blocking audit
+  } catch (_auditError) {
+    // Authorization audit already exists and destructive work has completed.
+    // Do not manufacture rollback after successful credential revocation and
+    // identity deletion.
   }
 
   return res.status(200).json({
     success: true,
-    message: `Account for ${user.name} (${normalizedUserId}) has been permanently deleted. All active sessions and credentials have been revoked.`,
+    message: `Account for ${user.name} (${normalizedUserId}) was permanently deleted after credential revocation.`,
     data: {
       userId: normalizedUserId,
       deleted: true,
+      authorizationAuditEventId: authorizationAudit.auditEventId,
     },
   });
 });
 
 const initiateOffboarding = asyncHandler(async (req, res) => {
-  const { organisationId, userId: actorId } = req.auth;
+  const { organisationId } = req.auth;
   const { userId } = req.params;
   const {
     noticeDate,
@@ -1296,55 +1744,74 @@ const initiateOffboarding = asyncHandler(async (req, res) => {
     assetsReturned = false,
     accessRevoked = false,
     deleteImmediately = false,
-  } = req.body;
+  } = req.body || {};
 
-  const normalizedUserId = String(userId).trim().toUpperCase();
-
-  const user = await User.findOne({ organisationId, userId: normalizedUserId });
-  if (!user) {
-    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
+  const normalizedUserId = String(userId || '').trim().toUpperCase();
+  if (!normalizedUserId) {
+    throw new ApiError(400, 'INVALID_PAYLOAD', 'userId parameter is required.');
   }
 
-  // If immediate deletion or access revocation is requested:
-  if (deleteImmediately || accessRevoked || exitType === 'TERMINATION') {
-    if (
-      user.isPrimaryMaster === true ||
-      user.email === 'pradeeshk331@gmail.com' ||
-      user.userId === 'MU-0001' ||
-      (user.role === 'MASTER' && user.isPrimaryMaster !== false)
-    ) {
-      throw new ApiError(403, 'CANNOT_DELETE_PRIMARY_MASTER', 'The Primary Master account is protected and cannot be deleted.');
-    }
-
-    await User.deleteOne({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId });
-    await Session.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-    await PasskeyCredential.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-    await OperatorSession.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-    await UserPreference.deleteMany({ organisationId: organisationId.trim().toUpperCase(), userId: normalizedUserId }).catch(() => null);
-
-    try {
-      await recordRequestAudit({
-        request: req,
-        module: 'EMPLOYEES',
-        action: 'OFFBOARD_AND_DELETE_EMPLOYEE',
-        entityType: 'EMPLOYEE',
-        entityId: normalizedUserId,
-        metadata: { lastWorkingDay, exitType, reasonCategory, accessRevoked: true },
-      });
-    } catch (e) {}
-
-    return res.status(200).json({
-      success: true,
-      message: `Account for ${user.name} (${normalizedUserId}) has been permanently deleted and access revoked immediately.`,
-      data: { employee: user, deleted: true },
-    });
+  if (deleteImmediately === true) {
+    throw new ApiError(
+      400,
+      'USE_DEDICATED_PERMANENT_DELETE_ENDPOINT',
+      'Permanent deletion is separate from offboarding and requires the dedicated Primary-Master-only deletion action.'
+    );
   }
 
   if (!lastWorkingDay) {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'lastWorkingDay is required.');
   }
 
-  user.employmentStatus = 'NOTICE_PERIOD';
+  const user = await User.findOne({
+    organisationId,
+    userId: normalizedUserId,
+  });
+  if (!user) {
+    throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', `Employee ${normalizedUserId} was not found.`);
+  }
+
+  if (isProtectedPrimaryMasterAccount(user)) {
+    throw new ApiError(
+      403,
+      'CANNOT_OFFBOARD_PRIMARY_MASTER',
+      'The Primary Master account is protected and cannot be offboarded or access-revoked.'
+    );
+  }
+
+  const revokeAccessNow =
+    accessRevoked === true ||
+    String(exitType || '').trim().toUpperCase() === 'TERMINATION';
+
+  // Record the authorization before changing employment/access state.
+  const actionAudit = await recordRequestAudit({
+    request: req,
+    module: 'EMPLOYEES',
+    action: revokeAccessNow
+      ? 'OFFBOARD_EMPLOYEE_ACCESS_REVOCATION_AUTHORIZED'
+      : 'OFFBOARD_EMPLOYEE_AUTHORIZED',
+    entityType: 'EMPLOYEE',
+    entityId: normalizedUserId,
+    result: 'SUCCESS',
+    riskClassification: revokeAccessNow ? 'HIGH' : 'MEDIUM',
+    metadata: {
+      lastWorkingDay,
+      exitType,
+      reasonCategory,
+      handoverComplete: Boolean(handoverComplete),
+      assetsReturned: Boolean(assetsReturned),
+      accessRevoked: revokeAccessNow,
+    },
+  });
+
+  if (!actionAudit?.auditEventId) {
+    throw new ApiError(
+      503,
+      'EMPLOYEE_OFFBOARD_AUDIT_NOT_CONFIRMED',
+      'Offboarding was not applied because immutable authorization audit could not be confirmed.'
+    );
+  }
+
   user.offboardingDetails = {
     noticeDate: noticeDate || new Date().toISOString().split('T')[0],
     lastWorkingDay,
@@ -1352,33 +1819,48 @@ const initiateOffboarding = asyncHandler(async (req, res) => {
     reasonCategory,
     handoverComplete: Boolean(handoverComplete),
     assetsReturned: Boolean(assetsReturned),
-    accessRevoked: Boolean(accessRevoked),
+    accessRevoked: revokeAccessNow,
     payrollNotified: true,
   };
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (lastWorkingDay <= todayStr && assetsReturned && accessRevoked) {
+  if (revokeAccessNow) {
+    // Preserve the HR identity and historical references. Disable the account
+    // first so even a later credential-cleanup failure leaves authentication
+    // fail-closed through authenticate()'s ACTIVE-user check.
     user.employmentStatus = 'EXITED';
     user.accountStatus = 'DISABLED';
+    await user.save();
+
+    await revokeEmployeeAuthenticationArtifacts({
+      organisationId,
+      userId: normalizedUserId,
+      includePreferences: false,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Access revoked for ${user.name} (${normalizedUserId}); the employee identity and HR history were preserved.`,
+      data: {
+        employee: user,
+        deleted: false,
+        accessRevoked: true,
+        authorizationAuditEventId: actionAudit.auditEventId,
+      },
+    });
   }
 
+  user.employmentStatus = 'NOTICE_PERIOD';
   await user.save();
-
-  try {
-    await recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'OFFBOARD_EMPLOYEE',
-      entityType: 'EMPLOYEE',
-      entityId: normalizedUserId,
-      metadata: { lastWorkingDay, exitType, reasonCategory },
-    });
-  } catch (e) {}
 
   return res.status(200).json({
     success: true,
     message: `Offboarding initiated for ${user.name}. Last working day: ${lastWorkingDay}.`,
-    data: { employee: user },
+    data: {
+      employee: user,
+      deleted: false,
+      accessRevoked: false,
+      authorizationAuditEventId: actionAudit.auditEventId,
+    },
   });
 });
 
@@ -1449,7 +1931,14 @@ const createPosition = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'positionTitle, department, and cafeId are required.');
   }
 
-  const positionId = `POS-${cafeId.replace('ZC-', '')}-${String(Math.floor(Math.random() * 900) + 100)}`;
+  const cleanCafeId = String(cafeId).trim().toUpperCase();
+  const positionCafeKey = cleanCafeId.replace('ZC-', '') || 'GLOBAL';
+  const positionId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `POSITION_${cleanCafeId}`,
+    prefix: `POS-${positionCafeKey}`,
+    minimumDigits: 3,
+  });
 
   const position = await Position.create({
     positionId,
@@ -1480,7 +1969,13 @@ const createStaffingRequest = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'cafeId, department, positionTitle, and desiredDate are required.');
   }
 
-  const requestId = `SR-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const staffingYear = new Date().getFullYear();
+  const requestId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `STAFFING_REQUEST_${staffingYear}`,
+    prefix: `SR-${staffingYear}`,
+    minimumDigits: 4,
+  });
 
   const request = await StaffingRequest.create({
     requestId,
@@ -2004,22 +2499,43 @@ const listSelfChangeRequests = asyncHandler(async (req, res) => {
 
 const createSelfChangeRequest = asyncHandler(async (req, res) => {
   const { organisationId, userId } = req.auth;
-  const { requestType, section, title, reason, proposedValues, oldValues, supportingDocuments, idempotencyKey } = req.body || {};
+  const {
+    requestType,
+    section,
+    title,
+    reason,
+    proposedValues,
+    oldValues,
+    supportingDocuments,
+    idempotencyKey,
+  } = req.body || {};
 
   if (!requestType || !reason || !proposedValues) {
-    throw new ApiError(400, 'INVALID_CHANGE_REQUEST', 'Request type, reason, and proposed values are required.');
+    throw new ApiError(
+      400,
+      'INVALID_CHANGE_REQUEST',
+      'Request type, reason, and proposed values are required.'
+    );
   }
 
-  const effectiveIdempotencyKey = idempotencyKey || req.headers?.['x-idempotency-key'] || null;
+  const effectiveIdempotencyKey =
+    idempotencyKey || req.headers?.['x-idempotency-key'] || null;
 
   if (effectiveIdempotencyKey) {
-    const existing = await ProfileChangeRequest.findOne({ organisationId, userId, idempotencyKey: effectiveIdempotencyKey }).lean();
+    const existing = await ProfileChangeRequest.findOne({
+      organisationId,
+      userId,
+      idempotencyKey: effectiveIdempotencyKey,
+    }).lean();
     if (existing) {
-      return res.status(200).json({ success: true, data: { request: existing }, message: 'Profile change request already submitted.' });
+      return res.status(200).json({
+        success: true,
+        data: { request: existing },
+        message: 'Profile change request already submitted.',
+      });
     }
   }
 
-  // Prevent immediate rapid retry duplication
   const recentDuplicate = await ProfileChangeRequest.findOne({
     organisationId,
     userId,
@@ -2039,86 +2555,128 @@ const createSelfChangeRequest = asyncHandler(async (req, res) => {
 
   const now = new Date();
   const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
-  const randomSuffix = Math.floor(10000 + Math.random() * 90000);
-  const requestId = `PCR-${yearMonth}-${randomSuffix}`;
+  let changeRequest;
 
-  const changeRequest = await ProfileChangeRequest.create({
-    requestId,
-    organisationId,
-    userId,
-    requestType,
-    section: section || 'PERSONAL',
-    title: title || `${requestType} Change Request`,
-    reason: String(reason).trim(),
-    oldValues: oldValues || {},
-    proposedValues: proposedValues || {},
-    status: 'SUBMITTED',
-    supportingDocuments: Array.isArray(supportingDocuments) ? supportingDocuments : [],
-    idempotencyKey: effectiveIdempotencyKey || null,
-    auditCorrelationId: req.correlationId || null,
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const requestId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `PROFILE_CHANGE_REQUEST_${yearMonth}`,
+        prefix: `PCR-${yearMonth}`,
+        minimumDigits: 5,
+        session,
+      });
+
+      changeRequest = new ProfileChangeRequest({
+        requestId,
+        organisationId,
+        userId,
+        requestType,
+        section: section || 'PERSONAL',
+        title: title || `${requestType} Change Request`,
+        reason: String(reason).trim(),
+        oldValues: oldValues || {},
+        proposedValues: proposedValues || {},
+        status: 'SUBMITTED',
+        supportingDocuments: Array.isArray(supportingDocuments) ? supportingDocuments : [],
+        idempotencyKey: effectiveIdempotencyKey || null,
+        auditCorrelationId: req.correlationId || null,
+      });
+      await changeRequest.save({ session });
+
+      const approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+        session,
+      });
+
+      const approval = new Approval({
+        approvalId,
+        organisationId,
+        cafeId: null,
+        entityType: 'PROFILE_CHANGE',
+        entityId: requestId,
+        requestingUserId: userId,
+        actionRequired: `Profile Change: ${requestType} (${section || 'PERSONAL'})`,
+        amountPaisa: 0,
+        status: 'PENDING',
+      });
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  await auditService.recordRequestAudit({
+    request: req,
+    module: 'EMPLOYEES',
+    action: 'PROFILE_CHANGE_REQUEST_CREATE',
+    entityType: 'PROFILE_CHANGE_REQUEST',
+    entityId: changeRequest.requestId,
+    result: 'SUCCESS',
+    metadata: {
+      requestId: changeRequest.requestId,
+      requestType,
+      section: section || 'PERSONAL',
+    },
   });
 
   try {
-    await auditService.recordRequestAudit({
-      request: req,
-      module: 'EMPLOYEES',
-      action: 'PROFILE_CHANGE_REQUEST_CREATE',
-      entityType: 'PROFILE_CHANGE_REQUEST',
-      entityId: requestId,
-      result: 'SUCCESS',
-      metadata: { requestId, requestType, section: section || 'PERSONAL' },
-    });
-  } catch (auditErr) {
-    // Compensating rollback: delete changeRequest to eliminate partial-success state
-    if (changeRequest?._id) {
-      await ProfileChangeRequest.deleteOne({ _id: changeRequest._id }).catch(() => {});
-    }
-    throw new ApiError(500, 'AUDIT_RECORD_FAILED', `Failed to audit profile change request: ${auditErr.message}`);
-  }
-
-  try {
-    const approvalCount = await Approval.countDocuments({ organisationId });
-    const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-    await Approval.create({
-      approvalId,
+    const masterUsers = await User.find({
       organisationId,
-      cafeId: null,
-      entityType: 'PROFILE_CHANGE',
-      entityId: requestId,
-      requestingUserId: userId,
-      actionRequired: `Profile Change: ${requestType} (${section || 'PERSONAL'})`,
-      amountPaisa: 0,
-      status: 'PENDING',
-    });
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${dateStr}`,
+        prefix: `NT-${dateStr}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
         eventType: 'PROFILE_CHANGE_REQUESTED',
         category: 'OPERATIONS',
-        recipientUserId: m.userId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
+        recipientEmail: master.email,
         title: `👤 Profile Change Request: ${userId}`,
         message: `${userId} requested a profile update (${requestType}). Reason: ${reason}`,
         priority: 'NORMAL',
         channels: ['IN_APP'],
-        deepLink: `#approvals`,
+        deepLink: '#approvals',
         sourceModule: 'EMPLOYEES',
         sourceEntityType: 'PROFILE_CHANGE',
-        sourceEntityId: requestId,
+        sourceEntityId: changeRequest.requestId,
+        deduplicationKey: `PCR_${changeRequest.requestId}_${master.userId}`,
+        correlationId: req.correlationId || `CORR-PCR-${changeRequest.requestId}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
         createdBy: userId,
       });
     }
   } catch (err) {
-    console.warn(`[PROFILE_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
+    console.warn(`[PROFILE_CHANGE_NOTIFICATION_WARN] ${err.message}`);
   }
 
-  return res.status(201).json({ success: true, data: { request: changeRequest }, message: 'Profile change request submitted for review.' });
+  return res.status(201).json({
+    success: true,
+    data: { request: changeRequest },
+    message: 'Profile change request submitted for review.',
+  });
 });
 
 const withdrawSelfChangeRequest = asyncHandler(async (req, res) => {
@@ -2453,8 +3011,13 @@ const uploadSelfDocument = asyncHandler(async (req, res) => {
     uploadedByUserId: userId,
   });
 
-  const docSeq = Math.floor(1000 + Math.random() * 9000);
-  const documentId = `DOC-${new Date().getFullYear()}-${docSeq}`;
+  const uploadDocumentYear = new Date().getFullYear();
+  const documentId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EMPLOYEE_DOCUMENT_${uploadDocumentYear}`,
+    prefix: `DOC-${uploadDocumentYear}`,
+    minimumDigits: 4,
+  });
 
   const doc = await EmployeeDocument.create({
     documentId,

@@ -88,7 +88,15 @@ test('REC-04A — POS Transaction-Integrity Reconciliation & Certification', asy
       return { success: true, alreadyDepleted: true, processedItemsCount: 0, consumedLots: [],
                existingMovementId: 'SM-MOCK-EXISTING' };
     }
-    return { depleted: true, alreadyDepleted: false, processedItemsCount: 1, consumedLots: [], billId };
+    return {
+      success: true,
+      depleted: true,
+      alreadyDepleted: false,
+      allDeductionsSucceeded: true,
+      processedItemsCount: 1,
+      consumedLots: [],
+      billId,
+    };
   });
 
   // ─── SEQUENCE COUNTER (static) ────────────────────────────────────────────
@@ -99,9 +107,34 @@ test('REC-04A — POS Transaction-Integrity Reconciliation & Certification', asy
 
   // ─── CAFE (static) ────────────────────────────────────────────────────────
   t.mock.method(Cafe, 'findOne', async (q = {}) => ({
-    cafeId: q?.cafeId || CAFE, organisationId: ORG,
-    displayName: 'Zamorin REC-04A Branch', gstin: '32AAACZ1234K1Z5',
-    cafeCode: 'C01', status: 'ACTIVE',
+    cafeId: q?.cafeId || CAFE,
+    organisationId: ORG,
+    name: 'Zamorin REC-04A Branch',
+    displayName: 'Zamorin REC-04A Branch',
+    legalName: 'Zamorin Hospitality Private Limited',
+    cafeCode: 'C01',
+    status: 'ACTIVE',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '32AAACZ1234K1Z5',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin REC-04A Branch',
+        principalPlace: 'Mavoor Road, Kozhikode, Kerala 673004',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '22334455667788',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin REC-04A Branch',
+      street: 'Mavoor Road',
+      city: 'Kozhikode',
+      state: 'Kerala',
+      pinCode: '673004',
+    },
     toObject() { return this; },
   }));
 
@@ -637,21 +670,43 @@ test('REC-04A — POS Transaction-Integrity Reconciliation & Certification', asy
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TC-A25: MASTER role bypasses IDOR
+  // TC-A25: PRIMARY MASTER bypasses café IDOR; malformed MASTER fails closed
   // ═══════════════════════════════════════════════════════════════════════════
-  await t.test('TC-A25: MASTER role can access any café bill — no IDOR restriction', async () => {
+  await t.test('TC-A25: Primary Master can access any café bill — no café IDOR restriction', async () => {
     const existingBill = mockBills.find(b => b.cafeId === CAFE);
-    if (!existingBill) return; // Skip if no bills committed yet (should not happen after TC-A03)
-    const masterAuth = {
-      userId: 'EMP-MASTER-01', role: 'MASTER', organisationId: ORG, assignedCafeIds: [],
+    assert.ok(existingBill, 'Prerequisite: a committed bill must exist from prior tests');
+    const primaryMasterAuth = {
+      userId: 'MU-0001',
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      organisationId: ORG,
+      assignedCafeIds: [],
     };
-    let idorThrew = false;
-    try {
-      await PosOrderService.printCommittedBill(existingBill.billId, masterAuth);
-    } catch (err) {
-      if (err?.code === 'CROSS_CAFE_RESOURCE_DENIED' || err?.code === 'CAFE_ACCESS_DENIED') idorThrew = true;
-    }
-    assert.ok(!idorThrew, 'MASTER role must NOT receive IDOR denial');
+    await assert.doesNotReject(
+      () => PosOrderService.printCommittedBill(existingBill.billId, primaryMasterAuth)
+    );
+  });
+
+  await t.test('TC-A25B: Malformed non-primary MASTER cannot access any café bill', async () => {
+    const existingBill = mockBills.find(b => b.cafeId === CAFE);
+    assert.ok(existingBill, 'Prerequisite: a committed bill must exist from prior tests');
+    const malformedMasterAuth = {
+      userId: 'MU-MALFORMED-01',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      organisationId: ORG,
+      assignedCafeIds: [CAFE],
+      primaryCafeId: CAFE,
+    };
+
+    await assert.rejects(
+      () => PosOrderService.printCommittedBill(existingBill.billId, malformedMasterAuth),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

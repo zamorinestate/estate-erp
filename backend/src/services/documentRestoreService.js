@@ -99,12 +99,23 @@ class DocumentRestoreService {
   }
 
   /**
-   * Enforces that only MASTER or PRIMARY_MASTER can execute recovery.
+   * Enforces singleton Primary Master authority for document recovery.
+   *
+   * Canonical runtime users use role=MASTER with isPrimaryMaster=true.
+   * The PRIMARY_MASTER pseudo-role remains accepted only for explicit recovery
+   * tooling that does not hydrate a full User document.
    */
   static validateAuthority(user = {}) {
-    const role = (user && (user.role || user.actorRole)) || '';
-    if (role !== 'PRIMARY_MASTER' && role !== 'MASTER') {
-      const err = new Error(`Role '${role || 'ANONYMOUS'}' is unauthorized to perform document restoration. Requires PRIMARY_MASTER or MASTER.`);
+    const role = String((user && (user.role || user.actorRole)) || '').trim().toUpperCase();
+    const isCanonicalPrimaryMaster =
+      role === 'MASTER' && user.isPrimaryMaster === true;
+    const isExplicitRecoveryPrimaryMaster =
+      role === 'PRIMARY_MASTER';
+
+    if (!isCanonicalPrimaryMaster && !isExplicitRecoveryPrimaryMaster) {
+      const err = new Error(
+        `Role '${role || 'ANONYMOUS'}' is unauthorized to perform document restoration. Primary Master authority is required.`
+      );
       err.code = 'RESTORE_UNAUTHORIZED';
       err.statusCode = 403;
       throw err;

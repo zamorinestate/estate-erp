@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 const crypto = require('crypto');
 const {
   Expense,
@@ -46,7 +48,14 @@ function ensureCafeAccess(request, cafeId) {
     throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'You do not have access to this cafe in the current workspace scope.');
   }
   const role = request?.auth?.role;
-  if (role === 'MASTER') return;
+  if (role === 'MASTER') {
+    if (request.auth?.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER expense access.'
+    );
+  }
   if (role === 'OWNER') {
     const assignedCafeIds = (request?.auth?.assignedCafeIds || []).map((c) => String(c).trim().toUpperCase());
     if (!assignedCafeIds.includes(cleanCafe)) {
@@ -212,8 +221,7 @@ const getExpense = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, expense.cafeId);
 
-  const isPrimary = request.auth.role === 'MASTER' && request.auth.isPrimaryMaster;
-  const isMaster = request.auth.role === 'MASTER';
+  const isPrimary = request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true;
   const isSubmitter = request.auth.userId === expense.ownerUserId || request.auth.userId === expense.preparerUserId;
 
   const allowedActions = [];
@@ -221,7 +229,7 @@ const getExpense = asyncHandler(async (request, response) => {
     allowedActions.push('EDIT', 'SUBMIT', 'DELETE');
   }
   if (expense.status === 'SUBMITTED' || expense.status === 'PENDING_APPROVAL') {
-    if (isMaster && request.auth.userId !== expense.ownerUserId) {
+    if (isPrimary && request.auth.userId !== expense.ownerUserId) {
       allowedActions.push('APPROVE', 'RETURN', 'REJECT');
     }
     if (isSubmitter) {
@@ -229,7 +237,7 @@ const getExpense = asyncHandler(async (request, response) => {
     }
   }
   if (expense.status === 'APPROVED') {
-    if (isMaster) {
+    if (isPrimary) {
       allowedActions.push('RECORD_PAYMENT', 'REVERSE', 'GENERATE_VOUCHER');
     }
   }
@@ -270,18 +278,18 @@ const createExpense = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, cafeId);
 
-  const amountPaisa = amount ? Math.round(Number(amount) * 100) : items.reduce((sum, it) => sum + (it.amountPaisa || 0), 0);
+  const amountPaisa = amount
+    ? Math.round(Number(amount) * 100)
+    : items.reduce((sum, it) => sum + (it.amountPaisa || 0), 0);
   const totalPaisa = amountPaisa + Number(taxPaisa);
   const dateStr = businessDate || getIstBusinessDate();
   const dateCompact = dateStr.replace(/-/g, '');
-
   const idempotencyKey = extractIdempotencyKey(request);
   const lockKey = `EXPENSE:${organisationId}:${cafeId}:${userId}:${totalPaisa}:${dateStr}`;
   const releaseLock = acquireLock(lockKey);
 
   let expense;
   try {
-    // Duplicate Check
     const normalizedInvoice = invoiceNumber.trim().toUpperCase();
     const duplicateQuery = {
       organisationId,
@@ -289,7 +297,9 @@ const createExpense = asyncHandler(async (request, response) => {
       status: { $nin: ['CANCELLED', 'REJECTED'] },
       $or: [
         ...(idempotencyKey ? [{ idempotencyKey }] : []),
-        ...(normalizedInvoice && vendorName ? [{ vendorName: new RegExp(`^${vendorName.trim()}$`, 'i'), invoiceNumber: normalizedInvoice }] : []),
+        ...(normalizedInvoice && vendorName
+          ? [{ vendorName: new RegExp(`^${vendorName.trim()}$`, 'i'), invoiceNumber: normalizedInvoice }]
+          : []),
         {
           preparerUserId: userId,
           totalPaisa,
@@ -311,81 +321,76 @@ const createExpense = asyncHandler(async (request, response) => {
       });
     }
 
-    let expenseId;
+    const session = await mongoose.startSession();
     try {
-      expenseId = await SequenceCounter.generateId({
-        organisationId,
-        sequenceKey: `EXPENSE:${dateCompact}`,
-        prefix: `EX-${dateCompact}`,
-        minimumDigits: 4,
-      });
-    } catch (err) {
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-      expenseId = `EX-${dateCompact}-${randomSuffix}`;
-    }
-
-    // Evidence hashes
-    const processedEvidence = (evidence || []).map((ev, idx) => ({
-      documentId: ev.documentId || `DOC-EXP-${idx + 1}`,
-      documentType: ev.documentType || 'RECEIPT',
-      fileUrl: ev.fileUrl || '/receipts/default.pdf',
-      fileHash: ev.fileHash || crypto.createHash('sha256').update(ev.fileUrl || `${expenseId}-${idx}`).digest('hex'),
-      fileName: ev.fileName || 'Receipt.pdf',
-      uploadedBy: userId,
-    }));
-
-    const initialStatus = isDraft ? 'DRAFT' : 'SUBMITTED';
-
-    expense = await Expense.create({
-      expenseId,
-      organisationId,
-      cafeId,
-      businessDate: dateStr,
-      idempotencyKey: idempotencyKey || null,
-      expenseType,
-      ownerUserId: request.body.ownerUserId || userId,
-      preparerUserId: userId,
-      category: category.toUpperCase(),
-      purpose,
-      description,
-      amount: amountPaisa / 100,
-      amountPaisa,
-      taxPaisa: Number(taxPaisa),
-      totalPaisa,
-      currency: 'INR',
-      paymentMethod,
-      paymentSource,
-      vendorName,
-      invoiceNumber: normalizedInvoice,
-      receiptStatus: processedEvidence.length > 0 ? 'ATTACHED' : 'REQUIRED',
-      evidence: processedEvidence,
-      items,
-      allocations: allocations.length > 0 ? allocations : [{ cafeId, amountPaisa: totalPaisa, percentage: 100 }],
-      gstDetails,
-      relatedRecords,
-      status: initialStatus,
-      submittedAt: isDraft ? null : new Date(),
-      submittedBy: isDraft ? null : userId,
-      createdBy: userId,
-    });
-
-    if (!isDraft) {
-      try {
-        let approval = await Approval.findOne({
+      await session.withTransaction(async () => {
+        const expenseId = await SequenceCounter.generateId({
           organisationId,
-          entityType: 'EXPENSE',
-          entityId: expense.expenseId,
+          sequenceKey: `EXPENSE:${dateCompact}`,
+          prefix: `EX-${dateCompact}`,
+          minimumDigits: 4,
+          session,
         });
 
-        if (!approval) {
-          let approvalId;
-          try {
-            approvalId = await SequenceCounter.generateId({ organisationId, sequenceKey: 'APPROVAL', prefix: 'APP', minimumDigits: 5 });
-          } catch {
-            const approvalCount = await Approval.countDocuments({ organisationId });
-            approvalId = `APP-${Date.now().toString().slice(-6)}-${String(approvalCount + 1).padStart(3, '0')}`;
-          }
-          await Approval.create({
+        const processedEvidence = (evidence || []).map((ev, idx) => ({
+          documentId: ev.documentId || `DOC-EXP-${idx + 1}`,
+          documentType: ev.documentType || 'RECEIPT',
+          fileUrl: ev.fileUrl || '/receipts/default.pdf',
+          fileHash:
+            ev.fileHash ||
+            crypto.createHash('sha256').update(ev.fileUrl || `${expenseId}-${idx}`).digest('hex'),
+          fileName: ev.fileName || 'Receipt.pdf',
+          uploadedBy: userId,
+        }));
+
+        const initialStatus = isDraft ? 'DRAFT' : 'SUBMITTED';
+        expense = new Expense({
+          expenseId,
+          organisationId,
+          cafeId,
+          businessDate: dateStr,
+          idempotencyKey: idempotencyKey || null,
+          expenseType,
+          ownerUserId: request.body.ownerUserId || userId,
+          preparerUserId: userId,
+          category: category.toUpperCase(),
+          purpose,
+          description,
+          amount: amountPaisa / 100,
+          amountPaisa,
+          taxPaisa: Number(taxPaisa),
+          totalPaisa,
+          currency: 'INR',
+          paymentMethod,
+          paymentSource,
+          vendorName,
+          invoiceNumber: normalizedInvoice,
+          receiptStatus: processedEvidence.length > 0 ? 'ATTACHED' : 'REQUIRED',
+          evidence: processedEvidence,
+          items,
+          allocations:
+            allocations.length > 0
+              ? allocations
+              : [{ cafeId, amountPaisa: totalPaisa, percentage: 100 }],
+          gstDetails,
+          relatedRecords,
+          status: initialStatus,
+          submittedAt: isDraft ? null : new Date(),
+          submittedBy: isDraft ? null : userId,
+          createdBy: userId,
+        });
+        await expense.save({ session });
+
+        if (!isDraft) {
+          const approvalId = await SequenceCounter.generateId({
+            organisationId,
+            sequenceKey: 'APPROVAL',
+            prefix: 'APP',
+            minimumDigits: 5,
+            session,
+          });
+
+          const approval = new Approval({
             approvalId,
             organisationId,
             cafeId,
@@ -396,36 +401,61 @@ const createExpense = asyncHandler(async (request, response) => {
             amountPaisa: totalPaisa,
             status: 'PENDING',
           });
+          await approval.save({ session });
         }
+      }, {
+        readPreference: 'primary',
+        readConcern: { level: 'snapshot' },
+        writeConcern: { w: 'majority' },
+        maxCommitTimeMS: 10000,
+      });
+    } finally {
+      await session.endSession();
+    }
 
-        const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    if (!isDraft) {
+      try {
+        const masterUsers = await User.find({
+          organisationId,
+          role: 'MASTER',
+          isPrimaryMaster: true,
+          accountStatus: 'ACTIVE',
+        }).select('userId email').lean();
+
         const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        for (const m of masterUsers) {
-          const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+        for (const master of masterUsers) {
+          const notifId = await SequenceCounter.generateId({
+            organisationId,
+            sequenceKey: `NOTIFICATION_${dateKey}`,
+            prefix: `NT-${dateKey}`,
+            minimumDigits: 4,
+          });
           await Notification.create({
             notificationId: notifId,
             organisationId,
             cafeId,
             eventType: 'EXPENSE_SUBMITTED',
             category: 'FINANCE',
-            recipientUserId: m.userId,
+            recipientUserId: master.userId,
             recipientRole: 'MASTER',
-            recipientEmail: m.email || 'master@zamorincafe.com',
+            recipientEmail: master.email,
             title: `🧾 Expense Claim: ${expense.expenseId}`,
             message: `${userId} submitted an expense claim of ₹${(totalPaisa / 100).toFixed(2)} (${expense.purpose || expense.category}) for ${cafeId}.`,
             priority: 'NORMAL',
             channels: ['IN_APP'],
-            deepLink: `#approvals`,
+            deepLink: '#approvals',
             sourceModule: 'EXPENSES',
             sourceEntityType: 'EXPENSE',
             sourceEntityId: expense.expenseId,
-            deduplicationKey: `EXP_${expense.expenseId}_${m.userId}`,
-            correlationId: request.correlationId || notifId,
+            deduplicationKey: `EXP_${expense.expenseId}_${master.userId}`,
+            correlationId: request.correlationId || `CORR-EXP-${expense.expenseId}`,
+            status: 'DELIVERED',
+            deliveredAt: new Date(),
             createdBy: userId,
           });
         }
       } catch (err) {
-        console.warn(`[EXPENSE_APPROVAL_HOOK_WARN] ${err.message}`);
+        console.warn(`[EXPENSE_NOTIFICATION_WARN] ${err.message}`);
       }
     }
   } finally {
@@ -496,72 +526,118 @@ const submitExpense = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const { expenseId } = request.params;
 
-  const expense = await Expense.findOne({ organisationId, expenseId });
-  if (!expense) {
+  const existingExpense = await Expense.findOne({ organisationId, expenseId });
+  if (!existingExpense) {
     throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
   }
+  ensureCafeAccess(request, existingExpense.cafeId);
 
-  ensureCafeAccess(request, expense.cafeId);
-
-  if (expense.status !== 'DRAFT' && expense.status !== 'RETURNED') {
+  if (!['DRAFT', 'RETURNED'].includes(existingExpense.status)) {
     throw new ApiError(400, 'INVALID_STATE', 'Expense is not in draft or returned state.');
   }
 
-  expense.status = 'SUBMITTED';
-  expense.submittedAt = new Date();
-  expense.submittedBy = userId;
-  expense.updatedBy = userId;
-  await expense.save();
-
+  let expense;
+  const session = await mongoose.startSession();
   try {
-    const existing = await Approval.findOne({ organisationId, entityId: expense.expenseId });
-    if (existing) {
-      existing.status = 'PENDING';
-      existing.actionRequired = `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`;
-      existing.amountPaisa = expense.totalPaisa || 0;
-      await existing.save();
-    } else {
-      const approvalCount = await Approval.countDocuments({ organisationId });
-      const approvalId = `APP-${String(approvalCount + 1001).padStart(5, '0')}`;
-      await Approval.create({
-        approvalId,
+    await session.withTransaction(async () => {
+      expense = await Expense.findOne({ organisationId, expenseId }).session(session);
+      if (!expense) throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
+      if (!['DRAFT', 'RETURNED'].includes(expense.status)) {
+        throw new ApiError(409, 'INVALID_STATE', 'Expense is no longer eligible for submission.');
+      }
+
+      expense.status = 'SUBMITTED';
+      expense.submittedAt = new Date();
+      expense.submittedBy = userId;
+      expense.updatedBy = userId;
+      await expense.save({ session });
+
+      let approval = await Approval.findOne({
         organisationId,
-        cafeId: expense.cafeId,
         entityType: 'EXPENSE',
         entityId: expense.expenseId,
-        requestingUserId: userId,
-        actionRequired: `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`,
-        amountPaisa: expense.totalPaisa || 0,
-        status: 'PENDING',
-      });
-    }
+      }).session(session);
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+      if (approval) {
+        approval.status = 'PENDING';
+        approval.actionRequired = `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`;
+        approval.amountPaisa = expense.totalPaisa || 0;
+        approval.decidedByUserId = null;
+        approval.decidedAt = null;
+        approval.decisionReason = '';
+        await approval.save({ session });
+      } else {
+        const approvalId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: 'APPROVAL',
+          prefix: 'APP',
+          minimumDigits: 5,
+          session,
+        });
+        approval = new Approval({
+          approvalId,
+          organisationId,
+          cafeId: expense.cafeId,
+          entityType: 'EXPENSE',
+          entityId: expense.expenseId,
+          requestingUserId: userId,
+          actionRequired: `Expense Claim: ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category})`,
+          amountPaisa: expense.totalPaisa || 0,
+          status: 'PENDING',
+        });
+        await approval.save({ session });
+      }
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  try {
+    const masterUsers = await User.find({
+      organisationId,
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
     const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${dateKey}`,
+        prefix: `NT-${dateKey}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
         cafeId: expense.cafeId,
         eventType: 'EXPENSE_SUBMITTED',
         category: 'FINANCE',
-        recipientUserId: m.userId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
+        recipientEmail: master.email,
         title: `🧾 Expense Claim: ${expense.expenseId}`,
         message: `${userId} submitted an expense claim of ₹${((expense.totalPaisa || 0) / 100).toFixed(2)} (${expense.purpose || expense.category}) for ${expense.cafeId}.`,
         priority: 'NORMAL',
         channels: ['IN_APP'],
-        deepLink: `#approvals`,
+        deepLink: '#approvals',
         sourceModule: 'EXPENSES',
         sourceEntityType: 'EXPENSE',
         sourceEntityId: expense.expenseId,
+        deduplicationKey: `EXP_${expense.expenseId}_${master.userId}`,
+        correlationId: request.correlationId || `CORR-EXP-${expense.expenseId}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
         createdBy: userId,
       });
     }
   } catch (err) {
-    console.warn(`[EXPENSE_APPROVAL_HOOK_WARN] ${err.message}`);
+    console.warn(`[EXPENSE_NOTIFICATION_WARN] ${err.message}`);
   }
 
   return response.status(200).json({
@@ -570,85 +646,113 @@ const submitExpense = asyncHandler(async (request, response) => {
   });
 });
 
+
 // 7. Decide Expense (Approve / Return / Reject)
 const decideExpense = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const { expenseId } = request.params;
   const { decision, reason = '', approvedAmountPaisa } = request.body;
 
+  if (request.auth.role !== 'MASTER' || !request.auth.isPrimaryMaster) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Expense decisions require Primary Master authority.');
+  }
+
   if (!['APPROVE', 'RETURN', 'REJECT'].includes(decision)) {
     throw new ApiError(400, 'INVALID_DECISION', 'Decision must be APPROVE, RETURN, or REJECT.');
   }
 
-  const expense = await Expense.findOne({ organisationId, expenseId });
-  if (!expense) {
+  const existingExpense = await Expense.findOne({ organisationId, expenseId }).lean();
+  if (!existingExpense) {
     throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
   }
+  ensureCafeAccess(request, existingExpense.cafeId);
 
-  ensureCafeAccess(request, expense.cafeId);
-
-  // Maker-Checker enforcement: cannot approve own expense
-  if (decision === 'APPROVE' && expense.ownerUserId === userId && request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'MAKER_CHECKER_VIOLATION', 'You cannot approve your own expense.');
-  }
-
-  if (expense.status !== 'SUBMITTED' && expense.status !== 'PENDING_APPROVAL') {
-    throw new ApiError(400, 'INVALID_STATE', 'Expense is not pending a decision.');
-  }
-
-  const finalApprovedPaisa = approvedAmountPaisa !== undefined ? Number(approvedAmountPaisa) : expense.totalPaisa;
-
-  if (decision === 'APPROVE') {
-    expense.status = 'APPROVED';
-    expense.approvalSnapshot = {
-      version: (expense.approvalSnapshot?.version || 0) + 1,
-      approvedAt: new Date(),
-      approvedBy: userId,
-      approvedAmountPaisa: finalApprovedPaisa,
-      reason,
-    };
-    expense.financeHandoff = {
-      status: 'AWAITING_FINANCE',
-      sentAt: new Date(),
-      postingStatus: 'PENDING',
-      paymentStatus: 'UNPAID',
-    };
-  } else if (decision === 'RETURN') {
-    expense.status = 'RETURNED';
-  } else {
-    expense.status = 'REJECTED';
-  }
-
-  expense.decisionAt = new Date();
-  expense.decisionBy = userId;
-  expense.decisionReason = reason;
-  expense.updatedBy = userId;
-  await expense.save();
-
-  // Sync Approval
+  let expense;
+  let approval;
+  const session = await mongoose.startSession();
   try {
-    const approvalStatus = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-    await Approval.updateOne(
-      { organisationId, entityId: expenseId, status: 'PENDING' },
-      {
-        $set: {
-          status: approvalStatus,
-          decidedByUserId: userId,
-          decisionReason: reason || (decision === 'RETURN' ? 'Returned for rework' : ''),
-          decidedAt: new Date(),
-        },
+    await session.withTransaction(async () => {
+      expense = await Expense.findOne({ organisationId, expenseId }).session(session);
+      if (!expense) throw new ApiError(404, 'EXPENSE_NOT_FOUND', 'The requested expense does not exist.');
+      if (!['SUBMITTED', 'PENDING_APPROVAL'].includes(expense.status)) {
+        throw new ApiError(409, 'INVALID_STATE', 'Expense is not pending a decision.');
       }
-    );
-  } catch (_) {}
 
-  // Notify preparer / owner
+      approval = await Approval.findOne({
+        organisationId,
+        entityType: 'EXPENSE',
+        entityId: expenseId,
+      }).session(session);
+      if (!approval) {
+        throw new ApiError(409, 'APPROVAL_TARGET_NOT_FOUND', 'Expense approval record is missing. No decision was committed.');
+      }
+      if (approval.status !== 'PENDING') {
+        throw new ApiError(409, 'ALREADY_DECIDED', `Approval is already ${approval.status}.`);
+      }
+
+      const finalApprovedPaisa =
+        approvedAmountPaisa !== undefined ? Number(approvedAmountPaisa) : expense.totalPaisa;
+
+      if (decision === 'APPROVE') {
+        expense.status = 'APPROVED';
+        expense.approvalSnapshot = {
+          version: (expense.approvalSnapshot?.version || 0) + 1,
+          approvedAt: new Date(),
+          approvedBy: userId,
+          approvedAmountPaisa: finalApprovedPaisa,
+          reason,
+        };
+        expense.financeHandoff = {
+          status: 'AWAITING_FINANCE',
+          sentAt: new Date(),
+          postingStatus: 'PENDING',
+          paymentStatus: 'UNPAID',
+        };
+      } else if (decision === 'RETURN') {
+        expense.status = 'RETURNED';
+      } else {
+        expense.status = 'REJECTED';
+      }
+
+      expense.decisionAt = new Date();
+      expense.decisionBy = userId;
+      expense.decisionReason = reason;
+      expense.updatedBy = userId;
+      await expense.save({ session });
+
+      approval.status = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+      approval.decidedByUserId = userId;
+      approval.decisionReason = reason || (decision === 'RETURN' ? 'Returned for rework' : '');
+      approval.decidedAt = new Date();
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
+
   try {
     const recipientId = expense.preparerUserId || expense.ownerUserId || expense.createdBy;
     const recipientUser = await User.findOne({ organisationId, userId: recipientId }).select('email role').lean();
     const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${dateKey}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const eventType = decision === 'APPROVE' ? 'EXPENSE_APPROVED' : (decision === 'RETURN' ? 'EXPENSE_RETURNED' : 'EXPENSE_REJECTED');
-    const decisionText = decision === 'APPROVE' ? 'Approved' : (decision === 'RETURN' ? 'Returned' : 'Rejected');
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${dateKey}`,
+      prefix: `NT-${dateKey}`,
+      minimumDigits: 4,
+    });
+    const eventType =
+      decision === 'APPROVE'
+        ? 'EXPENSE_APPROVED'
+        : decision === 'RETURN'
+          ? 'EXPENSE_RETURNED'
+          : 'EXPENSE_REJECTED';
+    const decisionText =
+      decision === 'APPROVE' ? 'Approved' : decision === 'RETURN' ? 'Returned' : 'Rejected';
 
     await Notification.create({
       notificationId: notifId,
@@ -658,7 +762,7 @@ const decideExpense = asyncHandler(async (request, response) => {
       category: 'FINANCE',
       recipientUserId: recipientId,
       recipientRole: recipientUser?.role || 'CAFE_ADMIN',
-      recipientEmail: recipientUser?.email || `${String(recipientId).toLowerCase()}@zamorincafe.com`,
+      recipientEmail: recipientUser?.email || null,
       title: `Expense ${expense.expenseId} ${decisionText}`,
       message: `Your expense claim ${expense.expenseId} (₹${((expense.totalPaisa || 0) / 100).toFixed(2)}) has been ${decisionText.toLowerCase()}.${reason ? ' Reason: ' + reason : ''}`,
       priority: 'NORMAL',
@@ -667,9 +771,15 @@ const decideExpense = asyncHandler(async (request, response) => {
       sourceModule: 'EXPENSES',
       sourceEntityType: 'EXPENSE',
       sourceEntityId: expense.expenseId,
+      deduplicationKey: `${recipientId}:${eventType}:${expense.expenseId}`,
+      correlationId: request.correlationId || `CORR-EXP-DEC-${expense.expenseId}`,
+      status: 'DELIVERED',
+      deliveredAt: new Date(),
       createdBy: userId,
     });
-  } catch (_) {}
+  } catch (err) {
+    console.warn(`[EXPENSE_NOTIFICATION_WARN] ${err.message}`);
+  }
 
   return response.status(200).json({
     message: `Expense ${decision.toLowerCase()}d successfully.`,
@@ -793,7 +903,16 @@ const liquidateAdvance = asyncHandler(async (request, response) => {
 const markExpensePaid = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
   const { expenseId } = request.params;
-  const { paymentReference = '', paidAt } = request.body;
+  const paymentReference = String(request.body?.paymentReference || '').trim();
+  const paidAtInput = request.body?.paidAt;
+
+  if (!paymentReference) {
+    throw new ApiError(
+      400,
+      'PAYMENT_REFERENCE_REQUIRED',
+      'A real payment reference is required before an expense can be marked paid.'
+    );
+  }
 
   const expense = await Expense.findOne({ organisationId, expenseId });
   if (!expense) {
@@ -802,26 +921,40 @@ const markExpensePaid = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, expense.cafeId);
 
+  if (expense.status === 'PAID') {
+    throw new ApiError(409, 'EXPENSE_ALREADY_PAID', 'This expense is already marked paid.');
+  }
+
   if (expense.status !== 'APPROVED') {
     throw new ApiError(400, 'INVALID_STATE', 'Only approved expenses can be marked as paid.');
   }
 
+  const paidAt = paidAtInput ? new Date(paidAtInput) : new Date();
+  if (Number.isNaN(paidAt.getTime())) {
+    throw new ApiError(400, 'INVALID_PAID_AT', 'paidAt must be a valid date/time.');
+  }
+
   expense.status = 'PAID';
-  expense.paidAt = paidAt ? new Date(paidAt) : new Date();
+  expense.paidAt = paidAt;
   expense.paidBy = userId;
   expense.paymentReference = paymentReference;
   expense.financeHandoff = {
     ...expense.financeHandoff,
     status: 'PAID',
     paymentStatus: 'PAID',
-    postingStatus: 'POSTED',
+    postingStatus: 'PAYMENT_RECORDED_GL_NOT_VERIFIED',
+    holdReason: '',
   };
   expense.updatedBy = userId;
   await expense.save();
 
   return response.status(200).json({
-    message: 'Expense marked as paid and settled in Finance.',
+    message: 'Expense payment recorded. General Ledger posting remains unverified until a canonical GL posting reference is linked.',
     expense,
+    financeActuality: {
+      paymentStatus: 'PAID',
+      glPostingStatus: 'NOT_VERIFIED',
+    },
   });
 });
 
@@ -831,8 +964,12 @@ const reverseExpense = asyncHandler(async (request, response) => {
   const { expenseId } = request.params;
   const { reason = '' } = request.body;
 
-  if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'MASTER_AUTHORITY_REQUIRED', 'Only Master may reverse an expense.');
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only Primary Master may reverse an expense.'
+    );
   }
 
   const expense = await Expense.findOne({ organisationId, expenseId });
@@ -950,8 +1087,18 @@ const createExpenseRequest = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, cafeId);
 
-  const reqCount = await ExpenseRequest.countDocuments({ organisationId });
-  const requestId = `REQ-2026-${String(reqCount + 1).padStart(4, '0')}`;
+  const estimatedAmountPaisa = Math.round(Number(estimatedAmount) * 100);
+  if (!Number.isSafeInteger(estimatedAmountPaisa) || estimatedAmountPaisa <= 0) {
+    throw new ApiError(400, 'INVALID_ESTIMATED_AMOUNT', 'estimatedAmount must be a positive monetary value.');
+  }
+
+  const requestYear = new Date().getFullYear();
+  const requestId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EXPENSE_REQUEST_${requestYear}`,
+    prefix: `REQ-${requestYear}`,
+    minimumDigits: 4,
+  });
 
   const expRequest = await ExpenseRequest.create({
     requestId,
@@ -962,7 +1109,7 @@ const createExpenseRequest = asyncHandler(async (request, response) => {
     category: category.toUpperCase(),
     purpose,
     justification,
-    estimatedAmountPaisa: Math.round(Number(estimatedAmount) * 100),
+    estimatedAmountPaisa,
     validUntil,
     status: 'SUBMITTED',
   });
@@ -984,16 +1131,34 @@ const createExpensePolicy = asyncHandler(async (request, response) => {
   }
 
   const { policyName, version, receiptThresholdPaisa = 50000, poRequiredThresholdPaisa = 5000000, categoryRules = [], effectiveFrom } = request.body;
-  const count = await ExpensePolicy.countDocuments({ organisationId });
-  const policyId = `POL-EXP-2026-${String(count + 1).padStart(2, '0')}`;
+
+  if (!String(policyName || '').trim()) {
+    throw new ApiError(400, 'POLICY_NAME_REQUIRED', 'policyName is required.');
+  }
+  if (
+    !Number.isSafeInteger(Number(receiptThresholdPaisa)) ||
+    Number(receiptThresholdPaisa) < 0 ||
+    !Number.isSafeInteger(Number(poRequiredThresholdPaisa)) ||
+    Number(poRequiredThresholdPaisa) < 0
+  ) {
+    throw new ApiError(400, 'INVALID_POLICY_THRESHOLD', 'Expense policy thresholds must be non-negative integer paise values.');
+  }
+
+  const policyYear = new Date().getFullYear();
+  const policyId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `EXPENSE_POLICY_${policyYear}`,
+    prefix: `POL-EXP-${policyYear}`,
+    minimumDigits: 2,
+  });
 
   const policy = await ExpensePolicy.create({
     policyId,
     version: version || 'V1.0',
-    policyName,
+    policyName: String(policyName).trim(),
     organisationId,
-    receiptThresholdPaisa,
-    poRequiredThresholdPaisa,
+    receiptThresholdPaisa: Number(receiptThresholdPaisa),
+    poRequiredThresholdPaisa: Number(poRequiredThresholdPaisa),
     categoryRules,
     effectiveFrom: effectiveFrom || getIstBusinessDate(),
     publishedBy: userId,
@@ -1019,21 +1184,41 @@ const listOperationalAdvances = asyncHandler(async (request, response) => {
 
 const createOperationalAdvance = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'MASTER_AUTHORITY_REQUIRED', 'Only Master may issue operational advances.');
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only Primary Master may issue operational advances.'
+    );
   }
 
   const { recipientUserId, cafeId, purpose, amount, returnDueDate } = request.body;
-  const count = await OperationalAdvance.countDocuments({ organisationId });
-  const advanceId = `ADV-OP-2026-${String(count + 1).padStart(3, '0')}`;
+  const cleanCafeId = normalizeIdentifier(cafeId);
+  ensureCafeAccess(request, cleanCafeId);
+
+  const amountPaisa = Math.round(Number(amount) * 100);
+  if (!normalizeIdentifier(recipientUserId) || !cleanCafeId || !String(purpose || '').trim() || !/^\d{4}-\d{2}-\d{2}$/.test(String(returnDueDate || ''))) {
+    throw new ApiError(400, 'INVALID_ADVANCE_PAYLOAD', 'recipientUserId, cafeId, purpose and returnDueDate are required.');
+  }
+  if (!Number.isSafeInteger(amountPaisa) || amountPaisa <= 0) {
+    throw new ApiError(400, 'INVALID_ADVANCE_AMOUNT', 'amount must be a positive monetary value.');
+  }
+
+  const advanceYear = new Date().getFullYear();
+  const advanceId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `OPERATIONAL_ADVANCE_${advanceYear}`,
+    prefix: `ADV-OP-${advanceYear}`,
+    minimumDigits: 4,
+  });
 
   const advance = await OperationalAdvance.create({
     advanceId,
     organisationId,
-    recipientUserId,
-    cafeId,
-    purpose,
-    amountPaisa: Math.round(Number(amount) * 100),
+    recipientUserId: normalizeIdentifier(recipientUserId),
+    cafeId: cleanCafeId,
+    purpose: String(purpose).trim(),
+    amountPaisa,
     returnDueDate,
     status: 'DISBURSED',
   });

@@ -189,7 +189,7 @@ function renderOverviewContentHtml() {
 
   const invTiles = [
     { id: "stock-by-cafe", icon: "📦", title: "Stock Levels", subtitle: "Multi-café on-hand, reserved & available balances", badge: `${kpis.totalActiveSkus || 0} SKUs`, badgeType: "accent" },
-    { id: "global-items", icon: "📋", title: "Global Item Master", subtitle: "Global item catalogue, UOM conversions & specs", badge: "Catalogue", badgeType: "" },
+    { id: "global-items", icon: "📋", title: "Global Inventory Item Catalogue", subtitle: "Raw ingredients, packaging & consumables", badge: "Catalogue", badgeType: "" },
     { id: "replenishment", icon: "📊", title: "Replenishment & PAR", subtitle: "Safety buffers, PAR thresholds & auto-order triggers", badge: `${kpis.lowStockCount || 0} Low`, badgeType: kpis.lowStockCount > 0 ? "warning" : "success" },
     { id: "receipts", icon: "📥", title: "Receipts & Put-Away", subtitle: "Goods receipts from purchase orders & bin put-away", badge: "Live POs", badgeType: "" },
     { id: "movements", icon: "📜", title: "Stock Ledger", subtitle: "Double-entry transaction audit & ledger logs", badge: "Ledger", badgeType: "" },
@@ -567,8 +567,8 @@ async function renderGlobalItemsTab(wrap) {
       ${renderChildHeader({
         parentTitle: "Inventory & Stock",
         parentRoute: "inventory",
-        childTitle: "Global Item Master",
-        childSubtitle: "Global item catalogue, UOM conversions, storage specs, allergens and yields.",
+        childTitle: "Global Inventory Item Catalogue",
+        childSubtitle: "Raw ingredients, packaging & consumables catalogue, UOM conversions, storage specs, and yields.",
         icon: "📋",
         backBtnId: "inv-back-to-hub-btn",
         actionsHtml: `

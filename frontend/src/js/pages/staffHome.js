@@ -674,16 +674,6 @@ export function wireStaffHome(root) {
     }
   }
 
-  // Direct click delegation on root for Change Shift Request buttons
-  root.addEventListener("click", (e) => {
-    const schedBtn = e.target.closest("#btn-inline-schedule-request, #btn-open-schedule-request");
-    if (schedBtn) {
-      e.preventDefault();
-      const currentData = (activeStaffEmployeeId && STAFF_DIRECTORY.find((s) => s.employee.id === activeStaffEmployeeId)) || getInitialStaffData();
-      const emp = currentData?.employee || state.user || {};
-      openScheduleRequestModal(emp);
-    }
-  });
 
   loadDashboard();
 }
@@ -806,6 +796,9 @@ function openReportProblemModal(emp) {
 
 // ── MODAL 2: SCHEDULE CHANGE / AVAILABILITY REQUEST ────────────────────────
 function openScheduleRequestModal(emp) {
+  const tomorrowIst = new Date(Date.now() + 86400000).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const resolvedCurrentShift = String(emp?.currentShift || emp?.shiftName || "").trim();
+
   let existingModal = document.getElementById("staff-schedule-modal");
   if (existingModal) existingModal.remove();
 
@@ -822,7 +815,7 @@ function openScheduleRequestModal(emp) {
       </div>
 
       <div style="font-size:12.5px; color:var(--text-muted); margin-bottom:16px;">
-        Request a shift change, timing adjustment, or availability update. Reviewed by café management.
+        Request a shift change, timing adjustment, or availability update. Requests enter the Primary Master approval workflow.
       </div>
 
       <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:20px;">
@@ -839,15 +832,18 @@ function openScheduleRequestModal(emp) {
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:4px;">Date</label>
-            <input type="date" id="sched-req-date" class="input" style="width:100%;" value="${new Date(Date.now() + 86400000).toISOString().slice(0, 10)}" />
+            <input type="date" id="sched-req-date" class="input" style="width:100%;" value="${tomorrowIst}" />
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:4px;">Preferred Timing</label>
-            <select id="sched-pref-time" class="input" style="width:100%;">
-              <option value="MORNING">Morning (9:00 AM – 5:00 PM)</option>
-              <option value="EVENING">Evening (1:00 PM – 9:00 PM)</option>
-              <option value="OFF">Full Day Rest</option>
-            </select>
+            <input
+              type="text"
+              id="sched-pref-time"
+              class="input"
+              style="width:100%;"
+              maxlength="200"
+              placeholder="Requested shift name, timing, or weekly-off change"
+            />
           </div>
         </div>
 
@@ -882,16 +878,25 @@ function openScheduleRequestModal(emp) {
     }
     const reqType = modal.querySelector("#sched-req-type")?.value;
     const reqDate = modal.querySelector("#sched-req-date")?.value;
-    const prefTime = modal.querySelector("#sched-pref-time")?.value;
+    const prefTime = modal.querySelector("#sched-pref-time")?.value?.trim() || "";
     const submitBtn = modal.querySelector("#sched-submit-btn");
+
+    if (!reqDate) {
+      showToast("Please select the requested date.");
+      return;
+    }
+    if (!prefTime) {
+      showToast("Please enter the requested shift or timing.");
+      return;
+    }
 
     try {
       submitBtn.disabled = true;
       submitBtn.textContent = "Submitting...";
       await apiPost("/shifts/me/requests", {
         requestedDate: reqDate,
-        requestedShift: prefTime || "MORNING",
-        currentShift: "STANDARD",
+        requestedShift: prefTime,
+        currentShift: resolvedCurrentShift,
         reason: `[${reqType}] ${reason}`,
       });
       close();

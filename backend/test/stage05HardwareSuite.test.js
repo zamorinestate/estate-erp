@@ -18,6 +18,7 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     userId: 'MU-0001',
     role: 'MASTER',
     organisationId: 'ORG-ZAMORIN',
+    isPrimaryMaster: true,
   };
 
   const authAdmin = {
@@ -32,6 +33,14 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     role: 'STAFF',
     organisationId: 'ORG-ZAMORIN',
     primaryCafeId: 'ZC-0001',
+    assignedCafeIds: ['ZC-0001'],
+    deviceContext: {
+      deviceId: 'DV-ZC0001-POS-01',
+      deviceClass: 'CAFE_OWNED',
+      boundCafeId: 'ZC-0001',
+      status: 'ACTIVE',
+      trustLevel: 'ENROLLED',
+    },
   };
 
   t.before(async () => {
@@ -44,6 +53,10 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
       name: 'Primary Master Admin',
       email: 'master@zamorin.test',
       role: 'MASTER',
+      isPrimaryMaster: true,
+      primaryMasterDesignatedAt: new Date(),
+      primaryMasterDesignatedBy: 'SYSTEM',
+      primaryMasterDesignationReason: 'Canonical Primary Master test fixture',
       createdBy: 'SYSTEM',
       accountStatus: 'ACTIVE',
       passwordHash,
@@ -152,7 +165,12 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     assert.ok(bufferString.includes('ZAMORIN CAFE'));
     assert.ok(bufferString.includes('DIAGNOSTIC TEST RECEIPT'));
     assert.ok(bufferString.includes('TERM-ZC0001-POS1'));
-    assert.ok(bufferString.includes('HARDWARE READINESS VERIFIED'));
+    assert.ok(bufferString.includes('HARDWARE READINESS NOT VERIFIED'));
+    assert.equal(
+      buffer.includes(hardwareBridgeService.buildDrawerKickBuffer(2)),
+      false,
+      'Diagnostic print payload must never contain an implicit drawer-kick pulse'
+    );
   });
 
   await t.test('05.5: Thermal Sales Receipt Compilation with Stage 02 QR and Tax Breakdown', async () => {
@@ -313,16 +331,66 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     assert.equal(kickResult.success, true);
     assert.equal(kickResult.terminalId, terminal.terminalId);
     assert.equal(kickResult.pin, 2);
+    assert.equal(kickResult.status, 'PREPARED');
+    assert.equal(kickResult.dispatched, false);
+    assert.equal(kickResult.acknowledged, false);
     assert.ok(Buffer.isBuffer(kickResult.kickBuffer));
 
     // Verify immutable audit log recorded in terminal
     const refreshedTerminal = await HardwareTerminal.findOne({ terminalId: terminal.terminalId });
     assert.ok(refreshedTerminal.auditEvents.length >= 1);
     const audit = refreshedTerminal.auditEvents[refreshedTerminal.auditEvents.length - 1];
-    assert.equal(audit.event, 'DRAWER_KICK_TRIGGERED');
+    assert.equal(audit.event, 'DRAWER_KICK_PREPARED');
     assert.equal(audit.actorUserId, authStaff.userId);
     assert.equal(audit.transactionId, 'TXN-2026-999');
     assert.equal(audit.reason, 'Customer cash sale change tender');
+
+    // Cross-café drawer access must fail even inside the same organisation.
+    const foreignTerminal = await hardwareBridgeService.registerOrUpdateTerminal(
+      {
+        terminalId: 'TERM-ZC0002-CASHIER',
+        cafeId: 'ZC-0002',
+        terminalName: 'Foreign Cafe Cashier',
+        drawerConfig: { enabled: true, pin: 2 },
+      },
+      authMaster
+    );
+
+    await assert.rejects(
+      () => hardwareBridgeService.issueDrawerKick(
+        foreignTerminal.terminalId,
+        authStaff,
+        { reason: 'Cross-cafe attempt' }
+      ),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CROSS_CAFE_RESOURCE_DENIED');
+        return true;
+      }
+    );
+
+    // Personal/unverified devices may not prepare physical drawer commands.
+    const personalDeviceStaff = {
+      ...authStaff,
+      deviceContext: {
+        deviceId: 'PERSONAL-01',
+        deviceClass: 'PERSONAL',
+        boundCafeId: null,
+        status: 'UNREGISTERED',
+      },
+    };
+    await assert.rejects(
+      () => hardwareBridgeService.issueDrawerKick(
+        terminal.terminalId,
+        personalDeviceStaff,
+        { reason: 'Untrusted-device attempt' }
+      ),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CAFE_OWNED_DEVICE_REQUIRED');
+        return true;
+      }
+    );
 
     // Test rejection when drawer is disabled
     const disabledTerminal = await hardwareBridgeService.registerOrUpdateTerminal(
@@ -399,10 +467,19 @@ test('STAGE 05 — Hardware Bridge + Device Integration Complete Suite', async (
     const terminals = await hardwareBridgeService.getTerminalsForCafe('ZC-0001', authMaster.organisationId);
     assert.ok(terminals.length >= 2);
 
-    // Health check
+    // A read-only health query must not manufacture live hardware evidence.
     const health = await hardwareBridgeService.checkTerminalHealth('TERM-ZC0001-KDS1', authMaster.organisationId);
     assert.equal(health.terminalId, 'TERM-ZC0001-KDS1');
-    assert.equal(health.status.online, true);
-    assert.ok(health.status.lastHeartbeat);
+    assert.equal(health.status.online, false);
+    assert.equal(health.status.lastHeartbeat, null);
+    assert.equal(health.status.evidenceSource, 'NONE');
+    assert.equal(health.status.paperStatus, 'UNKNOWN');
+    assert.equal(health.status.coverStatus, 'UNKNOWN');
+    assert.equal(health.status.drawerStatus, 'UNKNOWN');
+
+    const persisted = await HardwareTerminal.findOne({ terminalId: 'TERM-ZC0001-KDS1' }).lean();
+    assert.equal(persisted.status.online, false);
+    assert.equal(persisted.status.lastHeartbeat, null);
+    assert.equal(persisted.status.evidenceSource, 'NONE');
   });
 });

@@ -1,6 +1,6 @@
 // =============================================================================
 // PAGE: Sales & Cash Book — Comprehensive Enterprise Cash Management
-// Roles: PRIMARY_MASTER (full control, all cafes), NORMAL_MASTER (full control),
+// Roles: PRIMARY_MASTER (full control, all cafes), MALFORMED_MASTER (full control),
 //        OWNER (read-only, assigned cafes), CAFE_ADMIN (own cafe, session mgmt)
 //
 // Sections & Workspaces:

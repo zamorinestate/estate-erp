@@ -18,12 +18,49 @@ function create() {
       async findByCafe(cafeId) { return toPlainList(await models.Device.find({ cafeId })); },
       async listAll() { return toPlainList(await models.Device.find({})); },
       async update(id, patch) { return toPlain(await models.Device.findByIdAndUpdate(id, patch, { new: true })); },
+      async delete(id) { return toPlain(await models.Device.findByIdAndDelete(id)); },
       async touchLastSeen(id, when) { return toPlain(await models.Device.findByIdAndUpdate(id, { lastSeenAt: when }, { new: true })); },
     },
     enrollmentTokens: {
       async create(data) { return toPlain(await models.DeviceEnrollmentToken.create(data)); },
-      async findByHash(hash) { return toPlain(await models.DeviceEnrollmentToken.findOne({ tokenHash: hash }).select('+tokenHash')); },
+      async findByHash(hash) {
+        return toPlain(await models.DeviceEnrollmentToken.findOne({ tokenHash: hash })
+          .select('+tokenHash +hardwareAttestationChallengeHash'));
+      },
       async update(id, patch) { return toPlain(await models.DeviceEnrollmentToken.findByIdAndUpdate(id, patch, { new: true })); },
+      async issueHardwareAttestationChallenge(id, patch) {
+        const now = new Date();
+        return toPlain(await models.DeviceEnrollmentToken.findOneAndUpdate(
+          {
+            _id: id,
+            status: 'PENDING',
+            expiresAt: { $gt: now },
+            $or: [
+              { hardwareAttestationChallengeId: null },
+              { hardwareAttestationChallengeId: { $exists: false } },
+              { hardwareAttestationChallengeConsumedAt: { $ne: null } },
+              { hardwareAttestationChallengeExpiresAt: { $lte: now } },
+              { hardwareAttestationChallengeExpiresAt: null },
+            ],
+          },
+          { $set: patch },
+          { new: true }
+        ).select('+hardwareAttestationChallengeHash'));
+      },
+      async consumeIfPending(id, patch) {
+        return toPlain(await models.DeviceEnrollmentToken.findOneAndUpdate(
+          { _id: id, status: 'PENDING', expiresAt: { $gt: new Date() } },
+          { $set: { ...patch, status: 'USED' } },
+          { new: true }
+        ));
+      },
+      async restoreIfUsedByDevice(id, deviceId, patch = {}) {
+        return toPlain(await models.DeviceEnrollmentToken.findOneAndUpdate(
+          { _id: id, status: 'USED', usedByDeviceId: deviceId },
+          { $set: { ...patch, status: 'PENDING', usedAt: null, usedByDeviceId: null } },
+          { new: true }
+        ));
+      },
     },
     operatorCredentials: {
       async upsertForEmployee(employeeId, data) {

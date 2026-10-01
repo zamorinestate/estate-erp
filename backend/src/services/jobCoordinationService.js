@@ -36,8 +36,23 @@ class JobCoordinationService {
   }
 
   _generateFencingToken() {
-    this.fencingCounter = (this.fencingCounter + 1) % 10000;
-    return Date.now() * 10000 + this.fencingCounter;
+    // Local-only fallback token. Keep it inside Number.MAX_SAFE_INTEGER rather
+    // than multiplying Date.now() into an unsafe JavaScript integer.
+    this.fencingCounter += 1;
+    if (!Number.isSafeInteger(this.fencingCounter) || this.fencingCounter >= Number.MAX_SAFE_INTEGER) {
+      this.fencingCounter = 1;
+    }
+    return this.fencingCounter;
+  }
+
+  _redisCoordinationError(operation, error) {
+    const wrapped = new Error(
+      `Redis job coordination failed during ${operation}: ${String(error?.message || error || 'unknown error')}`
+    );
+    wrapped.code = 'REDIS_JOB_COORDINATION_FAILED';
+    wrapped.operation = operation;
+    wrapped.cause = error;
+    return wrapped;
   }
 
   /**
@@ -51,21 +66,29 @@ class JobCoordinationService {
     const lockKey = `lock:job:${jobName}`;
     const fencingKey = `lock:fencing:${jobName}`;
     const now = Date.now();
-    const fencingToken = this._generateFencingToken();
+    let fencingToken = this._generateFencingToken();
 
     if (this.redisClient) {
       try {
+        // Redis owns the distributed fencing sequence. Tokens may be consumed
+        // by failed contenders; monotonicity is what matters.
+        fencingToken = await this.redisClient.incr(fencingKey);
         const payload = JSON.stringify({ ownerId, fencingToken, acquiredAt: now });
-        const result = await this.redisClient.set(lockKey, payload, 'NX', 'PX', ttlMs);
-        if (result === 'OK') {
-          await this.redisClient.set(fencingKey, String(fencingToken));
+        const result = await this.redisClient.set(lockKey, payload, {
+          NX: true,
+          PX: ttlMs,
+        });
+        if (result === 'OK' || result === true) {
           this.metrics.locksAcquired++;
           return { acquired: true, fencingToken };
         }
         this.metrics.locksDenied++;
         return { acquired: false, fencingToken: null };
       } catch (err) {
-        console.warn(`[JobCoordination] Redis lock failed, falling back to local: ${err.message}`);
+        // A configured Redis dependency must never degrade into per-process
+        // locking: that would permit multiple cluster instances to execute the
+        // same supposedly-exclusive job.
+        throw this._redisCoordinationError('acquireLock', err);
       }
     }
 
@@ -99,13 +122,18 @@ class JobCoordinationService {
           end
           return 0
         `;
-        const res = await this.redisClient.eval(lua, 1, lockKey, ownerId, additionalTtlMs);
-        if (res === 1) {
+        const res = await this.redisClient.eval(lua, {
+          keys: [lockKey],
+          arguments: [String(ownerId), String(additionalTtlMs)],
+        });
+        if (Number(res) === 1) {
           this.metrics.locksExtended++;
           return true;
         }
         return false;
-      } catch (_) {}
+      } catch (err) {
+        throw this._redisCoordinationError('extendLock', err);
+      }
     }
 
     const existing = this.localLocks.get(lockKey);
@@ -137,7 +165,9 @@ class JobCoordinationService {
         }
         this.metrics.staleCommitsBlocked++;
         return false;
-      } catch (_) {}
+      } catch (err) {
+        throw this._redisCoordinationError('verifyFencingToken', err);
+      }
     }
 
     const existing = this.localLocks.get(lockKey);
@@ -166,10 +196,18 @@ class JobCoordinationService {
           end
           return 0
         `;
-        await this.redisClient.eval(lua, 1, lockKey, ownerId);
-        this.metrics.locksReleased++;
-        return true;
-      } catch (_) {}
+        const released = await this.redisClient.eval(lua, {
+          keys: [lockKey],
+          arguments: [String(ownerId)],
+        });
+        if (Number(released) === 1) {
+          this.metrics.locksReleased++;
+          return true;
+        }
+        return false;
+      } catch (err) {
+        throw this._redisCoordinationError('releaseLock', err);
+      }
     }
 
     const existing = this.localLocks.get(lockKey);
@@ -221,7 +259,9 @@ class JobCoordinationService {
           this.metrics.idempotentExecutionsSkipped++;
           return JSON.parse(raw);
         }
-      } catch (_) {}
+      } catch (err) {
+        throw this._redisCoordinationError('executeIdempotent.read', err);
+      }
     }
 
     if (this.idempotencyLedger.has(key)) {
@@ -237,8 +277,14 @@ class JobCoordinationService {
 
     if (this.redisClient) {
       try {
-        await this.redisClient.set(key, JSON.stringify(result), 'EX', Math.ceil(ttlMs / 1000));
-      } catch (_) {}
+        await this.redisClient.set(key, JSON.stringify(result), {
+          EX: Math.ceil(ttlMs / 1000),
+        });
+      } catch (err) {
+        const wrapped = this._redisCoordinationError('executeIdempotent.write', err);
+        wrapped.operationMayHaveExecuted = true;
+        throw wrapped;
+      }
     }
 
     return result;

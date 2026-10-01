@@ -13,9 +13,10 @@ function evaluateMasterCafeOperationsAccess({ device, master, now = new Date() }
   if (device.lifecycleStatus !== DEVICE_STATUS.ACTIVE) return deny(DENIAL_REASON.DEVICE_NOT_ACTIVE);
 
   if (!master) return deny(DENIAL_REASON.MASTER_AUTH_FAILED);
+  if (master.role !== 'MASTER_PRIMARY') return deny(DENIAL_REASON.MASTER_AUTH_FAILED);
   if (master.isActive === false) return deny(DENIAL_REASON.MASTER_INACTIVE);
 
-  // Master spec Section 106: a Master account from Organisation A must be
+  // Master spec Section 106: the designated Primary Master from Organisation A must be
   // denied on an Organisation B device, regardless of how broad their
   // authority is within their own organisation.
   if (String(master.organisationId) !== String(device.organisationId)) return deny(DENIAL_REASON.ORG_MISMATCH);

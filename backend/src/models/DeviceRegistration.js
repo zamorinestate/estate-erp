@@ -48,11 +48,11 @@ const deviceRegistrationSchema = new mongoose.Schema(
       validate: {
         validator: function (v) {
           if (this.deviceClass === 'CAFE_OWNED') {
-            return typeof v === 'string' && /^ZC-\d{4,}$/.test(v);
+            return typeof v === 'string' && /^ZC-(?:CAF-)?\d{4,}$/.test(v);
           }
           return true;
         },
-        message: 'Assigned cafeId must match /^ZC-\\d{4,}$/ when deviceClass is CAFE_OWNED',
+        message: 'Assigned cafeId must match /^ZC-(?:CAF-)?\\d{4,}$/ when deviceClass is CAFE_OWNED',
       },
     },
 
@@ -66,7 +66,7 @@ const deviceRegistrationSchema = new mongoose.Schema(
     platform: {
       type: String,
       enum: ['ANDROID', 'IOS', 'WEB_POS', 'DESKTOP', 'UNKNOWN'],
-      default: 'ANDROID',
+      default: 'UNKNOWN',
     },
 
     appVersion: {
@@ -92,6 +92,44 @@ const deviceRegistrationSchema = new mongoose.Schema(
       type: String,
       default: null,
       index: true,
+    },
+
+    signingKeyAlgorithm: {
+      type: String,
+      enum: ['ES256', null],
+      default: null,
+    },
+
+    signingKeyProvider: {
+      type: String,
+      enum: ['ANDROID_KEYSTORE', 'APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN', 'WINDOWS_CNG', 'WEB_CRYPTO', 'UNKNOWN', null],
+      default: null,
+    },
+
+    signingKeyHardwareBackedVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    signingKeyHardwareSecurityLevel: {
+      type: String,
+      enum: ['UNKNOWN', 'SOFTWARE', 'TRUSTED_ENVIRONMENT', 'STRONGBOX'],
+      default: 'UNKNOWN',
+    },
+
+    signingKeyHardwareAttestationVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+
+    signingKeyCreatedAt: {
+      type: Date,
+      default: null,
+    },
+
+    signingKeyLastVerifiedAt: {
+      type: Date,
+      default: null,
     },
 
     webAuthnCredentialIds: {
@@ -190,6 +228,56 @@ const deviceRegistrationSchema = new mongoose.Schema(
     collection: 'device_registrations',
   }
 );
+
+deviceRegistrationSchema.pre('validate', function enforceHardwareTrustEvidence() {
+  const securityLevel = String(this.signingKeyHardwareSecurityLevel || 'UNKNOWN').trim().toUpperCase();
+  const hardwareEvidenceComplete =
+    this.signingKeyHardwareBackedVerified === true &&
+    ['TRUSTED_ENVIRONMENT', 'STRONGBOX'].includes(securityLevel) &&
+    Boolean(this.signingKeyHardwareAttestationVerifiedAt);
+
+  if (this.signingKeyHardwareBackedVerified === true && !hardwareEvidenceComplete) {
+    this.invalidate(
+      'signingKeyHardwareBackedVerified',
+      'Verified hardware-backed signing keys require TrustedEnvironment/StrongBox evidence and a verification timestamp.'
+    );
+  }
+
+  if (String(this.trustLevel || '').trim().toUpperCase() === 'HARDWARE_BACKED' && !hardwareEvidenceComplete) {
+    this.invalidate(
+      'trustLevel',
+      'HARDWARE_BACKED trust requires verified Android hardware key-attestation evidence.'
+    );
+  }
+});
+
+deviceRegistrationSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function blockUnceremonialHardwareTrust() {
+  const update = this.getUpdate() || {};
+  const set = update.$set || update;
+  const nextTrustLevel = set?.trustLevel;
+  const nextHardwareVerified = set?.signingKeyHardwareBackedVerified;
+  const nextHardwareSecurityLevel = String(
+    set?.signingKeyHardwareSecurityLevel || ''
+  ).trim().toUpperCase();
+  const nextHardwareVerifiedAt = set?.signingKeyHardwareAttestationVerifiedAt;
+
+  if (String(nextTrustLevel || '').trim().toUpperCase() === 'HARDWARE_BACKED') {
+    const err = new Error('HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY');
+    err.code = 'HARDWARE_BACKED_TRUST_REQUIRES_ATTESTATION_CEREMONY';
+    throw err;
+  }
+
+  const createsPositiveHardwareEvidence =
+    nextHardwareVerified === true ||
+    ['TRUSTED_ENVIRONMENT', 'STRONGBOX'].includes(nextHardwareSecurityLevel) ||
+    Boolean(nextHardwareVerifiedAt);
+
+  if (createsPositiveHardwareEvidence) {
+    const err = new Error('HARDWARE_ATTESTATION_EVIDENCE_REQUIRES_VERIFIED_CEREMONY');
+    err.code = 'HARDWARE_ATTESTATION_EVIDENCE_REQUIRES_VERIFIED_CEREMONY';
+    throw err;
+  }
+});
 
 deviceRegistrationSchema.index({ organisationId: 1, assignedCafeId: 1, status: 1 });
 deviceRegistrationSchema.index({ organisationId: 1, deviceClass: 1, status: 1 });

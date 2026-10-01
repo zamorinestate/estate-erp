@@ -83,7 +83,7 @@ test('Cafe Operations Dual-PIN, Directory & Remember Access Suite', async (t) =>
     await User.create({
       userId: 'MU-0001',
       organisationId: 'ZAMORIN',
-      name: 'Master User',
+      name: 'Primary Master User',
       email: 'master@zamorin.cafe',
       role: 'MASTER',
       accountStatus: 'ACTIVE',
@@ -95,6 +95,22 @@ test('Cafe Operations Dual-PIN, Directory & Remember Access Suite', async (t) =>
       operatorPinHash: opPin1Hash,
       operatorPinSetAt: new Date(),
       createdBy: 'SYSTEM',
+    });
+
+    // Deliberately malformed legacy row inserted below Mongoose validation to
+    // prove service-level fail-closed behavior against historical bad data.
+    await User.collection.insertOne({
+      userId: 'MU-MALFORMED-OPS',
+      organisationId: 'ZAMORIN',
+      name: 'Invalid MASTER Context',
+      email: 'malformed.ops@zamorin.cafe',
+      role: 'MASTER',
+      accountStatus: 'ACTIVE',
+      isPrimaryMaster: false,
+      passwordHash: dummyPasswordHash,
+      operatorPinHash: opPin1Hash,
+      operatorPinSetAt: new Date(),
+      createdBy: 'LEGACY_TEST_FIXTURE',
     });
   });
 
@@ -120,6 +136,7 @@ test('Cafe Operations Dual-PIN, Directory & Remember Access Suite', async (t) =>
     assert.ok(operatorIds.includes('AD-0001'));
     assert.ok(operatorIds.includes('AD-0002'));
     assert.ok(operatorIds.includes('MU-0001'));
+    assert.equal(operatorIds.includes('MU-MALFORMED-OPS'), false);
 
     // Verify sensitive fields are NOT leaked
     dir.data.cafes.forEach((c) => {
@@ -207,7 +224,7 @@ test('Cafe Operations Dual-PIN, Directory & Remember Access Suite', async (t) =>
     );
   });
 
-  await t.test('6. MASTER user can operate any cafe location', async () => {
+  await t.test('6. Primary Master can operate any cafe location', async () => {
     const result = await operatorSessionService.signInOperator({
       organisationId: 'ZAMORIN',
       cafeId: 'ZC-0002',
@@ -221,12 +238,13 @@ test('Cafe Operations Dual-PIN, Directory & Remember Access Suite', async (t) =>
     assert.equal(result.operatorSession.operatorUserId, 'MU-0001');
   });
 
-  await t.test('7. Master can set/reset Cafe PIN', async () => {
+  await t.test('7. Primary Master can set/reset Cafe PIN', async () => {
     const setResult = await operatorSessionService.setCafePin({
       organisationId: 'ZAMORIN',
       cafeId: 'ZC-0001',
       actorUserId: 'MU-0001',
       actorRole: 'MASTER',
+      actorIsPrimaryMaster: true,
       newPin: '654320',
     });
 
@@ -242,5 +260,37 @@ test('Cafe Operations Dual-PIN, Directory & Remember Access Suite', async (t) =>
     });
 
     assert.equal(result.success, true);
+  });
+
+  await t.test('8. Malformed non-primary MASTER cannot administer Café or Operator PINs', async () => {
+    await assert.rejects(
+      () =>
+        operatorSessionService.setCafePin({
+          organisationId: 'ZAMORIN',
+          cafeId: 'ZC-0001',
+          actorUserId: 'MU-MALFORMED-OPS',
+          actorRole: 'MASTER',
+          actorIsPrimaryMaster: false,
+          newPin: '864209',
+        }),
+      (err) =>
+        err.statusCode === 403 &&
+        err.code === 'UNAUTHORIZED_CAFE_PIN_SETUP'
+    );
+
+    await assert.rejects(
+      () =>
+        operatorSessionService.setOperatorPin({
+          organisationId: 'ZAMORIN',
+          targetUserId: 'AD-0001',
+          actorUserId: 'MU-MALFORMED-OPS',
+          actorRole: 'MASTER',
+          actorIsPrimaryMaster: false,
+          newPin: '864209',
+        }),
+      (err) =>
+        err.statusCode === 403 &&
+        err.code === 'UNAUTHORIZED_PIN_SETUP'
+    );
   });
 });

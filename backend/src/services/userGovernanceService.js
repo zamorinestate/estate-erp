@@ -84,14 +84,18 @@ async function loadTarget(request, userId, { allowArchived = false } = {}) {
  * Returns true/false — does NOT throw.
  */
 function actorIsPrimaryMaster(actorDocument) {
-  return actorDocument.isPrimaryMaster === true;
+  return Boolean(
+    actorDocument &&
+      String(actorDocument.role || '').trim().toUpperCase() === 'MASTER' &&
+      actorDocument.isPrimaryMaster === true
+  );
 }
 
 // ─── Primary Master protection ───────────────────────────────────────────────
 
 /**
- * Countermeasure triggered when a secondary Master attempts an unauthorized
- * governance action against the Primary Master.
+ * Countermeasure triggered when a malformed non-primary MASTER context attempts
+ * an unauthorized governance action against the Primary Master.
  *
  * Requirements:
  * 1. DO NOT modify the Primary Master.
@@ -99,11 +103,15 @@ function actorIsPrimaryMaster(actorDocument) {
  * 3. Increment/revoke attacker session access (sessionVersion & permissionsVersion).
  * 4. Revoke all active attacker sessions.
  * 5. Record a CRITICAL audit event.
- * 6. Send CRITICAL security notifications to other Masters and Owners.
+ * 6. Send CRITICAL security notifications to the Primary Master and Owners.
  * 7. Throw PRIMARY_MASTER_ATTACK_SUSPENDED (403).
  */
 async function handlePrimaryMasterAttack({ request, actorDocument, target, operationDescription }) {
-  if (!target.isPrimaryMaster || actorDocument.isPrimaryMaster) {
+  if (
+    !target?.isPrimaryMaster ||
+    actorIsPrimaryMaster(actorDocument) ||
+    String(actorDocument?.role || '').trim().toUpperCase() !== 'MASTER'
+  ) {
     return;
   }
 
@@ -162,7 +170,10 @@ async function handlePrimaryMasterAttack({ request, actorDocument, target, opera
 
       const recipients = await User.find({
         organisationId: orgId,
-        role: { $in: ['MASTER', 'OWNER'] },
+        $or: [
+          { role: 'OWNER' },
+          { role: 'MASTER', isPrimaryMaster: true },
+        ],
         userId: { $ne: actorDocument.userId },
         accountStatus: 'ACTIVE',
       }).select('userId role');
@@ -208,7 +219,11 @@ async function handlePrimaryMasterAttack({ request, actorDocument, target, opera
  */
 function assertNotPrimaryMasterTarget(target, operationDescription, { request = null, actorDocument = null } = {}) {
   if (target && target.isPrimaryMaster) {
-    if (actorDocument && !actorDocument.isPrimaryMaster) {
+    if (
+      actorDocument &&
+      String(actorDocument.role || '').trim().toUpperCase() === 'MASTER' &&
+      !actorIsPrimaryMaster(actorDocument)
+    ) {
       handlePrimaryMasterAttack({
         request,
         actorDocument,
@@ -236,7 +251,7 @@ function assertMayRestoreAccount(actorDocument, target) {
       (typeof target.statusReason === 'string' &&
         target.statusReason.includes('PRIMARY_MASTER_PROTECTION_TRIGGERED')))
   ) {
-    if (!actorDocument.isPrimaryMaster) {
+    if (!actorIsPrimaryMaster(actorDocument)) {
       throw new ApiError(
         403,
         'PRIMARY_MASTER_AUTHORITY_REQUIRED',
@@ -247,11 +262,11 @@ function assertMayRestoreAccount(actorDocument, target) {
 }
 
 /**
- * Throw MASTER_ROLE_GOVERNANCE_FORBIDDEN when a non-primary Master tries to
- * perform a governance action that only the Primary Master may do.
+ * Reject any non-primary context that attempts a governance action reserved
+ * for the Primary Master.
  */
 function assertPrimaryMasterAuthority(actorDocument, operationDescription) {
-  if (!actorDocument.isPrimaryMaster) {
+  if (!actorIsPrimaryMaster(actorDocument)) {
     throw new ApiError(
       403,
       'PRIMARY_MASTER_AUTHORITY_REQUIRED',
@@ -262,11 +277,10 @@ function assertPrimaryMasterAuthority(actorDocument, operationDescription) {
 
 /**
  * When the target is a MASTER, only the Primary Master actor may act.
- * Secondary Masters cannot change, suspend, archive or otherwise neutralize
- * another Master.
+ * A malformed non-primary MASTER context has zero governance authority.
  */
 function assertMayActOnMasterTarget(actorDocument, target) {
-  if (target.role === 'MASTER' && !actorDocument.isPrimaryMaster) {
+  if (target.role === 'MASTER' && !actorIsPrimaryMaster(actorDocument)) {
     throw new ApiError(
       403,
       'MASTER_ROLE_GOVERNANCE_FORBIDDEN',
@@ -352,6 +366,14 @@ function validateProposedRole(proposedRole) {
       422,
       'INVALID_USER_ROLE',
       `The proposed role "${proposedRole}" is not valid. Supported roles: ${USER_ROLES.join(', ')}.`
+    );
+  }
+
+  if (proposedRole === 'MASTER') {
+    throw new ApiError(
+      403,
+      'MASTER_SINGLETON_ROLE_RESTRICTED',
+      'The MASTER role is reserved exclusively for the existing designated Primary Master and cannot be granted through role governance.'
     );
   }
 }
@@ -539,12 +561,8 @@ async function calculateRoleImpactPreview({
 
   const warnings = [];
 
-  if (proposedRole === 'MASTER') {
-    warnings.push('Granting MASTER role gives organisation-wide authority.');
-  }
-
   if (currentRole === 'MASTER' && proposedRole !== 'MASTER') {
-    warnings.push('Revoking MASTER role removes organisation-wide authority.');
+    warnings.push('Repairing a malformed non-primary MASTER record removes its invalid singleton role assignment.');
   }
 
   if (activeSessionCount > 0) {

@@ -59,7 +59,7 @@ function getPublicAppOrigin() {
     return origin.trim().replace(/\/+$/, '');
   }
   if (process.env.NODE_ENV === 'production') {
-    return 'https://zamorin-cafe-erp.onrender.com';
+    return 'https://zamorin-cafe-erp.vercel.app';
   }
   return 'http://localhost:5173';
 }

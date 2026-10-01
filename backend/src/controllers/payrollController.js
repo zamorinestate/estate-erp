@@ -8,6 +8,8 @@ const {
   PayrollRun,
 } = require('../models/PayrollRun');
 
+const { User } = require('../models/User');
+
 const payrollStatutoryService = require('../services/payrollStatutoryService');
 
 const {
@@ -370,7 +372,37 @@ const downloadEmployeeMonthlyPayslip = asyncHandler(
       }
     }
 
-    const pdfResult = await payrollStatutoryService.renderZamorinCorporatePayslipPdf(payslip, {
+    const employeeUserId = normalizeIdentifier(payslip.employeeUserId || requestedEmployeeId);
+    const employeeSourceAvailable = Boolean(
+      User.db?.readyState === 1 ||
+      User.findOne?.mock ||
+      typeof User.findOne?.restore === 'function'
+    );
+
+    let employee = null;
+    if (employeeSourceAvailable) {
+      const employeeQuery = User.findOne({
+        organisationId,
+        userId: employeeUserId,
+      });
+      employee = employeeQuery && typeof employeeQuery.lean === 'function'
+        ? await employeeQuery.lean()
+        : await employeeQuery;
+    }
+
+    const enrichedPayslip = {
+      ...payslip,
+      employeeName: payslip.employeeName || employee?.name || null,
+      employeeNumber: payslip.employeeNumber || employee?.employeeNumber || employee?.userId || null,
+      designation: payslip.designation || employee?.jobTitle || null,
+      department: payslip.department || employee?.department || null,
+      bankAccountNumber: employee?.bankDetails?.accountNumber || null,
+      bankIfscCode: employee?.bankDetails?.ifsc || null,
+      panNumber: employee?.statutoryApplicability?.pan || null,
+      uanNumber: employee?.statutoryApplicability?.uan || null,
+    };
+
+    const pdfResult = await payrollStatutoryService.renderZamorinCorporatePayslipPdf(enrichedPayslip, {
       tradeName: 'Zamorin Café',
     });
 
@@ -412,21 +444,79 @@ const exportBankDisbursement = asyncHandler(
       }
     }
 
-    // Retrieve payslips for this run
+    // Retrieve payslips and authoritative employee payment profiles.
     const payslipsQuery = Payslip.find({ organisationId, payrollRunId });
-    const payslips = payslipsQuery && typeof payslipsQuery.lean === 'function' ? await payslipsQuery.lean() : await payslipsQuery;
+    const payslips = payslipsQuery && typeof payslipsQuery.lean === 'function'
+      ? await payslipsQuery.lean()
+      : await payslipsQuery;
+
+    const employeeIds = [...new Set(
+      (payslips || [])
+        .map((p) => normalizeIdentifier(p.employeeUserId || p.employeeNumber))
+        .filter(Boolean)
+    )];
+
+    const usersQuery = User.find({
+      organisationId,
+      userId: { $in: employeeIds },
+    });
+    const users = usersQuery && typeof usersQuery.lean === 'function'
+      ? await usersQuery.lean()
+      : await usersQuery;
+    const usersById = new Map(
+      (users || []).map((user) => [normalizeIdentifier(user.userId), user])
+    );
+
+    const missingProfiles = [];
+    const paymentRecords = [];
+
+    for (const payslip of payslips || []) {
+      const employeeId = normalizeIdentifier(payslip.employeeUserId || payslip.employeeNumber);
+      const employee = usersById.get(employeeId);
+      if (!employee) {
+        missingProfiles.push({ employeeId, issue: 'EMPLOYEE_MASTER_NOT_FOUND' });
+        continue;
+      }
+
+      const paymentMethod = String(employee.paymentMethod || 'BANK').trim().toUpperCase();
+      if (paymentMethod !== 'BANK') {
+        continue;
+      }
+
+      const accountNumber = String(employee.bankDetails?.accountNumber || '').trim();
+      const ifscCode = String(employee.bankDetails?.ifsc || '').trim().toUpperCase();
+
+      if (!accountNumber || !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
+        missingProfiles.push({
+          employeeId,
+          issue: 'BANK_DETAILS_REQUIRED',
+        });
+        continue;
+      }
+
+      paymentRecords.push({
+        employeeName: payslip.employeeName || employee.name || employeeId,
+        employeeNumber: payslip.employeeNumber || employee.userId,
+        bankAccountNumber: accountNumber,
+        bankIfscCode: ifscCode,
+        netPayablePaise: payslip.netSalaryPayablePaise ?? payslip.netPayPaise ?? 0,
+        periodKey: run.periodKey,
+      });
+    }
+
+    if (missingProfiles.length > 0) {
+      throw new ApiError(
+        409,
+        'PAYROLL_BANK_DETAILS_INCOMPLETE',
+        `Bank disbursement export is blocked because ${missingProfiles.length} employee payment profile(s) are incomplete.`,
+        { missingProfiles }
+      );
+    }
 
     const schedule = payrollStatutoryService.generateBankDisbursementSchedule({
       payrollRunId,
       cafeId: run.cafeId,
-      paymentRecords: (payslips || []).map((p) => ({
-        employeeName: p.employeeName || p.employeeUserId,
-        employeeNumber: p.employeeNumber || p.employeeUserId,
-        bankAccountNumber: p.bankAccountNumber || '123456789012',
-        bankIfscCode: p.bankIfscCode || 'HDFC0001234',
-        netPayablePaise: p.netSalaryPayablePaise || p.netPayPaise || 0,
-        periodKey: run.periodKey,
-      })),
+      paymentRecords,
     });
 
     return response.status(200).json({

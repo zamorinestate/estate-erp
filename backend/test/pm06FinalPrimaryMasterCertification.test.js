@@ -56,12 +56,12 @@ test('PM-06: Final Primary Master Certification & Security Invariant Suite', asy
       createdBy: 'SYSTEM',
     });
 
-    // 2. Normal Master Account
+    // 2. Malformed MASTER Account
     await User.create({
       organisationId: 'ORG-ZAMORIN',
       userId: 'MU-0002',
-      name: 'Normal Master User',
-      email: 'normal.master@zamorincafe.com',
+      name: 'Malformed MASTER User',
+      email: 'malformed.master@zamorincafe.com',
       passwordHash: '$scrypt$v=1$test_hash',
       role: 'MASTER',
       accountStatus: 'ACTIVE',
@@ -204,8 +204,8 @@ test('PM-06: Final Primary Master Certification & Security Invariant Suite', asy
 
   // ── INVARIANT 2: FIVE-PORTAL PROJECTION & DENY-BY-DEFAULT ─────────────────
   await t.test('INVARIANT 2: Projections hold strict server-side deny-by-default boundary', async () => {
-    // Normal Master attempting Primary Master security policy mutation -> 403
-    const normalMasterReq = {
+    // Malformed MASTER attempting Primary Master security policy mutation -> 403
+    const malformedMasterReq = {
       auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       body: { passwordPolicy: 'Weak' },
     };
@@ -213,7 +213,7 @@ test('PM-06: Final Primary Master Certification & Security Invariant Suite', asy
 
     await assert.rejects(
       async () => {
-        await settingsController.updateSecurityPolicy(normalMasterReq, dummyRes);
+        await settingsController.updateSecurityPolicy(malformedMasterReq, dummyRes);
       },
       (err) => {
         assert.equal(err.statusCode, 403);

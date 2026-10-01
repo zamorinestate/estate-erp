@@ -145,12 +145,12 @@ test('CALC-008: overtime past standard shift detects overtimeMinutes and PENDING
 });
 
 // ---------------------------------------------------------------------------
-// 2. CONTROLLER TESTS: Master Attendance Edit & Normal Master Parity (P0-A01)
+// 2. CONTROLLER TESTS: Primary-Master Attendance Correction Boundary (P0-A01)
 // ---------------------------------------------------------------------------
 
 test('P0-A01: correctAttendance rejects if reason is missing', async () => {
   const req = {
-    auth: { userId: 'MU-NORMAL-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
+    auth: { userId: 'MU-PRIMARY-01', role: 'MASTER', isPrimaryMaster: true, organisationId: 'ORG-ZAMORIN' },
     params: { attendanceId: 'AT-20260819-001' },
     body: { checkInAt: '2026-08-19T09:00:00Z' },
   };
@@ -170,33 +170,7 @@ test('P0-A01: correctAttendance rejects if reason is missing', async () => {
   );
 });
 
-test('P0-A01: correctAttendance allows Normal Master and recalculates metrics', async () => {
-  const origFindOne = Attendance.findOne;
-  const origGenId = SequenceCounter.generateId;
-  const origAuditCreate = AuditEvent.create;
-
-  const sampleRecord = {
-    attendanceId: 'AT-20260819-001',
-    organisationId: 'ORG-ZAMORIN',
-    cafeId: 'ZC-0001',
-    userId: 'EMP-001',
-    businessDate: '2026-08-19',
-    status: 'CHECKED_IN',
-    checkInAt: new Date('2026-08-19T09:00:00Z'),
-    checkOutAt: null,
-    workedMinutes: 0,
-    breakMinutes: 0,
-    overtimeMinutes: 0,
-    breaks: [],
-    rawTimeEvents: [],
-    save: async function () { return this; },
-  };
-
-  Attendance.findOne = async () => sampleRecord;
-  SequenceCounter.generateId = async () => 'AE-20260819-0001';
-  AuditEvent.create = async () => ({});
-
-  let responseJson = null;
+test('P0-A01: correctAttendance rejects retired/non-primary MASTER authority', async () => {
   const req = {
     auth: { userId: 'MU-NORMAL-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
     params: { attendanceId: 'AT-20260819-001' },
@@ -206,29 +180,12 @@ test('P0-A01: correctAttendance allows Normal Master and recalculates metrics', 
       status: 'MANUALLY_CORRECTED',
       reason: 'Biometric reader network disconnect during check-out',
     },
-    ip: '127.0.0.1',
-    get: () => 'TestAgent',
-  };
-  const res = {
-    status(code) {
-      assert.equal(code, 200);
-      return this;
-    },
-    json(data) {
-      responseJson = data;
-      return this;
-    },
   };
 
-  await correctAttendance(req, res);
-
-  assert.equal(responseJson.success, true);
-  assert.equal(responseJson.data.attendance.workedMinutes, 480);
-  assert.equal(responseJson.data.attendance.status, 'MANUALLY_CORRECTED');
-
-  Attendance.findOne = origFindOne;
-  SequenceCounter.generateId = origGenId;
-  AuditEvent.create = origAuditCreate;
+  await assert.rejects(
+    async () => correctAttendance(req, { status() { return this; }, json() { return this; } }),
+    { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
+  );
 });
 
 test('P0-A01: previewRecalculation returns instant calculation preview', async () => {
@@ -531,7 +488,7 @@ test('P0-A03: requestStaffCorrection creates real AttendanceCorrectionRequest', 
   SequenceCounter.generateId = origGenId;
 });
 
-test('P0-A03: reviewStaffCorrection allows Normal Master to approve and update attendance', async () => {
+test('P0-A03: reviewStaffCorrection allows Malformed MASTER to approve and update attendance', async () => {
   const origFindOne = AttendanceCorrectionRequest.findOne;
   const origAttFindOne = Attendance.findOne;
   const origGenId = SequenceCounter.generateId;

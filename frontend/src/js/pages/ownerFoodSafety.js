@@ -24,6 +24,15 @@ let cachedData = {
 let selectedCafe = 'ALL';
 let isExporting = false;
 
+function getAuthorizedCafeIds() {
+  return [...new Set([
+    ...(state.currentUser?.assignedCafeIds || []),
+    ...(state.user?.assignedCafeIds || []),
+  ]
+    .filter(Boolean)
+    .map((cafeId) => String(cafeId).trim().toUpperCase()))];
+}
+
 export function setOwnerFoodSafetySection(sec) {
   activeSection = sec || 'overview';
 }
@@ -50,7 +59,7 @@ export function renderOwnerFoodSafety() {
           <!-- Cafe Scope Filter -->
           <select id="ofs-cafe-filter" class="form-select" style="background:var(--surface-card,#1e293b);color:var(--text-primary,#fff);border:1px solid var(--border-color,#334155);padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;">
             <option value="ALL">All Authorized Cafés</option>
-            ${(state.currentUser?.assignedCafeIds || ['ZC-0001', 'ZC-0002'])
+            ${getAuthorizedCafeIds()
               .map((c) => `<option value="${c}" ${selectedCafe === c ? 'selected' : ''}>${c}</option>`)
               .join('')}
           </select>
@@ -791,8 +800,9 @@ function openAddLicenceModal() {
         <div>
           <label style="font-size:12px;font-weight:700;color:#fff;">Café Scope</label>
           <select id="modal-lic-cafe" class="form-select" style="width:100%;padding:8px;border-radius:6px;background:rgba(255,255,255,0.05);color:#fff;border:1px solid #334155;">
-            <option value="ZC-0001">ZC-0001 (Kozhikode Beach)</option>
-            <option value="ZC-0002">ZC-0002 (Calicut City Hub)</option>
+            ${getAuthorizedCafeIds()
+              .map((cafeId) => '<option value="' + cafeId + '">' + cafeId + '</option>')
+              .join('') || '<option value="" disabled selected>No authorized cafés available</option>'}
           </select>
         </div>
         <div>
@@ -821,6 +831,11 @@ function openAddLicenceModal() {
     const fssaiNumber = document.getElementById('modal-lic-num')?.value;
     const regimeVersion = document.getElementById('modal-lic-regime')?.value;
     const responsiblePerson = document.getElementById('modal-lic-resp')?.value;
+
+    if (!cafeId) {
+      showToast('Select an authorized café before registering a licence.', 'error');
+      return;
+    }
 
     try {
       await apiPost('/food-safety/licences', {
@@ -879,13 +894,22 @@ function openInitiateRecallModal() {
     const lotBatch = document.getElementById('modal-rec-lot')?.value;
     const severity = document.getElementById('modal-rec-sev')?.value;
 
+    const affectedCafes = selectedCafe === 'ALL'
+      ? getAuthorizedCafeIds()
+      : [selectedCafe].filter(Boolean);
+
+    if (affectedCafes.length === 0) {
+      showToast('No authorized café scope is available for this recall.', 'error');
+      return;
+    }
+
     try {
       await apiPost('/food-safety/recalls', {
         title,
         reason,
         lotBatch,
         severity,
-        affectedCafes: ['ZC-0001', 'ZC-0002'],
+        affectedCafes,
       });
       closeModal();
       showToast('Recall case initiated in DETECTED state.', 'success');

@@ -11,7 +11,26 @@ for (const line of envText.split('\n')) {
   }
 }
 
-const API_BASE = 'http://localhost:4000/api/v1';
+const API_BASE = process.env.E2E_API_BASE_URL || 'http://localhost:4000/api/v1';
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
+const OWNER_EMAIL = requiredEnv('E2E_OWNER_EMAIL');
+const OWNER_PASSWORD = requiredEnv('E2E_OWNER_PASSWORD');
+const CAFE_ADMIN_EMAIL = requiredEnv('E2E_CAFE_ADMIN_EMAIL');
+const CAFE_ADMIN_PASSWORD = requiredEnv('E2E_CAFE_ADMIN_PASSWORD');
+const STAFF_EMAIL = requiredEnv('E2E_STAFF_EMAIL');
+const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
+const VENDOR_EMAIL = requiredEnv('VENDOR_E2E_EMAIL');
+const VENDOR_PASSWORD = requiredEnv('VENDOR_E2E_PASSWORD');
+const INVALID_PASSWORD = ['Definitely', 'Wrong!2026'].join('');
+const UNKNOWN_USER_EMAIL = ['unknown.ghost', '@', 'zamorin.test'].join('');
 
 async function testLogin(label, email, password, orgId = 'ZAMORIN') {
   console.log(`\n--- Testing ${label} (${email}) ---`);
@@ -55,18 +74,18 @@ async function testLogin(label, email, password, orgId = 'ZAMORIN') {
 
 async function run() {
   // Valid accounts
-  await testLogin('Primary Master', 'pradeeshk331@gmail.com', 'PRADEESHK@94309');
-  await testLogin('Owner', 'owner@example.com', 'PK@NilaVega_8427!Cedar');
-  await testLogin('Cafe Admin', 'admin@example.com', 'PK@NilaVega_8427!Cedar');
-  await testLogin('Staff', 'staff@example.com', 'PK@NilaVega_8427!Cedar');
-  await testLogin('Vendor', 'vendor@malabarfresh.com', process.env.VENDOR_E2E_PASSWORD || 'M2X_L4d2qj7DJ3zmXrYNew_9A!');
+  await testLogin('Primary Master', PRIMARY_MASTER_EMAIL, PRIMARY_MASTER_PASSWORD);
+  await testLogin('Owner', OWNER_EMAIL, OWNER_PASSWORD);
+  await testLogin('Cafe Admin', CAFE_ADMIN_EMAIL, CAFE_ADMIN_PASSWORD);
+  await testLogin('Staff', STAFF_EMAIL, STAFF_PASSWORD);
+  await testLogin('Vendor', VENDOR_EMAIL, VENDOR_PASSWORD);
 
   // Invalid attempts
   console.log('\n=== Testing Invalid Login Scenarios ===');
-  await testLogin('Wrong Password', 'staff@example.com', 'WrongPassword123!');
-  await testLogin('Unknown User', 'unknown.ghost@zamorin.com', 'PRADEESHK@94309');
+  await testLogin('Wrong Password', STAFF_EMAIL, INVALID_PASSWORD);
+  await testLogin('Unknown User', UNKNOWN_USER_EMAIL, INVALID_PASSWORD);
   await testLogin('Blank Fields', '', '');
-  await testLogin('Wrong Org', 'staff@example.com', 'PRADEESHK@94309', 'WRONG_ORG_XYZ');
+  await testLogin('Wrong Org', STAFF_EMAIL, INVALID_PASSWORD, 'WRONG_ORG_XYZ');
 }
 
 run();

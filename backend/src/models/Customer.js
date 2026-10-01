@@ -140,7 +140,7 @@ const customerSchema = new mongoose.Schema(
       type: String,
       trim: true,
       uppercase: true,
-      default: 'ZC-0001',
+      default: '',
     },
 
     preferredLanguage: {

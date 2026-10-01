@@ -425,13 +425,13 @@ function maskPanNumber(pan) {
 async function renderZamorinCorporatePayslipPdf(payslipData, cafeBranding = {}) {
   const p = payslipData.toObject ? payslipData.toObject() : payslipData;
 
-  const empName = p.employeeName || 'Staff Member';
-  const empId = p.employeeNumber || p.employeeId || 'EMP-ZC-000001';
-  const designation = p.designation || 'Barista';
-  const department = p.department || 'Café Operations';
-  const periodKey = p.periodKey || '2026-09';
+  const empName = p.employeeName || 'Not available';
+  const empId = p.employeeNumber || p.employeeId || p.employeeUserId || 'Not available';
+  const designation = p.designation || 'Not available';
+  const department = p.department || 'Not available';
+  const periodKey = p.periodKey || 'Not available';
   const cafeName = cafeBranding.tradeName || cafeBranding.name || 'Zamorin Café';
-  const cafeId = p.cafeId || 'ZC-0001';
+  const cafeId = p.cafeId || 'Not assigned';
 
   const earnings = p.earnings || {};
   const deductions = p.deductions || {};
@@ -453,11 +453,12 @@ async function renderZamorinCorporatePayslipPdf(payslipData, cafeBranding = {}) 
   const netPay = (p.netSalaryPayablePaise || (grossPay - totalDeductions) * 100) / 100;
   const netInWords = p.netPayableInWords || numberToIndianRupeeWords(Math.round(netPay * 100));
 
-  // Masked sensitive details
-  const maskedAcc = maskAccountNumber(p.bankAccountNumber || '123456789012');
-  const ifsc = p.bankIfscCode || 'HDFC0001234';
-  const maskedPan = maskPanNumber(p.panNumber || 'ABCDE1234F');
-  const uan = p.uanNumber || '100987654321';
+  // Masked sensitive details. Missing source data stays visibly unavailable;
+  // statutory/payroll exports must never invent financial or identity values.
+  const maskedAcc = p.bankAccountNumber ? maskAccountNumber(p.bankAccountNumber) : 'Not available';
+  const ifsc = p.bankIfscCode || 'Not available';
+  const maskedPan = p.panNumber ? maskPanNumber(p.panNumber) : 'Not available';
+  const uan = p.uanNumber || 'Not available';
 
   function escapePdf(str) {
     return String(str ?? '').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
@@ -480,7 +481,13 @@ async function renderZamorinCorporatePayslipPdf(payslipData, cafeBranding = {}) 
   streamOps += `BT\n/F1 8.5 Tf\n0.2 0.25 0.35 rg\n`;
   streamOps += `1 0 0 1 30 718 Tm\n(Employee ID: ${escapePdf(empId)}   |   Designation: ${escapePdf(designation)}   |   Department: ${escapePdf(department)}) Tj\n`;
   streamOps += `1 0 0 1 30 702 Tm\n(Bank A/C: ${escapePdf(maskedAcc)}   |   IFSC: ${escapePdf(ifsc)}   |   PAN: ${escapePdf(maskedPan)}) Tj\n`;
-  streamOps += `1 0 0 1 30 686 Tm\n(UAN: ${escapePdf(uan)}   |   Calendar Days: ${attendance.totalCalendarDays || 30}   |   Payable Days: ${attendance.payableDays || 30}) Tj\n`;
+  const calendarDaysDisplay = Number.isFinite(Number(attendance.totalCalendarDays))
+    ? String(attendance.totalCalendarDays)
+    : 'Not available';
+  const payableDaysDisplay = Number.isFinite(Number(attendance.payableDays))
+    ? String(attendance.payableDays)
+    : 'Not available';
+  streamOps += `1 0 0 1 30 686 Tm\n(UAN: ${escapePdf(uan)}   |   Calendar Days: ${escapePdf(calendarDaysDisplay)}   |   Payable Days: ${escapePdf(payableDaysDisplay)}) Tj\n`;
   streamOps += `ET\n`;
 
   // Table Headers (Earnings on Left, Deductions on Right)
@@ -607,20 +614,32 @@ function generateBankDisbursementSchedule({ payrollRunId, cafeId, paymentRecords
   let totalDisbursementPaisa = 0;
 
   const rows = paymentRecords.map((rec, idx) => {
-    const amountPaisa = Math.max(0, Math.round(Number(rec.netPayablePaise || rec.amountPaise || 0)));
+    const accountNumber = String(rec.bankAccountNumber || rec.accountNumber || '').trim();
+    const ifscCode = String(rec.bankIfscCode || rec.ifscCode || '').trim().toUpperCase();
+    const employeeId = String(rec.employeeNumber || rec.employeeId || '').trim();
+    const beneficiaryName = String(rec.employeeName || rec.beneficiaryName || '').trim();
+
+    if (!employeeId || !beneficiaryName || !accountNumber || !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
+      const error = new Error('Bank disbursement record is missing authoritative employee or bank details.');
+      error.code = 'PAYROLL_BANK_DETAILS_INCOMPLETE';
+      error.recordIndex = idx;
+      throw error;
+    }
+
+    const amountPaisa = Math.max(0, Math.round(Number(rec.netPayablePaise ?? rec.amountPaise ?? 0)));
     totalDisbursementPaisa += amountPaisa;
     const amountRupees = (amountPaisa / 100).toFixed(2);
 
     return {
       slNo: idx + 1,
-      beneficiaryName: String(rec.employeeName || rec.beneficiaryName || 'Employee').trim().toUpperCase(),
-      employeeId: rec.employeeNumber || rec.employeeId || `EMP-${idx + 1}`,
-      accountNumber: String(rec.bankAccountNumber || rec.accountNumber || '').trim(),
-      ifscCode: String(rec.bankIfscCode || rec.ifscCode || 'HDFC0001234').trim().toUpperCase(),
+      beneficiaryName: beneficiaryName.toUpperCase(),
+      employeeId,
+      accountNumber,
+      ifscCode,
       amountInRupees: amountRupees,
       amountPaisa,
       paymentMethod: Number(amountRupees) >= 200000 ? 'RTGS' : 'NEFT',
-      narration: `SALARY ${rec.periodKey || ''} ${rec.employeeNumber || ''}`.trim(),
+      narration: `SALARY ${rec.periodKey || ''} ${employeeId}`.trim(),
     };
   });
 

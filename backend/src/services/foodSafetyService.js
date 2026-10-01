@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 /**
  * ============================================================================
  * ZAMORIN CAFÉ ERP — FOOD SAFETY & HYGIENE SERVICE
@@ -16,10 +18,60 @@ const { CleaningTask } = require('../models/CleaningTask');
 const { PestControlRecord } = require('../models/PestControlRecord');
 const { CalibrationRecord } = require('../models/CalibrationRecord');
 const { AuditEvent } = require('../models/AuditEvent');
+const { SequenceCounter } = require('../models/SequenceCounter');
 const { EmployeeTraining, FOSTAC_VERIFICATION_STATUSES } = require('../models/EmployeeTraining');
 const { ApiError } = require('../utils/ApiError');
 const { TemperatureRuleService } = require('./temperatureRuleService');
 const { calculateNextQuarterlyDueDate } = require('../utils/trainingRecurrence');
+const { recordAuditEvent } = require('./auditService');
+
+function durableAuditAvailable() {
+  return Boolean(
+    mongoose.connection?.readyState === 1 ||
+    AuditEvent.create?.mock ||
+    typeof AuditEvent.create?.restore === 'function'
+  );
+}
+
+async function generateFoodSafetyId({ organisationId, sequenceKey, prefix }) {
+  return SequenceCounter.generateId({
+    organisationId,
+    sequenceKey,
+    prefix,
+    minimumDigits: 4,
+  });
+}
+
+async function recordFoodSafetyAudit({
+  organisationId,
+  cafeId,
+  actorUserId,
+  actorRole = 'SYSTEM',
+  action,
+  entityType,
+  entityId,
+  result = 'SUCCESS',
+  riskClassification = 'LOW',
+  metadata = {},
+}) {
+  if (!durableAuditAvailable()) return null;
+
+  return recordAuditEvent({
+    organisationId,
+    cafeId,
+    actorUserId,
+    actorRole: String(actorRole || 'SYSTEM').trim().toUpperCase(),
+    module: 'QUALITY',
+    action,
+    entityType,
+    entityId,
+    result,
+    riskClassification,
+    correlationId: `FOOD-SAFETY-${entityId}`,
+    metadata,
+  });
+}
+
 
 class FoodSafetyService {
   /**
@@ -36,6 +88,7 @@ class FoodSafetyService {
     minimumAllowedCelsius,
     maximumAllowedCelsius,
     recordedByUserId,
+    actorRole = 'SYSTEM',
     operatorSessionId = null,
     remarks = '',
     processType = null,
@@ -87,8 +140,11 @@ class FoodSafetyService {
     }
 
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    const logId = `TEMP-${datePart}-${rand}`;
+    const logId = await generateFoodSafetyId({
+      organisationId,
+      sequenceKey: `TEMPERATURE_LOG_${datePart}`,
+      prefix: `TEMP-${datePart}`,
+    });
 
     const log = await TemperatureLog.create({
       logId,
@@ -116,26 +172,31 @@ class FoodSafetyService {
       ruleEvaluationStatus: ruleEvalStatus,
     });
 
-    // Record audit event for food safety excursion
+    // Excursions are safety-significant and must use the canonical audit schema.
+    // In a connected production runtime, audit failure propagates instead of
+    // silently presenting an unaudited excursion as a successful workflow.
     if (isExcursion) {
-      await AuditEvent.create({
-        auditEventId: `AUDIT-TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      await recordFoodSafetyAudit({
         organisationId,
         cafeId,
-        action: 'TEMPERATURE_EXCURSION_DETECTED',
-        targetResource: 'TemperatureLog',
-        resourceId: logId,
         actorUserId: recordedByUserId,
-        outcome: 'WARNING',
-        severity: 'HIGH',
+        actorRole,
+        action: 'TEMPERATURE_EXCURSION_DETECTED',
+        entityType: 'TEMPERATURE_LOG',
+        entityId: logId,
+        result: 'SUCCESS',
+        riskClassification: 'HIGH',
         metadata: {
-          reading,
-          min,
-          max,
+          readingCelsius: reading,
+          minimumAllowedCelsius: min,
+          maximumAllowedCelsius: max,
           monitoringPoint,
           equipmentId,
+          ruleEvaluationStatus: ruleEvalStatus,
+          ruleId: matchedRuleId,
+          ruleVersion: matchedRuleVersion,
         },
-      }).catch(() => {});
+      });
     }
 
     return log;
@@ -151,6 +212,7 @@ class FoodSafetyService {
     correctiveAction,
     resolvedReadingCelsius,
     actionTakenByUserId,
+    actorRole = 'SYSTEM',
     remarks = '',
   }) {
     const log = await TemperatureLog.findOne({ organisationId, cafeId, logId });
@@ -175,21 +237,22 @@ class FoodSafetyService {
 
     await log.save();
 
-    await AuditEvent.create({
-      auditEventId: `AUDIT-CORR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    await recordFoodSafetyAudit({
       organisationId,
       cafeId,
-      action: 'TEMPERATURE_CORRECTIVE_ACTION_APPLIED',
-      targetResource: 'TemperatureLog',
-      resourceId: logId,
       actorUserId: actionTakenByUserId,
-      outcome: 'SUCCESS',
+      actorRole,
+      action: 'TEMPERATURE_CORRECTIVE_ACTION_APPLIED',
+      entityType: 'TEMPERATURE_LOG',
+      entityId: logId,
+      result: 'SUCCESS',
+      riskClassification: 'MEDIUM',
       metadata: {
-        originalReading: log.originalExcursionReading,
-        resolvedReading: log.resolvedReadingCelsius,
+        originalReadingCelsius: log.originalExcursionReading,
+        resolvedReadingCelsius: log.resolvedReadingCelsius,
         correctiveAction,
       },
-    }).catch(() => {});
+    });
 
     return log;
   }
@@ -197,8 +260,19 @@ class FoodSafetyService {
   /**
    * Queries temperature logs with filtering.
    */
-  static async listTemperatures({ organisationId, cafeId, excursionsOnly = false, limit = 50 }) {
-    const query = { organisationId, cafeId };
+  static async listTemperatures({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    excursionsOnly = false,
+    limit = 50,
+  }) {
+    const query = { organisationId };
+    if (cafeId) {
+      query.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      query.cafeId = { $in: cafeIds };
+    }
     if (excursionsOnly) {
       query.isExcursion = true;
     }
@@ -220,8 +294,11 @@ class FoodSafetyService {
     remarks = '',
   }) {
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    const taskId = `CLN-${datePart}-${rand}`;
+    const taskId = await generateFoodSafetyId({
+      organisationId,
+      sequenceKey: `CLEANING_TASK_${datePart}`,
+      prefix: `CLN-${datePart}`,
+    });
 
     return CleaningTask.create({
       taskId,
@@ -245,6 +322,7 @@ class FoodSafetyService {
     cafeId,
     taskId,
     completedByUserId,
+    actorRole = 'SYSTEM',
     verifiedByUserId = null,
     remarks = '',
   }) {
@@ -268,20 +346,22 @@ class FoodSafetyService {
 
     await task.save();
 
-    await AuditEvent.create({
-      auditEventId: `AUDIT-CLN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    await recordFoodSafetyAudit({
       organisationId,
       cafeId,
-      action: 'CLEANING_TASK_COMPLETED',
-      targetResource: 'CleaningTask',
-      resourceId: taskId,
       actorUserId: completedByUserId,
-      outcome: 'SUCCESS',
+      actorRole,
+      action: 'CLEANING_TASK_COMPLETED',
+      entityType: 'CLEANING_TASK',
+      entityId: taskId,
+      result: 'SUCCESS',
+      riskClassification: 'MEDIUM',
       metadata: {
         areaOrEquipment: task.areaOrEquipment,
         status: task.status,
+        verifiedByUserId: verifiedByUserId || null,
       },
-    }).catch(() => {});
+    });
 
     return task;
   }
@@ -289,20 +369,31 @@ class FoodSafetyService {
   /**
    * Lists cleaning tasks, marking overdue uncompleted tasks as MISSED.
    */
-  static async listCleaningTasks({ organisationId, cafeId, status = null, limit = 50 }) {
+  static async listCleaningTasks({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    status = null,
+    limit = 50,
+  }) {
     const now = new Date();
-    // Auto-update overdue tasks that are still DUE
+    const scope = { organisationId };
+    if (cafeId) {
+      scope.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      scope.cafeId = { $in: cafeIds };
+    }
+
     await CleaningTask.updateMany(
       {
-        organisationId,
-        cafeId,
+        ...scope,
         status: 'DUE',
         dueDateTime: { $lt: now },
       },
       { $set: { status: 'MISSED' } }
-    ).catch(() => {});
+    );
 
-    const query = { organisationId, cafeId };
+    const query = { ...scope };
     if (status) {
       query.status = status;
     }
@@ -329,8 +420,11 @@ class FoodSafetyService {
     remarks = '',
   }) {
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    const recordId = `PEST-${datePart}-${rand}`;
+    const recordId = await generateFoodSafetyId({
+      organisationId,
+      sequenceKey: `PEST_CONTROL_${datePart}`,
+      prefix: `PEST-${datePart}`,
+    });
 
     return PestControlRecord.create({
       recordId,
@@ -351,8 +445,19 @@ class FoodSafetyService {
     });
   }
 
-  static async listPestControl({ organisationId, cafeId, limit = 50 }) {
-    return PestControlRecord.find({ organisationId, cafeId }).sort({ serviceDate: -1 }).limit(limit).lean();
+  static async listPestControl({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    limit = 50,
+  }) {
+    const query = { organisationId };
+    if (cafeId) {
+      query.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      query.cafeId = { $in: cafeIds };
+    }
+    return PestControlRecord.find(query).sort({ serviceDate: -1 }).limit(limit).lean();
   }
 
   /**
@@ -373,8 +478,11 @@ class FoodSafetyService {
     remarks = '',
   }) {
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    const calibrationId = `CAL-${datePart}-${rand}`;
+    const calibrationId = await generateFoodSafetyId({
+      organisationId,
+      sequenceKey: `CALIBRATION_${datePart}`,
+      prefix: `CAL-${datePart}`,
+    });
 
     return CalibrationRecord.create({
       calibrationId,
@@ -394,8 +502,19 @@ class FoodSafetyService {
     });
   }
 
-  static async listCalibrations({ organisationId, cafeId, limit = 50 }) {
-    return CalibrationRecord.find({ organisationId, cafeId }).sort({ nextDueDate: 1 }).limit(limit).lean();
+  static async listCalibrations({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    limit = 50,
+  }) {
+    const query = { organisationId };
+    if (cafeId) {
+      query.cafeId = cafeId;
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      query.cafeId = { $in: cafeIds };
+    }
+    return CalibrationRecord.find(query).sort({ nextDueDate: 1 }).limit(limit).lean();
   }
 
   /**
@@ -436,8 +555,11 @@ class FoodSafetyService {
     }
 
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randPart = Math.floor(1000 + Math.random() * 9000);
-    const trainingId = `TRN-ONSITE-${datePart}-${randPart}`;
+    const trainingId = await generateFoodSafetyId({
+      organisationId: cleanOrg,
+      sequenceKey: `FOOD_SAFETY_TRAINING_${datePart}`,
+      prefix: `TRN-ONSITE-${datePart}`,
+    });
 
     const training = await EmployeeTraining.create({
       trainingId,

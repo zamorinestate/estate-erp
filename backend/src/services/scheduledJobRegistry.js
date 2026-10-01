@@ -19,6 +19,8 @@ const REGISTERED_JOBS = [
     owner: 'Infrastructure Operations',
     staleThresholdMinutes: 480,
     critical: false,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-DOCUMENT-INTEGRITY-RECONCILIATION',
@@ -27,6 +29,8 @@ const REGISTERED_JOBS = [
     owner: 'Security & Compliance',
     staleThresholdMinutes: 1560,
     critical: true,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-NOTIFICATION-OUTBOX-DISPATCH',
@@ -35,14 +39,18 @@ const REGISTERED_JOBS = [
     owner: 'Mail Operations Lead',
     staleThresholdMinutes: 10,
     critical: true,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/notificationOutboxWorker.js',
   },
   {
     jobId: 'JOB-ATTENDANCE-AUTO-CHECKOUT',
-    name: 'Midnight Attendance Rollover & Auto-Checkout',
+    name: 'Attendance Rollover & Missed-Punch Detection',
     schedule: 'Daily at 04:00 IST (30 22 * * *)',
     owner: 'Workforce Operations',
     staleThresholdMinutes: 1560,
     critical: true,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-BACKUP-PRECONDITION-AUDIT',
@@ -51,6 +59,8 @@ const REGISTERED_JOBS = [
     owner: 'Database Operations',
     staleThresholdMinutes: 840,
     critical: true,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
   {
     jobId: 'JOB-ASSET-MAINTENANCE-SCHEDULER',
@@ -59,11 +69,14 @@ const REGISTERED_JOBS = [
     owner: 'Equipment & Asset Reliability Lead',
     staleThresholdMinutes: 1560,
     critical: true,
+    runtimeWiring: 'WIRED',
+    workerEntrypoint: 'services/scheduledOperationsWorker.js',
   },
 ];
 
 class ScheduledJobRegistry {
   constructor() {
+    this.startedAt = new Date();
     this.jobs = new Map();
     this.processedIdempotencyKeys = new Set();
     this.executionHistory = [];
@@ -153,27 +166,69 @@ class ScheduledJobRegistry {
     const now = Date.now();
     const staleJobs = [];
     const failingJobs = [];
+    const unwiredJobs = [];
+    const neverRunJobs = [];
 
     for (const [jobId, job] of this.jobs.entries()) {
+      if (job.runtimeWiring !== 'WIRED') {
+        unwiredJobs.push({
+          jobId,
+          critical: Boolean(job.critical),
+          schedule: job.schedule,
+          reason: 'NO_RUNTIME_WORKER_ENTRYPOINT',
+        });
+        continue;
+      }
+
       if (job.consecutiveFailures > 0) {
-        failingJobs.push({ jobId, consecutiveFailures: job.consecutiveFailures, lastFailure: job.lastFailure });
+        failingJobs.push({
+          jobId,
+          consecutiveFailures: job.consecutiveFailures,
+          lastFailure: job.lastFailure,
+        });
       }
 
       if (job.lastSuccess) {
         const elapsedMinutes = (now - new Date(job.lastSuccess).getTime()) / 60000;
         if (elapsedMinutes > job.staleThresholdMinutes) {
-          staleJobs.push({ jobId, elapsedMinutes: Math.floor(elapsedMinutes), threshold: job.staleThresholdMinutes });
+          staleJobs.push({
+            jobId,
+            elapsedMinutes: Math.floor(elapsedMinutes),
+            threshold: job.staleThresholdMinutes,
+          });
+        }
+      } else {
+        const sinceRegistryStartMinutes =
+          (now - new Date(this.startedAt).getTime()) / 60000;
+        if (sinceRegistryStartMinutes > job.staleThresholdMinutes) {
+          neverRunJobs.push({
+            jobId,
+            elapsedMinutes: Math.floor(sinceRegistryStartMinutes),
+            threshold: job.staleThresholdMinutes,
+            reason: 'WIRED_JOB_HAS_NEVER_RECORDED_SUCCESS',
+          });
         }
       }
     }
 
+    const unhealthyIds = new Set([
+      ...staleJobs.map((job) => job.jobId),
+      ...failingJobs.map((job) => job.jobId),
+      ...unwiredJobs.filter((job) => job.critical).map((job) => job.jobId),
+      ...neverRunJobs.map((job) => job.jobId),
+    ]);
+
     return {
       timestamp: new Date().toISOString(),
+      registryStartedAt: this.startedAt.toISOString(),
       totalJobs: this.jobs.size,
-      healthyJobs: this.jobs.size - failingJobs.length - staleJobs.length,
+      wiredJobs: Array.from(this.jobs.values()).filter((job) => job.runtimeWiring === 'WIRED').length,
+      unwiredJobs,
+      neverRunJobs,
       staleJobs,
       failingJobs,
-      isAllHealthy: staleJobs.length === 0 && failingJobs.length === 0,
+      healthyJobs: Math.max(0, this.jobs.size - unhealthyIds.size),
+      isAllHealthy: unhealthyIds.size === 0,
     };
   }
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 const { ShiftChangeRequest, SHIFT_CHANGE_STATUSES } = require('../models/ShiftChangeRequest');
 const { ShiftRoster } = require('../models/ShiftRoster');
 const { NotificationOutbox } = require('../models/NotificationOutbox');
@@ -13,7 +15,7 @@ const { recordRequestAudit } = require('../services/auditService');
 
 // 1. Employee: Submit Shift Change Request
 const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
-  const { organisationId, userId, name } = request.auth;
+  const { organisationId, userId, name, assignedCafeIds = [] } = request.auth;
   const {
     requestedDate,
     endDate = null,
@@ -40,105 +42,145 @@ const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'REASON_REQUIRED', 'A reason for the shift change request is required.');
   }
 
-  // Resolve cafeId if not passed in body
-  let effectiveCafeId = cafeId;
-  if (!effectiveCafeId) {
-    const userDoc = await User.findOne({ userId, organisationId }).select('cafeId primaryCafeId assignedCafeIds').lean();
-    effectiveCafeId = userDoc?.primaryCafeId || userDoc?.cafeId || userDoc?.assignedCafeIds?.[0] || 'ZC-0001';
+  const userDoc = await User.findOne({ userId, organisationId })
+    .select('cafeId primaryCafeId assignedCafeIds')
+    .lean();
+
+  const allowedCafes = new Set(
+    [
+      ...(Array.isArray(assignedCafeIds) ? assignedCafeIds : [assignedCafeIds]),
+      userDoc?.primaryCafeId,
+      userDoc?.cafeId,
+      ...(Array.isArray(userDoc?.assignedCafeIds) ? userDoc.assignedCafeIds : []),
+    ]
+      .map((value) => String(value || '').trim().toUpperCase())
+      .filter(Boolean)
+  );
+
+  const requestedCafeId = String(cafeId || '').trim().toUpperCase();
+  if (requestedCafeId && !allowedCafes.has(requestedCafeId)) {
+    throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'You cannot submit a shift-change request for an unassigned Café.');
   }
 
-  const dateStr = new Date().getFullYear();
-  const randSeq = Math.floor(1000 + Math.random() * 9000);
-  const requestId = `SCR-${dateStr}-${randSeq}`;
+  const effectiveCafeId =
+    requestedCafeId ||
+    String(userDoc?.primaryCafeId || userDoc?.cafeId || userDoc?.assignedCafeIds?.[0] || '').trim().toUpperCase();
 
-  const shiftRequest = await ShiftChangeRequest.create({
-    requestId,
-    organisationId,
-    employeeUserId: userId,
-    employeeName: name || userId,
-    cafeId: effectiveCafeId,
-    requestedDate: String(requestedDate).trim(),
-    endDate: endDate ? String(endDate).trim() : null,
-    currentShift: String(currentShift || '').trim(),
-    requestedShift: String(requestedShift).trim(),
-    reason: String(reason).trim(),
-    notes: String(notes || '').trim(),
-    status: 'SUBMITTED',
-  });
+  if (!effectiveCafeId) {
+    throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'An assigned Café is required before submitting a shift-change request.');
+  }
 
+  let shiftRequest;
+  const session = await mongoose.startSession();
   try {
-    let approvalId;
-    try {
-      approvalId = await SequenceCounter.generateId({
+    await session.withTransaction(async () => {
+      const year = new Date().getFullYear();
+      const requestId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'SHIFT_CHANGE_REQUEST',
+        prefix: `SCR-${year}`,
+        minimumDigits: 4,
+        session,
+      });
+
+      shiftRequest = new ShiftChangeRequest({
+        requestId,
+        organisationId,
+        employeeUserId: userId,
+        employeeName: name || userId,
+        cafeId: effectiveCafeId,
+        requestedDate: String(requestedDate).trim(),
+        endDate: endDate ? String(endDate).trim() : null,
+        currentShift: String(currentShift || '').trim(),
+        requestedShift: String(requestedShift).trim(),
+        reason: String(reason).trim(),
+        notes: String(notes || '').trim(),
+        status: 'SUBMITTED',
+      });
+      await shiftRequest.save({ session });
+
+      const approvalId = await SequenceCounter.generateId({
         organisationId,
         sequenceKey: 'APPROVAL',
         prefix: 'APP',
         minimumDigits: 5,
+        session,
       });
-    } catch {
-      const approvalCount = await Approval.countDocuments({ organisationId });
-      approvalId = `APP-${String(approvalCount + Math.floor(1000 + Math.random() * 9000)).padStart(5, '0')}`;
-    }
 
-    await Approval.create({
-      approvalId,
-      organisationId,
-      cafeId: effectiveCafeId,
-      entityType: 'SHIFT_CHANGE',
-      entityId: shiftRequest.requestId,
-      requestingUserId: userId,
-      actionRequired: `Shift Change: ${shiftRequest.requestedDate} (${shiftRequest.currentShift || 'Current'} -> ${shiftRequest.requestedShift})`,
-      amountPaisa: 0,
-      status: 'PENDING',
+      const approval = new Approval({
+        approvalId,
+        organisationId,
+        cafeId: effectiveCafeId,
+        entityType: 'SHIFT_CHANGE',
+        entityId: shiftRequest.requestId,
+        requestingUserId: userId,
+        actionRequired: `Shift Change: ${shiftRequest.requestedDate} (${shiftRequest.currentShift || 'Current'} -> ${shiftRequest.requestedShift})`,
+        amountPaisa: 0,
+        status: 'PENDING',
+      });
+      await approval.save({ session });
+
+      await recordRequestAudit(
+        {
+          request,
+          module: 'ATTENDANCE',
+          action: 'SHIFT_CHANGE_REQUEST_CREATE',
+          entityType: 'SHIFT_CHANGE_REQUEST',
+          entityId: shiftRequest.requestId,
+          metadata: { requestedDate, requestedShift, reason },
+          result: 'SUCCESS',
+          riskClassification: 'MEDIUM',
+        },
+        { session }
+      );
     });
+  } finally {
+    await session.endSession();
+  }
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
-    const recipientIds = new Set(masterUsers.map((m) => m.userId));
-    recipientIds.add('MU-0001');
+  try {
+    const masterUsers = await User.find({
+      organisationId,
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
 
     const notifDateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const masterId of recipientIds) {
-      const mUser = masterUsers.find((m) => m.userId === masterId);
-      const notifId = `NT-${notifDateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${notifDateStr}`,
+        prefix: `NT-${notifDateStr}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
-        cafeId: effectiveCafeId || 'ALL',
+        cafeId: effectiveCafeId,
         eventType: 'SHIFT_CHANGE_REQUESTED',
         category: 'OPERATIONS',
-        recipientUserId: masterId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: mUser?.email || 'pradeeshk331@gmail.com',
+        recipientEmail: master.email,
         title: `🔄 Shift Change Request: ${userId}`,
         message: `${name || userId} requested shift change for ${requestedDate} (${currentShift || 'Current'} -> ${requestedShift}). Reason: ${reason}`,
         priority: 'NORMAL',
         channels: ['IN_APP'],
-        deepLink: `#approvals`,
+        deepLink: '#approvals',
         sourceModule: 'ATTENDANCE',
         sourceEntityType: 'SHIFT_CHANGE',
         sourceEntityId: shiftRequest.requestId,
-        deduplicationKey: `SCR_${shiftRequest.requestId}_${Date.now()}_${masterId}`,
-        correlationId: request.correlationId || `CORR-SCR-${shiftRequest.requestId}-${Math.floor(1000 + Math.random() * 9000)}`,
+        deduplicationKey: `SCR_${shiftRequest.requestId}_${master.userId}`,
+        correlationId: request.correlationId || `CORR-SCR-${shiftRequest.requestId}`,
         status: 'DELIVERED',
         deliveredAt: new Date(),
         createdBy: userId,
       });
     }
   } catch (err) {
-    console.warn(`[SHIFT_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
+    console.warn(`[SHIFT_CHANGE_NOTIFICATION_WARN] ${err.message}`);
   }
-
-  try {
-    await recordRequestAudit({
-      request,
-      module: 'ATTENDANCE',
-      action: 'SHIFT_CHANGE_REQUEST_CREATE',
-      entityType: 'SHIFT_CHANGE_REQUEST',
-      entityId: requestId,
-      metadata: { requestedDate, requestedShift, reason },
-      result: 'SUCCESS',
-    });
-  } catch (e) {}
 
   return response.status(201).json({
     success: true,
@@ -263,38 +305,88 @@ const reviewShiftChangeRequest = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_STATUS', `Status must be one of: ${SHIFT_CHANGE_STATUSES.join(', ')}`);
   }
 
-  const shiftRequest = await ShiftChangeRequest.findOne({ requestId, organisationId });
-  if (!shiftRequest) {
-    throw new ApiError(404, 'NOT_FOUND', 'Shift change request not found.');
-  }
-
-  shiftRequest.status = status;
-  shiftRequest.reviewNotes = String(reviewNotes || '').trim();
-  shiftRequest.reviewedByUserId = userId;
-  shiftRequest.reviewedAt = new Date();
-  await shiftRequest.save();
-
-  // Sync Approval record
+  let shiftRequest;
+  const reviewSession = await mongoose.startSession();
   try {
-    const approvalStatus = status === 'APPROVED' ? 'APPROVED' : (status === 'REJECTED' ? 'REJECTED' : 'PENDING');
-    await Approval.updateOne(
-      { organisationId, entityId: requestId, status: 'PENDING' },
-      {
-        $set: {
-          status: approvalStatus,
-          decidedByUserId: userId,
-          decisionReason: String(reviewNotes || '').trim(),
-          decidedAt: new Date(),
-        },
+    await reviewSession.withTransaction(async () => {
+      shiftRequest = await ShiftChangeRequest.findOne(
+        { requestId, organisationId },
+        null,
+        { session: reviewSession }
+      );
+      if (!shiftRequest) {
+        throw new ApiError(404, 'NOT_FOUND', 'Shift change request not found.');
       }
-    );
-  } catch (_) {}
+
+      const approvalStatus =
+        status === 'APPROVED'
+          ? 'APPROVED'
+          : (status === 'REJECTED' ? 'REJECTED' : 'PENDING');
+
+      shiftRequest.status = status;
+      shiftRequest.reviewNotes = String(reviewNotes || '').trim();
+      shiftRequest.reviewedByUserId = userId;
+      shiftRequest.reviewedAt = new Date();
+      await shiftRequest.save({ session: reviewSession });
+
+      const approvalUpdate = await Approval.updateOne(
+        {
+          organisationId,
+          entityType: 'SHIFT_CHANGE',
+          entityId: requestId,
+          status: 'PENDING',
+        },
+        {
+          $set: {
+            status: approvalStatus,
+            decidedByUserId: ['APPROVED', 'REJECTED'].includes(approvalStatus) ? userId : null,
+            decisionReason: String(reviewNotes || '').trim(),
+            decidedAt: ['APPROVED', 'REJECTED'].includes(approvalStatus) ? new Date() : null,
+          },
+        },
+        { session: reviewSession }
+      );
+
+      if (!approvalUpdate || approvalUpdate.matchedCount !== 1) {
+        throw new ApiError(
+          409,
+          'SHIFT_CHANGE_APPROVAL_STATE_CONFLICT',
+          'Shift-change approval state is missing or changed concurrently; no review decision was committed.'
+        );
+      }
+
+      await recordRequestAudit(
+        {
+          request,
+          module: 'ATTENDANCE',
+          action: 'SHIFT_CHANGE_REQUEST_REVIEW',
+          entityType: 'SHIFT_CHANGE_REQUEST',
+          entityId: requestId,
+          metadata: {
+            newStatus: status,
+            reviewerUserId: userId,
+            approvalStatus,
+          },
+          result: 'SUCCESS',
+          riskClassification: 'MEDIUM',
+        },
+        { session: reviewSession }
+      );
+    });
+  } finally {
+    await reviewSession.endSession();
+  }
 
   // Create canonical notification to employee
   try {
     const recipientUser = await User.findOne({ organisationId, userId: shiftRequest.employeeUserId }).select('email role').lean();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const notifId = await SequenceCounter.generateId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_${dateStr}`,
+      prefix: `NT-${dateStr}`,
+      minimumDigits: 5,
+    });
     const eventType = status === 'APPROVED' ? 'SHIFT_CHANGE_APPROVED' : 'SHIFT_CHANGE_REJECTED';
     await Notification.create({
       notificationId: notifId,
@@ -318,18 +410,6 @@ const reviewShiftChangeRequest = asyncHandler(async (request, response) => {
   } catch (e) {
     console.warn(`[SHIFT_CHANGE_NOTIF_WARN] ${e.message}`);
   }
-
-  try {
-    await recordRequestAudit({
-      request,
-      module: 'ATTENDANCE',
-      action: 'SHIFT_CHANGE_REQUEST_REVIEW',
-      entityType: 'SHIFT_CHANGE_REQUEST',
-      entityId: requestId,
-      metadata: { newStatus: status, reviewerUserId: userId },
-      result: 'SUCCESS',
-    });
-  } catch (e) {}
 
   return response.status(200).json({
     success: true,

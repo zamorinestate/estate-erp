@@ -9,15 +9,21 @@ function requireGovernance(req, cafeId = null) {
     throw new ApiError(401, 'UNAUTHENTICATED', 'Authentication required.');
   }
   const role = req.auth.role.toUpperCase();
-  if (role !== 'MASTER' && role !== 'OWNER') {
+  const isPrimaryMaster =
+    role === 'MASTER' && req.auth.isPrimaryMaster === true;
+  const isOwner = role === 'OWNER';
+
+  if (!isPrimaryMaster && !isOwner) {
     throw new ApiError(
       403,
-      'GOVERNANCE_ACCESS_REQUIRED',
-      'Only Master and Owner roles may manage Café Operations access.'
+      role === 'MASTER'
+        ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+        : 'GOVERNANCE_ACCESS_REQUIRED',
+      'Only the Primary Master or Owner may manage Café Operations access.'
     );
   }
 
-  if (role === 'OWNER' && cafeId) {
+  if (isOwner && cafeId) {
     const rawCafes = [
       ...(Array.isArray(req.auth.assignedCafeIds) ? req.auth.assignedCafeIds : (req.auth.assignedCafeIds ? [req.auth.assignedCafeIds] : [])),
       ...(req.auth.primaryCafeId ? [req.auth.primaryCafeId] : []),

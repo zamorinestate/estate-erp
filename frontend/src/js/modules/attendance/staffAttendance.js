@@ -27,15 +27,17 @@ import { setupModalA11y } from "../../utils/modalA11y.js";
 
 let activeTab = "TODAY"; // 'TODAY' | 'ROSTER' | 'CALENDAR' | 'TIMECARD' | 'CORRECTIONS' | 'ATTESTATION'
 let clockTimer = null;
-let currentMonth = new Date().toISOString().slice(0, 7);
+let currentMonth = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
 let serverTimeOffset = 0;
 let cachedToday = null;
 let cachedShift = null;
+let cachedPolicy = null;
 let cachedSchedule = [];
 let cachedHistory = [];
 let cachedSummary = null;
 let cachedCorrections = [];
 let historyFilterStatus = "ALL";
+let pendingAttendanceIntentConsumed = false;
 
 export function renderStaffAttendance() {
   return `
@@ -131,13 +133,21 @@ function renderActiveTabContent() {
 // ── 1. TODAY TAB ─────────────────────────────────────────────────────────────
 function renderTodayTab() {
   const today = cachedToday;
-  const shift = cachedShift || {
-    shiftName: "Standard Duty Shift",
-    scheduledStartAt: new Date().toISOString(),
-    scheduledEndAt: new Date().toISOString(),
-    assignedCafeName: state.user?.primaryCafeName || state.user?.primaryCafeId || "Primary Outlet",
-    unpaidBreakMinutes: 30,
-  };
+  const shift = cachedShift || null;
+  const shiftName = shift?.shiftName || "No scheduled shift information";
+  const shiftCafeName =
+    shift?.assignedCafeName ||
+    state.user?.primaryCafeName ||
+    state.user?.primaryCafeId ||
+    "Assigned café unavailable";
+  const scheduledHours =
+    shift?.scheduledStartAt || shift?.scheduledEndAt
+      ? `${shift?.scheduledStartAt ? formatTimeStr(shift.scheduledStartAt) : "—"} – ${shift?.scheduledEndAt ? formatTimeStr(shift.scheduledEndAt) : "—"}`
+      : "—";
+  const unpaidBreakMinutes = Number(shift?.unpaidBreakMinutes);
+  const unpaidBreakLabel = Number.isFinite(unpaidBreakMinutes)
+    ? `${unpaidBreakMinutes} mins`
+    : "—";
 
   const status = today ? today.status : "NOT_STARTED";
   const isCheckedIn = status === "CHECKED_IN";
@@ -169,10 +179,10 @@ function renderTodayTab() {
         </div>
 
         <div style="font-size:18px; font-weight:800; color:var(--text-primary); margin-bottom:4px;">
-          ${shift.shiftName}
+          ${shiftName}
         </div>
         <div style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-          ${shift.assignedCafeName || "Main Outlet"}
+          ${shiftCafeName}
         </div>
 
         <!-- Shift details grid -->
@@ -180,13 +190,13 @@ function renderTodayTab() {
           <div>
             <div style="font-size:11px; color:var(--text-muted);">Scheduled Hours</div>
             <div style="font-size:13px; font-weight:700; color:var(--text-primary);">
-              ${formatTimeStr(shift.scheduledStartAt)} – ${formatTimeStr(shift.scheduledEndAt)}
+              ${scheduledHours}
             </div>
           </div>
           <div>
             <div style="font-size:11px; color:var(--text-muted);">Unpaid Break</div>
             <div style="font-size:13px; font-weight:700; color:var(--text-primary);">
-              ${shift.unpaidBreakMinutes || 30} mins
+              ${unpaidBreakLabel}
             </div>
           </div>
         </div>
@@ -231,30 +241,30 @@ function renderTodayTab() {
         <div>
           <div class="flex items-center justify-between" style="margin-bottom:14px;">
             <div style="font-size:12px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.04em;">
-              Verification Readiness Check
+              Secure Punch Verification
             </div>
-            <span class="badge badge-mint" style="font-size:10px;">ALL SIGNALS READY</span>
+            <span class="badge badge-subtle" style="font-size:10px;">CHECKED AT PUNCH</span>
           </div>
 
           <!-- Readiness signals -->
           <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
             <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
               <span style="font-size:12.5px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
-                <span>📍</span> GPS Geofence (Main Outlet)
+                <span>📍</span> GPS Geofence
               </span>
-              <span class="badge badge-mint" style="font-size:10px;">In Radius (8m)</span>
+              <span class="badge badge-subtle" style="font-size:10px;">Verified after location permission</span>
             </div>
             <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
               <span style="font-size:12.5px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
                 <span>📷</span> Device Camera Access
               </span>
-              <span class="badge badge-mint" style="font-size:10px;">Granted</span>
+              <span class="badge badge-subtle" style="font-size:10px;">Permission requested during selfie step</span>
             </div>
             <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
               <span style="font-size:12.5px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
                 <span>📶</span> Network Connectivity
               </span>
-              <span class="badge badge-mint" style="font-size:10px;">Active &amp; Low Latency</span>
+              <span class="badge ${typeof navigator !== "undefined" && navigator.onLine ? "badge-mint" : "badge-coral"}" style="font-size:10px;">${typeof navigator !== "undefined" && navigator.onLine ? "Online" : "Offline"}</span>
             </div>
           </div>
 
@@ -291,11 +301,11 @@ function renderTodayTab() {
       <div id="explainer-content" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border-subtle); display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; font-size:12px; color:var(--text-secondary);">
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">⏱️ Grace Period</div>
-          <div>15-minute grace threshold for morning punches before lateness is counted.</div>
+          <div>${Number.isFinite(Number(cachedPolicy?.gracePeriodMinutes)) ? `${Number(cachedPolicy.gracePeriodMinutes)}-minute configured grace threshold.` : "Attendance grace policy is unavailable."}</div>
         </div>
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-          <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">☕ Unpaid Break</div>
-          <div>30 minutes standard deduction applied automatically to total shift duration.</div>
+          <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">☕ Unpaid Break Policy</div>
+          <div>${Number.isFinite(Number(cachedPolicy?.unpaidBreakMinutes)) ? `${Number(cachedPolicy.unpaidBreakMinutes)} minutes configured by the current attendance policy.` : "Break policy is unavailable."}</div>
         </div>
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">📍 Geofence Privacy</div>
@@ -303,7 +313,7 @@ function renderTodayTab() {
         </div>
         <div style="padding:10px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <div style="font-weight:700; color:var(--text-primary); margin-bottom:2px;">🔒 Evidence Retention</div>
-          <div>Selfie photos are encrypted and retained for 90 days for statutory verification.</div>
+          <div>Attendance photos are private evidence. Retention and purge are controlled by authorised evidence-governance actions; no fixed retention period is implied here.</div>
         </div>
       </div>
     </div>
@@ -521,35 +531,66 @@ function renderCalendarTab() {
 }
 
 function renderCalendarDays() {
+  const [year, month] = currentMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const leadingSlots = (new Date(year, month - 1, 1).getDay() + 6) % 7; // Monday-first
+  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const recordsByDate = new Map(
+    (cachedHistory || [])
+      .filter((record) => record?.businessDate)
+      .map((record) => [String(record.businessDate), record])
+  );
+
   let html = "";
-  // Empty slots for leading days
-  for (let i = 0; i < 5; i++) {
-    html += `<div style="opacity:0.2; padding:12px 6px; background:var(--bg-surface-2); border-radius:var(--radius-sm);"></div>`;
+  for (let i = 0; i < leadingSlots; i++) {
+    html += `<div aria-hidden="true" style="opacity:0.18; min-height:86px; background:var(--bg-surface-2); border-radius:var(--radius-sm);"></div>`;
   }
 
-  for (let d = 1; d <= 31; d++) {
-    const dayStr = String(d).padStart(2, "0");
-    const dateKey = `2026-08-${dayStr}`;
-    const isToday = d === 19;
-    const isPast = d <= 19;
-    let badgeColor = "transparent";
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const record = recordsByDate.get(dateKey) || null;
+    const attendanceId = String(record?.attendanceId || record?.id || record?._id || "").replace(/"/g, "&quot;");
+    const isToday = dateKey === todayKey;
+    const status = String(record?.status || "").toUpperCase();
+    const isLate = record?.isLate === true || Number(record?.lateMinutes || 0) > 0;
+    const checkInEvidence = record?.attendanceEvidence?.checkIn || null;
+    const checkOutEvidence = record?.attendanceEvidence?.checkOut || null;
+    const hasCheckInSelfie = Boolean(checkInEvidence?.photoFileId || checkInEvidence?.selfieMediaId || record?.selfieFileId);
+    const hasCheckOutSelfie = Boolean(checkOutEvidence?.photoFileId || checkOutEvidence?.selfieMediaId);
 
-    if (isPast) {
-      if (d === 15) {
-        badgeColor = "var(--brand-gold)"; // Holiday
-      } else if (d === 17) {
-        badgeColor = "var(--color-accent-coral)"; // Late
-      } else if (d % 7 === 2) {
-        badgeColor = "var(--text-muted)"; // Weekly off
-      } else {
-        badgeColor = "var(--color-accent-mint)"; // Present
-      }
+    let badgeColor = "transparent";
+    let statusLabel = "";
+    if (status === "ABSENT") {
+      badgeColor = "var(--color-accent-coral)";
+      statusLabel = "Absent";
+    } else if (status === "CHECKED_IN" || status === "ON_BREAK") {
+      badgeColor = isLate ? "var(--color-accent-coral)" : "var(--color-accent-mint)";
+      statusLabel = isLate ? "Late · In" : "Checked In";
+    } else if (status === "CHECKED_OUT") {
+      badgeColor = isLate ? "var(--color-accent-coral)" : "var(--color-accent-mint)";
+      statusLabel = isLate ? "Late · Complete" : "Complete";
+    } else if (status === "ON_LEAVE") {
+      badgeColor = "var(--brand-gold)";
+      statusLabel = "Leave";
     }
 
+    const punchLine = record
+      ? `${record.checkInAt ? formatTimeStr(record.checkInAt) : "—"} – ${record.checkOutAt ? formatTimeStr(record.checkOutAt) : "—"}`
+      : "";
+
     html += `
-      <div class="calendar-day-cell" data-date="${dateKey}" style="padding:10px 4px; background:${isToday ? "rgba(200,157,92,0.12)" : "var(--bg-surface-2)"}; border:${isToday ? "1px solid var(--brand-gold)" : "1px solid var(--border-subtle)"}; border-radius:var(--radius-sm); cursor:pointer; min-height:54px; display:flex; flex-direction:column; align-items:center; justify-content:space-between;">
-        <span style="font-size:12px; font-weight:${isToday ? "800" : "600"}; color:${isToday ? "var(--brand-gold)" : "var(--text-primary)"};">${d}</span>
-        <span style="width:6px; height:6px; border-radius:50%; background:${badgeColor}; margin-top:4px;"></span>
+      <div
+        class="calendar-day-cell"
+        data-date="${dateKey}"
+        data-att-id="${attendanceId}"
+        style="padding:8px 6px; background:${isToday ? "rgba(200,157,92,0.12)" : "var(--bg-surface-2)"}; border:${isToday ? "1px solid var(--brand-gold)" : "1px solid var(--border-subtle)"}; border-radius:var(--radius-sm); cursor:${record ? "pointer" : "default"}; min-height:86px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:4px;"
+        title="${record ? "Open authoritative attendance evidence" : "No attendance record"}"
+      >
+        <span style="font-size:12px; font-weight:${isToday ? "800" : "600"}; color:${isToday ? "var(--brand-gold)" : "var(--text-primary)"};">${day}</span>
+        <span style="width:6px; height:6px; border-radius:50%; background:${badgeColor};"></span>
+        <span style="font-size:9.5px; font-weight:700; color:var(--text-muted); min-height:12px;">${statusLabel}</span>
+        ${record ? `<span style="font-size:9.5px; color:var(--text-muted); font-family:var(--font-mono, monospace);">${punchLine}</span>` : ""}
+        ${record ? `<span style="font-size:9px; color:var(--text-muted);">${hasCheckInSelfie ? "📷 IN" : ""}${hasCheckInSelfie && hasCheckOutSelfie ? " · " : ""}${hasCheckOutSelfie ? "📷 OUT" : ""}</span>` : ""}
       </div>
     `;
   }
@@ -559,75 +600,112 @@ function renderCalendarDays() {
 
 // ── 3. TIMECARD TAB ──────────────────────────────────────────────────────────
 function renderTimecardTab() {
+  const totalWorkedHours = cachedSummary?.totalHoursWorked ??
+    (cachedHistory.reduce((sum, r) => sum + Number(r.totalWorkedMinutes || 0), 0) / 60).toFixed(1);
+  const approvedOvertimeHours = cachedSummary?.totalOvertimeHours ??
+    (cachedHistory.reduce((sum, r) => sum + Number(r.approvedOvertimeMinutes || 0), 0) / 60).toFixed(1);
+  const daysPresent = Number(
+    cachedSummary?.daysPresent ??
+    cachedHistory.filter((r) => ["CHECKED_IN", "CHECKED_OUT", "ON_BREAK"].includes(String(r.status || "").toUpperCase())).length
+  );
+  const daysLate = Number(
+    cachedSummary?.daysLate ??
+    cachedHistory.filter((r) => r.isLate === true || Number(r.lateMinutes || 0) > 0).length
+  );
+  const exceptionsCount = Number(
+    cachedSummary?.exceptionsCount ??
+    cachedHistory.filter((r) =>
+      r.isLate === true ||
+      r.correctionRequired === true ||
+      ["MISSED_PUNCH", "ABSENT"].includes(String(r.status || "").toUpperCase())
+    ).length
+  );
+  const onTimeRate = daysPresent > 0
+    ? Math.max(0, ((daysPresent - daysLate) / daysPresent) * 100).toFixed(1)
+    : "—";
+
+  const overtimeRecords = cachedHistory
+    .filter((r) =>
+      Number(r.detectedOvertimeMinutes || 0) > 0 ||
+      Number(r.approvedOvertimeMinutes || 0) > 0 ||
+      Boolean(r.overtimeStatus)
+    )
+    .slice()
+    .sort((a, b) => String(b.businessDate || "").localeCompare(String(a.businessDate || "")));
+  const latestOvertime = overtimeRecords[0] || null;
+
+  let overtimeGovernanceHtml = `
+    <div class="card" style="padding:16px 20px; background:var(--surface); border-radius:var(--radius-card, 12px); border:1px solid var(--line); box-shadow:var(--shadow-xs); margin-bottom:20px;">
+      <div style="font-size:13px; font-weight:700; color:var(--ink);">Overtime Governance</div>
+      <div style="font-size:12px; color:var(--muted); margin-top:5px;">No overtime record exists for this period.</div>
+    </div>
+  `;
+
+  if (latestOvertime) {
+    const detectedMinutes = Number(latestOvertime.detectedOvertimeMinutes || latestOvertime.overtimeMinutes || 0);
+    const approvedMinutes = Number(latestOvertime.approvedOvertimeMinutes || 0);
+    const status = String(latestOvertime.overtimeStatus || (approvedMinutes > 0 ? "APPROVED" : "DETECTED")).replace(/_/g, " ");
+    const dateLabel = latestOvertime.businessDate
+      ? formatDateStr(`${latestOvertime.businessDate}T00:00:00+05:30`)
+      : "Recorded date unavailable";
+
+    overtimeGovernanceHtml = `
+      <div class="card" style="padding:16px 20px; background:var(--surface); border-radius:var(--radius-card, 12px); border:1px solid var(--line); box-shadow:var(--shadow-xs); margin-bottom:20px;">
+        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:8px;">
+          Overtime Governance — ${escapeHtml(dateLabel)}
+        </div>
+        <div style="display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--text-secondary);">
+          <span>Detected: <strong>${(detectedMinutes / 60).toFixed(1)}h</strong></span>
+          <span>Approved: <strong>${(approvedMinutes / 60).toFixed(1)}h</strong></span>
+          <span>Status: <strong>${escapeHtml(status)}</strong></span>
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div style="margin-bottom:24px;">
-      <!-- KPI Cards Summary (Matching Reference HRIS Design) -->
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px; margin-bottom:20px;">
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Total Worked Hours</div>
-          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">148.5h</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● +4.2h vs Last Month</div>
+          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">${escapeHtml(totalWorkedHours)}h</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">${daysPresent} recorded present day${daysPresent === 1 ? "" : "s"}</div>
         </div>
 
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Approved Overtime</div>
-          <div style="font-size:26px; font-weight:800; color:#b45309; font-family:var(--font-heading); margin-top:4px;">2.5h</div>
-          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Master Approved for Payroll</div>
+          <div style="font-size:26px; font-weight:800; color:#b45309; font-family:var(--font-heading); margin-top:4px;">${escapeHtml(approvedOvertimeHours)}h</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Server-recorded approved overtime</div>
         </div>
 
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
           <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">On-Time Arrival Rate</div>
-          <div style="font-size:26px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:4px;">94.2%</div>
-          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">2 Lates this period (-33%)</div>
+          <div style="font-size:26px; font-weight:800; color:#059669; font-family:var(--font-heading); margin-top:4px;">${onTimeRate === "—" ? "—" : `${onTimeRate}%`}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">${daysLate} late arrival${daysLate === 1 ? "" : "s"} this period</div>
         </div>
 
         <div class="kpi-card" style="background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card, 12px); padding:16px 18px; box-shadow:var(--shadow-xs);">
-          <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Period Payroll State</div>
-          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">OPEN</div>
-          <div style="font-size:11.5px; color:#059669; font-weight:600; margin-top:2px;">● Eligible for corrections</div>
+          <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.4px;">Attendance Exceptions</div>
+          <div style="font-size:26px; font-weight:800; color:var(--ink); font-family:var(--font-heading); margin-top:4px;">${exceptionsCount}</div>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Late, missed-punch, absence, or correction flags</div>
         </div>
       </div>
 
-      <!-- Overtime Multi-Stage Decision Timeline Box -->
-      <div class="card" style="padding:16px 20px; background:var(--surface); border-radius:var(--radius-card, 12px); border:1px solid var(--line); box-shadow:var(--shadow-xs); margin-bottom:20px;">
-        <div style="font-size:13px; font-weight:700; color:var(--ink); margin-bottom:10px;">
-          Overtime Governance Workflow (16 Aug 2026 · 1.5h Overtime)
-        </div>
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; font-size:12px; gap:8px;">
-          <div class="flex items-center gap-xs">
-            <span style="width:20px; height:20px; border-radius:50%; background:rgba(5,150,105,0.15); color:#059669; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:11px;">1</span>
-            <span style="font-weight:600; color:var(--ink);">Detected (1.5h)</span>
-          </div>
-          <span style="color:var(--muted);">→</span>
-          <div class="flex items-center gap-xs">
-            <span style="width:20px; height:20px; border-radius:50%; background:rgba(5,150,105,0.15); color:#059669; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:11px;">2</span>
-            <span style="font-weight:600; color:var(--ink);">Admin Verified</span>
-          </div>
-          <span style="color:var(--muted);">→</span>
-          <div class="flex items-center gap-xs">
-            <span style="width:20px; height:20px; border-radius:50%; background:rgba(180,83,9,0.15); color:#b45309; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:11px;">3</span>
-            <span style="font-weight:700; color:#b45309;">Master Approved (1.5h Payable)</span>
-          </div>
-        </div>
-      </div>
+      ${overtimeGovernanceHtml}
 
-      <!-- Timecard Table Card -->
       <div class="card" style="padding:20px; background:var(--bg-surface-1); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); border:1px solid var(--border-subtle);">
         <div class="flex items-center justify-between flex-wrap gap-sm" style="margin-bottom:16px;">
           <div style="font-size:15px; font-weight:800; color:var(--text-primary);">
-            August 2026 Detailed Daily Timecard
+            ${new Date(currentMonth + "-01T00:00:00+05:30").toLocaleString("en-IN", { month: "long", year: "numeric", timeZone: "Asia/Kolkata" })} Detailed Daily Timecard
           </div>
-          <!-- Export & Filter Controls (P2 Option) -->
           <div class="flex items-center gap-xs flex-wrap">
             <select class="input" id="sel-history-filter" style="padding:4px 8px; font-size:12px;">
-              <option value="ALL">All Records</option>
-              <option value="PRESENT">Present Only</option>
-              <option value="LATE">Late Arrivals</option>
-              <option value="EXCEPTIONS">Exceptions Only</option>
+              <option value="ALL" ${historyFilterStatus === "ALL" ? "selected" : ""}>All Records</option>
+              <option value="PRESENT" ${historyFilterStatus === "PRESENT" ? "selected" : ""}>Present Only</option>
+              <option value="LATE" ${historyFilterStatus === "LATE" ? "selected" : ""}>Late Arrivals</option>
+              <option value="EXCEPTIONS" ${historyFilterStatus === "EXCEPTIONS" ? "selected" : ""}>Exceptions Only</option>
             </select>
-            <button class="btn btn-xs btn-secondary" id="btn-export-csv">
-              CSV
-            </button>
+            <button class="btn btn-xs btn-secondary" id="btn-export-csv">CSV</button>
             <button class="btn btn-xs btn-secondary" onclick="window.print()">
               ${icon("printer", 13)} Print Statement
             </button>
@@ -659,34 +737,54 @@ function renderTimecardTab() {
 }
 
 function renderTimecardRows() {
-  if (cachedHistory.length === 0) {
-    return `<tr><td colspan="8" style="padding:24px; text-align:center; color:var(--text-muted); font-size:13px;">No timecard records found. History will appear once attendance data is synced.</td></tr>`;
+  let rows = cachedHistory.slice();
+  if (historyFilterStatus === "PRESENT") {
+    rows = rows.filter((r) => ["CHECKED_IN", "CHECKED_OUT", "ON_BREAK"].includes(String(r.status || "").toUpperCase()));
+  } else if (historyFilterStatus === "LATE") {
+    rows = rows.filter((r) => r.isLate === true || Number(r.lateMinutes || 0) > 0);
+  } else if (historyFilterStatus === "EXCEPTIONS") {
+    rows = rows.filter((r) =>
+      r.isLate === true ||
+      r.correctionRequired === true ||
+      ["MISSED_PUNCH", "ABSENT"].includes(String(r.status || "").toUpperCase())
+    );
   }
 
-  return cachedHistory.map((r) => {
-    const dateLabel = r.businessDate
-      ? new Date(r.businessDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+  if (rows.length === 0) {
+    return `<tr><td colspan="8" style="padding:24px; text-align:center; color:var(--text-muted); font-size:13px;">No timecard records match this view.</td></tr>`;
+  }
+
+  return rows.map((r) => {
+    const rawBusinessDate = String(r.businessDate || "");
+    const dateLabel = rawBusinessDate
+      ? formatDateStr(`${rawBusinessDate}T00:00:00+05:30`)
       : "—";
-    const shiftLabel = r.shiftLabel || r.shift || (r.checkInAt ? `${formatTimeStr(r.checkInAt)} – ${r.checkOutAt ? formatTimeStr(r.checkOutAt) : "Open"}` : "—");
+    const shiftLabel = r.shiftName || r.shiftLabel || r.shift ||
+      (r.scheduledStartAt || r.scheduledEndAt
+        ? `${r.scheduledStartAt ? formatTimeStr(r.scheduledStartAt) : "—"} – ${r.scheduledEndAt ? formatTimeStr(r.scheduledEndAt) : "—"}`
+        : "—");
     const checkIn = r.checkInAt ? formatTimeStr(r.checkInAt) : "—";
     const checkOut = r.checkOutAt ? formatTimeStr(r.checkOutAt) : "—";
-    const worked = r.totalWorkedMinutes > 0 ? `${Math.floor(r.totalWorkedMinutes / 60)}h ${r.totalWorkedMinutes % 60}m` : "—";
-    const ot = r.overtimeMinutes > 0 ? `${(r.overtimeMinutes / 60).toFixed(1)}h` : "—";
-    const statusLabel = (r.status || "PRESENT").replace(/_/g, " ");
-    const isLate = r.isLate || false;
-    const attId = r.id || r.attendanceId || r.businessDate || "";
+    const worked = Number(r.totalWorkedMinutes) > 0
+      ? `${Math.floor(Number(r.totalWorkedMinutes) / 60)}h ${Number(r.totalWorkedMinutes) % 60}m`
+      : "—";
+    const overtimeMinutes = Number(r.approvedOvertimeMinutes ?? r.overtimeMinutes ?? 0);
+    const ot = overtimeMinutes > 0 ? `${(overtimeMinutes / 60).toFixed(1)}h` : "—";
+    const statusLabel = String(r.status || "NO STATUS").replace(/_/g, " ");
+    const isLate = r.isLate === true || Number(r.lateMinutes || 0) > 0;
+    const attId = String(r.attendanceId || r.id || r._id || "");
 
     return `
     <tr style="border-bottom:1px solid var(--border-subtle);">
-      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${dateLabel}</td>
-      <td style="padding:10px 8px; color:var(--text-secondary);">${shiftLabel}</td>
-      <td style="padding:10px 8px; color:var(--color-accent-mint); font-weight:600;">${checkIn}</td>
-      <td style="padding:10px 8px; color:var(--brand-gold); font-weight:600;">${checkOut}</td>
-      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${worked}</td>
-      <td style="padding:10px 8px; color:var(--text-secondary);">${ot}</td>
-      <td style="padding:10px 8px;"><span class="badge ${isLate ? "badge-coral" : "badge-subtle"}" style="font-size:10.5px;">${statusLabel}</span></td>
+      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${escapeHtml(dateLabel)}</td>
+      <td style="padding:10px 8px; color:var(--text-secondary);">${escapeHtml(shiftLabel)}</td>
+      <td style="padding:10px 8px; color:var(--color-accent-mint); font-weight:600;">${escapeHtml(checkIn)}</td>
+      <td style="padding:10px 8px; color:var(--brand-gold); font-weight:600;">${escapeHtml(checkOut)}</td>
+      <td style="padding:10px 8px; font-weight:700; color:var(--text-primary);">${escapeHtml(worked)}</td>
+      <td style="padding:10px 8px; color:var(--text-secondary);">${escapeHtml(ot)}</td>
+      <td style="padding:10px 8px;"><span class="badge ${isLate ? "badge-coral" : "badge-subtle"}" style="font-size:10.5px;">${escapeHtml(statusLabel)}</span></td>
       <td style="padding:10px 8px; text-align:right;">
-        <button class="btn btn-xs btn-ghost btn-view-day-drilldown" data-att-id="${attId}" data-date="${dateLabel}">
+        <button class="btn btn-xs btn-ghost btn-view-day-drilldown" data-att-id="${escapeHtml(attId)}" data-date="${escapeHtml(rawBusinessDate)}">
           Details →
         </button>
       </td>
@@ -697,90 +795,112 @@ function renderTimecardRows() {
 
 // ── 4. CORRECTIONS & ISSUES TAB ──────────────────────────────────────────────
 function renderCorrectionsTab() {
-  return `
-    <div style="margin-bottom:24px;">
-      <!-- Action Required Exceptions Banner -->
+  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const missingPunch = cachedHistory
+    .filter((r) =>
+      r?.businessDate &&
+      String(r.businessDate) < todayKey &&
+      Boolean(r.checkInAt) &&
+      !r.checkOutAt &&
+      ["CHECKED_IN", "ON_BREAK", "MISSED_PUNCH"].includes(String(r.status || "").toUpperCase())
+    )
+    .slice()
+    .sort((a, b) => String(b.businessDate).localeCompare(String(a.businessDate)))[0] || null;
+
+  const missingPunchHtml = missingPunch
+    ? `
       <div class="card" style="padding:18px 20px; background:rgba(239,122,133,0.08); border:1px solid rgba(239,122,133,0.25); border-radius:var(--radius-lg); margin-bottom:20px;">
         <div class="flex items-center justify-between flex-wrap gap-sm">
           <div>
             <div style="font-size:13px; font-weight:700; color:var(--color-accent-coral); margin-bottom:2px; display:flex; align-items:center; gap:6px;">
-              <span>⚡</span>
-              <span>Pending Action: Missing Check-Out Recorded</span>
+              <span>⚡</span><span>Pending Action: Missing Check-Out</span>
             </div>
             <div style="font-size:12px; color:var(--text-secondary);">
-              Your shift on <strong>14 Aug 2026</strong> has an unclosed punch. Submit a correction request with your actual exit time.
+              Your attendance record for <strong>${escapeHtml(formatDateStr(`${missingPunch.businessDate}T00:00:00+05:30`))}</strong> has a check-in but no check-out.
             </div>
           </div>
-          <button class="btn btn-sm btn-primary" id="btn-fix-missing-punch">
+          <button class="btn btn-sm btn-primary" id="btn-fix-missing-punch" data-att-id="${escapeHtml(missingPunch.attendanceId || "")}">
             Fix Missing Punch
           </button>
         </div>
       </div>
+    `
+    : "";
 
-      <!-- Corrections Tracking Table -->
+  const requestRows = cachedCorrections.length
+    ? cachedCorrections.map((req) => {
+        const status = String(req.status || "PENDING").toUpperCase();
+        const badgeClass = status === "APPROVED"
+          ? "badge-mint"
+          : status === "REJECTED"
+            ? "badge-coral"
+            : status === "CANCELLED"
+              ? "badge-subtle"
+              : "badge-gold";
+        const requestedParts = [];
+        if (req.requestedCheckInAt) requestedParts.push(`Check-In: ${formatTimeStr(req.requestedCheckInAt)}`);
+        if (req.requestedCheckOutAt) requestedParts.push(`Check-Out: ${formatTimeStr(req.requestedCheckOutAt)}`);
+        if (Number(req.requestedBreakMinutes || 0) > 0) requestedParts.push(`Break: ${Number(req.requestedBreakMinutes)}m`);
+        if (!requestedParts.length) requestedParts.push(String(req.issueType || "Attendance correction").replace(/_/g, " "));
+
+        const submitted = req.submittedAt || req.createdAt;
+        const decisionLabel = req.reviewedAt
+          ? `Reviewed ${formatDateStr(req.reviewedAt)}`
+          : submitted
+            ? `Submitted ${formatDateStr(submitted)}`
+            : "Submitted";
+
+        return `
+          <div class="flex items-center justify-between flex-wrap gap-sm" style="padding:12px 16px; background:var(--bg-surface-2); border-radius:var(--radius-md); border:1px solid var(--border-subtle);">
+            <div>
+              <div class="flex items-center gap-xs">
+                <span style="font-size:13px; font-weight:700; color:var(--text-primary);">${escapeHtml(req.businessDate ? formatDateStr(`${req.businessDate}T00:00:00+05:30`) : "Date unavailable")}</span>
+                <span class="badge ${badgeClass}" style="font-size:10px;">${escapeHtml(status.replace(/_/g, " "))}</span>
+              </div>
+              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                ${escapeHtml(requestedParts.join(" · "))} · Reason: “${escapeHtml(req.reason || "No reason recorded")}”
+              </div>
+              ${req.reviewRemarks || req.reviewReason ? `<div style="font-size:11.5px; color:var(--text-muted); margin-top:3px;">Decision note: ${escapeHtml(req.reviewRemarks || req.reviewReason)}</div>` : ""}
+            </div>
+            <span style="font-size:11.5px; color:var(--text-muted);">${escapeHtml(decisionLabel)}</span>
+          </div>
+        `;
+      }).join("")
+    : `<div style="padding:20px; text-align:center; color:var(--text-muted); font-size:12.5px;">No correction requests found for this period.</div>`;
+
+  const decisionHistory = cachedCorrections
+    .filter((req) => req.submittedAt || req.createdAt || req.reviewedAt)
+    .slice(0, 10)
+    .map((req) => {
+      const ref = req.correctionRequestId || req.requestId || "Correction";
+      const submitted = req.submittedAt || req.createdAt;
+      const status = String(req.status || "PENDING").replace(/_/g, " ");
+      return `
+        <div class="flex items-center justify-between flex-wrap gap-xs" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
+          <span>${escapeHtml(ref)} · ${escapeHtml(req.businessDate || "")}</span>
+          <span style="color:var(--text-muted);">${escapeHtml(status)}${submitted ? ` · ${escapeHtml(formatDateStr(submitted))}` : ""}</span>
+        </div>
+      `;
+    }).join("") || `<div style="padding:12px; color:var(--text-muted);">No correction history for this period.</div>`;
+
+  return `
+    <div style="margin-bottom:24px;">
+      ${missingPunchHtml}
+
       <div class="card" style="padding:22px; background:var(--bg-surface-1); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); border:1px solid var(--border-subtle); margin-bottom:20px;">
         <div class="flex items-center justify-between" style="margin-bottom:16px;">
           <div>
-            <div style="font-size:15px; font-weight:800; color:var(--text-primary);">
-              Attendance Correction Requests
-            </div>
-            <div style="font-size:12px; color:var(--text-muted);">
-              Track formal requests submitted for check-in/out adjustments.
-            </div>
+            <div style="font-size:15px; font-weight:800; color:var(--text-primary);">Attendance Correction Requests</div>
+            <div style="font-size:12px; color:var(--text-muted);">Your submitted correction requests for the selected attendance period.</div>
           </div>
-          <button class="btn btn-sm btn-secondary" id="btn-new-correction">
-            + New Correction Request
-          </button>
+          <button class="btn btn-sm btn-secondary" id="btn-new-correction">+ New Correction Request</button>
         </div>
-
-        <div style="display:flex; flex-direction:column; gap:10px;">
-          <div class="flex items-center justify-between flex-wrap gap-sm" style="padding:12px 16px; background:var(--bg-surface-2); border-radius:var(--radius-md); border:1px solid var(--border-subtle);">
-            <div>
-              <div class="flex items-center gap-xs">
-                <span style="font-size:13px; font-weight:700; color:var(--text-primary);">14 Aug 2026</span>
-                <span class="badge badge-gold" style="font-size:10px;">PENDING REVIEW</span>
-              </div>
-              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
-                Requested Check-Out: <strong>5:30 PM</strong> · Reason: "Biometric reader was offline at closing"
-              </div>
-            </div>
-            <span style="font-size:11.5px; color:var(--text-muted);">Submitted 15 Aug, 10:00 AM</span>
-          </div>
-
-          <div class="flex items-center justify-between flex-wrap gap-sm" style="padding:12px 16px; background:var(--bg-surface-2); border-radius:var(--radius-md); border:1px solid var(--border-subtle);">
-            <div>
-              <div class="flex items-center gap-xs">
-                <span style="font-size:13px; font-weight:700; color:var(--text-primary);">08 Aug 2026</span>
-                <span class="badge badge-mint" style="font-size:10px;">APPROVED</span>
-              </div>
-              <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
-                Adjusted Check-In: <strong>9:00 AM</strong> · Decision by Café Admin / Master
-              </div>
-            </div>
-            <span style="font-size:11.5px; color:var(--text-muted);">Approved on 09 Aug</span>
-          </div>
-        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">${requestRows}</div>
       </div>
 
-      <!-- Employee-Safe Audit Change History (P2 Option) -->
       <div class="card" style="padding:20px; background:var(--bg-surface-1); border-radius:var(--radius-lg); border:1px solid var(--border-subtle);">
-        <div style="font-size:14px; font-weight:800; color:var(--text-primary); margin-bottom:12px;">
-          📜 Attendance Record Change History
-        </div>
-        <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
-          <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-            <span>08 Aug 2026: Shift checked-in at 09:30 AM (Late)</span>
-            <span style="color:var(--text-muted);">Original punch</span>
-          </div>
-          <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-            <span>09 Aug 2026: Correction submitted requesting 09:00 AM</span>
-            <span style="color:var(--brand-gold);">Employee submitted</span>
-          </div>
-          <div class="flex items-center justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-            <span>09 Aug 2026: Correction approved by Master · Worked hours updated</span>
-            <span style="color:var(--color-accent-mint);">Approved</span>
-          </div>
-        </div>
+        <div style="font-size:14px; font-weight:800; color:var(--text-primary); margin-bottom:12px;">📜 Correction Decision History</div>
+        <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">${decisionHistory}</div>
       </div>
     </div>
   `;
@@ -861,6 +981,15 @@ function renderAttestationTab() {
 }
 
 // ── UTILITIES & WIRE INTERACTIONS ────────────────────────────────────────────
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function formatTimeStr(iso) {
   if (!iso) return "—";
   try {
@@ -895,11 +1024,13 @@ export function wireStaffAttendance(root) {
   // 2. Fetch server time, today's status & weekly roster
   async function loadInitialData() {
     try {
-      const [timeRes, todayRes, historyRes, scheduleRes] = await Promise.all([
+      const [timeRes, todayRes, historyRes, scheduleRes, correctionsRes, policyRes] = await Promise.all([
         apiGet("/attendance/server-time").catch(() => null),
         apiGet("/attendance/today").catch(() => null),
         apiGet(`/attendance/history?month=${currentMonth}`).catch(() => null),
         apiGet("/shifts/me/schedule").catch(() => null),
+        apiGet(`/attendance/corrections/mine?month=${currentMonth}`).catch(() => null),
+        apiGet("/attendance/policy").catch(() => null),
       ]);
 
       if (timeRes?.data?.utc) {
@@ -916,8 +1047,32 @@ export function wireStaffAttendance(root) {
       if (scheduleRes?.data?.schedule) {
         cachedSchedule = scheduleRes.data.schedule || [];
       }
+      if (correctionsRes?.data) {
+        cachedCorrections = correctionsRes.data.requests || [];
+      }
+      if (policyRes?.data) {
+        cachedPolicy = policyRes.data;
+      }
 
       refreshTabContent();
+
+      if (!pendingAttendanceIntentConsumed && typeof window !== "undefined") {
+        try {
+          const pendingQr = String(sessionStorage.getItem("zamorin.pendingAttendanceQr") || "").trim();
+          if (/^ZAM_ATT_[a-f0-9]{64}$/i.test(pendingQr)) {
+            pendingAttendanceIntentConsumed = true;
+            sessionStorage.removeItem("zamorin.pendingAttendanceQr");
+            const activeStatus = String(cachedToday?.status || "").toUpperCase();
+            const flowType = (activeStatus === "CHECKED_IN" || activeStatus === "ON_BREAK")
+              ? "CHECK_OUT"
+              : "CHECK_IN";
+            openVerificationModal(flowType, () => {
+              refreshTabContent();
+              loadInitialData();
+            }, { preScannedQrToken: pendingQr });
+          }
+        } catch {}
+      }
     } catch {}
   }
 
@@ -985,10 +1140,24 @@ export function wireStaffAttendance(root) {
     // Request correction triggers
     container.querySelectorAll("#btn-request-correction-today, #btn-new-correction, #btn-fix-missing-punch").forEach((btn) => {
       btn.addEventListener("click", () => {
+        const attendanceId = btn.dataset.attId || "";
+        const record = attendanceId
+          ? cachedHistory.find((r) => String(r.attendanceId || r.id || r._id || "") === attendanceId)
+          : null;
+        const prefill = record
+          ? {
+              attendanceId: record.attendanceId || record.id || record._id,
+              businessDate: record.businessDate,
+              checkInAt: record.checkInAt,
+              checkOutAt: record.checkOutAt,
+              breakMinutes: record.breakMinutes,
+              issueType: !record.checkOutAt ? "MISSED_CHECK_OUT" : "OTHER",
+            }
+          : {};
         openCorrectionModal(() => {
           refreshTabContent();
           loadInitialData();
-        });
+        }, prefill);
       });
     });
 
@@ -1020,7 +1189,7 @@ export function wireStaffAttendance(root) {
     // Day drilldown clicks
     container.querySelectorAll(".btn-view-day-drilldown, .calendar-day-cell").forEach((el) => {
       el.addEventListener("click", () => {
-        const date = el.dataset.date || "18 Aug 2026";
+        const date = el.dataset.date || "";
         const attId = el.dataset.attId;
         const matched = cachedHistory.find((r) =>
           (attId && (r.id === attId || r.attendanceId === attId || r._id === attId)) ||
@@ -1041,10 +1210,16 @@ export function wireStaffAttendance(root) {
       const prev = new Date(y, m - 2, 1);
       currentMonth = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
       try {
-        const historyRes = await apiGet(`/attendance/history?month=${currentMonth}`);
+        const [historyRes, correctionsRes] = await Promise.all([
+          apiGet(`/attendance/history?month=${currentMonth}`),
+          apiGet(`/attendance/corrections/mine?month=${currentMonth}`).catch(() => null),
+        ]);
         if (historyRes?.data) {
           cachedHistory = historyRes.data.records || [];
           cachedSummary = historyRes.data.summary;
+        }
+        if (correctionsRes?.data) {
+          cachedCorrections = correctionsRes.data.requests || [];
         }
       } catch {}
       refreshTabContent();
@@ -1056,10 +1231,16 @@ export function wireStaffAttendance(root) {
       const next = new Date(y, m, 1);
       currentMonth = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
       try {
-        const historyRes = await apiGet(`/attendance/history?month=${currentMonth}`);
+        const [historyRes, correctionsRes] = await Promise.all([
+          apiGet(`/attendance/history?month=${currentMonth}`),
+          apiGet(`/attendance/corrections/mine?month=${currentMonth}`).catch(() => null),
+        ]);
         if (historyRes?.data) {
           cachedHistory = historyRes.data.records || [];
           cachedSummary = historyRes.data.summary;
+        }
+        if (correctionsRes?.data) {
+          cachedCorrections = correctionsRes.data.requests || [];
         }
       } catch {}
       refreshTabContent();
@@ -1068,7 +1249,8 @@ export function wireStaffAttendance(root) {
 
     // History filter
     container.querySelector("#sel-history-filter")?.addEventListener("change", (e) => {
-      showToast(`Filter applied: ${e.target.value}`, "info");
+      historyFilterStatus = e.target.value || "ALL";
+      refreshTabContent();
     });
 
     // Shift reminder toggle
@@ -1129,37 +1311,33 @@ export function wireStaffAttendance(root) {
     updateNavTabs();
   }
 
-  // 6. Direct click delegation on root container for reliable button handling
-  root.addEventListener("click", (e) => {
-    // Button 1: Request Attendance Correction
-    const corrBtn = e.target.closest("#btn-request-correction-today, #btn-new-correction, #btn-fix-missing-punch, .btn-trigger-correction");
-    if (corrBtn) {
-      e.preventDefault();
-      openCorrectionModal(() => {
-        refreshTabContent();
-        loadInitialData();
-      });
-      return;
-    }
-
-    // Button 5: Shift Change / Availability Request
-    const scBtn = e.target.closest("#btn-open-shift-change, .btn-trigger-shift-change");
-    if (scBtn) {
-      e.preventDefault();
-      const date = scBtn.dataset.shiftDate;
-      const shiftName = scBtn.dataset.shiftName;
-      openShiftChangeModal(() => {
-        loadInitialData();
-      }, { requestedDate: date, currentShift: shiftName });
-      return;
-    }
-  });
 
   loadInitialData();
 }
 
 // ── VERIFICATION FLOW MODAL (ROTATING QR + GPS + LIVE SELFIE) ────────────────
-export function openVerificationModal(flowType, onDoneCallback) {
+function normalizeAttendanceQrInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^ZAM_ATT_[a-f0-9]{64}$/i.test(raw)) return raw;
+  if (raw.split(".").length === 5 && !raw.includes("://")) return raw;
+
+  try {
+    const parsed = new URL(raw);
+    const isTrustedProtocol = parsed.protocol === "https:" ||
+      (parsed.protocol === "http:" && ["localhost", "127.0.0.1"].includes(parsed.hostname));
+    const returnTo = parsed.searchParams.get("returnTo");
+    const embedded = String(parsed.searchParams.get("attendanceQr") || "").trim();
+    if (isTrustedProtocol && returnTo === "staff-attendance" && /^ZAM_ATT_[a-f0-9]{64}$/i.test(embedded)) {
+      return embedded;
+    }
+  } catch {}
+
+  return raw;
+}
+
+export function openVerificationModal(flowType, onDoneCallback, { preScannedQrToken = null } = {}) {
   let existing = document.getElementById("attendance-verification-modal");
   if (existing) {
     if (typeof existing._cleanup === "function") existing._cleanup();
@@ -1388,14 +1566,24 @@ export function openVerificationModal(flowType, onDoneCallback) {
     showLoading("Verifying Attendance QR challenge with server...");
 
     try {
-      const res = await apiPost("/attendance/qr/verify", { qrToken: token });
+      const normalizedQrToken = normalizeAttendanceQrInput(token);
+      const res = await apiPost("/attendance/qr/verify", { qrToken: normalizedQrToken });
       hideLoading();
 
       if (!res?.data?.verified) {
         throw new Error(res?.data?.message || "Invalid Attendance QR token.");
       }
 
-      scannedQrToken = token;
+      const serverTransition = String(res.data.transition || "").toUpperCase();
+      if (serverTransition && serverTransition !== flowType) {
+        throw new Error(
+          serverTransition === "CHECK_OUT"
+            ? "Your attendance session is already checked in. Reopen attendance to complete Check-Out."
+            : "No active check-in session was found. Reopen attendance to complete Check-In."
+        );
+      }
+
+      scannedQrToken = res.data.scanGrant || normalizedQrToken;
       verifiedCafe = res.data;
 
       // Mark Step 1 complete with verified café identity & Company Logo
@@ -1538,12 +1726,14 @@ export function openVerificationModal(flowType, onDoneCallback) {
       const formData = new FormData();
       formData.append("selfie", selfieBlob, `attendance_${flowType.toLowerCase()}_${Date.now()}.jpg`);
       formData.append("punchType", flowType);
+      formData.append("scanGrant", scannedQrToken);
       if (verifiedCafe?.challengeId) {
         formData.append("qrChallengeId", verifiedCafe.challengeId);
       }
 
       const uploadRes = await apiUpload("/attendance/evidence/upload", formData);
-      if (!uploadRes?.data?.fileId) {
+      const selfieFileId = uploadRes?.data?.fileId || uploadRes?.data?.mediaId || null;
+      if (!selfieFileId) {
         throw new Error(uploadRes?.message || "Evidence upload failed.");
       }
 
@@ -1555,7 +1745,7 @@ export function openVerificationModal(flowType, onDoneCallback) {
         latitude: geoCoords.latitude,
         longitude: geoCoords.longitude,
         accuracyMeters: geoCoords.accuracyMeters,
-        selfieFileId: uploadRes.data.fileId,
+        selfieFileId,
         deviceFingerprint: "BROWSER-STAFF-DEVICE",
       });
 
@@ -1580,8 +1770,16 @@ export function openVerificationModal(flowType, onDoneCallback) {
     }
   }
 
-  // Start sequence at Step 1
-  startQrScanner();
+  // Start sequence at Step 1. A QR deep-link has already been scanned by
+  // the employee's phone camera, so verify that exact short-lived challenge
+  // directly instead of asking the employee to scan the same QR a second time.
+  if (preScannedQrToken && /^ZAM_ATT_[a-f0-9]{64}$/i.test(String(preScannedQrToken))) {
+    handleQrScanned(String(preScannedQrToken)).catch((err) => {
+      showError(err?.message || "Attendance QR verification failed.");
+    });
+  } else {
+    startQrScanner();
+  }
 }
 
 export { openVerificationModal as openPunchVerificationModal };
@@ -1639,12 +1837,35 @@ function openPunchReceiptModal(flowType, attendance) {
 }
 
 // ── CORRECTION REQUEST MODAL (WITH SUPPORTING ATTACHMENT) ─────────────────────
+function toIstTimeInput(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function istLocalDateTimeToIso(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const d = new Date(`${dateStr}T${timeStr}:00+05:30`);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 function openCorrectionModal(onDoneCallback, prefill = {}) {
   let existing = document.getElementById("attendance-correction-modal");
   if (existing) existing.remove();
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const defaultDate = prefill?.businessDate || (prefill?.checkInAt ? String(prefill.checkInAt).slice(0, 10) : todayStr);
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const defaultDate =
+    prefill?.businessDate ||
+    (prefill?.checkInAt ? new Date(prefill.checkInAt).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) : todayStr);
+  const defaultCheckIn = toIstTimeInput(prefill?.checkInAt);
+  const defaultCheckOut = toIstTimeInput(prefill?.checkOutAt);
+  const defaultIssueType = String(prefill?.issueType || "OTHER").toUpperCase();
 
   const modal = document.createElement("div");
   modal.id = "attendance-correction-modal";
@@ -1661,7 +1882,7 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
       </div>
 
       <div style="font-size:12.5px; color:var(--text-secondary); margin-bottom:16px;">
-        Submit an official adjustment for missed punches or reader errors. Subject to Café Admin &amp; Master approval.
+        Submit the actual attendance values that need correction. Requests are reviewed through the Primary Master approval workflow.
       </div>
 
       <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:18px;">
@@ -1669,45 +1890,60 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Attendance Shift Date *
           </label>
-          <input type="date" id="corr-date-input" class="input" style="width:100%;" value="${defaultDate}" />
+          <input type="date" id="corr-date-input" class="input" style="width:100%;" value="${escapeHtml(defaultDate)}" />
+        </div>
+
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
+            Issue Type *
+          </label>
+          <select id="corr-issue-type" class="input" style="width:100%;">
+            ${[
+              "MISSED_CHECK_IN",
+              "MISSED_CHECK_OUT",
+              "WRONG_CHECK_IN",
+              "WRONG_CHECK_OUT",
+              "WRONG_BREAK",
+              "INCORRECT_STATUS",
+              "SHIFT_MISMATCH",
+              "OTHER",
+            ].map((value) => `<option value="${value}" ${defaultIssueType === value ? "selected" : ""}>${value.replace(/_/g, " ")}</option>`).join("")}
+          </select>
         </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
-              Actual Check-In *
+              Actual Check-In (IST)
             </label>
-            <input type="time" id="corr-in-input" class="input" style="width:100%;" value="09:00" />
+            <input type="time" id="corr-in-input" class="input" style="width:100%;" value="${escapeHtml(defaultCheckIn)}" />
           </div>
           <div>
             <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
-              Actual Check-Out *
+              Actual Check-Out (IST)
             </label>
-            <input type="time" id="corr-out-input" class="input" style="width:100%;" value="17:30" />
+            <input type="time" id="corr-out-input" class="input" style="width:100%;" value="${escapeHtml(defaultCheckOut)}" />
           </div>
+        </div>
+
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
+            Correct Break Minutes
+          </label>
+          <input type="number" min="0" step="1" id="corr-break-input" class="input" style="width:100%;" value="${Number.isFinite(Number(prefill?.breakMinutes)) ? Number(prefill.breakMinutes) : 0}" />
         </div>
 
         <div>
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Mandatory Reason for Correction *
           </label>
-          <textarea id="corr-reason-input" class="input" rows="3" placeholder="Explain the reason for discrepancy (e.g. café QR scanner timeout during rush hours)..." style="width:100%; resize:none;"></textarea>
-        </div>
-
-        <!-- Optional Supporting Attachment Picker (P2 Option) -->
-        <div>
-          <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
-            Optional Supporting Attachment (PDF, JPG, PNG)
-          </label>
-          <input type="file" id="corr-file-input" class="input" accept=".pdf,.png,.jpg,.jpeg" style="width:100%; padding:6px;" />
+          <textarea id="corr-reason-input" class="input" rows="3" placeholder="Describe the attendance discrepancy and the actual event." style="width:100%; resize:none;"></textarea>
         </div>
       </div>
 
       <div class="flex justify-end gap-sm">
         <button class="btn btn-secondary" id="cmodal-cancel-btn">Cancel</button>
-        <button class="btn btn-primary" id="cmodal-submit-btn" style="font-weight:700;">
-          Submit Request
-        </button>
+        <button class="btn btn-primary" id="cmodal-submit-btn" style="font-weight:700;">Submit Request</button>
       </div>
     </div>
   `;
@@ -1724,15 +1960,29 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
   modal.querySelector("#cmodal-cancel-btn")?.addEventListener("click", close);
 
   modal.querySelector("#cmodal-submit-btn")?.addEventListener("click", async () => {
-    const reason = modal.querySelector("#corr-reason-input").value.trim();
+    const reason = modal.querySelector("#corr-reason-input")?.value?.trim() || "";
+    const reqDate = modal.querySelector("#corr-date-input")?.value || defaultDate;
+    const reqIn = modal.querySelector("#corr-in-input")?.value || "";
+    const reqOut = modal.querySelector("#corr-out-input")?.value || "";
+    const issueType = modal.querySelector("#corr-issue-type")?.value || "OTHER";
+    const requestedBreakMinutes = Number(modal.querySelector("#corr-break-input")?.value || 0);
+
     if (!reason) {
       showToast("Please provide a mandatory reason for correction.", "coral");
       return;
     }
-
-    const reqDate = modal.querySelector("#corr-date-input")?.value || defaultDate;
-    const reqIn = modal.querySelector("#corr-in-input")?.value || "09:00";
-    const reqOut = modal.querySelector("#corr-out-input")?.value || "17:30";
+    if (!reqDate) {
+      showToast("Please select the attendance shift date.", "coral");
+      return;
+    }
+    if (!reqIn && !reqOut && issueType !== "WRONG_BREAK" && issueType !== "INCORRECT_STATUS" && issueType !== "SHIFT_MISMATCH") {
+      showToast("Enter the actual Check-In or Check-Out time that requires correction.", "coral");
+      return;
+    }
+    if (!Number.isFinite(requestedBreakMinutes) || requestedBreakMinutes < 0) {
+      showToast("Break minutes must be a non-negative number.", "coral");
+      return;
+    }
 
     const submitBtn = modal.querySelector("#cmodal-submit-btn");
     submitBtn.disabled = true;
@@ -1741,26 +1991,22 @@ function openCorrectionModal(onDoneCallback, prefill = {}) {
     try {
       const payload = {
         businessDate: reqDate,
-        requestedCheckIn: `${reqDate}T${reqIn}:00.000Z`,
-        requestedCheckOut: `${reqDate}T${reqOut}:00.000Z`,
+        issueType,
+        requestedBreakMinutes,
         reason,
       };
-      if (prefill?.attendanceId) {
-        payload.attendanceId = prefill.attendanceId;
-      }
+      const requestedCheckIn = istLocalDateTimeToIso(reqDate, reqIn);
+      const requestedCheckOut = istLocalDateTimeToIso(reqDate, reqOut);
+      if (requestedCheckIn) payload.requestedCheckIn = requestedCheckIn;
+      if (requestedCheckOut) payload.requestedCheckOut = requestedCheckOut;
+      if (prefill?.attendanceId) payload.attendanceId = prefill.attendanceId;
 
       const res = await apiPost("/attendance/corrections", payload);
-      const newCorr = res?.data?.correctionRequest || {
-        requestId: `ACR-${Date.now()}`,
-        businessDate: reqDate,
-        reason,
-        status: "PENDING",
-        createdAt: new Date().toISOString(),
-      };
-      cachedCorrections.unshift(newCorr);
+      const newCorr = res?.data?.correctionRequest;
+      if (newCorr) cachedCorrections.unshift(newCorr);
 
       close();
-      showToast("Correction request submitted for administrative review ✓", "mint");
+      showToast("Correction request submitted for Primary Master review ✓", "mint");
       if (onDoneCallback) onDoneCallback();
     } catch (err) {
       submitBtn.disabled = false;
@@ -1775,9 +2021,17 @@ function openShiftChangeModal(onDoneCallback, prefill = {}) {
   let existing = document.getElementById("staff-shift-change-modal");
   if (existing) existing.remove();
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const defaultDate = prefill?.requestedDate || todayStr;
-  const defaultCurrentShift = prefill?.currentShift || "Morning Shift (09:00 – 17:00)";
+  const liveCurrentShift = cachedShift
+    ? [
+        cachedShift.shiftName,
+        cachedShift.scheduledStartAt || cachedShift.scheduledEndAt
+          ? `${cachedShift.scheduledStartAt ? formatTimeStr(cachedShift.scheduledStartAt) : "—"} – ${cachedShift.scheduledEndAt ? formatTimeStr(cachedShift.scheduledEndAt) : "—"}`
+          : "",
+      ].filter(Boolean).join(" · ")
+    : "";
+  const defaultCurrentShift = prefill?.currentShift || liveCurrentShift;
 
   const modal = document.createElement("div");
   modal.id = "staff-shift-change-modal";
@@ -1817,20 +2071,22 @@ function openShiftChangeModal(onDoneCallback, prefill = {}) {
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Currently Assigned Shift
           </label>
-          <input type="text" id="sc-curr-input" class="input" style="width:100%;" value="${defaultCurrentShift}" />
+          <input type="text" id="sc-curr-input" class="input" style="width:100%;" value="${escapeHtml(defaultCurrentShift)}" placeholder="No current shift resolved" />
         </div>
 
         <div>
           <label style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; display:block;">
             Requested Shift / Timing *
           </label>
-          <select id="sc-target-input" class="input" style="width:100%;">
-            <option value="MORNING">Morning Duty Shift (07:00 – 15:30)</option>
-            <option value="AFTERNOON">Standard Afternoon Shift (11:00 – 19:30)</option>
-            <option value="EVENING">Evening Rush Shift (14:30 – 23:00)</option>
-            <option value="NIGHT">Closing / Night Shift (16:00 – 00:30)</option>
-            <option value="WEEKLY_OFF_SWAP">Swap Weekly Off Day</option>
-          </select>
+          <input
+            type="text"
+            id="sc-target-input"
+            class="input"
+            style="width:100%;"
+            maxlength="200"
+            placeholder="e.g. 10:00–18:30, weekly-off swap, or published shift name"
+            value="${escapeHtml(prefill?.requestedShift || "")}"
+          />
         </div>
 
         <div>
@@ -1887,8 +2143,17 @@ function openShiftChangeModal(onDoneCallback, prefill = {}) {
 
     const endDate = modal.querySelector("#sc-enddate-input").value || null;
     const currentShift = modal.querySelector("#sc-curr-input").value.trim();
-    const requestedShift = modal.querySelector("#sc-target-input").value;
+    const requestedShift = modal.querySelector("#sc-target-input").value.trim();
     const notes = modal.querySelector("#sc-notes-input").value.trim();
+
+    if (!requestedShift) {
+      showToast("Please enter the requested shift or timing.", "coral");
+      return;
+    }
+    if (endDate && endDate < requestedDate) {
+      showToast("End date cannot be before the requested start date.", "coral");
+      return;
+    }
 
     const submitBtn = modal.querySelector("#scmodal-submit-btn");
     submitBtn.disabled = true;
@@ -1987,7 +2252,7 @@ function openDiscrepancyModal(onDoneCallback) {
 
     try {
       await apiPost("/attendance/attestation", {
-        month: "2026-08",
+        month: currentMonth,
         decision: "REPORT_DISCREPANCY",
         remarks: memo,
       });
@@ -2012,12 +2277,17 @@ function openDayDrilldownModal(dateStr, record) {
   modal.className = "modal-backdrop flex items-center justify-center";
   modal.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1050; padding:16px;";
 
-  const punchIn = record?.checkInAt ? formatTimeStr(record.checkInAt) : "09:02 AM IST";
-  const punchOut = record?.checkOutAt ? formatTimeStr(record.checkOutAt) : "05:34 PM IST";
-  const worked = record?.totalWorkedMinutes > 0
+  const punchIn = record?.checkInAt ? formatTimeStr(record.checkInAt) : "—";
+  const punchOut = record?.checkOutAt ? formatTimeStr(record.checkOutAt) : "—";
+  const worked = Number(record?.totalWorkedMinutes) > 0
     ? `${Math.floor(record.totalWorkedMinutes / 60)}h ${record.totalWorkedMinutes % 60}m`
-    : "8h 02m";
+    : "—";
   const attId = record?.id || record?.attendanceId || record?._id;
+  const checkInSelfie = record?.attendanceEvidence?.checkIn?.photoFileId || record?.attendanceEvidence?.checkIn?.selfieMediaId || record?.selfieFileId || null;
+  const checkOutSelfie = record?.attendanceEvidence?.checkOut?.photoFileId || record?.attendanceEvidence?.checkOut?.selfieMediaId || null;
+  const scheduledLabel = record?.scheduledStartAt || record?.scheduledEndAt
+    ? `${record?.scheduledStartAt ? formatTimeStr(record.scheduledStartAt) : "—"} – ${record?.scheduledEndAt ? formatTimeStr(record.scheduledEndAt) : "—"}`
+    : (record?.shiftName || record?.shiftLabel || record?.shift || "—");
 
   modal.innerHTML = `
     <div class="card" style="width:100%; max-width:480px; padding:24px; background:var(--bg-surface-1); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg);">
@@ -2034,7 +2304,7 @@ function openDayDrilldownModal(dateStr, record) {
 
       <div style="display:flex; flex-direction:column; gap:10px; font-size:13px; margin-bottom:20px;">
         <div class="flex justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-          <span>Scheduled Shift:</span><strong>${record?.shiftLabel || record?.shift || "09:00 AM – 05:30 PM (8.5h)"}</strong>
+          <span>Scheduled Shift:</span><strong>${scheduledLabel}</strong>
         </div>
         <div class="flex justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
           <span>Actual Punch In:</span><strong style="color:var(--color-accent-mint);">${punchIn}</strong>
@@ -2046,18 +2316,18 @@ function openDayDrilldownModal(dateStr, record) {
           <span>Worked Total:</span><strong>${worked}</strong>
         </div>
         <div class="flex justify-between" style="padding:8px 12px; background:var(--bg-surface-2); border-radius:var(--radius-sm);">
-          <span>Verification Evidence:</span><strong style="color:var(--color-accent-mint);">Geo + QR + Selfie Sealed</strong>
+          <span>Presence Selfies:</span><strong style="color:var(--color-accent-mint);">${checkInSelfie ? "Check-In ✓" : "Check-In —"} · ${checkOutSelfie ? "Check-Out ✓" : "Check-Out —"}</strong>
         </div>
       </div>
 
       <!-- View Presence Evidence Button -->
-      <button class="btn btn-sm btn-primary" id="ddmodal-view-evidence-btn" style="width:100%; margin-bottom:14px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px;">
-        📷 View Presence Evidence
+      <button class="btn btn-sm btn-primary" id="ddmodal-view-evidence-btn" ${attId ? "" : "disabled"} style="width:100%; margin-bottom:14px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px;">
+        📷 View Check-In / Check-Out Evidence
       </button>
 
       <!-- Controlled Evidence Preview Option -->
       <div style="padding:10px 12px; background:rgba(82,183,136,0.06); border:1px solid rgba(82,183,136,0.2); border-radius:var(--radius-sm); margin-bottom:16px; font-size:11.5px; color:var(--text-secondary);">
-        🔒 <strong>Evidence Status:</strong> Verified &amp; retained in secure storage. Retention active (valid for 90 days).
+        🔒 <strong>Evidence Status:</strong> Stored as private attendance evidence. Retention and purge are controlled by audited governance policy; no fixed retention period is implied here.
       </div>
 
       <div class="flex justify-between items-center" style="padding-top:12px; border-top:1px solid var(--border-subtle);">

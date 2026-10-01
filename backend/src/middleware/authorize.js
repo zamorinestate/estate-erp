@@ -3,6 +3,9 @@
 const {
   RolePermission,
 } = require('../models/RolePermission');
+const {
+  TemporaryAccessGrant,
+} = require('../models/TemporaryAccessGrant');
 
 const {
   logSecurityEvent,
@@ -148,7 +151,7 @@ function canAccessCafe(
   }
 
   if (auth.role === 'MASTER') {
-    return true;
+    return auth.isPrimaryMaster === true;
   }
 
   const assignedCafeIds =
@@ -169,7 +172,7 @@ function ruleAppliesToRequest({
 
   switch (rule.scope) {
     case 'ORGANISATION':
-      return auth.role === 'MASTER' ||
+      return (auth.role === 'MASTER' && auth.isPrimaryMaster === true) ||
         auth.role === 'OWNER';
 
     case 'ASSIGNED_CAFES':
@@ -300,8 +303,8 @@ function enforceSensitiveRequirements({
 
 /**
  * requirePrimaryMaster — standalone middleware that ensures the authenticated
- * user is a MASTER with isPrimaryMaster === true. Normal Masters, Owners,
- * Admins, and Staff all receive 403 PRIMARY_MASTER_AUTHORITY_REQUIRED.
+ * user is a MASTER with isPrimaryMaster === true. All other callers receive
+ * 403 PRIMARY_MASTER_AUTHORITY_REQUIRED.
  */
 function requirePrimaryMaster(
   request,
@@ -389,8 +392,20 @@ function authorize(
         );
       }
       const authRole = String(request.auth.role).toUpperCase();
-      const isMasterRole = authRole === 'MASTER' || authRole === 'PRIMARY_MASTER' || Boolean(request.auth.isPrimaryMaster);
-      const isRoleAllowed = roles.includes(authRole) || (roles.includes('MASTER') && isMasterRole);
+      if (authRole === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+        return sendAuthorizationError(
+          response,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER access.',
+          403,
+          request
+        );
+      }
+      const isPrimaryMasterRole =
+        authRole === 'MASTER' && request.auth.isPrimaryMaster === true;
+      const isRoleAllowed =
+        roles.includes(authRole) &&
+        (authRole !== 'MASTER' || isPrimaryMasterRole);
       if (!isRoleAllowed) {
         return sendAuthorizationError(
           response,
@@ -426,6 +441,17 @@ function authorize(
       }
 
       const auth = request.auth;
+
+      if (auth.role === 'MASTER' && auth.isPrimaryMaster !== true) {
+        return sendAuthorizationError(
+          response,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER access.',
+          403,
+          request
+        );
+      }
+
       const userCaps = Array.isArray(auth.capabilities) ? auth.capabilities : [];
       const hasMatchingCapability =
         Array.isArray(allowedCapabilities) &&
@@ -489,9 +515,53 @@ function authorize(
         );
       }
 
+      const baseCafeAllowed =
+        !cafeId || canAccessCafe(auth, cafeId);
+
+      const temporaryGrantQuery = {
+        organisationId: auth.organisationId,
+        userId: auth.userId,
+        permissionCode: normalizedPermissionCode,
+        status: 'ACTIVE',
+        effectiveFrom: { $lte: new Date() },
+        effectiveTo: { $gt: new Date() },
+      };
+
+      if (!cafeId) {
+        temporaryGrantQuery.cafeId = null;
+      } else if (baseCafeAllowed) {
+        temporaryGrantQuery.cafeId = { $in: [null, cafeId] };
+      } else {
+        // A temporary grant may extend café scope only when it is explicitly
+        // bound to the exact requested café.
+        temporaryGrantQuery.cafeId = cafeId;
+      }
+
+      let temporaryGrant = null;
+      const temporaryGrantSourceAvailable = Boolean(
+        TemporaryAccessGrant.db?.readyState === 1 ||
+        TemporaryAccessGrant.findOne?.mock ||
+        typeof TemporaryAccessGrant.findOne?.restore === 'function'
+      );
+
+      if (temporaryGrantSourceAvailable) {
+        temporaryGrant =
+          await TemporaryAccessGrant
+            .findOne(temporaryGrantQuery)
+            .lean();
+      }
+
+      const temporaryCafeAllowed =
+        Boolean(
+          cafeId &&
+          temporaryGrant &&
+          temporaryGrant.cafeId === cafeId
+        );
+
       if (
         cafeId &&
-        !canAccessCafe(auth, cafeId)
+        !baseCafeAllowed &&
+        !temporaryCafeAllowed
       ) {
         return sendAuthorizationError(
           response,
@@ -548,11 +618,37 @@ function authorize(
           applicableRules
         );
 
+      // Explicit DENY rules remain authoritative. A temporary grant can only
+      // fill an otherwise-unruled permission gap and never bypass an explicit
+      // role-policy denial or an absolute role restriction.
+      if (!decision.allowed && !decision.rule && temporaryGrant) {
+        decision = {
+          allowed: true,
+          rule: {
+            permissionRuleId: temporaryGrant.grantId,
+            scope: temporaryGrant.cafeId ? 'CAFE' : 'RECORD',
+            requiresMfa: false,
+            requiresStepUpAuthentication: false,
+            requiresReauthentication: false,
+            requiresReason: false,
+            requiresAuditEvent: true,
+            fieldAccess: {
+              allowedFields: [],
+              deniedFields: [],
+              maskedFields: [],
+            },
+            temporaryGrantId: temporaryGrant.grantId,
+            temporaryGrantEffectiveTo: temporaryGrant.effectiveTo,
+          },
+        };
+      }
+
       if (!decision.allowed && !decision.rule) {
         // No explicit DB rule found. If the route explicitly permits this role,
         // or if the actor is Primary Master (with full governance and no absolute restriction),
         // fallback to default permission grant.
-        const isMaster = auth.role === 'MASTER' || Boolean(auth.isPrimaryMaster);
+        const isMaster =
+          auth.role === 'MASTER' && auth.isPrimaryMaster === true;
         const isRoleInAllowed = Array.isArray(allowedRoles) && allowedRoles.includes(auth.role);
 
         if (isMaster || isRoleInAllowed || hasMatchingCapability) {
@@ -560,7 +656,7 @@ function authorize(
             allowed: true,
             rule: {
               permissionRuleId: `DEFAULT_${auth.role}_${normalizedPermissionCode}`,
-              scope: (auth.role === 'MASTER' || auth.role === 'OWNER') ? 'ORGANISATION' : (cafeId ? 'CAFE' : 'ORGANISATION'),
+              scope: ((auth.role === 'MASTER' && auth.isPrimaryMaster === true) || auth.role === 'OWNER') ? 'ORGANISATION' : (cafeId ? 'CAFE' : 'ORGANISATION'),
               requiresMfa: false,
               requiresReason: false,
               requiresAuditEvent: false,
@@ -616,6 +712,10 @@ function authorize(
         maskedFields:
           decision.rule.fieldAccess
             ?.maskedFields || [],
+        temporaryGrantId:
+          decision.rule.temporaryGrantId || null,
+        temporaryGrantEffectiveTo:
+          decision.rule.temporaryGrantEffectiveTo || null,
       };
 
       return next();

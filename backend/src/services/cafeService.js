@@ -24,6 +24,7 @@ const {
   hashOpaqueToken,
 } = require('./cafeAccessCryptoService');
 const { ApiError } = require('../utils/ApiError');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 const { verifyPassword } = require('./authService');
 const {
   INDIAN_STATE_CODES,
@@ -97,6 +98,7 @@ const ALLOWED_CAFE_CREATE_FIELDS = [
   'mapsLink',
   'latitude',
   'longitude',
+  'geofenceRadiusMetres',
   'landmark',
   'city',
   'district',
@@ -178,13 +180,13 @@ function requireMasterCreationAuthority(auth) {
   }
 
   const role = auth.role.toUpperCase();
-  const isAllowed = role === 'MASTER';
+  const isAllowed = role === 'MASTER' && auth.isPrimaryMaster === true;
 
   if (!isAllowed) {
     throw new ApiError(
       403,
-      'CAFE_CREATION_DENIED',
-      'Only Master governance authority may create or provision new cafés.'
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Only the Primary Master may create or provision new cafés.'
     );
   }
 }
@@ -195,13 +197,17 @@ function requireGovernanceAuthority(auth) {
   }
 
   const role = auth.role.toUpperCase();
-  const isAllowed = role === 'MASTER' || role === 'OWNER';
+  const isPrimaryMaster =
+    role === 'MASTER' && auth.isPrimaryMaster === true;
+  const isOwner = role === 'OWNER';
 
-  if (!isAllowed) {
+  if (!isPrimaryMaster && !isOwner) {
     throw new ApiError(
       403,
-      'GOVERNANCE_ACCESS_REQUIRED',
-      'Only Master and Owner roles may perform this governance operation.'
+      role === 'MASTER'
+        ? 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+        : 'GOVERNANCE_ACCESS_REQUIRED',
+      'Only the Primary Master or Owner may perform this governance operation.'
     );
   }
 }
@@ -254,6 +260,46 @@ class CafeService {
       throw new ApiError(400, 'INVALID_CAFE_STATUS', 'The café status is invalid.');
     }
 
+    if (initialStatus === 'ACTIVE') {
+      const createAddress = sanitized.address || {};
+      const latitude = Number(sanitized.latitude ?? createAddress.latitude);
+      const longitude = Number(sanitized.longitude ?? createAddress.longitude);
+      const geofenceRadiusMetres = Number(
+        sanitized.geofenceRadiusMetres ?? createAddress.geofenceRadiusMetres ?? 100
+      );
+
+      if (
+        !Number.isFinite(latitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        !Number.isFinite(longitude) ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_REQUIRED',
+          'An ACTIVE café requires valid latitude and longitude for secure attendance geofencing.'
+        );
+      }
+
+      if (
+        !Number.isFinite(geofenceRadiusMetres) ||
+        geofenceRadiusMetres < 10 ||
+        geofenceRadiusMetres > 1000
+      ) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_RADIUS_INVALID',
+          'Attendance geofence radius must be between 10 and 1000 metres.'
+        );
+      }
+
+      sanitized.latitude = latitude;
+      sanitized.longitude = longitude;
+      sanitized.geofenceRadiusMetres = geofenceRadiusMetres;
+    }
+
     // 1. Generate sequential, collision-safe Cafe ID (e.g. ZC-0001)
     const cafeId = await SequenceCounter.generateId({
       organisationId,
@@ -296,47 +342,47 @@ class CafeService {
     // 4. Persistence with transaction safety
     let createdCafe = null;
     let createdAccess = null;
+    let universalQr = null;
 
-    const useMongooseTransactions =
-      mongoose.connection &&
-      mongoose.connection.client &&
-      typeof mongoose.connection.client.startSession === 'function' &&
-      Boolean(process.env.ENABLE_MONGO_TRANSACTIONS);
-
-    let session = null;
-    if (useMongooseTransactions) {
-      try {
-        session = await mongoose.startSession();
-        session.startTransaction();
-      } catch {
-        session = null;
-      }
-    }
+    // Café provisioning is a multi-document security boundary. Use the
+    // canonical transaction runner so statement-level TransientTransactionError
+    // restarts the whole body, while UnknownTransactionCommitResult retries only
+    // commit on the same session.
+    let transactionWasAvailable = false;
 
     try {
+      await executeTransactionWithRetry(async (session) => {
+        transactionWasAvailable = transactionWasAvailable || Boolean(session);
+
+        if (process.env.NODE_ENV === 'production' && !session) {
+          throw new ApiError(
+            503,
+            'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
+            'Production café provisioning requires MongoDB transaction support.'
+          );
+        }
       // 4a. Legacy Permanent PIN reservation is retired in REC-02 (omitted)
 
-      // 4b. Create Stage 02 Universal QR Record for Café Login
+      // 4b. Create Stage 02 Universal QR Record for Café Login inside the same
+      // transaction as the Café and CaféAccess records.
       const { UniversalQrService } = require('./universalQrService');
       const securePublicCafeReference = generateOpaqueToken();
-      let universalQr = null;
-      try {
-        universalQr = await UniversalQrService.createQrRecord({
-          qrType: 'CAFE_LOGIN',
-          targetEntityId: securePublicCafeReference,
-          organisationId,
+      universalQr = await UniversalQrService.createQrRecord({
+        qrType: 'CAFE_LOGIN',
+        targetEntityId: securePublicCafeReference,
+        organisationId,
+        cafeId,
+        title: `Café Login QR — ${name}`,
+        metadata: {
           cafeId,
-          title: `Café Login QR — ${name}`,
-          metadata: {
-            cafeId,
-            name,
-            city: sanitized.city || (sanitized.address && sanitized.address.city) || '',
-          },
-          actorUserId: auth.userId,
-        });
-      } catch (_) {
-        // Non-blocking fallback if running in standalone test environment
-      }
+          name,
+          city: sanitized.city || (sanitized.address && sanitized.address.city) || '',
+        },
+        actorUserId: auth.userId,
+        session,
+        publicOrigin: getPublicAppOrigin(),
+        payloadOverride: `${getPublicAppOrigin()}/cafe-access/qr/${qrToken}`,
+      });
 
       // 4c. Resolve FSSAI 2026 eligibility and fee based on Kind of Business
       const kindOfBusiness = (
@@ -422,8 +468,15 @@ class CafeService {
               pincode: sanitized.pincode || sanitized.address?.pincode || '',
               country: sanitized.country || sanitized.address?.country || 'India',
               landmark: sanitized.landmark || sanitized.address?.landmark || '',
-              latitude: sanitized.latitude || sanitized.address?.latitude || null,
-              longitude: sanitized.longitude || sanitized.address?.longitude || null,
+              latitude: Number.isFinite(sanitized.latitude)
+                ? sanitized.latitude
+                : (Number.isFinite(sanitized.address?.latitude) ? sanitized.address.latitude : null),
+              longitude: Number.isFinite(sanitized.longitude)
+                ? sanitized.longitude
+                : (Number.isFinite(sanitized.address?.longitude) ? sanitized.address.longitude : null),
+              geofenceRadiusMetres: Number.isFinite(sanitized.geofenceRadiusMetres)
+                ? sanitized.geofenceRadiusMetres
+                : (Number.isFinite(sanitized.address?.geofenceRadiusMetres) ? sanitized.address.geofenceRadiusMetres : 100),
               doorNumber: sanitized.doorNumber || sanitized.address?.doorNumber || '',
               possessionType: sanitized.possessionType || sanitized.address?.possessionType || 'RENTED',
               leaseStartDate: sanitized.leaseStartDate || sanitized.address?.leaseStartDate || null,
@@ -571,7 +624,7 @@ class CafeService {
             qrLoginContext: {
               qrRecordId: universalQr ? universalQr.qrId : null,
               securePublicCafeReference,
-              loginUrl: `https://zamorin.app/cafe/${securePublicCafeReference}/login`,
+              loginUrl: `${getPublicAppOrigin()}/cafe-access/qr/${qrToken}`,
               cafeOperationsLoginUrl: `${getPublicAppOrigin()}/cafe-operations/login?cafe=${cafeId}`,
               status: 'ACTIVE',
               lastScannedAt: null,
@@ -669,10 +722,10 @@ class CafeService {
           await CafeInventoryConfig.insertMany(
             configDocs,
             session ? { session, ordered: false } : { ordered: false }
-          ).catch(() => {});
+          );
         }
-      } catch (_) {
-        // Non-blocking inventory setup
+      } catch (inventoryProvisionError) {
+        throw inventoryProvisionError;
       }
 
       // 4e. Auto-provision FY-aware Tax Invoice & Receipt Sequences in SequenceCounter
@@ -695,7 +748,7 @@ class CafeService {
             },
           },
           { upsert: true, session: session || undefined }
-        ).catch(() => {});
+        );
 
         const receiptSeqKey = `RECEIPT_${organisationId}_${cafeId}_${fyInfo.fyShort}`;
         await SequenceCounter.findOneAndUpdate(
@@ -710,9 +763,9 @@ class CafeService {
             },
           },
           { upsert: true, session: session || undefined }
-        ).catch(() => {});
-      } catch (_) {
-        // Non-blocking sequence pre-provisioning
+        );
+      } catch (sequenceProvisionError) {
+        throw sequenceProvisionError;
       }
 
       // 5. Post-Creation Integrity Verification
@@ -751,24 +804,46 @@ class CafeService {
         }
       }
 
-      if (session) {
-        await session.commitTransaction();
-        session.endSession();
-        session = null;
-      }
+      return {
+        cafe: createdCafe,
+        access: createdAccess,
+        universalQr,
+      };
+      });
     } catch (err) {
-      if (session) {
-        await session.abortTransaction();
-        session.endSession();
-        session = null;
-      } else {
-        // Compensating rollback if standalone
+      if (
+        err?.isUnknownCommitOutcome ||
+        err?.code === 'TRANSACTION_COMMIT_OUTCOME_UNKNOWN'
+      ) {
+        // The durable outcome is intentionally not guessed and must not be
+        // compensated or automatically replayed.
+        throw err;
+      }
+
+      if (!transactionWasAvailable) {
+        // Non-production standalone compensation. Production rejects null-session
+        // provisioning before any durable write occurs.
         if (createdCafe?._id) {
           await Cafe.deleteOne({ _id: createdCafe._id }).catch(() => {});
         }
         if (createdAccess?._id) {
           await CafeAccess.deleteOne({ _id: createdAccess._id }).catch(() => {});
         }
+        if (universalQr?.qrId) {
+          const { UniversalQrRecord } = require('../models/UniversalQrRecord');
+          await UniversalQrRecord.deleteOne({ qrId: universalQr.qrId }).catch(() => {});
+        }
+        try {
+          const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
+          await CafeInventoryConfig.deleteMany({ organisationId, cafeId }).catch(() => {});
+        } catch (_) {}
+      }
+
+      if (
+        err instanceof ApiError &&
+        err.code === 'CAFE_PROVISIONING_TRANSACTION_REQUIRED'
+      ) {
+        throw err;
       }
 
       throw new ApiError(
@@ -926,6 +1001,41 @@ class CafeService {
     const stateName = sanitized.state || address.state || '';
     const pinCode = sanitized.pincode || address.pinCode || address.pincode || '';
 
+    const rawLatitude = sanitized.latitude ?? address.latitude;
+    const rawLongitude = sanitized.longitude ?? address.longitude;
+    const hasLatitude = rawLatitude !== undefined && rawLatitude !== null && rawLatitude !== '';
+    const hasLongitude = rawLongitude !== undefined && rawLongitude !== null && rawLongitude !== '';
+    if (hasLatitude !== hasLongitude) {
+      errors.push('Café geofence latitude and longitude must be supplied together.');
+    }
+    if (hasLatitude && hasLongitude) {
+      const latitude = Number(rawLatitude);
+      const longitude = Number(rawLongitude);
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+        errors.push('Café latitude must be a finite value between -90 and 90.');
+      }
+      if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        errors.push('Café longitude must be a finite value between -180 and 180.');
+      }
+      if (Number.isFinite(latitude) && latitude >= -90 && latitude <= 90) {
+        sanitized.latitude = latitude;
+      }
+      if (Number.isFinite(longitude) && longitude >= -180 && longitude <= 180) {
+        sanitized.longitude = longitude;
+      }
+    }
+
+    const rawGeofenceRadius =
+      sanitized.geofenceRadiusMetres ??
+      address.geofenceRadiusMetres ??
+      100;
+    const geofenceRadiusMetres = Number(rawGeofenceRadius);
+    if (!Number.isFinite(geofenceRadiusMetres) || geofenceRadiusMetres < 10 || geofenceRadiusMetres > 1000) {
+      errors.push('Attendance geofence radius must be between 10 and 1000 metres.');
+    } else {
+      sanitized.geofenceRadiusMetres = geofenceRadiusMetres;
+    }
+
     let resolvedState = null;
     if (stateCode) {
       resolvedState = resolveStateByCode(stateCode);
@@ -940,6 +1050,10 @@ class CafeService {
     }
 
     if (!isDraft) {
+      if (!hasLatitude || !hasLongitude) {
+        errors.push('Attendance geofence latitude and longitude are required before an operational café can be created.');
+      }
+
       if (!sanitized.addressLine1 && !address.street && !address.line1 && !address.building) {
         errors.push('Street / Premises address is required.');
       }
@@ -1156,6 +1270,15 @@ class CafeService {
           stateCode: sanitized.stateCode || sanitized.address?.stateCode || '',
           pinCode: sanitized.pincode || sanitized.address?.pinCode || '',
           country: 'India',
+          latitude: Number.isFinite(sanitized.latitude)
+            ? sanitized.latitude
+            : (Number.isFinite(sanitized.address?.latitude) ? sanitized.address.latitude : null),
+          longitude: Number.isFinite(sanitized.longitude)
+            ? sanitized.longitude
+            : (Number.isFinite(sanitized.address?.longitude) ? sanitized.address.longitude : null),
+          geofenceRadiusMetres: Number.isFinite(sanitized.geofenceRadiusMetres)
+            ? sanitized.geofenceRadiusMetres
+            : (Number.isFinite(sanitized.address?.geofenceRadiusMetres) ? sanitized.address.geofenceRadiusMetres : 100),
         },
         contactProfile: {
           primaryContact: {
@@ -1293,6 +1416,33 @@ class CafeService {
       );
     }
 
+    if (targetStage === 'ACTIVATED') {
+      const latitude = Number(cafe.address?.latitude);
+      const longitude = Number(cafe.address?.longitude);
+      const radius = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+      if (
+        !Number.isFinite(latitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        !Number.isFinite(longitude) ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_REQUIRED',
+          'Café activation requires valid attendance geofence coordinates.'
+        );
+      }
+      if (!Number.isFinite(radius) || radius < 10 || radius > 1000) {
+        throw new ApiError(
+          400,
+          'CAFE_GEOFENCE_RADIUS_INVALID',
+          'Café activation requires an attendance geofence radius between 10 and 1000 metres.'
+        );
+      }
+    }
+
     cafe.lifecycleStage = targetStage;
     cafe.lifecycleHistory.push({
       fromStage: currentStage,
@@ -1342,27 +1492,45 @@ class CafeService {
   }) {
     requireMasterCreationAuthority(auth);
 
-    const cleanOrg = String(organisationId).toUpperCase();
-    const cleanCafe = String(cafeId).toUpperCase();
-
-    const cafe = await Cafe.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
-    if (!cafe) {
-      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+    const cleanOrg = String(organisationId || '').trim().toUpperCase();
+    const cleanCafe = String(cafeId || '').trim().toUpperCase();
+    if (!cleanOrg || !cleanCafe) {
+      throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'Organisation and café scope are required for provisioning.');
     }
 
-    // Set stage to PROVISIONING
-    cafe.lifecycleStage = 'PROVISIONING';
-    cafe.lifecycleHistory.push({
-      fromStage: cafe.lifecycleStage || 'CREATED',
-      toStage: 'PROVISIONING',
-      transitionedAt: new Date(),
-      transitionedBy: auth.userId,
-      reason: 'Subsystem provisioning initiated.',
-    });
-    await cafe.save();
-
+    let cafe = null;
     try {
-      // 1. Invoice and Receipt Sequences in SequenceCounter
+      cafe = await executeTransactionWithRetry(async (session) => {
+        if (!session) {
+          throw new ApiError(
+            503,
+            'CAFE_PROVISIONING_TRANSACTION_REQUIRED',
+            'Café subsystem provisioning requires MongoDB transaction support.'
+          );
+        }
+
+        const transactionalCafe = await Cafe.findOne({
+          organisationId: cleanOrg,
+          cafeId: cleanCafe,
+        }).session(session);
+
+        if (!transactionalCafe) {
+          throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café record not found.');
+        }
+
+        const cafe = transactionalCafe;
+        const previousStage = cafe.lifecycleStage || 'CREATED';
+      cafe.lifecycleStage = 'PROVISIONING';
+      cafe.lifecycleHistory.push({
+        fromStage: previousStage,
+        toStage: 'PROVISIONING',
+        transitionedAt: new Date(),
+        transitionedBy: auth.userId,
+        reason: 'Subsystem provisioning initiated.',
+      });
+      await cafe.save({ session });
+
+      // 1. Invoice and Receipt Sequences
       const fyInfo = resolveFinancialYear();
       const gstinClean = (cafe.registrations?.gstin || '').toUpperCase();
       const invoiceSeqKey = gstinClean
@@ -1380,7 +1548,7 @@ class CafeService {
             minimumDigits: 5,
           },
         },
-        { upsert: true }
+        { upsert: true, session }
       );
 
       const receiptSeqKey = `RECEIPT_${cleanOrg}_${cleanCafe}_${fyInfo.fyShort}`;
@@ -1395,48 +1563,53 @@ class CafeService {
             minimumDigits: 5,
           },
         },
-        { upsert: true }
+        { upsert: true, session }
       );
 
-      // 2. Inventory Provisioning: Neutral locations, zero fake stock
+      // 2. Inventory Provisioning: neutral locations, zero fake stock.
       const { GlobalInventoryItem } = require('../models/GlobalInventoryItem');
       const { CafeInventoryConfig } = require('../models/CafeInventoryConfig');
-      const activeItems = await GlobalInventoryItem.find({ organisationId: cleanOrg, status: 'ACTIVE' }).lean();
+      const activeItems = await GlobalInventoryItem.find({
+        organisationId: cleanOrg,
+        status: 'ACTIVE',
+      }).session(session).lean();
 
-      if (activeItems.length > 0) {
-        for (const itm of activeItems) {
-          await CafeInventoryConfig.findOneAndUpdate(
-            { organisationId: cleanOrg, cafeId: cleanCafe, itemId: itm.itemId },
-            {
-              $setOnInsert: {
-                organisationId: cleanOrg,
-                cafeId: cleanCafe,
-                itemId: itm.itemId,
-                currentQuantityBase: 0, // Strict zero fake stock
-                availableQuantityBase: 0,
-                reservedQuantityBase: 0,
-                quarantinedQuantityBase: 0,
-                expiredQuantityBase: 0,
-                inTransitQuantityBase: 0,
-                incomingQuantityBase: 0,
-                minQuantityBase: 10,
-                parQuantityBase: 25,
-                maxQuantityBase: 50,
-                safetyStockBase: 5,
-                stockedHere: true,
-                replenishmentEnabled: true,
-                primaryLocation: 'Main Store',
-                storageLocations: ['Main Store', 'Cold Room'],
-                status: 'ACTIVE',
-              },
+      for (const itm of activeItems) {
+        await CafeInventoryConfig.findOneAndUpdate(
+          { organisationId: cleanOrg, cafeId: cleanCafe, itemId: itm.itemId },
+          {
+            $setOnInsert: {
+              organisationId: cleanOrg,
+              cafeId: cleanCafe,
+              itemId: itm.itemId,
+              currentQuantityBase: 0,
+              availableQuantityBase: 0,
+              reservedQuantityBase: 0,
+              quarantinedQuantityBase: 0,
+              expiredQuantityBase: 0,
+              inTransitQuantityBase: 0,
+              incomingQuantityBase: 0,
+              minQuantityBase: 10,
+              parQuantityBase: 25,
+              maxQuantityBase: 50,
+              safetyStockBase: 5,
+              stockedHere: true,
+              replenishmentEnabled: true,
+              primaryLocation: 'Main Store',
+              storageLocations: ['Main Store', 'Cold Room'],
+              status: 'ACTIVE',
             },
-            { upsert: true }
-          );
-        }
+          },
+          { upsert: true, session }
+        );
       }
 
-      // 3. CafeAccess Provisioning (Zero PIN, QR + Link only)
-      let access = await CafeAccess.findOne({ organisationId: cleanOrg, cafeId: cleanCafe });
+      // 3. Café access provisioning inside the same transaction.
+      let access = await CafeAccess.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
       if (!access) {
         const qrToken = generateOpaqueToken();
         let linkToken = generateOpaqueToken();
@@ -1444,38 +1617,53 @@ class CafeService {
           linkToken = generateOpaqueToken();
         }
 
-        access = await CafeAccess.create({
-          organisationId: cleanOrg,
-          cafeId: cleanCafe,
-          accessStatus: 'ACTIVE',
-          provisioningStatus: 'READY',
-          qrCredentialHash: hashOpaqueToken(qrToken),
-          qrTokenEncrypted: encryptSecret(qrToken),
-          qrVersion: 1,
-          qrEnabled: true,
-          qrCreatedAt: new Date(),
-          linkCredentialHash: hashOpaqueToken(linkToken),
-          linkTokenEncrypted: encryptSecret(linkToken),
-          linkVersion: 1,
-          linkEnabled: true,
-          linkCreatedAt: new Date(),
-          createdBy: auth.userId,
-          updatedBy: auth.userId,
-        });
+        [access] = await CafeAccess.create(
+          [{
+            organisationId: cleanOrg,
+            cafeId: cleanCafe,
+            accessStatus: 'ACTIVE',
+            provisioningStatus: 'READY',
+            qrCredentialHash: hashOpaqueToken(qrToken),
+            qrTokenEncrypted: encryptSecret(qrToken),
+            qrVersion: 1,
+            qrEnabled: true,
+            qrCreatedAt: new Date(),
+            linkCredentialHash: hashOpaqueToken(linkToken),
+            linkTokenEncrypted: encryptSecret(linkToken),
+            linkVersion: 1,
+            linkEnabled: true,
+            linkCreatedAt: new Date(),
+            createdBy: auth.userId,
+            updatedBy: auth.userId,
+          }],
+          { session }
+        );
       }
 
-      // 4. Café Admin Assignment if requested
+      // 4. Optional Café Admin assignment is part of the same transaction.
       if (options.adminUserId) {
-        const adminUser = await User.findOne({ userId: options.adminUserId, organisationId: cleanOrg });
-        if (adminUser) {
-          await User.updateOne(
-            { userId: adminUser.userId, organisationId: cleanOrg },
-            { $addToSet: { assignedCafeIds: cleanCafe } }
+        const adminUserId = String(options.adminUserId).trim().toUpperCase();
+        const adminUser = await User.findOne({
+          userId: adminUserId,
+          organisationId: cleanOrg,
+        }).session(session);
+
+        if (!adminUser) {
+          throw new ApiError(
+            400,
+            'CAFE_ADMIN_NOT_FOUND',
+            'Requested Café Admin assignment could not be resolved.'
           );
         }
+
+        await User.updateOne(
+          { userId: adminUser.userId, organisationId: cleanOrg },
+          { $addToSet: { assignedCafeIds: cleanCafe } },
+          { session }
+        );
       }
 
-      // 5. Complete PROVISIONED transition
+      // 5. Complete lifecycle transition only after every subsystem write succeeds.
       cafe.lifecycleStage = 'PROVISIONED';
       cafe.lifecycleHistory.push({
         fromStage: 'PROVISIONING',
@@ -1484,8 +1672,13 @@ class CafeService {
         transitionedBy: auth.userId,
         reason: 'All branch subsystems provisioned successfully.',
       });
-      await cafe.save();
+      await cafe.save({ session });
 
+        return cafe;
+      });
+
+      // Audit is intentionally after commit so no success event can exist for
+      // a transaction that later aborts.
       await auditService.recordAuditEvent({
         organisationId: cleanOrg,
         cafeId: cleanCafe,
@@ -1495,7 +1688,7 @@ class CafeService {
         action: 'CAFE_PROVISIONED',
         entityType: 'CAFE',
         entityId: cleanCafe,
-        reason: 'Subsystems provisioned with zero fake stock, FY sequence, and retired PIN.',
+        reason: 'Subsystems provisioned atomically with zero fake stock and FY sequences.',
         result: 'SUCCESS',
         riskClassification: 'HIGH',
         correlationId,
@@ -1505,17 +1698,43 @@ class CafeService {
 
       return { cafe, provisioningStatus: 'PROVISIONED' };
     } catch (err) {
-      cafe.lifecycleStage = 'PROVISIONING_FAILED';
-      cafe.lifecycleHistory.push({
-        fromStage: 'PROVISIONING',
-        toStage: 'PROVISIONING_FAILED',
-        transitionedAt: new Date(),
-        transitionedBy: auth.userId,
-        reason: `Provisioning failed: ${err.message}`,
-      });
-      await cafe.save().catch(() => {});
+      if (
+        err?.isUnknownCommitOutcome ||
+        err?.code === 'TRANSACTION_COMMIT_OUTCOME_UNKNOWN'
+      ) {
+        throw err;
+      }
 
-      throw new ApiError(500, 'PROVISIONING_FAILED', `Provisioning failed: ${err.message}`);
+      // Record the failed lifecycle outside the aborted transaction. No
+      // subsystem artifacts from the failed attempt are allowed to survive.
+      try {
+        const failedCafe = await Cafe.findOne({
+          organisationId: cleanOrg,
+          cafeId: cleanCafe,
+        });
+        if (failedCafe) {
+          const fromStage = failedCafe.lifecycleStage || 'CREATED';
+          failedCafe.lifecycleStage = 'PROVISIONING_FAILED';
+          failedCafe.lifecycleHistory.push({
+            fromStage,
+            toStage: 'PROVISIONING_FAILED',
+            transitionedAt: new Date(),
+            transitionedBy: auth.userId,
+            reason: `Provisioning failed atomically: ${err.message}`,
+          });
+          await failedCafe.save();
+        }
+      } catch (_) {}
+
+      if (err instanceof ApiError && [400, 404, 503].includes(err.statusCode)) {
+        throw err;
+      }
+
+      throw new ApiError(
+        500,
+        'PROVISIONING_FAILED',
+        `Provisioning failed atomically: ${err.message}`
+      );
     }
   }
 
@@ -1536,9 +1755,30 @@ class CafeService {
 
     const failureReasons = [];
 
-    // Verify identity & address
+    // Verify identity, address, and attendance geofence readiness
     if (!cafe.name || !cafe.displayName) failureReasons.push('Café identity is incomplete.');
     if (!cafe.address?.city) failureReasons.push('Structured location city is missing.');
+
+    const latitude = Number(cafe.address?.latitude);
+    const longitude = Number(cafe.address?.longitude);
+    const geofenceRadiusMetres = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      failureReasons.push('Attendance geofence coordinates are missing or invalid.');
+    }
+    if (
+      !Number.isFinite(geofenceRadiusMetres) ||
+      geofenceRadiusMetres < 10 ||
+      geofenceRadiusMetres > 1000
+    ) {
+      failureReasons.push('Attendance geofence radius must be between 10 and 1000 metres.');
+    }
 
     // Verify sequences in SequenceCounter
     const fyInfo = resolveFinancialYear();
@@ -1624,6 +1864,37 @@ class CafeService {
         400,
         'CANNOT_ACTIVATE_UNVERIFIED_CAFE',
         `Café must be in 'VERIFIED' stage before activation. Current stage: '${cafe.lifecycleStage}'.`
+      );
+    }
+
+    const latitude = Number(cafe.address?.latitude);
+    const longitude = Number(cafe.address?.longitude);
+    const geofenceRadiusMetres = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new ApiError(
+        400,
+        'CAFE_GEOFENCE_REQUIRED',
+        'Café activation requires valid latitude and longitude for secure attendance geofencing.'
+      );
+    }
+
+    if (
+      !Number.isFinite(geofenceRadiusMetres) ||
+      geofenceRadiusMetres < 10 ||
+      geofenceRadiusMetres > 1000
+    ) {
+      throw new ApiError(
+        400,
+        'CAFE_GEOFENCE_RADIUS_INVALID',
+        'Café activation requires an attendance geofence radius between 10 and 1000 metres.'
       );
     }
 
@@ -1964,64 +2235,21 @@ class CafeService {
       }
     }
 
-    const access = await CafeAccess.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    });
-
-    if (!access) {
-      throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
-    }
-
-    const priorVersion = access.qrVersion || 1;
-    if (!access.qrHistory) access.qrHistory = [];
-    access.qrHistory.push({
-      version: priorVersion,
-      action: 'ROTATED',
-      actionAt: new Date(),
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      reason: `QR rotated to v${priorVersion + 1}`,
-    });
-
-    const newQrToken = generateOpaqueToken();
-    access.qrCredentialHash = hashOpaqueToken(newQrToken);
-    access.qrTokenEncrypted = encryptSecret(newQrToken);
-    access.qrVersion = priorVersion + 1;
-    access.qrEnabled = true;
-    access.qrCreatedAt = new Date();
-    access.qrRevokedAt = null;
-    access.qrRevokedBy = null;
-    access.qrRevokeReason = null;
-    access.updatedBy = auth.userId;
-    await access.save();
-
-    await auditService.recordAuditEvent({
+    // One canonical QR rotation path. Universal QR, Café metadata and the
+    // authoritative CafeAccess credential are committed together.
+    const result = await this.regenerateCafeLoginQr({
       organisationId,
       cafeId,
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      module: 'CAFE_OPERATIONS',
-      action: 'CAFE_QR_REGENERATED',
-      entityType: 'CAFE_ACCESS',
-      entityId: cafeId,
-      reason: `QR access credential regenerated to version ${access.qrVersion}. Prior codes invalidated.`,
-      result: 'SUCCESS',
-      riskClassification: 'HIGH',
-      ipAddress: clientIp,
+      auth,
+      clientIp,
       userAgent,
-      metadata: {
-        qrVersion: access.qrVersion,
-      },
     });
 
-    const publicOrigin = getPublicAppOrigin();
-
     return {
-      cafeId,
-      qrVersion: access.qrVersion,
-      qrToken: newQrToken,
-      qrUrl: `${publicOrigin}/cafe-access/qr/${newQrToken}`,
+      cafeId: result.cafeId,
+      qrVersion: result.qrVersion,
+      qrToken: result.qrToken,
+      qrUrl: result.qrUrl,
     };
   }
 
@@ -2039,10 +2267,13 @@ class CafeService {
   }) {
     requireGovernanceAuthority(auth);
 
+    const cleanOrg = String(organisationId || '').trim().toUpperCase();
+    const cleanCafe = String(cafeId || '').trim().toUpperCase();
+
     if (currentPassword) {
       const user = await User.findOne({
         userId: auth.userId,
-        organisationId: String(organisationId).toUpperCase(),
+        organisationId: cleanOrg,
       }).select('+passwordHash');
       if (user && user.passwordHash) {
         const ok = await verifyPassword(currentPassword, user.passwordHash);
@@ -2050,69 +2281,108 @@ class CafeService {
       }
     }
 
-    const access = await CafeAccess.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    });
+    const revokeReason = reason || 'Revoked by governance authority';
+    const { UniversalQrService } = require('./universalQrService');
 
-    if (!access) {
-      throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
-    }
+    const result = await executeTransactionWithRetry(async (session) => {
+      if (!session) {
+        throw new ApiError(
+          503,
+          'CAFE_QR_TRANSACTION_REQUIRED',
+          'Café QR revocation requires MongoDB transaction support.'
+        );
+      }
 
-    if (!access.qrEnabled) {
+      const access = await CafeAccess.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
+      if (!access) {
+        throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
+      }
+
+      const cafe = await Cafe.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
+      if (!cafe) {
+        throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found.');
+      }
+
+      if (cafe.qrLoginContext?.qrRecordId) {
+        try {
+          await UniversalQrService.revokeQrRecord(
+            cafe.qrLoginContext.qrRecordId,
+            revokeReason,
+            auth.userId,
+            session
+          );
+        } catch (err) {
+          if (err?.code !== 'QR_NOT_FOUND') throw err;
+        }
+      }
+
+      if (!Array.isArray(access.qrHistory)) access.qrHistory = [];
+      if (access.qrEnabled) {
+        access.qrHistory.push({
+          version: access.qrVersion || 1,
+          action: 'REVOKED',
+          actionAt: new Date(),
+          actorUserId: auth.userId,
+          actorRole: auth.role,
+          reason: revokeReason,
+        });
+      }
+
+      access.qrEnabled = false;
+      access.qrRevokedAt = access.qrRevokedAt || new Date();
+      access.qrRevokedBy = auth.userId;
+      access.qrRevokeReason = revokeReason;
+      access.updatedBy = auth.userId;
+      await access.save({ session });
+
+      const existingContext = cafe.qrLoginContext || {};
+      cafe.qrLoginContext = {
+        ...existingContext,
+        status: 'REVOKED',
+      };
+      cafe.updatedBy = auth.userId;
+      await cafe.save({ session });
+
       return {
-        cafeId,
+        cafeId: cleanCafe,
         qrVersion: access.qrVersion,
         qrEnabled: false,
         qrRevokedAt: access.qrRevokedAt,
+        qrRevokedBy: access.qrRevokedBy,
         qrRevokeReason: access.qrRevokeReason,
+        qrRecordId: cafe.qrLoginContext?.qrRecordId || null,
       };
-    }
-
-    if (!access.qrHistory) access.qrHistory = [];
-    access.qrHistory.push({
-      version: access.qrVersion || 1,
-      action: 'REVOKED',
-      actionAt: new Date(),
-      actorUserId: auth.userId,
-      actorRole: auth.role,
-      reason: reason || 'QR credential revoked by Master governance',
     });
 
-    access.qrEnabled = false;
-    access.qrRevokedAt = new Date();
-    access.qrRevokedBy = auth.userId;
-    access.qrRevokeReason = reason || 'Revoked by governance authority';
-    access.updatedBy = auth.userId;
-    await access.save();
-
     await auditService.recordAuditEvent({
-      organisationId,
-      cafeId,
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
       actorUserId: auth.userId,
       actorRole: auth.role,
       module: 'CAFE_OPERATIONS',
       action: 'CAFE_QR_REVOKED',
       entityType: 'CAFE_ACCESS',
-      entityId: cafeId,
-      reason: reason || `QR access credential revoked for version ${access.qrVersion}. Gateway disabled.`,
+      entityId: cleanCafe,
+      reason: revokeReason,
       result: 'SUCCESS',
       riskClassification: 'CRITICAL',
       ipAddress: clientIp,
       userAgent,
       metadata: {
-        qrVersion: access.qrVersion,
+        qrVersion: result.qrVersion,
+        qrRecordId: result.qrRecordId,
       },
-    });
+    }).catch(() => {});
 
-    return {
-      cafeId,
-      qrVersion: access.qrVersion,
-      qrEnabled: false,
-      qrRevokedAt: access.qrRevokedAt,
-      qrRevokedBy: access.qrRevokedBy,
-      qrRevokeReason: access.qrRevokeReason,
-    };
+    return result;
   }
 
   /**
@@ -2254,8 +2524,8 @@ class CafeService {
   }
 
   /**
-   * Gateway Credential Resolver: exchanges Permanent PIN, QR Token, or Link Token
-   * for a short-lived server-side CafeGatewayContext.
+   * Gateway Credential Resolver: exchanges the canonical Café QR or official
+   * Café login-link token for a short-lived server-side CafeGatewayContext.
    */
   async resolveGatewayCredential({
     method,
@@ -2264,27 +2534,33 @@ class CafeService {
     userAgent = null,
     correlationId = null,
   }) {
-    if (!method || !['PIN', 'QR', 'LINK'].includes(method.toUpperCase())) {
-      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be PIN, QR, or LINK.');
+    if (!method || typeof method !== 'string') {
+      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be QR or LINK.');
+    }
+
+    const cleanMethod = method.trim().toUpperCase();
+
+    if (cleanMethod === 'PIN') {
+      throw new ApiError(
+        400,
+        'PIN_AUTH_DISALLOWED',
+        'Permanent PIN authentication is disallowed. Café context must be securely resolved via unique Café QR or official login URL.'
+      );
+    }
+
+    if (!['QR', 'LINK'].includes(cleanMethod)) {
+      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be QR or LINK.');
     }
 
     if (!credential || typeof credential !== 'string' || !credential.trim()) {
       throw new ApiError(400, 'CREDENTIAL_REQUIRED', 'Access credential is required.');
     }
 
-    const cleanMethod = method.toUpperCase();
     const cleanCred = credential.trim();
 
     let access = null;
 
-    if (cleanMethod === 'PIN') {
-      // Disallow permanent PIN authentication bypass per architectural specification
-      throw new ApiError(
-        400,
-        'PIN_AUTH_DISALLOWED',
-        'Permanent PIN authentication is disallowed. Café context must be securely resolved via unique Café QR or official login URL.'
-      );
-    } else if (cleanMethod === 'QR') {
+    if (cleanMethod === 'QR') {
       const hash = hashOpaqueToken(cleanCred);
       access = await CafeAccess.findOne({
         qrCredentialHash: hash,
@@ -2296,20 +2572,8 @@ class CafeService {
         linkCredentialHash: hash,
         linkEnabled: true,
       });
-    } else if (cleanMethod === 'SETUP_CODE') {
-      // Internal initial store commissioning: one-time short-lived setup code
-      const hash = hashOpaqueToken(cleanCred);
-      access = await CafeAccess.findOne({
-        oneTimeSetupCodeHash: hash,
-        setupCodeExpiresAt: { $gt: new Date() },
-        setupCodeUsed: false,
-      });
-      if (access) {
-        // Invalidate immediately upon successful use
-        await CafeAccess.updateOne({ _id: access._id }, { setupCodeUsed: true });
-      }
     } else {
-      throw new ApiError(400, 'INVALID_ACCESS_METHOD', 'Supported access methods are QR, LINK, or SETUP_CODE.');
+      throw new ApiError(400, 'INVALID_GATEWAY_METHOD', 'Gateway method must be QR or LINK.');
     }
 
     if (!access) {
@@ -2320,7 +2584,7 @@ class CafeService {
       );
     }
 
-    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+    if (access.accessStatus !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_ACCESS_UNAVAILABLE',
@@ -2334,7 +2598,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+    if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2410,7 +2674,7 @@ class CafeService {
       );
     }
 
-    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+    if (access.accessStatus !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_ACCESS_UNAVAILABLE',
@@ -2423,7 +2687,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+    if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2475,7 +2739,7 @@ class CafeService {
       );
     }
 
-    if (access.accessStatus === 'LOCKED' || access.accessStatus === 'DISABLED') {
+    if (access.accessStatus !== 'ACTIVE') {
       throw new ApiError(
         403,
         'CAFE_ACCESS_UNAVAILABLE',
@@ -2488,7 +2752,7 @@ class CafeService {
       cafeId: access.cafeId,
     }).lean();
 
-    if (!cafe || ['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
+    if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
       throw new ApiError(
         403,
         'CAFE_INACTIVE',
@@ -2540,16 +2804,22 @@ class CafeService {
       throw new ApiError(404, 'CAFE_NOT_FOUND', 'Target café not found.');
     }
 
-    if (['ARCHIVED', 'CLOSED', 'SUSPENDED', 'INACTIVE'].includes(cafe.status)) {
-      throw new ApiError(403, 'CAFE_INACTIVE', 'Café is inactive or suspended.');
+    if (!['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
+      throw new ApiError(403, 'CAFE_INACTIVE', 'Café is not in an operational or commissioned test state.');
     }
 
     // 2. Role-based authorization binding check
     if (cleanRole === 'MASTER') {
-      // Master is authorised across the organisation's cafés
+      if (isPrimaryMaster !== true) {
+        throw new ApiError(
+          403,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER café binding.'
+        );
+      }
       return {
         authorized: true,
-        isPrimaryMaster: Boolean(isPrimaryMaster),
+        isPrimaryMaster: true,
         cafeId: cleanTargetCafeId,
         targetCafeId: cleanTargetCafeId,
         cafeName: cafe.name,
@@ -2627,10 +2897,18 @@ class CafeService {
   async runAccessHealthCheck({ organisationId, cafeId, auth }) {
     requireGovernanceAuthority(auth);
 
+    const cleanOrg = String(organisationId || '').trim().toUpperCase();
+    const cleanCafe = String(cafeId || '').trim().toUpperCase();
+    if (!cleanOrg || !cleanCafe) {
+      throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'Organisation and café scope are required.');
+    }
+
     const access = await CafeAccess.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    }).select('+permanentCafePinEncrypted +permanentCafePinLookupHash');
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
+    }).select(
+      '+permanentCafePinEncrypted +permanentCafePinLookupHash +qrCredentialHash +linkCredentialHash'
+    );
 
     if (!access) {
       throw new ApiError(404, 'ACCESS_RECORD_NOT_FOUND', 'Café Access record not found.');
@@ -2648,7 +2926,10 @@ class CafeService {
 
     // Test 1: PIN posture (one-way bcrypt hash)
     try {
-      const cafeDoc = await Cafe.findOne({ cafeId: cleanCafe }).select('+operationsPinHash').lean();
+      const cafeDoc = await Cafe.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).select('+operationsPinHash').lean();
       if (cafeDoc?.operationsPinHash) {
         results.permanentPin = 'PASS';
         results.pinPosture = 'BCRYPT_ONE_WAY';
@@ -2844,22 +3125,33 @@ class CafeService {
       testResults: cafe.readinessChecklist ? { ...cafe.readinessChecklist } : null,
     });
 
-    await cafe.save();
+    const targetAccessStatus =
+      ['TEST_MODE', 'ACTIVE'].includes(normalizedTarget)
+        ? 'ACTIVE'
+        : 'DISABLED';
 
-    // Synchronize CafeAccess status
-    try {
-      if (normalizedTarget === 'ACTIVE') {
-        await CafeAccess.updateOne(
-          { organisationId: cafe.organisationId, cafeId: cafe.cafeId },
-          { $set: { accessStatus: 'ACTIVE', updatedBy: auth.userId } }
-        );
-      } else if (normalizedTarget === 'TEMPORARILY_CLOSED' || normalizedTarget === 'CLOSED') {
-        await CafeAccess.updateOne(
-          { organisationId: cafe.organisationId, cafeId: cafe.cafeId },
-          { $set: { accessStatus: 'DISABLED', updatedBy: auth.userId } }
-        );
+    const accessResult = await CafeAccess.updateOne(
+      {
+        organisationId: cafe.organisationId,
+        cafeId: cafe.cafeId,
+      },
+      {
+        $set: {
+          accessStatus: targetAccessStatus,
+          updatedBy: auth.userId,
+        },
       }
-    } catch (_) {}
+    );
+
+    if (!accessResult || accessResult.matchedCount !== 1) {
+      throw new ApiError(
+        409,
+        'CAFE_ACCESS_STATE_MISSING',
+        'Café lifecycle transition was not completed because its access record could not be updated.'
+      );
+    }
+
+    await cafe.save();
 
     await auditService.recordAuditEvent({
       organisationId: cafe.organisationId,
@@ -2919,92 +3211,166 @@ class CafeService {
    * STAGE 03: Regenerates Café Login QR Code using Stage 02 Universal QR Engine.
    * Immediately revokes the previous opaque token and provisions a fresh QR record.
    */
-  async regenerateCafeLoginQr({ organisationId, cafeId, auth }) {
+  async regenerateCafeLoginQr({
+    organisationId,
+    cafeId,
+    auth,
+    clientIp = null,
+    userAgent = null,
+    correlationId = null,
+  }) {
     requireGovernanceAuthority(auth);
 
-    const cafe = await Cafe.findOne({
-      organisationId: String(organisationId).toUpperCase(),
-      cafeId: String(cafeId).toUpperCase(),
-    });
-
-    if (!cafe) {
-      throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found.');
+    const cleanOrg = String(organisationId || '').trim().toUpperCase();
+    const cleanCafe = String(cafeId || '').trim().toUpperCase();
+    if (!cleanOrg || !cleanCafe) {
+      throw new ApiError(400, 'CAFE_SCOPE_REQUIRED', 'Organisation and café scope are required.');
     }
 
     const { UniversalQrService } = require('./universalQrService');
+    const publicOrigin = getPublicAppOrigin();
 
-    // 1. Revoke existing Universal QR Record if present
-    if (cafe.qrLoginContext?.qrRecordId) {
-      await UniversalQrService.revokeQrRecord(
-        cafe.qrLoginContext.qrRecordId,
-        'Regenerated by authorized governance user.',
-        auth.userId
-      ).catch(() => {});
-    }
+    const result = await executeTransactionWithRetry(async (session) => {
+      if (!session) {
+        throw new ApiError(
+          503,
+          'CAFE_QR_TRANSACTION_REQUIRED',
+          'Café QR rotation requires MongoDB transaction support.'
+        );
+      }
 
-    // 2. Generate new opaque token and create Universal QR Record
-    const newReference = generateOpaqueToken();
-    const newQrRecord = await UniversalQrService.createQrRecord({
-      qrType: 'CAFE_LOGIN',
-      targetEntityId: newReference,
-      organisationId: cafe.organisationId,
-      cafeId: cafe.cafeId,
-      title: `Café Login QR — ${cafe.name}`,
-      metadata: {
-        cafeId: cafe.cafeId,
-        name: cafe.name,
-        regeneratedAt: new Date().toISOString(),
-      },
-      actorUserId: auth.userId,
-    });
+      const cafe = await Cafe.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
 
-    // 3. Update Cafe model
-    cafe.qrLoginContext = {
-      qrRecordId: newQrRecord.qrId,
-      securePublicCafeReference: newReference,
-      loginUrl: `https://zamorin.app/cafe/${newReference}/login`,
-      status: 'ACTIVE',
-      lastScannedAt: null,
-      scanCount: 0,
-    };
-    cafe.updatedBy = auth.userId;
-    await cafe.save();
+      if (!cafe) {
+        throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found.');
+      }
 
-    // 4. Update CafeAccess model
-    const access = await CafeAccess.findOne({
-      organisationId: cafe.organisationId,
-      cafeId: cafe.cafeId,
-    });
-    if (access) {
-      access.qrCredentialHash = hashOpaqueToken(newReference);
-      access.qrTokenEncrypted = encryptSecret(newReference);
-      access.qrVersion = (access.qrVersion || 1) + 1;
+      const access = await CafeAccess.findOne({
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+      }).session(session);
+
+      if (!access) {
+        throw new ApiError(
+          409,
+          'ACCESS_RECORD_NOT_FOUND',
+          'Café Access record is required before QR rotation.'
+        );
+      }
+
+      // Revoke the prior Universal QR record in the same transaction. A missing
+      // historical record is tolerated because the authoritative gateway token
+      // in CafeAccess is replaced atomically below.
+      if (cafe.qrLoginContext?.qrRecordId) {
+        try {
+          await UniversalQrService.revokeQrRecord(
+            cafe.qrLoginContext.qrRecordId,
+            'Regenerated by authorized governance user.',
+            auth.userId,
+            session
+          );
+        } catch (err) {
+          if (err?.code !== 'QR_NOT_FOUND') throw err;
+        }
+      }
+
+      // Keep the non-secret public reference distinct from the secret gateway
+      // credential. The secret token is stored only as hash + encrypted value.
+      const newPublicReference = generateOpaqueToken();
+      let newQrToken = generateOpaqueToken();
+      while (newQrToken === newPublicReference) {
+        newQrToken = generateOpaqueToken();
+      }
+
+      const newQrRecord = await UniversalQrService.createQrRecord({
+        qrType: 'CAFE_LOGIN',
+        targetEntityId: newPublicReference,
+        organisationId: cleanOrg,
+        cafeId: cleanCafe,
+        title: `Café Login QR — ${cafe.name}`,
+        metadata: {
+          cafeId: cleanCafe,
+          name: cafe.name,
+          regeneratedAt: new Date().toISOString(),
+        },
+        actorUserId: auth.userId,
+        session,
+        publicOrigin,
+        payloadOverride: `${publicOrigin}/cafe-access/qr/${newQrToken}`,
+      });
+
+      cafe.qrLoginContext = {
+        qrRecordId: newQrRecord.qrId,
+        securePublicCafeReference: newPublicReference,
+        loginUrl: `${publicOrigin}/cafe-access/qr/${newQrToken}`,
+        cafeOperationsLoginUrl: `${publicOrigin}/cafe-operations/login?cafe=${cleanCafe}`,
+        status: 'ACTIVE',
+        lastScannedAt: null,
+        scanCount: 0,
+      };
+      cafe.updatedBy = auth.userId;
+      await cafe.save({ session });
+
+      const priorVersion = access.qrVersion || 1;
+      if (!Array.isArray(access.qrHistory)) access.qrHistory = [];
+      access.qrHistory.push({
+        version: priorVersion,
+        action: 'ROTATED',
+        actionAt: new Date(),
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        reason: `QR rotated to v${priorVersion + 1}`,
+      });
+      access.qrCredentialHash = hashOpaqueToken(newQrToken);
+      access.qrTokenEncrypted = encryptSecret(newQrToken);
+      access.qrVersion = priorVersion + 1;
+      access.qrEnabled = true;
       access.qrCreatedAt = new Date();
+      access.qrRevokedAt = null;
+      access.qrRevokedBy = null;
+      access.qrRevokeReason = null;
       access.updatedBy = auth.userId;
-      await access.save();
-    }
+      await access.save({ session });
+
+      return {
+        cafeId: cleanCafe,
+        qrId: newQrRecord.qrId,
+        qrVersion: access.qrVersion,
+        qrToken: newQrToken,
+        securePublicCafeReference: newPublicReference,
+        loginUrl: cafe.qrLoginContext.loginUrl,
+        qrUrl: cafe.qrLoginContext.loginUrl,
+        payload: newQrRecord.payload,
+      };
+    });
 
     await auditService.recordAuditEvent({
-      organisationId: cafe.organisationId,
-      cafeId: cafe.cafeId,
+      organisationId: cleanOrg,
+      cafeId: cleanCafe,
       actorUserId: auth.userId,
       actorRole: auth.role,
       module: 'UNIVERSAL_QR',
       action: 'CAFE_LOGIN_QR_REGENERATED',
       entityType: 'CAFE',
-      entityId: cafe.cafeId,
-      reason: 'Café login QR code regenerated.',
+      entityId: cleanCafe,
+      reason: 'Café login QR credential and printable QR record regenerated atomically.',
       result: 'SUCCESS',
       riskClassification: 'HIGH',
-    });
+      correlationId,
+      ipAddress: clientIp,
+      userAgent,
+      metadata: {
+        qrId: result.qrId,
+        qrVersion: result.qrVersion,
+      },
+    }).catch(() => {});
 
     return {
       success: true,
-      cafeId: cafe.cafeId,
-      qrId: newQrRecord.qrId,
-      securePublicCafeReference: newReference,
-      loginUrl: cafe.qrLoginContext.loginUrl,
-      payload: newQrRecord.payload,
+      ...result,
     };
   }
 
@@ -3026,7 +3392,13 @@ class CafeService {
 
     let qrRecord = null;
     if (cafe.qrLoginContext?.qrRecordId) {
-      qrRecord = await UniversalQrRecord.findOne({ qrId: cafe.qrLoginContext.qrRecordId });
+      qrRecord = await UniversalQrRecord.findOne({
+        qrId: cafe.qrLoginContext.qrRecordId,
+        organisationId: cafe.organisationId,
+        cafeId: cafe.cafeId,
+        qrType: 'CAFE_LOGIN',
+        status: 'ACTIVE',
+      });
     }
 
     if (!qrRecord) {
@@ -3040,16 +3412,11 @@ class CafeService {
     }
 
     if (!qrRecord) {
-      // Create on-demand
-      const ref = cafe.qrLoginContext?.securePublicCafeReference || generateOpaqueToken();
-      qrRecord = await UniversalQrService.createQrRecord({
-        qrType: 'CAFE_LOGIN',
-        targetEntityId: ref,
-        organisationId: cafe.organisationId,
-        cafeId: cafe.cafeId,
-        title: `Café Login QR — ${cafe.name}`,
-        actorUserId: 'SYSTEM',
-      });
+      throw new ApiError(
+        409,
+        'CAFE_QR_RECORD_MISSING',
+        'The canonical Café login QR record is missing. Regenerate the Café QR before printing so the card cannot point to a stale or alternate credential.'
+      );
     }
 
     const branding = {

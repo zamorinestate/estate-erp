@@ -28,21 +28,6 @@ const ERP_MODULES = [
     testOwnership: 'backend/test/dashboardCommandCentre.test.js'
   },
   {
-    id: 'DASHBOARD_NORMAL_MASTER',
-    name: 'Normal Master Operational Dashboard',
-    family: 'Dashboard',
-    personas: ['MASTER_NORMAL'],
-    route: '#dashboard-master-normal',
-    frontendFile: 'frontend/src/js/pages/dashboardMaster.js',
-    backendRoute: 'backend/src/routes/dashboardRoutes.js',
-    controller: 'backend/src/controllers/dashboardController.js',
-    exportSupport: 'ZURF_PDF',
-    uploadSupport: 'NOT_APPLICABLE',
-    receiptSupport: 'NOT_APPLICABLE',
-    permissions: ['VIEW_PORTFOLIO_DASHBOARD'],
-    testOwnership: 'backend/test/dashboardCommandCentre.test.js'
-  },
-  {
     id: 'DASHBOARD_OWNER',
     name: 'Owner Portfolio Dashboard',
     family: 'Dashboard',

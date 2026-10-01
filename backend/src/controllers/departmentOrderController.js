@@ -297,7 +297,10 @@ const createDepartmentOrder = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_ORDER_PAYLOAD', 'Institution, department, and at least one item are required.');
   }
 
-  const normCafeId = normalizeId(cafeId) || 'ZC-0001';
+  const normCafeId = normalizeId(cafeId);
+  if (!normCafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
+  }
   assertCafeAccess(request, normCafeId);
 
   const businessDate = orderDate || getIstBusinessDate();
@@ -334,19 +337,15 @@ const createDepartmentOrder = asyncHandler(async (request, response) => {
     orderStatus: { $ne: 'CANCELLED' },
   }).select('orderId totalPaisa fulfilmentDate').lean();
 
-  // Generate sequence DO-YYYY-XXXX
+  // Generate canonical sequence DO-YYYY-XXXX. Allocation failure
+  // blocks creation rather than falling back to collision-prone randomness.
   const year = new Date().getFullYear();
-  let orderId;
-  try {
-    orderId = await SequenceCounter.generateId({
-      organisationId: request.auth.organisationId,
-      prefix: `DO-${year}`,
-      minimumDigits: 4,
-    });
-  } catch (e) {
-    const seq = Math.floor(Math.random() * 9000) + 1000;
-    orderId = `DO-${year}-${String(seq).padStart(4, '0')}`;
-  }
+  const orderId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `DEPARTMENT_ORDER_${year}`,
+    prefix: `DO-${year}`,
+    minimumDigits: 4,
+  });
 
   const initialStatus = isDraft ? 'DRAFT' : 'CONFIRMED';
   const initialFulfilmentStatus = isDraft ? 'SCHEDULED' : 'SCHEDULED';
@@ -391,7 +390,6 @@ const createDepartmentOrder = asyncHandler(async (request, response) => {
     requestedByUserId: request.auth.userId,
   });
 
-  try {
     await recordRequestAudit({
       request,
       module: 'DEPARTMENT_ORDERS',
@@ -405,9 +403,6 @@ const createDepartmentOrder = asyncHandler(async (request, response) => {
         status: initialStatus,
       },
     });
-  } catch (err) {
-    // Non-blocking audit
-  }
 
   return response.status(201).json({
     success: true,
@@ -466,7 +461,6 @@ const createOrderRevision = asyncHandler(async (request, response) => {
 
   await order.save();
 
-  try {
     await recordRequestAudit({
       request,
       module: 'DEPARTMENT_ORDERS',
@@ -480,9 +474,6 @@ const createOrderRevision = asyncHandler(async (request, response) => {
         reason,
       },
     });
-  } catch (err) {
-    // Non-blocking audit
-  }
 
   return response.status(200).json({
     success: true,
@@ -529,7 +520,6 @@ const confirmOrderFulfilment = asyncHandler(async (request, response) => {
 
   await order.save();
 
-  try {
     await recordRequestAudit({
       request,
       module: 'DEPARTMENT_ORDERS',
@@ -542,9 +532,6 @@ const confirmOrderFulfilment = asyncHandler(async (request, response) => {
         receivingContactName,
       },
     });
-  } catch (err) {
-    // Non-blocking audit
-  }
 
   return response.status(200).json({
     success: true,
@@ -563,8 +550,27 @@ const recordOrderSettlement = asyncHandler(async (request, response) => {
   const { amountPaisa, paymentMethod, paymentReference, notes } = request.body;
 
   const parsedAmount = Number(amountPaisa);
-  if (!parsedAmount || parsedAmount <= 0) {
+  if (!Number.isSafeInteger(parsedAmount) || parsedAmount <= 0) {
     throw new ApiError(400, 'INVALID_SETTLEMENT_AMOUNT', 'Settlement amount must be a positive integer in paisa.');
+  }
+
+  const normalizedPaymentMethod = normalizeId(paymentMethod || 'BANK_TRANSFER');
+  const allowedPaymentMethods = ['BANK_TRANSFER', 'UPI', 'CHEQUE', 'CREDIT_NOTE', 'CASH'];
+  if (!allowedPaymentMethods.includes(normalizedPaymentMethod)) {
+    throw new ApiError(
+      400,
+      'INVALID_PAYMENT_METHOD',
+      `paymentMethod must be one of: ${allowedPaymentMethods.join(', ')}.`
+    );
+  }
+
+  const normalizedPaymentReference = String(paymentReference || '').trim();
+  if (normalizedPaymentMethod !== 'CASH' && !normalizedPaymentReference) {
+    throw new ApiError(
+      400,
+      'PAYMENT_REFERENCE_REQUIRED',
+      'A payment reference is required for non-cash institutional settlements.'
+    );
   }
 
   const order = await DepartmentOrder.findOne({
@@ -583,12 +589,18 @@ const recordOrderSettlement = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'AMOUNT_EXCEEDS_OUTSTANDING', `Settlement amount ₹${(parsedAmount / 100).toFixed(2)} exceeds current outstanding ₹${(currentOutstanding / 100).toFixed(2)}.`);
   }
 
-  const settlementId = `SETTLE-${Date.now().toString(36).toUpperCase()}`;
+  const settlementDateKey = getIstBusinessDate().replace(/-/g, '');
+  const settlementId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `DEPARTMENT_ORDER_SETTLEMENT_${settlementDateKey}`,
+    prefix: `DO-SET-${settlementDateKey}`,
+    minimumDigits: 4,
+  });
   const newSettlement = {
     settlementId,
     amountPaisa: parsedAmount,
-    paymentMethod: paymentMethod || 'BANK_TRANSFER',
-    paymentReference: paymentReference ? paymentReference.trim() : '',
+    paymentMethod: normalizedPaymentMethod,
+    paymentReference: normalizedPaymentReference,
     settledAt: new Date(),
     recordedByUserId: request.auth.userId,
     notes: notes ? notes.trim() : '',
@@ -606,7 +618,6 @@ const recordOrderSettlement = asyncHandler(async (request, response) => {
 
   await order.save();
 
-  try {
     await recordRequestAudit({
       request,
       module: 'DEPARTMENT_ORDERS',
@@ -620,9 +631,6 @@ const recordOrderSettlement = asyncHandler(async (request, response) => {
         remainingBalance: Math.max(0, order.totalPaisa - order.settledPaisa),
       },
     });
-  } catch (err) {
-    // Non-blocking audit
-  }
 
   return response.status(200).json({
     success: true,
@@ -675,7 +683,10 @@ const createQuote = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_QUOTE_DATA', 'Institution, department, contact, validity date, and items are required.');
   }
 
-  const normCafeId = normalizeId(cafeId) || 'ZC-0001';
+  const normCafeId = normalizeId(cafeId);
+  if (!normCafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
+  }
   assertCafeAccess(request, normCafeId);
 
   let subtotalPaisa = 0;
@@ -696,7 +707,13 @@ const createQuote = asyncHandler(async (request, response) => {
   const taxPaisa = Math.round(subtotalPaisa * 0.05);
   const totalPaisa = subtotalPaisa + taxPaisa;
 
-  const quoteId = `QUO-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`;
+  const quoteYear = new Date().getFullYear();
+  const quoteId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `INSTITUTIONAL_QUOTE_${quoteYear}`,
+    prefix: `QUO-${quoteYear}`,
+    minimumDigits: 4,
+  });
 
   const quote = await InstitutionalQuote.create({
     quoteId,
@@ -717,7 +734,6 @@ const createQuote = asyncHandler(async (request, response) => {
     createdByUserId: request.auth.userId,
   });
 
-  try {
     await recordRequestAudit({
       request,
       module: 'DEPARTMENT_ORDERS',
@@ -730,9 +746,6 @@ const createQuote = asyncHandler(async (request, response) => {
         totalPaisa,
       },
     });
-  } catch (err) {
-    // Non-blocking audit
-  }
 
   return response.status(201).json({
     success: true,

@@ -1,7 +1,7 @@
 /* =====================================================================
    js/screens/masterSignIn.js
    ---------------------------------------------------------------------
-   "Sign in with Master Account" — Primary/Normal Master strong
+   "Sign in with Master Account" — Primary Master strong
    authentication (master spec Section 10-31). Never a PIN. This screen
    never learns whether an account exists from a failed attempt (Section
    23/165) — success and failure paths both take the generic route

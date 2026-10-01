@@ -56,6 +56,20 @@ const qualityChecklistSchema = new mongoose.Schema(
       maxlength: 300,
     },
 
+    templateId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+      index: true,
+    },
+
+    templateVersion: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
     frequency: {
       type: String,
       enum: CHECKLIST_FREQUENCIES,
@@ -163,7 +177,7 @@ qualityChecklistSchema.index(
 );
 
 qualityChecklistSchema.pre('validate', function normaliseQCFields() {
-  const upperFields = ['checklistId', 'organisationId', 'cafeId', 'inspectedByUserId'];
+  const upperFields = ['checklistId', 'organisationId', 'cafeId', 'inspectedByUserId', 'templateId'];
   for (const field of upperFields) {
     if (this[field] && typeof this[field] === 'string') {
       this[field] = this[field].trim().toUpperCase();

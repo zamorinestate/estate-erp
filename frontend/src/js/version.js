@@ -3,5 +3,5 @@
 // automatically invalidates the old cached app shell and triggers the
 // update-available flow for everyone already using the app — that's the
 // whole mechanism, there's nothing else to wire per release.
-export const APP_VERSION = "1.0.1";
-export const BUILD_DATE = "2026-08-02";
+export const APP_VERSION = "1.0.2";
+export const BUILD_DATE = "2026-09-30";

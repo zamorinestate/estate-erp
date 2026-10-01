@@ -53,7 +53,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const bcrypt = require('bcrypt');
 
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'a_very_secure_and_long_jwt_access_secret_32bytes_long!';
@@ -108,8 +108,34 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
   let secondBranchCafeId; // For same-GSTIN branch linkage testing
 
   t.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
-    await mongoose.connect(mongoServer.getUri());
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+    await mongoose.connect(mongoServer.getUri(), {
+      autoIndex: false,
+      autoCreate: false,
+    });
+
+    // Provisioning and lifecycle transactions should run against explicitly
+    // created collections, not rely on first-write collection creation.
+    for (const model of [
+      Cafe,
+      CafeAccess,
+      CafeGatewayContext,
+      SequenceCounter,
+      User,
+      GlobalInventoryItem,
+      CafeInventoryConfig,
+      AuditEvent,
+      Bill,
+      CashTransaction,
+      MenuItem,
+      BusinessDocument,
+      PurchaseOrder,
+      Asset,
+      DeviceRegistration,
+      OperatorSession,
+    ]) {
+      await model.createCollection();
+    }
 
     cafeAccessCryptoService.verifySecretKeys();
     const passwordHash = await bcrypt.hash('SecurePassword#2026', 10);
@@ -318,6 +344,9 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
         pincode: '673001',
         phone: '+91 98470 12345',
         email: 'val@zamorin.cafe',
+        latitude: 11.2588,
+        longitude: 75.7804,
+        geofenceRadiusMetres: 100,
         gstin: '32AAACZ1234F1Z5',
         fssaiNumber: '11326001000999',
       },
@@ -325,6 +354,25 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
       organisationId: ORG_ID,
     });
     assert.equal(validCheck.valid, true, 'Fully compliant payload must pass validation');
+
+    // 2.1A Operational validation must fail closed without attendance geofence.
+    const missingGeofenceCheck = await cafeService.validateCafeCreationPayload({
+      cafeData: {
+        name: `${SYNTHETIC_CAFE_NAME}-NO-GEOFENCE`,
+        displayName: 'No Geofence Unit',
+        addressLine1: 'Estate Road, Vythiri',
+        city: 'Kozhikode',
+        stateCode: '32',
+        pincode: '673001',
+      },
+      isDraft: false,
+      organisationId: ORG_ID,
+    });
+    assert.equal(missingGeofenceCheck.valid, false);
+    assert.ok(
+      missingGeofenceCheck.errors.some((e) => e.includes('geofence latitude and longitude')),
+      'Operational café validation must require attendance geofence coordinates'
+    );
 
     // 2.2 Missing required business name
     const missingNameCheck = await cafeService.validateCafeCreationPayload({
@@ -414,6 +462,9 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
         pincode: '673576',
         phone: '+91 98470 12345',
         email: 'hilltop.rec10@zamorin.cafe',
+        latitude: 11.5500,
+        longitude: 75.7300,
+        geofenceRadiusMetres: 100,
         gstin: '32AAACZ1234F1Z5',
         fssaiNumber: '11326001000123',
         estimatedAnnualTurnoverInr: 25000000, // ₹2.5 crore -> State Licence
@@ -470,6 +521,9 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
         $set: {
           'address.line1': 'Estate Road, Vythiri',
           'address.district': 'Wayanad',
+          'address.latitude': 11.5500,
+          'address.longitude': 75.7300,
+          'address.geofenceRadiusMetres': 100,
           'registrations.gstin': '32AAACZ1234F1Z5',
           'registrations.fssai.number': '11326001000123',
           'registrations.fssai.category': 'STATE_LICENCE',
@@ -1395,7 +1449,10 @@ test('REC-10: New Café / Restaurant Full End-to-End Acceptance, Provisioning, Q
       ],
     });
 
-    assert.ok(offlineBatchResult.syncedCount >= 1 || offlineBatchResult.processed >= 1);
+    assert.ok(
+      offlineBatchResult.syncedCount >= 1 || offlineBatchResult.processed >= 1,
+      `Expected valid offline cash sale to sync; result=${JSON.stringify(offlineBatchResult)}`
+    );
 
     // 37.3 Foreign café attempting to replay device assigned to new café is blocked
     await assert.rejects(

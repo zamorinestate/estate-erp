@@ -82,28 +82,6 @@ class DeviceController {
     }
   }
 
-  async issueChallenge(req, res, next) {
-    try {
-      const { cafeId } = req.body;
-      const deviceId = req.headers['x-device-id'] || req.body.deviceId;
-
-      if (!deviceId || !cafeId) {
-        return res.status(400).json({ error: 'DEVICE_ID_AND_CAFE_ID_REQUIRED' });
-      }
-
-      const challenge = await attendanceQrService.issueChallenge({
-        organisationId: req.auth.organisationId || 'ZAMORIN',
-        deviceId,
-        cafeId,
-        correlationId: req.headers['x-correlation-id'],
-      });
-
-      res.status(200).json(challenge);
-    } catch (err) {
-      next(err);
-    }
-  }
-
   async issueOfflineLease(req, res, next) {
     try {
       const { cafeId, durationMinutes } = req.body;

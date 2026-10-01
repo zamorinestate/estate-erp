@@ -43,7 +43,7 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
     isPrimaryMaster: true,
   };
 
-  const normalMasterUser = {
+  const malformedMasterUser = {
     userId: 'US-MASTER-02',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
@@ -133,9 +133,9 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
     assert.match(draftRes.cafe.cafeId, /^ZC-\d{4}$/);
     assert.equal(draftRes.cafe.lifecycleStage, 'DRAFT');
 
-    // 1.2 Normal Master allowed
-    const normalMasterDraft = await cafeService.createCafeDraft({
-      auth: normalMasterUser,
+    // 1.2 Malformed MASTER allowed
+    const malformedMasterDraft = await cafeService.createCafeDraft({
+      auth: malformedMasterUser,
       cafeData: {
         name: 'Zamorin Wayanad Hills',
         displayName: 'Wayanad Retreat',
@@ -148,7 +148,7 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
         email: 'wayanad@zamorin.cafe',
       },
     });
-    assert.ok(normalMasterDraft.cafe);
+    assert.ok(malformedMasterDraft.cafe);
 
     // 1.3 Owner rejected (403)
     await assert.rejects(
@@ -424,6 +424,9 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
         pincode: '682003',
         phone: '+91 98470 99887',
         email: 'kochi@zamorin.cafe',
+        latitude: 9.9667,
+        longitude: 76.2673,
+        geofenceRadiusMetres: 100,
         gstin: '32AAACZ1234F1Z5',
         fssaiNumber: '11326001000999',
         estimatedAnnualTurnoverInr: 25000000, // 2.5 crore -> State Licence
@@ -574,6 +577,9 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
         pincode: '682011',
         phone: '+91 98470 77889',
         email: 'marine.drive@zamorin.cafe',
+        latitude: 9.9816,
+        longitude: 76.2768,
+        geofenceRadiusMetres: 100,
         gstin: '32AAACZ9999F1Z1',
         fssaiNumber: '11326001000777',
       },

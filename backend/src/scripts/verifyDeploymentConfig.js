@@ -14,6 +14,7 @@
 
 require('dotenv').config({ quiet: true });
 const mongoose = require('mongoose');
+const crypto = require('node:crypto');
 const { loadEnvironment } = require('../config/environment');
 
 const BOLD = '\x1b[1m';
@@ -60,11 +61,68 @@ async function runPreFlightCheck() {
   const isMfaValid = mfaKey.length === 64 && /^[0-9a-fA-F]+$/.test(mfaKey);
   recordResult('MFA 64-Hex Encryption Key', isMfaValid, isMfaValid ? '64-hex key verified' : 'Must be exact 64-character hexadecimal key');
 
-  // 3. CORS & Allowed Origins Validation
-  console.log(`\n${BOLD}[3/5] Validating CORS & Domain Bindings...${RESET}`);
+  // 3. CORS, Domain & Android Attestation Policy Validation
+  console.log(`\n${BOLD}[3/5] Validating CORS, Domain Bindings & Android Attestation Policy...${RESET}`);
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
   const isCorsValid = allowedOrigins.length > 0 && !allowedOrigins.includes('*') && allowedOrigins.every((o) => o.startsWith('http://') || o.startsWith('https://'));
   recordResult('CORS Allowed Origins Policy', isCorsValid, isCorsValid ? `${allowedOrigins.length} origin(s) mapped: ${allowedOrigins.join(', ')}` : 'Must define explicit http(s) origins without wildcards');
+
+  const androidPackage = String(
+    process.env.ZAMORIN_ANDROID_APP_PACKAGE || 'com.zamorin.cafe.erp'
+  ).trim();
+  const androidCertDigests = String(
+    process.env.ZAMORIN_ANDROID_APP_CERT_SHA256 || ''
+  )
+    .split(/[,;\s]+/)
+    .map((value) => value.trim().toLowerCase().replace(/[^a-f0-9]/g, ''))
+    .filter(Boolean);
+  const androidPackageValid = /^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(androidPackage);
+  const androidCertPolicyValid =
+    androidCertDigests.length > 0 &&
+    androidCertDigests.every((value) => /^[a-f0-9]{64}$/.test(value));
+
+  recordResult(
+    'Android Application Package Policy',
+    androidPackageValid,
+    androidPackageValid
+      ? `Package: ${androidPackage}`
+      : 'ZAMORIN_ANDROID_APP_PACKAGE must be a valid Android applicationId'
+  );
+  recordResult(
+    'Android App Signing Certificate SHA-256 Policy',
+    nodeEnv !== 'production' || androidCertPolicyValid,
+    nodeEnv !== 'production'
+      ? (androidCertPolicyValid ? `${androidCertDigests.length} digest(s) configured` : 'Optional outside production')
+      : (androidCertPolicyValid
+        ? `${androidCertDigests.length} production signing digest(s) configured`
+        : 'ZAMORIN_ANDROID_APP_CERT_SHA256 must contain one or more 64-hex SHA-256 digests')
+  );
+
+  const dispatchPrivateKey = String(
+    process.env.ZAMORIN_PRINT_DISPATCH_PRIVATE_KEY_PKCS8_B64 || ''
+  ).trim();
+  let dispatchSigningKeyValid = false;
+  if (dispatchPrivateKey) {
+    try {
+      const key = crypto.createPrivateKey({
+        key: Buffer.from(dispatchPrivateKey, 'base64'),
+        format: 'der',
+        type: 'pkcs8',
+      });
+      dispatchSigningKeyValid = key.asymmetricKeyType === 'ed25519';
+    } catch (_) {
+      dispatchSigningKeyValid = false;
+    }
+  }
+  recordResult(
+    'Local ESC/POS Dispatch Authorization Signing Key',
+    nodeEnv !== 'production' || dispatchSigningKeyValid,
+    nodeEnv !== 'production'
+      ? (dispatchSigningKeyValid ? 'Valid Ed25519 key configured' : 'Optional outside production')
+      : (dispatchSigningKeyValid
+        ? 'Production Ed25519 dispatch signer configured'
+        : 'ZAMORIN_PRINT_DISPATCH_PRIVATE_KEY_PKCS8_B64 must be valid base64 PKCS#8 Ed25519 private key')
+  );
 
   // 4. Initial Master Credentials & Storage Config
   console.log(`\n${BOLD}[4/5] Auditing Initial Master Credentials & Storage Driver...${RESET}`);
@@ -137,7 +195,8 @@ async function runPreFlightCheck() {
   console.log(`Failed / Action Items : ${failedChecks > 0 ? `${RED}${failedChecks}${RESET}` : `${GREEN}0${RESET}`}`);
 
   if (failedChecks === 0) {
-    console.log(`\n${BOLD}${GREEN}✔ ALL PRE-FLIGHT DEPLOYMENT INVARIANTS PASSED! READY FOR PRODUCTION LAUNCH.${RESET}\n`);
+    console.log(`\n${BOLD}${GREEN}✔ ALL CONFIGURATION PRE-FLIGHT INVARIANTS PASSED.${RESET}`);
+    console.log(`${YELLOW}Release certification still requires exact-head CI, repository invariants, and REC-04E real-hardware acceptance.${RESET}\n`);
     process.exit(0);
   } else {
     console.log(`\n${BOLD}${YELLOW}⚠ ACTION REQUIRED BEFORE DEPLOYMENT:${RESET}`);

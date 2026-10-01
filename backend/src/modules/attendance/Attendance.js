@@ -121,6 +121,47 @@ const punchEvidenceSchema = new mongoose.Schema(
       enum: ['VERIFIED', 'PENDING', 'FLAGGED', 'REJECTED'],
       default: 'VERIFIED',
     },
+    integrityState: {
+      type: String,
+      enum: ['UNVERIFIED', 'PASS', 'QUARANTINED'],
+      default: 'UNVERIFIED',
+    },
+    integrityLastCheckedAt: {
+      type: Date,
+      default: null,
+    },
+    integrityFailedChecks: {
+      type: [String],
+      default: [],
+    },
+    integrityAuditEventId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    integrityReleaseAuditEventId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    integrityReleasedAt: {
+      type: Date,
+      default: null,
+    },
+    integrityReleasedByUserId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    integrityReleaseReason: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: '',
+    },
     qrChallengeId: {
       type: String,
       trim: true,
@@ -139,6 +180,23 @@ const punchEvidenceSchema = new mongoose.Schema(
       default: null,
     },
     distanceMeters: {
+      type: Number,
+      default: null,
+    },
+    geofencePolicyVersion: {
+      type: Number,
+      enum: [1, null],
+      default: null,
+    },
+    cafeLatitude: {
+      type: Number,
+      default: null,
+    },
+    cafeLongitude: {
+      type: Number,
+      default: null,
+    },
+    allowedRadiusMeters: {
       type: Number,
       default: null,
     },
@@ -229,17 +287,17 @@ const attendanceSchema = new mongoose.Schema(
 
     shiftName: {
       type: String,
-      default: 'Regular Shift',
+      default: null,
     },
 
     scheduledStart: {
       type: String,
-      default: '07:00',
+      default: null,
     },
 
     scheduledEnd: {
       type: String,
-      default: '15:30',
+      default: null,
     },
 
     checkInAt: {

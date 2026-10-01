@@ -8,6 +8,7 @@ const test = require('node:test');
 const { createApp } = require('../src/server');
 const { Session } = require('../src/models/Session');
 const { User } = require('../src/models/User');
+const authService = require('../src/services/authService');
 
 const JWT_SECRET =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -72,7 +73,7 @@ function makeUser() {
     role: 'MASTER',
     accountStatus: 'ACTIVE',
     assignedCafeIds: [],
-    isPrimaryMaster: false,
+    isPrimaryMaster: true,
     passwordHash: 'unused',
     sessionVersion: 0,
     permissionsVersion: 0,
@@ -182,4 +183,161 @@ test('POST /auth/refresh detects reuse of a previously rotated refresh token', a
   assert.equal(response.body.error?.code, 'INVALID_REFRESH_SESSION');
   assert.equal(session.status, 'COMPROMISED');
   assert.match(session.compromiseDetails, /previously rotated refresh token/i);
+});
+
+
+test('POST /auth/refresh replay of the predecessor invalidates the rotated successor', async (t) => {
+  const originalRefreshToken = 'refresh-token-lineage-original';
+  const user = makeUser();
+  const session = makeSession(originalRefreshToken);
+
+  t.mock.method(Session, 'findOne', () => query(session));
+  t.mock.method(User, 'findOne', () => query(user));
+
+  const server = await startServer(t);
+
+  const first = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken: originalRefreshToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(first.status, 200);
+  const setCookies = first.headers['set-cookie'] || [];
+  const refreshCookie = setCookies.find((value) => value.startsWith('zamorin_refresh_token='));
+  assert.ok(refreshCookie, 'rotated refresh token cookie must be issued');
+  const rotatedRefreshToken = refreshCookie.split(';')[0].split('=').slice(1).join('=');
+  assert.ok(rotatedRefreshToken);
+
+  const replay = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken: originalRefreshToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(replay.status, 401);
+  assert.equal(session.status, 'COMPROMISED');
+
+  const successorAttempt = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken: rotatedRefreshToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(successorAttempt.status, 401);
+  assert.equal(successorAttempt.body.error?.code, 'INVALID_REFRESH_SESSION');
+  assert.equal(session.status, 'COMPROMISED');
+});
+
+test('createSession rejects a malformed non-primary MASTER before token issuance', async () => {
+  const malformedMaster = makeUser();
+  malformedMaster.isPrimaryMaster = false;
+
+  await assert.rejects(
+    () => authService.createSession({
+      user: malformedMaster,
+      device: { deviceId: 'DEV-MALFORMED-MASTER' },
+    }),
+    /Invalid MASTER account configuration/
+  );
+});
+
+test('POST /auth/refresh rejects malformed non-primary MASTER before token issuance', async (t) => {
+  const refreshToken = 'refresh-token-malformed-master';
+  const malformedMaster = makeUser();
+  malformedMaster.isPrimaryMaster = false;
+  const session = makeSession(refreshToken);
+
+  t.mock.method(Session, 'findOne', () => query(session));
+  t.mock.method(User, 'findOne', () => query(malformedMaster));
+
+  const server = await startServer(t);
+  const response = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error?.code, 'INVALID_REFRESH_SESSION');
+  assert.equal(session.status, 'COMPROMISED');
+  assert.match(session.compromiseDetails, /non-primary MASTER/i);
+});
+
+test('POST /auth/refresh revokes session when live role differs from issued role snapshot', async (t) => {
+  const refreshToken = 'refresh-token-role-changed';
+  const user = makeUser();
+  user.role = 'OWNER';
+  user.isPrimaryMaster = false;
+  const session = makeSession(refreshToken, { roleSnapshot: 'MASTER' });
+
+  t.mock.method(Session, 'findOne', () => query(session));
+  t.mock.method(User, 'findOne', () => query(user));
+
+  const server = await startServer(t);
+  const response = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error?.code, 'INVALID_REFRESH_SESSION');
+  assert.equal(session.status, 'REVOKED');
+  assert.equal(session.revocationReason, 'ROLE_CHANGED');
+});
+
+
+test('POST /auth/refresh detects replay older than the former ten-token window', async (t) => {
+  const replayedToken = 'refresh-token-very-old';
+  const currentRefreshToken = 'refresh-token-current-after-many-rotations';
+  const history = [
+    hashToken(replayedToken),
+    ...Array.from({ length: 15 }, (_, index) => hashToken(`rotated-history-${index}`)),
+  ];
+  const session = makeSession(currentRefreshToken, {
+    previousRefreshTokenHashes: history,
+    sessionVersion: history.length,
+  });
+
+  t.mock.method(Session, 'findOne', () => query(session));
+
+  const server = await startServer(t);
+  const response = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken: replayedToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error?.code, 'INVALID_REFRESH_SESSION');
+  assert.equal(session.status, 'COMPROMISED');
+  assert.match(session.compromiseDetails, /previously rotated refresh token/i);
+});
+
+test('POST /auth/refresh bounds token-lineage growth by forcing renewal at rotation limit', async (t) => {
+  const refreshToken = 'refresh-token-at-rotation-limit';
+  const user = makeUser();
+  const session = makeSession(refreshToken, {
+    sessionVersion: 1024,
+    previousRefreshTokenHashes: Array.from(
+      { length: 1024 },
+      (_, index) => hashToken(`bounded-history-${index}`)
+    ),
+  });
+
+  t.mock.method(Session, 'findOne', () => query(session));
+  t.mock.method(User, 'findOne', () => query(user));
+
+  const server = await startServer(t);
+  const response = await request(server, {
+    sessionId: session.sessionId,
+    refreshToken,
+    deviceId: session.device.deviceId,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error?.code, 'INVALID_REFRESH_SESSION');
+  assert.equal(session.status, 'REVOKED');
+  assert.equal(session.revocationReason, 'SESSION_EXPIRED');
 });

@@ -9,6 +9,7 @@ const {
   requestPasswordReset,
   verifyPasswordResetCode,
   resetPassword,
+  beginAuthenticatedMfaSetup,
   mfaSetup,
   mfaConfirm,
   mfaVerify,
@@ -44,6 +45,7 @@ const {
 const passkeyController = require('../controllers/passkeyController');
 const { getTrustedClientIp } = require('../utils/clientIp');
 const { logSecurityEvent } = require('../services/securityLogger');
+const { redisClientFactory } = require('../services/redisClientFactory');
 
 const router = express.Router();
 
@@ -128,6 +130,151 @@ const MFA_RATE_LIMIT_MESSAGE = Object.freeze({
   },
 });
 
+
+function isProductionLikeAuthEnvironment() {
+  const nodeEnv = String(process.env.NODE_ENV || '').trim().toLowerCase();
+  const appMode = String(process.env.APP_MODE || '').trim().toUpperCase();
+  return (
+    nodeEnv === 'production' ||
+    nodeEnv === 'staging' ||
+    appMode === 'PRODUCTION' ||
+    appMode === 'STAGING' ||
+    appMode === 'UAT' ||
+    appMode === 'REAL_USER_TEST'
+  );
+}
+
+function sendDistributedLimiterUnavailable(req, res) {
+  try {
+    logSecurityEvent({
+      correlationId: req.correlationId || null,
+      organisationId: req.body?.organisationId || req.body?.orgId || null,
+      action: 'AUTH_DISTRIBUTED_RATE_LIMITER_UNAVAILABLE',
+      outcome: 'DENIED',
+      severity: 'ERROR',
+      metadata: {
+        route: req.originalUrl || req.baseUrl || '/auth',
+        clientIp: getTrustedClientIp(req),
+      },
+    });
+  } catch {}
+
+  return res.status(503).json({
+    success: false,
+    error: {
+      code: 'AUTH_RATE_LIMITER_UNAVAILABLE',
+      message: 'Authentication protection is temporarily unavailable. Please try again later.',
+    },
+  });
+}
+
+function isSuccessfulAuthenticationAttempt(req, res) {
+  return req.authCredentialVerified === true || (res.statusCode >= 200 && res.statusCode < 400);
+}
+
+function createDistributedAuthRateLimiter({
+  scope,
+  ipLimit,
+  accountLimit,
+  accountKeyFn = normalizeAccountKey,
+  windowMs = 15 * 60 * 1000,
+  message = LOGIN_RATE_LIMIT_MESSAGE,
+  releaseSuccessfulRequests = false,
+}) {
+  return async function distributedAuthRateLimiter(req, res, next) {
+    const adapter = redisClientFactory.adapterService;
+
+    if (!adapter) {
+      if (isProductionLikeAuthEnvironment()) {
+        return sendDistributedLimiterUnavailable(req, res);
+      }
+      return next();
+    }
+
+    const ipIdentifier = ipKeyGenerator(getTrustedClientIp(req));
+    const accountIdentifier = accountKeyFn(req);
+
+    try {
+      const ipScope = `${scope}:IP`;
+      const accountScope = `${scope}:ACCOUNT`;
+      const [ipResult, accountResult] = await Promise.all([
+        adapter.checkRateLimit(ipScope, ipIdentifier, ipLimit, windowMs),
+        adapter.checkRateLimit(accountScope, accountIdentifier, accountLimit, windowMs),
+      ]);
+
+      const reservations = [
+        ipResult.allowed && ipResult.reservationId
+          ? { scope: ipScope, identifier: ipIdentifier, reservationId: ipResult.reservationId }
+          : null,
+        accountResult.allowed && accountResult.reservationId
+          ? { scope: accountScope, identifier: accountIdentifier, reservationId: accountResult.reservationId }
+          : null,
+      ].filter(Boolean);
+
+      const releaseReservations = async () => {
+        if (typeof adapter.releaseRateLimitReservation !== 'function') return;
+        await Promise.allSettled(
+          reservations.map((reservation) =>
+            adapter.releaseRateLimitReservation(
+              reservation.scope,
+              reservation.identifier,
+              reservation.reservationId
+            )
+          )
+        );
+      };
+
+      const deniedResult = !ipResult.allowed
+        ? { result: ipResult, limiter: `${scope}_IP` }
+        : (!accountResult.allowed
+          ? { result: accountResult, limiter: `${scope}_ACCOUNT` }
+          : null);
+
+      if (deniedResult) {
+        await releaseReservations();
+        try {
+          logSecurityEvent({
+            correlationId: req.correlationId || null,
+            organisationId: req.body?.organisationId || req.body?.orgId || null,
+            action: 'RATE_LIMIT_EXCEEDED',
+            outcome: 'DENIED',
+            severity: 'WARN',
+            metadata: {
+              route: req.originalUrl || req.baseUrl || '/auth',
+              limiter: deniedResult.limiter,
+              clientIp: getTrustedClientIp(req),
+              distributed: true,
+            },
+          });
+        } catch {}
+
+        if (Number.isFinite(deniedResult.result.resetAfterSeconds)) {
+          res.setHeader('Retry-After', String(Math.max(1, deniedResult.result.resetAfterSeconds)));
+        }
+
+        return res.status(429).json(message);
+      }
+
+      if (releaseSuccessfulRequests && reservations.length > 0) {
+        let released = false;
+        res.once('finish', () => {
+          if (released || !isSuccessfulAuthenticationAttempt(req, res)) return;
+          released = true;
+          releaseReservations().catch(() => {});
+        });
+      }
+
+      return next();
+    } catch (error) {
+      if (isProductionLikeAuthEnvironment()) {
+        return sendDistributedLimiterUnavailable(req, res);
+      }
+
+      return next();
+    }
+  };
+}
+
 function createLoginIpRateLimiter(overrides = {}) {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -135,6 +282,8 @@ function createLoginIpRateLimiter(overrides = {}) {
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => ipKeyGenerator(getTrustedClientIp(req)),
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: isSuccessfulAuthenticationAttempt,
     handler: createRateLimitHandler('AUTH_LOGIN_IP', LOGIN_RATE_LIMIT_MESSAGE),
     message: LOGIN_RATE_LIMIT_MESSAGE,
     ...overrides,
@@ -148,6 +297,8 @@ function createLoginAccountRateLimiter(overrides = {}) {
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => normalizeAccountKey(req, 'email'),
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: isSuccessfulAuthenticationAttempt,
     handler: createRateLimitHandler('AUTH_LOGIN_ACCOUNT', LOGIN_RATE_LIMIT_MESSAGE),
     message: LOGIN_RATE_LIMIT_MESSAGE,
     ...overrides,
@@ -184,6 +335,24 @@ const loginIpRateLimiter = createLoginIpRateLimiter();
 const loginAccountRateLimiter = createLoginAccountRateLimiter();
 const passwordResetIpRateLimiter = createPasswordResetIpRateLimiter();
 const passwordResetAccountRateLimiter = createPasswordResetAccountRateLimiter();
+
+const distributedLoginRateLimiter = createDistributedAuthRateLimiter({
+  // Rotate away from stale buckets created by the old success-counting limiter.
+  scope: 'AUTH_LOGIN_FAILURES_V2',
+  ipLimit: process.env.AUTH_RATE_LIMIT_IP_MAX ? Number(process.env.AUTH_RATE_LIMIT_IP_MAX) : 50,
+  accountLimit: process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX ? Number(process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX) : 10,
+  accountKeyFn: (req) => normalizeAccountKey(req, 'email'),
+  message: LOGIN_RATE_LIMIT_MESSAGE,
+  releaseSuccessfulRequests: true,
+});
+
+const distributedPasswordResetRateLimiter = createDistributedAuthRateLimiter({
+  scope: 'AUTH_PASSWORD_RECOVERY',
+  ipLimit: 15,
+  accountLimit: 5,
+  accountKeyFn: (req) => normalizeAccountKey(req, 'email'),
+  message: PASSWORD_RESET_RATE_LIMIT_MESSAGE,
+});
 
 const passkeyIpRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -276,10 +445,10 @@ const cafeOpsIpRateLimiter = createCafeOpsIpRateLimiter();
 const cafeOpsAccountRateLimiter = createCafeOpsAccountRateLimiter();
 
 // Authentication endpoints
-router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, login);
-router.post('/password/forgot', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, requestPasswordReset);
-router.post('/password/reset/verify', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, verifyPasswordResetCode);
-router.post('/password/reset', passwordResetIpRateLimiter, passwordResetAccountRateLimiter, resetPassword);
+router.post('/login', distributedLoginRateLimiter, loginIpRateLimiter, loginAccountRateLimiter, login);
+router.post('/password/forgot', distributedPasswordResetRateLimiter, passwordResetIpRateLimiter, passwordResetAccountRateLimiter, requestPasswordReset);
+router.post('/password/reset/verify', distributedPasswordResetRateLimiter, passwordResetIpRateLimiter, passwordResetAccountRateLimiter, verifyPasswordResetCode);
+router.post('/password/reset', distributedPasswordResetRateLimiter, passwordResetIpRateLimiter, passwordResetAccountRateLimiter, resetPassword);
 router.post('/refresh', refreshSession);
 
 // Café Operations Login 2.0 Endpoints
@@ -328,7 +497,8 @@ router.post('/mfa/setup', mfaIpRateLimiter, mfaAccountRateLimiter, mfaSetup);
 router.post('/mfa/confirm', mfaIpRateLimiter, mfaAccountRateLimiter, mfaConfirm);
 router.post('/mfa/verify', mfaIpRateLimiter, mfaAccountRateLimiter, mfaVerify);
 
-// Authenticated MFA status and recovery code regeneration routes
+// Authenticated MFA setup/status and recovery-code management routes
+router.post('/mfa/setup/authenticated', authenticate, mfaIpRateLimiter, beginAuthenticatedMfaSetup);
 router.get('/mfa/status', authenticate, getMfaStatus);
 router.post('/mfa/recovery-codes/regenerate', authenticate, mfaIpRateLimiter, regenerateRecoveryCodes);
 
@@ -356,5 +526,8 @@ router.createLoginIpRateLimiter = createLoginIpRateLimiter;
 router.createLoginAccountRateLimiter = createLoginAccountRateLimiter;
 router.createPasswordResetIpRateLimiter = createPasswordResetIpRateLimiter;
 router.createPasswordResetAccountRateLimiter = createPasswordResetAccountRateLimiter;
+router.createDistributedAuthRateLimiter = createDistributedAuthRateLimiter;
+router.isSuccessfulAuthenticationAttempt = isSuccessfulAuthenticationAttempt;
+router.isProductionLikeAuthEnvironment = isProductionLikeAuthEnvironment;
 
 module.exports = router;

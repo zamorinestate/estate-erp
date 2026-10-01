@@ -503,7 +503,7 @@ describe('EXT-03F — Free-Tier MongoDB Backup & Restore Verification Suite', ()
   });
 
   // 22. PO Approval regression
-  test('22. PO Approval Invariant: Primary Master and Normal Master ALLOW; Owner, Cafe Admin, Staff DENY', () => {
+  test('22. PO Approval Invariant: Primary Master and Malformed MASTER ALLOW; Owner, Cafe Admin, Staff DENY', () => {
     const canApprove = (role) => role === 'MASTER';
     assert.equal(canApprove('MASTER'), true);
     assert.equal(canApprove('OWNER'), false);

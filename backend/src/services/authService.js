@@ -396,6 +396,41 @@ async function verifyPassword(
   return false;
 }
 
+function getEffectiveAuthSecurityPolicy() {
+  return {
+    password: {
+      minimumLengthWithoutMfa: 15,
+      minimumLengthWithMfa: 8,
+      maximumLength: 128,
+      compositionRulesRequired: false,
+      commonPasswordBlocklistEnabled: true,
+    },
+    mfa: {
+      // Mandatory role-based TOTP is retired. When a user explicitly has MFA
+      // enabled, session creation still requires successful MFA verification.
+      mandatoryRoleMfaEnabled: false,
+      requiredRoles: [],
+      userConfiguredMfaEnforced: true,
+    },
+    session: {
+      accessTokenTtlMinutes: getPositiveIntegerEnvironmentValue(
+        'JWT_ACCESS_TTL_MINUTES',
+        15
+      ),
+      refreshTokenTtlDays: getPositiveIntegerEnvironmentValue(
+        'REFRESH_TOKEN_TTL_DAYS',
+        7
+      ),
+      absoluteSessionTtlDays: getPositiveIntegerEnvironmentValue(
+        'SESSION_ABSOLUTE_TTL_DAYS',
+        7
+      ),
+    },
+    source: 'AUTH_RUNTIME_CONFIGURATION',
+    runtimeMutable: false,
+  };
+}
+
 function calculateTokenDates() {
   const now = new Date();
 
@@ -608,6 +643,12 @@ async function authenticatePassword({
     );
   }
 
+  if (String(user.role || '').toUpperCase() === 'MASTER' && user.isPrimaryMaster !== true) {
+    // Defensive fail-closed guard for malformed/legacy data. The User model
+    // forbids this state from being created.
+    throw new Error('Invalid MASTER account configuration.');
+  }
+
   // Transparent opportunistic upgrade to canonical scrypt KDF on successful login
   if (needsPasswordRehash(user.passwordHash)) {
     try {
@@ -677,6 +718,15 @@ async function createSession({
   if (!device?.deviceId) {
     throw new Error(
       'A device ID is required.'
+    );
+  }
+
+  if (
+    String(user.role || '').trim().toUpperCase() === 'MASTER' &&
+    user.isPrimaryMaster !== true
+  ) {
+    throw new Error(
+      'Invalid MASTER account configuration.'
     );
   }
 
@@ -856,11 +906,47 @@ async function rotateRefreshToken({
     organisationId: session.organisationId,
     userId: session.userId,
     accountStatus: 'ACTIVE',
+    archivedAt: null,
   });
 
   if (!user) {
+    await session.revoke({
+      revokedBy: 'SYSTEM',
+      reason: 'USER_UNAVAILABLE',
+      details:
+        'The user account is unavailable or archived.',
+    });
+
     throw new Error(
       'The user account is unavailable.'
+    );
+  }
+
+  if (
+    String(user.role || '').trim().toUpperCase() === 'MASTER' &&
+    user.isPrimaryMaster !== true
+  ) {
+    await session.markCompromised({
+      revokedBy: 'SYSTEM',
+      details:
+        'A malformed non-primary MASTER account attempted token rotation.',
+    });
+
+    throw new Error(
+      'Invalid MASTER account configuration.'
+    );
+  }
+
+  if (session.roleSnapshot !== user.role) {
+    await session.revoke({
+      revokedBy: 'SYSTEM',
+      reason: 'ROLE_CHANGED',
+      details:
+        'The user role changed after the session was issued.',
+    });
+
+    throw new Error(
+      'The session role is no longer valid.'
     );
   }
 
@@ -882,16 +968,34 @@ async function rotateRefreshToken({
     );
   }
 
+  const maximumRefreshRotations =
+    getPositiveIntegerEnvironmentValue(
+      'MAX_REFRESH_ROTATIONS_PER_SESSION',
+      1024
+    );
+
+  if (session.sessionVersion >= maximumRefreshRotations) {
+    await session.revoke({
+      revokedBy: 'SYSTEM',
+      reason: 'SESSION_EXPIRED',
+      details:
+        'The session reached its maximum refresh-token rotation count.',
+    });
+
+    throw new Error(
+      'The session must be renewed.'
+    );
+  }
+
   const tokenDates = calculateTokenDates();
   const nextRefreshToken =
     generateOpaqueToken();
 
+  // Retain the complete token lineage for the bounded lifetime of this
+  // session so reuse of any rotated predecessor is detected.
   session.previousRefreshTokenHashes.push(
     session.refreshTokenHash
   );
-
-  session.previousRefreshTokenHashes =
-    session.previousRefreshTokenHashes.slice(-10);
 
   session.sessionVersion += 1;
 
@@ -1099,6 +1203,7 @@ async function revokeUserSession({
 
 module.exports = {
   MFA_REQUIRED_ROLES,
+  getEffectiveAuthSecurityPolicy,
   SCRYPT_PREFIX,
   normalizePassword,
   needsPasswordRehash,

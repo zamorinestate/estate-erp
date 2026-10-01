@@ -33,20 +33,31 @@ const {
 
 const apiRouter = require('./routes');
 const { documentStorageAdapter } = require('./services/documentStorageAdapter');
+const {
+  startNotificationOutboxWorker,
+  stopNotificationOutboxWorker,
+} = require('./services/notificationOutboxWorker');
+const {
+  startScheduledOperationsWorker,
+  stopScheduledOperationsWorker,
+} = require('./services/scheduledOperationsWorker');
 const { getTrustedClientIp, getTrustedProxies } = require('./utils/clientIp');
+const { redisClientFactory } = require('./services/redisClientFactory');
 
 const SERVICE_NAME =
   'zamorin-cafe-erp-api';
+
+const CANONICAL_VERCEL_ORIGINS = new Set([
+  'https://zamorin-cafe-erp.vercel.app',
+  'https://estate-erp.vercel.app',
+]);
 
 function isAllowedVercelOrigin(origin) {
   if (!origin || typeof origin !== 'string') return false;
   try {
     const url = new URL(origin);
     if (url.protocol !== 'https:') return false;
-    const hostname = url.hostname.toLowerCase();
-    if (hostname === 'zamorin-cafe-erp.vercel.app' || hostname === 'estate-erp.vercel.app') return true;
-    if (hostname.endsWith('.vercel.app') && (hostname.includes('zamorin') || hostname.includes('estate'))) return true;
-    return false;
+    return CANONICAL_VERCEL_ORIGINS.has(url.origin.toLowerCase());
   } catch {
     return false;
   }
@@ -306,7 +317,6 @@ function createApp(environment) {
         request.correlationId || null,
     });
 
-  app.get('/api/v1/health', healthHandler);
   app.get('/api/health', healthHandler);
   app.get('/health', healthHandler);
 
@@ -323,7 +333,6 @@ function createApp(environment) {
     const isStorageReady = storageStatus === 'OK' || storageStatus === 'HEALTHY';
     const isDbReady = database.readyState === 1;
     const isProd = process.env.NODE_ENV === 'production';
-    const ready = isProd ? (isDbReady && isStorageReady) : isDbReady;
 
     const { malwareScannerService } = require('./services/malwareScannerService');
     let scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false };
@@ -333,6 +342,20 @@ function createApp(environment) {
       scannerReport = { CORE_APP_READY: true, DOCUMENT_SCANNER_READY: false, details: 'Probe failed' };
     }
 
+    let redisReport = { status: 'LOCAL_FALLBACK', isConnected: false, lastError: null };
+    try {
+      redisReport = await redisClientFactory.getHealthStatus();
+    } catch (redisError) {
+      redisReport = { status: 'DEGRADED', isConnected: false, lastError: redisError.message };
+    }
+
+    const requireScanner = isProd && process.env.REQUIRE_DOCUMENT_SCANNER === 'true';
+    const isScannerReady = !requireScanner || scannerReport.DOCUMENT_SCANNER_READY === true;
+    const isRedisReady = !isProd || redisReport.isConnected === true;
+    const ready = isProd
+      ? (isDbReady && isStorageReady && isScannerReady && isRedisReady)
+      : isDbReady;
+
     return response
       .status(ready ? 200 : 503)
       .json({
@@ -341,6 +364,11 @@ function createApp(environment) {
         service: SERVICE_NAME,
         database: database.status,
         storage: storageStatus,
+        redis: {
+          status: redisReport.status,
+          connected: Boolean(redisReport.isConnected),
+          required: isProd,
+        },
         scanner: {
           coreAppReady: scannerReport.CORE_APP_READY,
           documentScannerReady: scannerReport.DOCUMENT_SCANNER_READY,
@@ -354,6 +382,12 @@ function createApp(environment) {
         correlationId: request.correlationId || null,
       });
   };
+
+  app.get('/api/v1/health', (request, response) =>
+    process.env.NODE_ENV === 'production'
+      ? readinessHandler(request, response)
+      : healthHandler(request, response)
+  );
 
   app.get('/health/ready', readinessHandler);
   app.get('/api/health/ready', readinessHandler);
@@ -495,11 +529,20 @@ async function startServer() {
   }
 
   // Validate durable document storage configuration before accepting traffic (Fails safe if unconfigured in production)
-  documentStorageAdapter.validateStartupConfiguration(environment);
+  documentStorageAdapter.validateStartupConfiguration(process.env);
 
   // Universal production configuration & secrets validator (Fails safe: reports PRESENT/MISSING/INVALID/UNSAFE without revealing secrets)
   const { validateStartupConfiguration: validateConfig } = require('./config/startupValidator');
-  validateConfig(environment, { failClosed: true });
+  validateConfig(process.env, { failClosed: true });
+
+  // Redis is a mandatory distributed-state dependency in production. Initialize
+  // before binding the HTTP listener so rate limits, event fan-out and device
+  // presence cannot silently fall back to per-process state in a multi-instance deployment.
+  await redisClientFactory.initializeClients({
+    url: process.env.REDIS_URL || null,
+    keyPrefix: process.env.REDIS_KEY_PREFIX || 'zamorin:',
+    clusterMode: environment.production || process.env.NODE_ENV === 'production',
+  });
 
   const app =
     createApp(environment);
@@ -509,6 +552,9 @@ async function startServer() {
       host: environment.host,
       port: environment.port,
     });
+
+  startNotificationOutboxWorker();
+  startScheduledOperationsWorker();
 
   console.log(
     `Zamorin Cafe ERP API running on ${environment.host}:${environment.port} in ${environment.nodeEnvironment} mode.`
@@ -576,7 +622,10 @@ function registerShutdownHandlers(
         `${signal} received; shutting down safely.`
       );
 
+      await stopScheduledOperationsWorker();
+      await stopNotificationOutboxWorker();
       await closeHttpServer(server);
+      await redisClientFactory.close();
       await disconnectDatabase();
 
       console.log(
@@ -648,6 +697,14 @@ async function runMain() {
     );
   } catch (error) {
     try {
+      await redisClientFactory.close();
+    } catch (redisCloseError) {
+      console.error(
+        'Redis cleanup failed:',
+        redisCloseError.message
+      );
+    }
+    try {
       await disconnectDatabase();
     } catch (disconnectError) {
       console.error(
@@ -672,6 +729,7 @@ if (require.main === module) {
 module.exports = {
   createApp,
   createCorsOptions,
+  isAllowedVercelOrigin,
   closeHttpServer,
   registerShutdownHandlers,
   startServer,

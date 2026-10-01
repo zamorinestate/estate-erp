@@ -20,7 +20,7 @@ test('PM-05 PARITY: 1. Invariant: PRIMARY_MASTER_FUNCTIONAL_SUPERSET = 1', () =>
     organisationId: 'ORG-ZAMORIN',
   };
 
-  const normalMasterActor = {
+  const malformedMasterActor = {
     userId: 'MU-0002',
     role: 'MASTER',
     isPrimaryMaster: false,
@@ -32,10 +32,10 @@ test('PM-05 PARITY: 1. Invariant: PRIMARY_MASTER_FUNCTIONAL_SUPERSET = 1', () =>
     assertPrimaryMasterAuthority(pmActor, 'TEST_PM_ACTION');
   });
 
-  // Normal Master fails assertion with 403 PRIMARY_MASTER_AUTHORITY_REQUIRED
+  // Malformed MASTER fails assertion with 403 PRIMARY_MASTER_AUTHORITY_REQUIRED
   assert.throws(
     () => {
-      assertPrimaryMasterAuthority(normalMasterActor, 'TEST_PM_ACTION');
+      assertPrimaryMasterAuthority(malformedMasterActor, 'TEST_PM_ACTION');
     },
     (err) => {
       return err.statusCode === 403 && err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED';

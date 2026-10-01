@@ -75,7 +75,6 @@ function parseDate(value, fieldName) {
 
 /**
  * Modules whose audit events are restricted to Primary Master only.
- * Normal Master receives operational audit events but not these sensitive categories.
  */
 const SENSITIVE_AUDIT_MODULES = [
   'PERSONAL_LEDGER',
@@ -93,15 +92,8 @@ function buildAuditFilter(request) {
       request.auth.organisationId,
   };
 
-  // Normal Master: exclude sensitive modules entirely.
-  const isNormalMaster =
-    request.auth.role === 'MASTER' &&
-    !request.auth.isPrimaryMaster;
-
-  if (isNormalMaster) {
-    filter.module = {
-      $nin: SENSITIVE_AUDIT_MODULES,
-    };
+  if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for MASTER audit access.');
   }
 
   const identifierFilters = {
@@ -123,15 +115,6 @@ function buildAuditFilter(request) {
       normalizeIdentifier(value);
 
     if (normalizedValue) {
-      // For Normal Master, silently ignore any module filter that tries
-      // to access sensitive modules to prevent probing.
-      if (
-        field === 'module' &&
-        isNormalMaster &&
-        SENSITIVE_AUDIT_MODULES.includes(normalizedValue)
-      ) {
-        return;
-      }
       filter[field] =
         normalizedValue;
     }

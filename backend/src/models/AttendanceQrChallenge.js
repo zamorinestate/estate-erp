@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { generateSixDigitPin } = require('../utils/secureRandom');
 
 const attendanceQrChallengeSchema = new mongoose.Schema(
   {
@@ -68,7 +69,7 @@ const attendanceQrChallengeSchema = new mongoose.Schema(
 
     fallbackPin: {
       type: String,
-      default: () => Math.floor(100000 + Math.random() * 900000).toString(),
+      default: generateSixDigitPin,
       trim: true,
       index: true,
     },

@@ -11,8 +11,6 @@
  *
  * Authority rules:
  *   - Primary Master: Full portfolio view including expense totals & finance metrics.
- *   - Normal Master:  Operational data only — no personal ledger, no payroll figures,
- *                     no sensitive finance. Open Actions count excludes sensitive items.
  *   - Owner:          Cross-café operational snapshot for assigned locations.
  *   - Cafe Admin:     Single/assigned café data only.
  */
@@ -164,13 +162,13 @@ function resolveComparisonRange(comparison, primary, today) {
 
 /**
  * Build a MongoDB cafeId filter based on actor's permitted scope.
- * Primary Master and Normal Master see ALL active cafes in the org.
+ * Primary Master sees all active cafes in the organisation.
  * Owner can access only authorized cafes in assignedCafeIds.
  * CAFE_ADMIN sees only their assigned cafes.
  */
 function getCafeScope(auth) {
   const { role, assignedCafeIds, primaryCafeId, cafeId } = auth;
-  if (role === 'MASTER') return null; // no restriction → all cafes for Master
+  if (role === 'MASTER' && auth.isPrimaryMaster === true) return null; // organisation-wide Primary Master
 
   const rawCafes = [
     ...(Array.isArray(assignedCafeIds) ? assignedCafeIds : (assignedCafeIds ? [assignedCafeIds] : [])),
@@ -274,9 +272,8 @@ async function aggregateDailyRevenueTrend(orgId, cafeScopeFilter, dateRange) {
 // ─── Expense helper ───────────────────────────────────────────────────────────
 
 async function aggregateExpenses(orgId, cafeScopeFilter, dateRange, auth) {
-  // Normal Master: return null (no access to expense financials)
-  if (auth.role === 'MASTER' && !auth.isPrimaryMaster) {
-    return null;
+  if (auth.role === 'MASTER' && auth.isPrimaryMaster !== true) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for MASTER dashboard access.');
   }
 
   const match = {
@@ -364,11 +361,8 @@ async function getOpenActionsCount(orgId, cafeScopeFilter, auth) {
   const pendingApprovalsFilter = { organisationId: orgId, status: 'PENDING' };
   if (cafeScopeFilter) pendingApprovalsFilter.cafeId = cafeScopeFilter;
 
-  // Normal Master: exclude protected entity types from count to prevent sensitive leakage
-  if (auth.role === 'MASTER' && !auth.isPrimaryMaster) {
-    pendingApprovalsFilter.entityType = {
-      $nin: ['EXPENSE', 'OVERTIME', 'PAYROLL', 'PERSONAL_LEDGER', 'USER_ADMINISTRATION'],
-    };
+  if (auth.role === 'MASTER' && auth.isPrimaryMaster !== true) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for MASTER dashboard access.');
   }
 
   const [approvalCount, taskCount] = await Promise.all([

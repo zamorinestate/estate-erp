@@ -2406,7 +2406,11 @@ async function renderSalesSubtab(root, container) {
     el.addEventListener('click', (e) => {
       e.preventDefault();
       const billId = el.dataset.billDrill;
-      const cafeId = el.dataset.billCafe || 'ZC-0001';
+      const cafeId = el.dataset.billCafe;
+      if (!cafeId) {
+        showToast('Café context is unavailable for this bill drill-down.', 'error');
+        return;
+      }
       openBillDrilldownModal(billId, cafeId);
     });
   });

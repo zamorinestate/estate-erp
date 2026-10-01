@@ -9,6 +9,29 @@
   'use strict';
   const UI = global.CafeOpsUI;
 
+  function resolveEnrollmentPlatform() {
+    const injected = String(global.ZamorinNativeCapabilities?.platform || '').trim().toUpperCase();
+    if (injected === 'ANDROID') return 'android';
+    if (injected === 'IOS') return 'ios';
+    if (injected === 'MACOS') return 'macos';
+    if (injected === 'WINDOWS') return 'windows';
+
+    if (global.ZamorinNativeBridge || global.ZamorinAndroidSAF || global.AndroidStorageBridge) {
+      return 'android';
+    }
+    if (global.chrome?.webview) {
+      return 'windows';
+    }
+    if (global.webkit?.messageHandlers?.ZamorinNativeBridge) {
+      const isMac = Boolean(
+        global.ZamorinIsMac ||
+        (global.navigator?.platform && global.navigator.platform.toUpperCase().includes('MAC'))
+      );
+      return isMac ? 'macos' : 'ios';
+    }
+    return 'web';
+  }
+
   function render(root) {
     root.innerHTML = `
       <div class="auth-card">
@@ -64,7 +87,7 @@
         const data = await global.CafeOpsApi.enrollDevice({
           enrollmentCode: code,
           displayName: nameInput.value.trim() || undefined,
-          platform: 'web',
+          platform: resolveEnrollmentPlatform(),
           appVersion: global.CAFE_OPS_APP_VERSION || '1.0.0',
         });
         global.CafeOpsTokens.setDeviceToken(data.deviceToken);

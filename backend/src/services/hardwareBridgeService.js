@@ -95,7 +95,8 @@ function buildEscPosQrBuffer(text, moduleSize = 5) {
 }
 
 /**
- * Compiles a Diagnostic Test Receipt byte buffer for hardware readiness testing.
+ * Compiles a diagnostic ESC/POS test payload.
+ * Payload generation alone is not physical printer readiness evidence.
  */
 function compileDiagnosticTestReceipt(terminal = {}, cafeInfo = {}) {
   const width = terminal.printerConfig?.paperWidth === 58 ? 32 : 48;
@@ -152,17 +153,13 @@ function compileDiagnosticTestReceipt(terminal = {}, cafeInfo = {}) {
   parts.push(Buffer.from('Universal QR Code Test:\n', 'utf8'));
   parts.push(buildEscPosQrBuffer(`https://zamorin.app/test/hardware/${terminal.terminalId || '01'}`, 4));
 
-  parts.push(Buffer.from(`*** HARDWARE READINESS VERIFIED ***\n`, 'utf8'));
+  parts.push(Buffer.from(`*** HARDWARE READINESS NOT VERIFIED ***\n`, 'utf8'));
   parts.push(Buffer.from(`${divider}\n\n`, 'utf8'));
 
-  // Footer & Feed & Cut
+  // Footer & Feed & Cut. A diagnostic print payload must never carry an
+  // implicit cash-drawer side effect; drawer actuation has its own authorized path.
   parts.push(ESC_POS_COMMANDS.FEED_5_LINES);
   parts.push(terminal.printerConfig?.cutType === 'FULL' ? ESC_POS_COMMANDS.CUT_FULL : ESC_POS_COMMANDS.CUT_PARTIAL);
-
-  // Optional drawer kick pulse
-  if (terminal.drawerConfig?.enabled) {
-    parts.push(buildDrawerKickBuffer(terminal.drawerConfig.pin || 2));
-  }
 
   return Buffer.concat(parts);
 }
@@ -307,8 +304,10 @@ function compileThermalReceipt(orderData = {}, terminal = {}, cafeInfo = {}) {
   parts.push(ESC_POS_COMMANDS.FEED_5_LINES);
   parts.push(terminal.printerConfig?.cutType === 'FULL' ? ESC_POS_COMMANDS.CUT_FULL : ESC_POS_COMMANDS.CUT_PARTIAL);
 
-  // Trigger cash drawer kick if cash tendered
-  if (terminal.drawerConfig?.enabled && (orderData.paymentMethod === 'CASH' || orderData.triggerDrawerKick)) {
+  // REC-04C: Drawer kick is an explicit one-shot side effect controlled by the
+  // original sale dispatch. PRINT / REPRINT must never infer a new kick merely
+  // because the historical tender was CASH.
+  if (terminal.drawerConfig?.enabled && orderData.triggerDrawerKick === true) {
     parts.push(buildDrawerKickBuffer(terminal.drawerConfig.pin || 2));
   }
 
@@ -659,16 +658,64 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
     throw new ApiError(400, 'DRAWER_DISABLED', `Cash drawer is disabled on terminal ${terminalId}.`);
   }
 
+  const actorRole = String(actor.role || '').trim().toUpperCase();
+  const terminalCafeId = String(terminal.cafeId || '').trim().toUpperCase();
+
+  if (actorRole === 'OWNER') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Owner role is read-only and cannot operate a physical cash drawer.'
+    );
+  }
+
+  if (actorRole === 'MASTER') {
+    if (actor.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER cash-drawer operations.'
+      );
+    }
+  } else {
+    const assignedCafeIds = Array.isArray(actor.assignedCafeIds)
+      ? actor.assignedCafeIds.map((id) => String(id || '').trim().toUpperCase())
+      : [];
+    if (!assignedCafeIds.includes(terminalCafeId)) {
+      throw new ApiError(
+        403,
+        'CROSS_CAFE_RESOURCE_DENIED',
+        'Cash-drawer operation is denied outside the operator assigned café.'
+      );
+    }
+  }
+
+  const device = actor.deviceContext || {};
+  const deviceCafeId = String(device.boundCafeId || '').trim().toUpperCase();
+  if (
+    String(device.deviceClass || '').trim().toUpperCase() !== 'CAFE_OWNED' ||
+    String(device.status || '').trim().toUpperCase() !== 'ACTIVE' ||
+    !device.deviceId ||
+    device.deviceId === 'UNKNOWN_PERSONAL_DEVICE' ||
+    deviceCafeId !== terminalCafeId
+  ) {
+    throw new ApiError(
+      403,
+      'CAFE_OWNED_DEVICE_REQUIRED',
+      'Cash-drawer operation requires an active café-owned device bound to the terminal café.'
+    );
+  }
+
   const kickBuffer = buildDrawerKickBuffer(terminal.drawerConfig.pin || 2);
 
   // Append immutable audit record
   terminal.auditEvents.push({
-    event: 'DRAWER_KICK_TRIGGERED',
+    event: 'DRAWER_KICK_PREPARED',
     timestamp: new Date(),
     actorUserId: actorUserId || 'SYSTEM',
     transactionId: transactionId || null,
     reason: reason.trim(),
-    details: `Triggered pulse on pin ${terminal.drawerConfig.pin || 2}`,
+    details: `Prepared drawer-kick pulse for pin ${terminal.drawerConfig.pin || 2}; physical emission is not yet acknowledged`,
   });
 
   await terminal.save();
@@ -680,7 +727,7 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
     actorUserId: actorUserId || 'SYSTEM',
     actorRole: actor.role || 'STAFF',
     module: 'HARDWARE_BRIDGE',
-    action: 'CASH_DRAWER_KICK',
+    action: 'CASH_DRAWER_KICK_PREPARED',
     entityType: 'HARDWARE_TERMINAL',
     entityId: terminal.terminalId,
     reason,
@@ -693,7 +740,10 @@ async function issueDrawerKick(terminalId, actor = {}, { reason = 'Authorized sa
     terminalId: terminal.terminalId,
     pin: terminal.drawerConfig.pin || 2,
     kickBuffer,
-    triggeredAt: new Date(),
+    status: 'PREPARED',
+    dispatched: false,
+    acknowledged: false,
+    preparedAt: new Date(),
   };
 }
 
@@ -707,15 +757,27 @@ async function checkTerminalHealth(terminalId, organisationId) {
     throw new ApiError(404, 'TERMINAL_NOT_FOUND', `Hardware terminal ${terminalId} not found.`);
   }
 
-  terminal.status.lastHeartbeat = new Date();
-  terminal.status.online = true;
-  await terminal.save();
+  const evidenceSource = String(terminal.status?.evidenceSource || 'NONE').trim().toUpperCase();
+  const hardwareVerifiedAt = terminal.status?.hardwareVerifiedAt || null;
+  const trustedEvidence = (
+    ['DEVICE_ATTESTED', 'TRUSTED_PROXY'].includes(evidenceSource) &&
+    Boolean(hardwareVerifiedAt) &&
+    Boolean(terminal.status?.lastHeartbeat)
+  );
 
   return {
     terminalId: terminal.terminalId,
     terminalName: terminal.terminalName,
     deviceType: terminal.deviceType,
-    status: terminal.status,
+    status: {
+      online: trustedEvidence && terminal.status?.online === true,
+      lastHeartbeat: trustedEvidence ? terminal.status.lastHeartbeat : null,
+      evidenceSource: trustedEvidence ? evidenceSource : 'NONE',
+      hardwareVerifiedAt: trustedEvidence ? hardwareVerifiedAt : null,
+      paperStatus: trustedEvidence ? (terminal.status?.paperStatus || 'UNKNOWN') : 'UNKNOWN',
+      coverStatus: trustedEvidence ? (terminal.status?.coverStatus || 'UNKNOWN') : 'UNKNOWN',
+      drawerStatus: trustedEvidence ? (terminal.status?.drawerStatus || 'UNKNOWN') : 'UNKNOWN',
+    },
     printerConfig: {
       enabled: terminal.printerConfig?.enabled,
       connectionType: terminal.printerConfig?.connectionType,

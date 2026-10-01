@@ -288,6 +288,15 @@ test('Stage 10 — Explicit Safe Post-Release Systems Test Suite', async (t) => 
       assert.strictEqual(execution.consecutiveFailures, 0);
     });
 
+    await st.test('reports all registered scheduled jobs as runtime-wired', () => {
+      const health = scheduledJobRegistry.auditJobHealth();
+
+      assert.ok(Array.isArray(health.unwiredJobs));
+      assert.deepEqual(health.unwiredJobs, []);
+      assert.equal(health.wiredJobs, 6);
+      assert.equal(health.isAllHealthy, true);
+    });
+
     await st.test('enforces idempotency key checks', () => {
       const key = `INVOICE_JOB_${Date.now()}_BATCH_UNIQUE`;
       // First attempt succeeds

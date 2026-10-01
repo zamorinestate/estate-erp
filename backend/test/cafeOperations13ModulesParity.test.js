@@ -59,8 +59,8 @@ test('13 Shared Modules Parity, Master Workspace vs Cafe Operations Scope & Tena
     };
     assert.equal(resolveEffectiveCafeScope(masterReqCafeOps), 'ZC-0001', 'Master in Cafe Operations MUST be strictly clamped to device café (ZC-0001)');
 
-    // D. Normal Master in CAFE_OPERATIONS mode on Cafe A device (ZC-0001)
-    const normalMasterReqCafeOps = {
+    // D. Malformed MASTER in CAFE_OPERATIONS mode on Cafe A device (ZC-0001)
+    const malformedMasterReqCafeOps = {
       auth: {
         role: 'MASTER',
         userId: 'MST-002',
@@ -72,7 +72,7 @@ test('13 Shared Modules Parity, Master Workspace vs Cafe Operations Scope & Tena
       query: {},
       body: {},
     };
-    assert.equal(resolveEffectiveCafeScope(normalMasterReqCafeOps), 'ZC-0001', 'Normal Master in Cafe Operations is strictly clamped to device café (ZC-0001)');
+    assert.equal(resolveEffectiveCafeScope(malformedMasterReqCafeOps), 'ZC-0001', 'Malformed MASTER in Cafe Operations is strictly clamped to device café (ZC-0001)');
   });
 
   await t.test('2. CRITICAL P0: Master in Cafe Operations attempting foreign cafe tampering is strictly DENIED', () => {

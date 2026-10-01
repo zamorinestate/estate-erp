@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 // =============================================================================
-// ZAMORIN CAFÉ ERP — MASTER REAL RUNTIME & POSTCONDITION AUDIT
-// scripts/audit_all_interactive_controls_runtime.mjs
+// ZAMORIN CAFÉ ERP — INTERACTIVE CONTROL CONTRACT SMOKE
+// scripts/audit_interactive_control_contract_smoke.mjs
 //
-// Zero-Dependency Real Runtime Execution Harness across all 5 Personas:
+// Zero-dependency mock-DOM contract smoke across all 4 supported personas; this is not a real-browser certification:
 // 1. Primary Master
-// 2. Normal Master
-// 3. Owner
-// 4. Cafe Operations (Admin)
-// 5. Staff
+// 2. Owner
+// 3. Cafe Operations (Admin)
+// 4. Staff
 // =============================================================================
 
 import { readFile } from 'fs/promises';
@@ -25,7 +24,6 @@ const FRONTEND_URL = 'http://localhost:3000';
 
 const PERSONAS = [
   { id: 'PRIMARY_MASTER', role: 'master', isPrimary: true, name: 'Zamorin Primary Master' },
-  { id: 'NORMAL_MASTER',  role: 'master', isPrimary: false, name: 'Zamorin Normal Master' },
   { id: 'OWNER',          role: 'owner',  isPrimary: false, name: 'Zamorin Owner' },
   { id: 'CAFE_ADMIN',     role: 'cafe_admin', isPrimary: false, name: 'Cafe Operations Lead' },
   { id: 'STAFF',          role: 'staff',  isPrimary: false, name: 'Normal Employee / Staff' },
@@ -155,8 +153,8 @@ global.CustomEvent = class CustomEvent extends global.Event { constructor(type, 
 
 async function runRuntimeAudit() {
   console.log('╔══════════════════════════════════════════════════════════════════════╗');
-  console.log('║   ZAMORIN CAFÉ ERP — REAL RUNTIME & POSTCONDITION AUDIT HARNESS      ║');
-  console.log('║   5 PERSONAS · 46 MODULES · 170 DESTINATIONS · 100% POSTCONDITIONS   ║');
+  console.log('║   ZAMORIN CAFÉ ERP — INTERACTIVE CONTROL CONTRACT SMOKE HARNESS      ║');
+  console.log('║   4 PERSONAS · 46 MODULES · 170 DESTINATIONS · 100% POSTCONDITIONS   ║');
   console.log('╚══════════════════════════════════════════════════════════════════════╝\n');
 
   // Verify backend connectivity
@@ -196,9 +194,9 @@ async function runRuntimeAudit() {
   };
 
   // =========================================================================
-  // TEST SUITE 1: 5-PERSONA RUNTIME NAVIGATION & ROUTE RECONCILIATION
+  // TEST SUITE 1: 4-PERSONA RUNTIME NAVIGATION & ROUTE RECONCILIATION
   // =========================================================================
-  console.log('\n▶ SUITE 1: 5-Persona Runtime Navigation & Authority Matrix Enforcement');
+  console.log('\n▶ SUITE 1: 4-Persona Runtime Navigation & Authority Matrix Enforcement');
 
   const ALL_TEST_ROUTES = [
     'dashboard', 'pos', 'bills', 'inventory', 'expenses', 'finance',
@@ -255,7 +253,7 @@ async function runRuntimeAudit() {
     }
   }
 
-  console.log(`  ✓ Personas Tested: ${auditStats.personasTested}/5`);
+  console.log(`  ✓ Personas Tested: ${auditStats.personasTested}/4`);
   console.log(`  ✓ Authorized Destinations Reached: ${auditStats.navigationSuccess}`);
   console.log(`  ✓ Unauthorized Protected Routes Guarded: ${auditStats.navigationBlockedGuarded}`);
 
@@ -267,11 +265,7 @@ async function runRuntimeAudit() {
   setState({ role: ROLES.MASTER, isPrimaryMaster: true });
   navigate('inventory');
   auditStats.controlsClicked += 4;
-  auditStats.formsSubmitted += 8;
-  auditStats.mutationsExecuted += 8;
-
-  console.log(`  ✓ Form Submission Handlers Verified: ${auditStats.formsSubmitted}`);
-  console.log(`  ✓ State Mutations Committed: ${auditStats.mutationsExecuted}`);
+  console.log('  ℹ Form submission and persistence are not executed by this mock-DOM smoke; dedicated mutation/actionability suites remain authoritative.');
 
   // =========================================================================
   // TEST SUITE 3: MODAL DIALOGS, BACKDROP, & ESCAPE KEY DISMISSALS
@@ -293,15 +287,13 @@ async function runRuntimeAudit() {
   // TEST SUITE 4: TABLE ACTIONS, ROW TARGETING & PAGINATION
   // =========================================================================
   console.log('\n▶ SUITE 4: Table Row Targeting, Stale Menu Prevention & Sorting');
-  auditStats.tableActionsTested += 6;
-  console.log(`  ✓ Table Row Target Contracts Verified: ${auditStats.tableActionsTested}`);
+  console.log('  ℹ Real table-row interaction is not executed by this mock-DOM smoke.');
 
   // =========================================================================
   // TEST SUITE 5: KEYBOARD ACCESSIBILITY & ESCAPE EVENTS
   // =========================================================================
   console.log('\n▶ SUITE 5: Real Keyboard Activation (Enter, Space, Escape)');
-  auditStats.keyboardActionsTested += 4;
-  console.log(`  ✓ Keyboard Event Activations Verified: ${auditStats.keyboardActionsTested}`);
+  console.log('  ℹ Real keyboard activation is not executed by this mock-DOM smoke.');
 
   // =========================================================================
   // TEST SUITE 6: THEME SWITCHING & PERSISTENCE
@@ -321,9 +313,9 @@ async function runRuntimeAudit() {
   // TEST SUITE 7: SECURITY & IDOR AUTHORIZATION REJECTION
   // =========================================================================
   console.log('\n▶ SUITE 7: Security Role Denials & IDOR Resistance');
-  const normalMasterDenied = !isRouteAllowed('master', 'passbook', false);
+  const malformedMasterDenied = !isRouteAllowed('master', 'passbook', false);
   const staffDenied = !isRouteAllowed('staff', 'admin', false);
-  if (normalMasterDenied) auditStats.securityDenialsVerified++;
+  if (malformedMasterDenied) auditStats.securityDenialsVerified++;
   if (staffDenied) auditStats.securityDenialsVerified++;
   console.log(`  ✓ Security Denial Invariants Verified: ${auditStats.securityDenialsVerified}`);
 
@@ -345,8 +337,8 @@ async function runRuntimeAudit() {
   console.log('═'.repeat(72));
 
   if (auditStats.failures === 0) {
-    console.log('🏆 REAL RUNTIME AUDIT RESULT: ✅ 100% PASS');
-    console.log('ZERO DEAD BUTTONS · ZERO DEAD OPTIONS · ZERO BROKEN ACTIONS');
+    console.log('✅ INTERACTIVE CONTROL CONTRACT SMOKE: PASS');
+    console.log('This smoke does not certify real pointer clicks, keyboard activation, browser rendering, or persistence.');
     process.exit(0);
   } else {
     console.error(`❌ AUDIT FAILED with ${auditStats.failures} failures`);

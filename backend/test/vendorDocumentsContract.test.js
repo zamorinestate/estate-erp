@@ -358,7 +358,57 @@ test('VEN-SCR-010: Vendor Documents Centre Contract Test Suite', async (suite) =
       ],
     });
 
-    // 4e. Vendor B Artifact (PO for Vendor B)
+    // 4e. Vendor B BusinessDocument in the SAME authorized cafe.
+    // Vendor A must never see/download it merely because both vendors serve CAFE_1.
+    await BusinessDocument.create({
+      organisationId: ORG_ID,
+      documentId: 'BD-GST-OTHER-01',
+      entityType: 'VENDOR',
+      entityId: VENDOR_B_ID,
+      relatedRecordId: VENDOR_B_ID,
+      title: 'Other Vendor GST Certificate',
+      documentType: 'GST_CERTIFICATE',
+      classification: 'SUPPLIER_GENERAL',
+      cafeId: CAFE_1,
+      originalFilename: 'GST-Certificate-Other.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 64,
+      uploadedBy: 'MU-0001',
+      uploadedByUserId: 'MU-0001',
+      fileData: Buffer.from('%PDF-1.4\n% OTHER VENDOR ONLY\n', 'utf8').toString('base64'),
+      versions: [
+        {
+          version: 1,
+          originalFilename: 'GST-Certificate-Other.pdf',
+          internalFilename: 'GST-Certificate-Other-v1.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 64,
+          uploadedBy: 'MU-0001',
+          fileData: Buffer.from('%PDF-1.4\n% OTHER VENDOR ONLY\n', 'utf8').toString('base64'),
+        },
+      ],
+    });
+
+    // Vendor A metadata record with intentionally unavailable bytes.
+    await BusinessDocument.create({
+      organisationId: ORG_ID,
+      documentId: 'BD-MISSING-BINARY-01',
+      entityType: 'VENDOR',
+      entityId: VENDOR_A_ID,
+      relatedRecordId: VENDOR_A_ID,
+      title: 'Unavailable Historical Attachment',
+      documentType: 'VENDOR_AGREEMENT',
+      classification: 'SUPPLIER_GENERAL',
+      cafeId: CAFE_1,
+      originalFilename: 'Unavailable-Historical-Attachment.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 128,
+      uploadedBy: 'MU-0001',
+      uploadedByUserId: 'MU-0001',
+      versions: [],
+    });
+
+    // 4f. Vendor B Artifact (PO for Vendor B)
     await PurchaseOrder.create({
       organisationId: ORG_ID,
       purchaseOrderId: 'PO-DOC-VB-01',
@@ -587,6 +637,22 @@ test('VEN-SCR-010: Vendor Documents Centre Contract Test Suite', async (suite) =
     assert.ok(content.includes('Official GST Certificate'));
   });
 
+  await suite.test('6b. Missing document bytes return truthful 404 instead of synthetic PDF success', async () => {
+    const resMissing = await makeRequest({
+      port,
+      method: 'GET',
+      path: '/api/v1/vendor/documents/BD-MISSING-BINARY-01/file',
+      headers: { Authorization: `Bearer ${vendorAToken}` },
+    });
+
+    assert.equal(resMissing.statusCode, 404);
+    assert.equal(
+      resMissing.body?.error?.code || resMissing.body?.code,
+      'DOCUMENT_BINARY_NOT_FOUND'
+    );
+    assert.equal(resMissing.headers['content-type']?.includes('application/pdf'), false);
+  });
+
   // 7. STANDARD CSV EXPORT
   await suite.test('7. Standard CSV export security and data integrity', async () => {
     const resCsv = await makeRequest({
@@ -616,6 +682,23 @@ test('VEN-SCR-010: Vendor Documents Centre Contract Test Suite', async (suite) =
     });
     assert.equal(resAList.statusCode, 200);
     assert.equal(resAList.body.data.some((d) => d.referenceNumber === 'PO-DOC-VB-01'), false);
+    assert.equal(
+      resAList.body.data.some((d) => d.referenceNumber === 'BD-GST-OTHER-01'),
+      false,
+      'Vendor A must not see Vendor B BusinessDocument from the same cafe'
+    );
+
+    const resForeignBusinessDoc = await makeRequest({
+      port,
+      method: 'GET',
+      path: '/api/v1/vendor/documents/BD-GST-OTHER-01/file',
+      headers: { Authorization: `Bearer ${vendorAToken}` },
+    });
+    assert.equal(
+      resForeignBusinessDoc.statusCode,
+      404,
+      'Exact foreign BusinessDocument download must fail without leaking same-cafe documents'
+    );
 
     // Vendor A trying to download Vendor B PO directly via universal dispatcher
     const resIdor = await makeRequest({

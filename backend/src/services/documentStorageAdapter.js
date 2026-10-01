@@ -163,6 +163,7 @@ class DocumentStorageAdapter {
       'image/jpeg': 'jpg',
       'image/jpg': 'jpg',
       'image/png': 'png',
+      'image/webp': 'webp',
     };
     const ext = extMap[String(mimeType || '').toLowerCase()] || 'bin';
     const opaqueId = `${documentId}-${crypto.randomBytes(6).toString('hex')}`;
@@ -180,6 +181,7 @@ class DocumentStorageAdapter {
       'image/jpeg': 'jpg',
       'image/jpg': 'jpg',
       'image/png': 'png',
+      'image/webp': 'webp',
     };
     const ext = extMap[String(mimeType || '').toLowerCase()] || 'bin';
     return `quarantine/${org}/${cafe}/${documentId}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
@@ -228,20 +230,20 @@ class DocumentStorageAdapter {
     return stream;
   }
 
-  async exists({ storageKey }) {
-    if (!storageKey) return false;
+  async exists({ storageKey = null, fileId = null } = {}) {
+    if (!storageKey && !fileId) return false;
     const provider = this.getProvider();
-    return provider.objectExists({ objectKey: storageKey });
+    return provider.objectExists({ objectKey: storageKey, fileId });
   }
 
-  async delete({ storageKey }) {
-    if (!storageKey) return false;
+  async delete({ storageKey = null, fileId = null } = {}) {
+    if (!storageKey && !fileId) return false;
     const provider = this.getProvider();
-    return provider.deleteObject({ objectKey: storageKey });
+    return provider.deleteObject({ objectKey: storageKey, fileId });
   }
 
-  async deleteFile({ storageKey }) {
-    return this.delete({ storageKey });
+  async deleteFile({ storageKey = null, fileId = null } = {}) {
+    return this.delete({ storageKey, fileId });
   }
 
   async copy({ sourceKey, destinationKey }) {

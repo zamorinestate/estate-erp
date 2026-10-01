@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const { ChartOfAccount } = require('../models/ChartOfAccount');
 const { Journal } = require('../models/Journal');
 const { FinancialPeriod } = require('../models/FinancialPeriod');
@@ -15,8 +16,12 @@ const { RegisterSession } = require('../models/RegisterSession');
 const { Payslip } = require('../models/Payslip');
 const { PersonalLedger } = require('../models/PersonalLedger');
 const { DashboardTarget } = require('../models/DashboardTarget');
+const { BudgetPlan } = require('../models/BudgetPlan');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { TaxInvoice } = require('../models/TaxInvoice');
+const { PassbookTransaction } = require('../models/PassbookTransaction');
+const { PassbookAccount } = require('../models/PassbookAccount');
+const { StockMovement } = require('../models/StockMovement');
 const gstTaxService = require('../services/gstTaxService');
 const zReportService = require('../services/zReportService');
 const { ApiError } = require('../utils/ApiError');
@@ -100,6 +105,33 @@ function ensureCafeAccess(request, cafeId) {
     );
   }
 }
+
+async function runFinanceAtomic(work) {
+  if (mongoose.connection?.readyState !== 1 || typeof mongoose.startSession !== 'function') {
+    return work(null);
+  }
+
+  const session = await mongoose.startSession();
+  let result;
+  try {
+    await session.withTransaction(async () => {
+      result = await work(session);
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
+function normalizeFinanceId(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
 
 // 1. Overview Command Centre
 const getFinanceOverview = asyncHandler(async (request, response) => {
@@ -713,17 +745,12 @@ const createJournal = asyncHandler(async (request, response) => {
   }
 
   const dateCompact = journalDate.replace(/-/g, '');
-  let journalId;
-  try {
-    journalId = await SequenceCounter.generateId({
-      organisationId,
-      sequenceKey: `JOURNAL:${dateCompact}`,
-      prefix: `JRN-${dateCompact}`,
-      minimumDigits: 4,
-    });
-  } catch (err) {
-    journalId = `JRN-${dateCompact}-${Math.floor(1000 + Math.random() * 9000)}`;
-  }
+  const journalId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `JOURNAL:${dateCompact}`,
+    prefix: `JRN-${dateCompact}`,
+    minimumDigits: 4,
+  });
 
   const journal = await Journal.create({
     organisationId,
@@ -747,9 +774,22 @@ const createJournal = asyncHandler(async (request, response) => {
 
 const postJournal = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { journalId } = request.params;
+  const journalId = normalizeFinanceId(request.params.journalId);
 
-  const journal = await Journal.findOne({ organisationId, journalId });
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_REQUIRED',
+      'Only the Primary Master may post accounting journals.'
+    );
+  }
+
+  const journalQuery = Journal.findOne({ organisationId, journalId });
+  const journal =
+    journalQuery && typeof journalQuery.lean === 'function'
+      ? await journalQuery.lean()
+      : await journalQuery;
+
   if (!journal) {
     throw new ApiError(404, 'JOURNAL_NOT_FOUND', 'Journal not found.');
   }
@@ -757,20 +797,147 @@ const postJournal = asyncHandler(async (request, response) => {
   if (journal.status === 'POSTED') {
     throw new ApiError(409, 'ALREADY_POSTED', 'This journal is already posted to the General Ledger.');
   }
-
-  // Check period status
-  const period = await FinancialPeriod.findOne({ organisationId, periodId: journal.periodId });
-  if (period && period.status === 'CLOSED') {
-    throw new ApiError(403, 'PERIOD_CLOSED', `Financial period ${journal.periodId} is closed. Postings are locked.`);
+  if (!['DRAFT', 'SUBMITTED', 'APPROVED', 'PENDING_APPROVAL'].includes(journal.status)) {
+    throw new ApiError(
+      409,
+      'JOURNAL_NOT_POSTABLE',
+      `Journal in ${journal.status} state cannot be posted.`
+    );
   }
 
-  journal.status = 'POSTED';
-  journal.postedAt = new Date();
-  journal.postedBy = userId;
-  journal.checkerUserId = userId;
-  await journal.save();
+  const periodQuery = FinancialPeriod.findOne({
+    organisationId,
+    periodId: journal.periodId,
+  });
+  const period =
+    periodQuery && typeof periodQuery.lean === 'function'
+      ? await periodQuery.lean()
+      : await periodQuery;
 
-  return response.status(200).json({ message: `Journal ${journalId} successfully posted to General Ledger.`, journal });
+  if (!period) {
+    throw new ApiError(
+      409,
+      'FINANCIAL_PERIOD_NOT_FOUND',
+      'Journal posting is blocked because the referenced financial period does not exist.'
+    );
+  }
+  if (!['OPEN', 'CLOSING', 'REOPENED'].includes(period.status)) {
+    throw new ApiError(
+      403,
+      'PERIOD_CLOSED',
+      `Financial period ${journal.periodId} is ${period.status}. Postings are locked.`
+    );
+  }
+
+  const lines = Array.isArray(journal.lines) ? journal.lines : [];
+  if (lines.length < 2) {
+    throw new ApiError(
+      409,
+      'JOURNAL_LINES_INVALID',
+      'Journal posting requires at least two double-entry lines.'
+    );
+  }
+
+  let totalDebitPaisa = 0;
+  let totalCreditPaisa = 0;
+  const accountCodes = new Set();
+
+  for (const line of lines) {
+    const debit = Number(line.debitPaisa || 0);
+    const credit = Number(line.creditPaisa || 0);
+    if (
+      !Number.isSafeInteger(debit) ||
+      !Number.isSafeInteger(credit) ||
+      debit < 0 ||
+      credit < 0 ||
+      (debit > 0 && credit > 0) ||
+      (debit === 0 && credit === 0)
+    ) {
+      throw new ApiError(
+        409,
+        'JOURNAL_LINE_INVALID',
+        `Journal line ${line.lineId || 'UNKNOWN'} has invalid debit/credit values.`
+      );
+    }
+    totalDebitPaisa += debit;
+    totalCreditPaisa += credit;
+    accountCodes.add(normalizeFinanceId(line.accountCode));
+  }
+
+  if (
+    totalDebitPaisa !== totalCreditPaisa ||
+    totalDebitPaisa !== Number(journal.totalDebitPaisa || 0) ||
+    totalCreditPaisa !== Number(journal.totalCreditPaisa || 0)
+  ) {
+    throw new ApiError(
+      409,
+      'UNBALANCED_JOURNAL',
+      'Journal totals changed or no longer balance. Posting is blocked.'
+    );
+  }
+
+  const accountQuery = ChartOfAccount.find({
+    organisationId,
+    accountCode: { $in: [...accountCodes] },
+    status: 'ACTIVE',
+    isPostingAllowed: { $ne: false },
+  });
+  const accounts =
+    accountQuery && typeof accountQuery.lean === 'function'
+      ? await accountQuery.lean()
+      : await accountQuery;
+  const activeCodes = new Set((accounts || []).map((account) => normalizeFinanceId(account.accountCode)));
+  const missingOrBlocked = [...accountCodes].filter((code) => !activeCodes.has(code));
+
+  if (missingOrBlocked.length > 0) {
+    throw new ApiError(
+      409,
+      'JOURNAL_ACCOUNT_UNAVAILABLE',
+      'One or more journal accounts are missing, inactive, or not posting-enabled.',
+      { accountCodes: missingOrBlocked }
+    );
+  }
+
+  const postedAt = new Date();
+  const posted = await Journal.findOneAndUpdate(
+    {
+      _id: journal._id,
+      organisationId,
+      journalId,
+      status: journal.status,
+      totalDebitPaisa: journal.totalDebitPaisa,
+      totalCreditPaisa: journal.totalCreditPaisa,
+    },
+    {
+      $set: {
+        status: 'POSTED',
+        postedAt,
+        postedBy: userId,
+        // A distinct journal checker role is not currently configured.
+        // Do not misrepresent the poster as an independent checker.
+        checkerUserId: null,
+      },
+    },
+    { new: true, runValidators: true }
+  );
+
+  if (!posted) {
+    throw new ApiError(
+      409,
+      'JOURNAL_POST_STATE_CONFLICT',
+      'Journal state changed while posting was being committed. Reload and retry from fresh state.'
+    );
+  }
+
+  return response.status(200).json({
+    success: true,
+    message: `Journal ${journalId} successfully posted to the General Ledger.`,
+    data: {
+      journal: posted,
+      postingControl: 'PRIMARY_MASTER_SINGLE_CONTROL',
+      makerCheckerStatus: 'NOT_CONFIGURED',
+    },
+  });
 });
 
 const reverseJournal = asyncHandler(async (request, response) => {
@@ -793,7 +960,12 @@ const reverseJournal = asyncHandler(async (request, response) => {
 
   const dateStr = getIstBusinessDate();
   const dateCompact = dateStr.replace(/-/g, '');
-  const revJournalId = `JRN-REV-${dateCompact}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const revJournalId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `JOURNAL_REVERSAL:${dateCompact}`,
+    prefix: `JRN-REV-${dateCompact}`,
+    minimumDigits: 4,
+  });
 
   // Invert debits and credits
   const reversedLines = originalJournal.lines.map((l, index) => ({
@@ -884,8 +1056,13 @@ const createAPInvoice = asyncHandler(async (request, response) => {
   const taxPaisa = Math.round(Number(tax) * 100);
   const totalPaisa = amountPaisa + taxPaisa;
 
-  const count = await APInvoice.countDocuments({ organisationId });
-  const invoiceId = `AP-2026-${String(count + 1).padStart(5, '0')}`;
+  const apYear = new Date().getFullYear();
+  const invoiceId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `AP_INVOICE:${apYear}`,
+    prefix: `AP-${apYear}`,
+    minimumDigits: 5,
+  });
 
   const invoice = await APInvoice.create({
     organisationId,
@@ -922,26 +1099,96 @@ const listPaymentRuns = asyncHandler(async (request, response) => {
 
 const createPaymentRun = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { bankAccountId, selectedInvoiceIds = [] } = request.body;
+  const { bankAccountId, selectedInvoiceIds = [] } = request.body || {};
 
-  if (!bankAccountId || !Array.isArray(selectedInvoiceIds) || selectedInvoiceIds.length === 0) {
+  const cleanBankAccountId = normalizeFinanceId(bankAccountId);
+  const invoiceIds = [...new Set(
+    (Array.isArray(selectedInvoiceIds) ? selectedInvoiceIds : [])
+      .map(normalizeFinanceId)
+      .filter(Boolean)
+  )];
+
+  if (!cleanBankAccountId || invoiceIds.length === 0) {
     throw new ApiError(400, 'VALIDATION_FAILED', 'Bank account and selected invoices are required.');
   }
 
-  const invoices = await APInvoice.find({ organisationId, invoiceId: { $in: selectedInvoiceIds } });
-  const totalAmountPaisa = invoices.reduce((sum, inv) => sum + inv.outstandingPaisa, 0);
+  const bankQuery = BankAccount.findOne({
+    organisationId,
+    bankAccountId: cleanBankAccountId,
+    status: 'ACTIVE',
+  });
+  const bankAccount = bankQuery && typeof bankQuery.lean === 'function'
+    ? await bankQuery.lean()
+    : await bankQuery;
+  if (!bankAccount) {
+    throw new ApiError(404, 'BANK_ACCOUNT_NOT_FOUND', 'The selected active bank account was not found.');
+  }
 
-  const count = await PaymentRun.countDocuments({ organisationId });
-  const paymentRunId = `PAY-RUN-2026-${String(count + 1).padStart(4, '0')}`;
+  const invoicesQuery = APInvoice.find({
+    organisationId,
+    invoiceId: { $in: invoiceIds },
+  });
+  const invoices = invoicesQuery && typeof invoicesQuery.lean === 'function'
+    ? await invoicesQuery.lean()
+    : await invoicesQuery;
+  const invoiceRows = Array.isArray(invoices) ? invoices : [];
+
+  if (invoiceRows.length !== invoiceIds.length) {
+    const foundIds = new Set(invoiceRows.map((invoice) => normalizeFinanceId(invoice.invoiceId)));
+    const missingInvoiceIds = invoiceIds.filter((id) => !foundIds.has(id));
+    throw new ApiError(
+      404,
+      'AP_INVOICE_NOT_FOUND',
+      'One or more selected Accounts Payable invoices were not found.',
+      { missingInvoiceIds }
+    );
+  }
+
+  const ineligibleInvoices = invoiceRows
+    .filter((invoice) => {
+      const outstanding = Number(invoice.outstandingPaisa || 0);
+      return (
+        !Number.isSafeInteger(outstanding) ||
+        outstanding <= 0 ||
+        !['UNPAID', 'DUE', 'OVERDUE', 'PARTIALLY_PAID'].includes(invoice.paymentStatus)
+      );
+    })
+    .map((invoice) => invoice.invoiceId);
+
+  if (ineligibleInvoices.length > 0) {
+    throw new ApiError(
+      409,
+      'AP_INVOICE_NOT_PAYABLE',
+      'One or more selected invoices are not eligible for a new payment run.',
+      { ineligibleInvoices }
+    );
+  }
+
+  const totalAmountPaisa = invoiceRows.reduce(
+    (sum, invoice) => sum + Number(invoice.outstandingPaisa || 0),
+    0
+  );
+
+  if (!Number.isSafeInteger(totalAmountPaisa) || totalAmountPaisa <= 0) {
+    throw new ApiError(409, 'INVALID_PAYMENT_RUN_TOTAL', 'Payment run total is invalid.');
+  }
+
+  const paymentRunYear = new Date().getFullYear();
+  const paymentRunId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `PAYMENT_RUN:${paymentRunYear}`,
+    prefix: `PAY-RUN-${paymentRunYear}`,
+    minimumDigits: 4,
+  });
 
   const paymentRun = await PaymentRun.create({
     organisationId,
     paymentRunId,
     runDate: getIstBusinessDate(),
-    bankAccountId,
+    bankAccountId: cleanBankAccountId,
     totalAmountPaisa,
-    itemCount: invoices.length,
-    selectedInvoiceIds,
+    itemCount: invoiceRows.length,
+    selectedInvoiceIds: invoiceIds,
     status: 'PENDING_APPROVAL',
     makerUserId: userId,
   });
@@ -951,34 +1198,355 @@ const createPaymentRun = asyncHandler(async (request, response) => {
 
 const decidePaymentRun = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { paymentRunId } = request.params;
-  const { decision } = request.body; // 'APPROVE' or 'REJECT'
+  const paymentRunId = normalizeFinanceId(request.params.paymentRunId);
+  const decision = normalizeFinanceId(request.body?.decision);
+
+  if (!['APPROVE', 'REJECT'].includes(decision)) {
+    throw new ApiError(400, 'INVALID_PAYMENT_RUN_DECISION', 'decision must be APPROVE or REJECT.');
+  }
 
   const run = await PaymentRun.findOne({ organisationId, paymentRunId });
   if (!run) {
     throw new ApiError(404, 'PAYMENT_RUN_NOT_FOUND', 'Payment run not found.');
   }
+  if (run.status !== 'PENDING_APPROVAL') {
+    throw new ApiError(
+      409,
+      'PAYMENT_RUN_STATE_CONFLICT',
+      `Only PENDING_APPROVAL runs may be decided; current state is ${run.status}.`
+    );
+  }
 
-  if (run.makerUserId === userId && request.auth.role === 'CAFE_ADMIN') {
-    throw new ApiError(403, 'MAKER_CHECKER_VIOLATION', 'Preparer cannot approve their own payment proposal.');
+  if (normalizeFinanceId(run.makerUserId) === normalizeFinanceId(userId)) {
+    throw new ApiError(
+      403,
+      'MAKER_CHECKER_VIOLATION',
+      'The payment-run preparer cannot approve or reject their own proposal.'
+    );
+  }
+
+  if (request.auth.role === 'CAFE_ADMIN') {
+    const invoiceScopeQuery = APInvoice.find({
+      organisationId,
+      invoiceId: { $in: run.selectedInvoiceIds },
+    }).select('invoiceId cafeId');
+    const invoiceScopeRows =
+      invoiceScopeQuery && typeof invoiceScopeQuery.lean === 'function'
+        ? await invoiceScopeQuery.lean()
+        : await invoiceScopeQuery;
+
+    const assignedCafeIds = new Set(
+      (request.auth.assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean)
+    );
+    const unauthorizedInvoiceIds = (invoiceScopeRows || [])
+      .filter((invoice) => !assignedCafeIds.has(normalizeFinanceId(invoice.cafeId)))
+      .map((invoice) => invoice.invoiceId);
+
+    if (
+      (invoiceScopeRows || []).length !== run.selectedInvoiceIds.length ||
+      unauthorizedInvoiceIds.length > 0
+    ) {
+      throw new ApiError(
+        403,
+        'PAYMENT_RUN_CAFE_SCOPE_DENIED',
+        'Café Admin may decide only payment runs whose entire invoice set belongs to assigned cafés.',
+        { unauthorizedInvoiceIds }
+      );
+    }
   }
 
   if (decision === 'APPROVE') {
+    const scheduleResult = await APInvoice.updateMany(
+      {
+        organisationId,
+        invoiceId: { $in: run.selectedInvoiceIds },
+        paymentStatus: { $in: ['UNPAID', 'DUE', 'OVERDUE', 'PARTIALLY_PAID'] },
+        outstandingPaisa: { $gt: 0 },
+      },
+      {
+        $set: { paymentStatus: 'SCHEDULED' },
+      }
+    );
+
+    if (
+      Number.isInteger(scheduleResult?.matchedCount) &&
+      scheduleResult.matchedCount !== run.selectedInvoiceIds.length
+    ) {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_INVOICE_STATE_CONFLICT',
+        'One or more invoices changed state before approval. Refresh the payment run.'
+      );
+    }
+
     run.status = 'APPROVED';
     run.checkerUserId = userId;
     run.approvedAt = new Date();
-
-    // Mark associated invoices as scheduled/paid
-    await APInvoice.updateMany(
-      { organisationId, invoiceId: { $in: run.selectedInvoiceIds } },
-      { $set: { paymentStatus: 'PAID', paidPaisa: '$totalPaisa', outstandingPaisa: 0 } }
-    );
   } else {
     run.status = 'VOIDED';
+    run.checkerUserId = userId;
+    run.approvedAt = null;
   }
 
   await run.save();
-  return response.status(200).json({ message: `Payment run ${paymentRunId} ${decision.toLowerCase()}d.`, paymentRun: run });
+  return response.status(200).json({
+    message: `Payment run ${paymentRunId} ${decision === 'APPROVE' ? 'approved' : 'rejected'}.`,
+    paymentRun: run,
+  });
+});
+
+const executePaymentRun = asyncHandler(async (request, response) => {
+  const { organisationId, userId } = request.auth;
+  const paymentRunId = normalizeFinanceId(request.params.paymentRunId);
+  const executionReference = String(request.body?.paymentReference || '').trim();
+  const paymentMethod = normalizeFinanceId(request.body?.paymentMethod || 'BANK_TRANSFER');
+  const allowedMethods = ['BANK_TRANSFER', 'NEFT', 'RTGS', 'IMPS', 'UPI', 'CHEQUE'];
+
+  if (!executionReference) {
+    throw new ApiError(
+      400,
+      'PAYMENT_EXECUTION_REFERENCE_REQUIRED',
+      'A real bank/payment execution reference is required.'
+    );
+  }
+  if (!allowedMethods.includes(paymentMethod)) {
+    throw new ApiError(
+      400,
+      'INVALID_PAYMENT_METHOD',
+      `paymentMethod must be one of: ${allowedMethods.join(', ')}.`
+    );
+  }
+
+  const result = await runFinanceAtomic(async (session) => {
+    let runQuery = PaymentRun.findOne({ organisationId, paymentRunId });
+    if (session && typeof runQuery.session === 'function') runQuery = runQuery.session(session);
+    const run = await runQuery;
+
+    if (!run) {
+      throw new ApiError(404, 'PAYMENT_RUN_NOT_FOUND', 'Payment run not found.');
+    }
+    if (run.status === 'EXECUTED') {
+      throw new ApiError(409, 'PAYMENT_RUN_ALREADY_EXECUTED', 'This payment run has already been executed.');
+    }
+    if (run.status !== 'APPROVED') {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_NOT_APPROVED',
+        `Payment run must be APPROVED before execution; current state is ${run.status}.`
+      );
+    }
+
+    let bankQuery = BankAccount.findOne({
+      organisationId,
+      bankAccountId: run.bankAccountId,
+      status: 'ACTIVE',
+    });
+    if (session && typeof bankQuery.session === 'function') bankQuery = bankQuery.session(session);
+    const bankAccount = await bankQuery;
+    if (!bankAccount) {
+      throw new ApiError(409, 'PAYMENT_BANK_ACCOUNT_UNAVAILABLE', 'The payment run bank account is not active.');
+    }
+
+    const glAccountCode = normalizeFinanceId(bankAccount.glAccountCode);
+    if (!glAccountCode) {
+      throw new ApiError(
+        409,
+        'PAYMENT_PASSBOOK_ACCOUNT_MAPPING_REQUIRED',
+        'The selected bank account is not mapped to an authoritative passbook account code.'
+      );
+    }
+
+    let passbookAccountQuery = PassbookAccount.findOne({
+      organisationId,
+      accountCode: glAccountCode,
+      status: 'ACTIVE',
+      accountType: 'BANK_OPERATING',
+    });
+    if (session && typeof passbookAccountQuery.session === 'function') {
+      passbookAccountQuery = passbookAccountQuery.session(session);
+    }
+    const passbookAccount = await passbookAccountQuery;
+    if (!passbookAccount) {
+      throw new ApiError(
+        409,
+        'PAYMENT_PASSBOOK_ACCOUNT_MAPPING_REQUIRED',
+        'No active authoritative bank passbook account matches the selected finance bank account.'
+      );
+    }
+
+    let invoicesQuery = APInvoice.find({
+      organisationId,
+      invoiceId: { $in: run.selectedInvoiceIds },
+    });
+    if (session && typeof invoicesQuery.session === 'function') invoicesQuery = invoicesQuery.session(session);
+    const invoices = await invoicesQuery;
+    const invoiceRows = Array.isArray(invoices) ? invoices : [];
+
+    if (invoiceRows.length !== run.selectedInvoiceIds.length) {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_INVOICE_SET_CHANGED',
+        'The payment run invoice set is incomplete. Execution is blocked.'
+      );
+    }
+
+    const payableTotalPaisa = invoiceRows.reduce((sum, invoice) => {
+      if (invoice.paymentStatus !== 'SCHEDULED') {
+        throw new ApiError(
+          409,
+          'PAYMENT_RUN_INVOICE_NOT_SCHEDULED',
+          `Invoice ${invoice.invoiceId} is no longer scheduled for this run.`
+        );
+      }
+      const outstanding = Number(invoice.outstandingPaisa || 0);
+      if (!Number.isSafeInteger(outstanding) || outstanding <= 0) {
+        throw new ApiError(
+          409,
+          'PAYMENT_RUN_INVOICE_BALANCE_INVALID',
+          `Invoice ${invoice.invoiceId} has an invalid outstanding balance.`
+        );
+      }
+      return sum + outstanding;
+    }, 0);
+
+    if (payableTotalPaisa !== Number(run.totalAmountPaisa || 0)) {
+      throw new ApiError(
+        409,
+        'PAYMENT_RUN_AMOUNT_CHANGED',
+        'Invoice balances no longer equal the approved payment-run total.',
+        {
+          approvedTotalPaisa: Number(run.totalAmountPaisa || 0),
+          currentOutstandingPaisa: payableTotalPaisa,
+        }
+      );
+    }
+
+    const normalizedExecutionReference = normalizeFinanceId(executionReference);
+    let bankTransactionQuery = PassbookTransaction.findOne({
+      organisationId,
+      accountId: passbookAccount.accountId,
+      direction: 'DEBIT',
+      status: { $in: ['POSTED', 'CLEARED'] },
+      amountPaisa: payableTotalPaisa,
+      $or: [
+        { transactionId: normalizedExecutionReference },
+        { externalReference: executionReference },
+        { externalReference: normalizedExecutionReference },
+      ],
+    });
+    if (session && typeof bankTransactionQuery.session === 'function') {
+      bankTransactionQuery = bankTransactionQuery.session(session);
+    }
+    const bankTransaction =
+      bankTransactionQuery && typeof bankTransactionQuery.lean === 'function'
+        ? await bankTransactionQuery.lean()
+        : await bankTransactionQuery;
+
+    if (!bankTransaction) {
+      throw new ApiError(
+        409,
+        'PAYMENT_BANK_DEBIT_NOT_VERIFIED',
+        'AP execution is blocked because the supplied payment reference does not resolve to a posted/cleared bank debit for the exact payment-run amount and account.'
+      );
+    }
+
+    const duplicateExecutionQuery = PaymentRun.findOne({
+      organisationId,
+      paymentRunId: { $ne: run.paymentRunId },
+      status: 'EXECUTED',
+      executionReference: {
+        $in: [
+          executionReference,
+          normalizedExecutionReference,
+          bankTransaction.transactionId,
+        ].filter(Boolean),
+      },
+    });
+    const duplicateExecution =
+      session && typeof duplicateExecutionQuery.session === 'function'
+        ? await duplicateExecutionQuery.session(session)
+        : await duplicateExecutionQuery;
+
+    if (duplicateExecution) {
+      throw new ApiError(
+        409,
+        'PAYMENT_BANK_DEBIT_ALREADY_APPLIED',
+        'The authoritative bank debit is already linked to another executed payment run.'
+      );
+    }
+
+    const invoiceCafeIds = [...new Set(
+      invoiceRows.map((invoice) => normalizeFinanceId(invoice.cafeId)).filter(Boolean)
+    )];
+    const economicCafeId = normalizeFinanceId(bankTransaction.economicCafeId || 'ALL');
+    if (
+      economicCafeId !== 'ALL' &&
+      (invoiceCafeIds.length !== 1 || invoiceCafeIds[0] !== economicCafeId)
+    ) {
+      throw new ApiError(
+        409,
+        'PAYMENT_BANK_DEBIT_CAFE_SCOPE_MISMATCH',
+        'The authoritative bank debit economic café scope does not match the payment-run invoice scope.',
+        { bankEconomicCafeId: economicCafeId, invoiceCafeIds }
+      );
+    }
+
+    const executionDateKey = getIstBusinessDate().replace(/-/g, '');
+    for (const invoice of invoiceRows) {
+      const paymentId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `AP_PAYMENT:${executionDateKey}`,
+        prefix: `AP-PAY-${executionDateKey}`,
+        minimumDigits: 4,
+        session,
+      });
+
+      const paidNowPaisa = Number(invoice.outstandingPaisa || 0);
+      invoice.paidPaisa = Number(invoice.paidPaisa || 0) + paidNowPaisa;
+      invoice.amountPaidPaisa = invoice.paidPaisa;
+      invoice.outstandingPaisa = 0;
+      invoice.outstandingPayableAmountPaisa = 0;
+      invoice.outstandingBalancePaisa = 0;
+      invoice.paymentStatus = 'PAID';
+      invoice.paymentHistory = Array.isArray(invoice.paymentHistory) ? invoice.paymentHistory : [];
+      invoice.paymentHistory.push({
+        paymentId,
+        paidPaisa: paidNowPaisa,
+        paidAt: new Date(),
+        paidByUserId: userId,
+        paymentMethod,
+        reference: executionReference,
+        bankTransactionId: bankTransaction.transactionId,
+      });
+      await invoice.save(session ? { session } : undefined);
+    }
+
+    run.status = 'EXECUTED';
+    run.executedAt = new Date();
+    run.executedByUserId = userId;
+    run.executionReference = bankTransaction.transactionId;
+    run.paymentMethod = paymentMethod;
+    run.bankTransactionId = bankTransaction.transactionId;
+    await run.save(session ? { session } : undefined);
+
+    return {
+      run,
+      bankTransactionId: bankTransaction.transactionId,
+      paidInvoiceIds: invoiceRows.map((invoice) => invoice.invoiceId),
+      totalPaidPaisa: payableTotalPaisa,
+    };
+  });
+
+  return response.status(200).json({
+    success: true,
+    message: 'Payment run executed and Accounts Payable balances updated.',
+    data: {
+      paymentRun: result.run,
+      bankTransactionId: result.bankTransactionId,
+      paidInvoiceIds: result.paidInvoiceIds,
+      totalPaidPaisa: result.totalPaidPaisa,
+    },
+  });
 });
 
 // 7. Accounts Receivable (AR) & Collections
@@ -988,40 +1556,163 @@ const listReceivables = asyncHandler(async (request, response) => {
 
   if (cafeId) ensureCafeAccess(request, cafeId);
 
-  // Return departmental orders with credit outstanding
-  const filter = { organisationId, status: { $in: ['FULFILLED', 'IN_FULFILMENT', 'CONFIRMED'] } };
+  const filter = {
+    organisationId,
+    orderStatus: { $in: ['FULFILLED', 'IN_FULFILMENT', 'CONFIRMED'] },
+    creditStatus: { $in: ['CREDIT_OPEN', 'PARTIALLY_SETTLED', 'OVERDUE', 'DISPUTED'] },
+  };
   if (cafeId) filter.cafeId = cafeId.trim().toUpperCase();
 
   const orders = await DepartmentOrder.find(filter).lean();
-  const receivables = orders.map((o) => ({
-    receivableId: `AR-${o.orderId}`,
-    customerName: o.accountName,
-    invoiceDate: o.businessDate,
-    amountPaisa: o.totalAmountPaisa,
-    status: o.creditSettlementStatus || 'PENDING',
-    cafeId: o.cafeId,
-  }));
+  const receivables = orders.map((order) => {
+    const totalPaisa = Number(order.totalPaisa || 0);
+    const settledPaisa = Number(order.settledPaisa || 0);
+    return {
+      receivableId: `AR-${order.orderId}`,
+      orderId: order.orderId,
+      customerName: order.institutionName,
+      invoiceNumber: order.invoiceNumber || null,
+      invoiceDate: order.orderDate,
+      fulfilmentDate: order.fulfilmentDate,
+      amountPaisa: totalPaisa,
+      settledPaisa,
+      outstandingPaisa: Math.max(0, totalPaisa - settledPaisa),
+      status: order.creditStatus,
+      cafeId: order.cafeId,
+    };
+  });
 
   return response.status(200).json({ receivables });
 });
 
 const recordCustomerReceipt = asyncHandler(async (request, response) => {
-  const { organisationId } = request.auth;
-  const { receivableId, amount, paymentMethod = 'BANK_TRANSFER', referenceNumber } = request.body;
+  const { organisationId, userId } = request.auth;
+  const {
+    receivableId,
+    amount,
+    amountPaisa: rawAmountPaisa,
+    paymentMethod = 'BANK_TRANSFER',
+    referenceNumber,
+    notes = '',
+  } = request.body || {};
 
-  if (!receivableId || !amount) {
-    throw new ApiError(400, 'VALIDATION_FAILED', 'Receivable ID and amount are required.');
+  const cleanReceivableId = String(receivableId || '').trim().toUpperCase();
+  if (!cleanReceivableId) {
+    throw new ApiError(400, 'VALIDATION_FAILED', 'Receivable ID is required.');
+  }
+
+  const amountPaisa = rawAmountPaisa !== undefined
+    ? Number(rawAmountPaisa)
+    : Math.round(Number(amount) * 100);
+
+  if (!Number.isSafeInteger(amountPaisa) || amountPaisa <= 0) {
+    throw new ApiError(400, 'INVALID_RECEIPT_AMOUNT', 'Receipt amount must be a positive integer paise value.');
+  }
+
+  const normalizedMethod = String(paymentMethod || 'BANK_TRANSFER').trim().toUpperCase();
+  const allowedMethods = ['BANK_TRANSFER', 'UPI', 'CHEQUE', 'CREDIT_NOTE', 'CASH'];
+  if (!allowedMethods.includes(normalizedMethod)) {
+    throw new ApiError(400, 'INVALID_PAYMENT_METHOD', `paymentMethod must be one of: ${allowedMethods.join(', ')}.`);
+  }
+
+  const cleanReference = String(referenceNumber || '').trim();
+  if (normalizedMethod !== 'CASH' && !cleanReference) {
+    throw new ApiError(400, 'PAYMENT_REFERENCE_REQUIRED', 'A real payment reference is required for non-cash receipts.');
+  }
+
+  const orderId = cleanReceivableId.startsWith('AR-')
+    ? cleanReceivableId.slice(3)
+    : cleanReceivableId;
+
+  const order = await DepartmentOrder.findOne({
+    organisationId,
+    orderId,
+  }).lean();
+
+  if (!order) {
+    throw new ApiError(404, 'RECEIVABLE_NOT_FOUND', 'The requested institutional receivable was not found.');
+  }
+
+  ensureCafeAccess(request, order.cafeId);
+
+  const totalPaisa = Number(order.totalPaisa || 0);
+  const currentSettledPaisa = Number(order.settledPaisa || 0);
+  const outstandingPaisa = Math.max(0, totalPaisa - currentSettledPaisa);
+
+  if (outstandingPaisa <= 0 || order.creditStatus === 'SETTLED') {
+    throw new ApiError(409, 'RECEIVABLE_ALREADY_SETTLED', 'This receivable is already fully settled.');
+  }
+  if (amountPaisa > outstandingPaisa) {
+    throw new ApiError(
+      409,
+      'RECEIPT_EXCEEDS_OUTSTANDING',
+      'Receipt amount cannot exceed the outstanding receivable balance.',
+      { amountPaisa, outstandingPaisa }
+    );
+  }
+
+  const receiptDate = getIstBusinessDate();
+  const settlementId = await SequenceCounter.generateId({
+    organisationId,
+    sequenceKey: `AR_SETTLEMENT:${receiptDate.replace(/-/g, '')}`,
+    prefix: `AR-REC-${receiptDate.replace(/-/g, '')}`,
+    minimumDigits: 4,
+  });
+
+  const nextSettledPaisa = currentSettledPaisa + amountPaisa;
+  const nextCreditStatus = nextSettledPaisa >= totalPaisa
+    ? 'SETTLED'
+    : 'PARTIALLY_SETTLED';
+
+  const updatedOrder = await DepartmentOrder.findOneAndUpdate(
+    {
+      _id: order._id,
+      organisationId,
+      orderId,
+      settledPaisa: currentSettledPaisa,
+      creditStatus: { $ne: 'SETTLED' },
+    },
+    {
+      $inc: { settledPaisa: amountPaisa },
+      $set: { creditStatus: nextCreditStatus },
+      $push: {
+        settlements: {
+          settlementId,
+          amountPaisa,
+          paymentMethod: normalizedMethod,
+          paymentReference: cleanReference,
+          settledAt: new Date(),
+          recordedByUserId: userId,
+          notes: String(notes || '').trim(),
+        },
+      },
+    },
+    { new: true, runValidators: true }
+  ).lean();
+
+  if (!updatedOrder) {
+    throw new ApiError(
+      409,
+      'RECEIVABLE_STATE_CONFLICT',
+      'The receivable balance changed concurrently. Reload it before recording the receipt.'
+    );
   }
 
   return response.status(200).json({
-    message: 'Customer collection receipt applied to receivable.',
+    success: true,
+    message: 'Customer collection receipt recorded against the institutional receivable.',
     receipt: {
-      receiptId: `REC-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      receivableId,
-      amountPaisa: Math.round(Number(amount) * 100),
-      paymentMethod,
-      referenceNumber,
-      appliedAt: new Date(),
+      receiptId: settlementId,
+      receivableId: `AR-${updatedOrder.orderId}`,
+      amountPaisa,
+      paymentMethod: normalizedMethod,
+      referenceNumber: cleanReference || null,
+      appliedAt: updatedOrder.settlements?.find((entry) => entry.settlementId === settlementId)?.settledAt || new Date(),
+      outstandingPaisa: Math.max(
+        0,
+        Number(updatedOrder.totalPaisa || 0) - Number(updatedOrder.settledPaisa || 0)
+      ),
+      creditStatus: updatedOrder.creditStatus,
     },
   });
 });
@@ -1036,18 +1727,82 @@ const listMarketplaceSettlements = asyncHandler(async (request, response) => {
 const reconcileMarketplaceSettlement = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
   const { settlementId } = request.params;
-  const { bankMatchReference } = request.body;
+  const bankMatchReference = String(request.body?.bankMatchReference || '').trim().toUpperCase();
+
+  if (!bankMatchReference) {
+    throw new ApiError(
+      400,
+      'BANK_MATCH_REFERENCE_REQUIRED',
+      'A real passbook transaction ID or external bank reference is required.'
+    );
+  }
 
   const settlement = await MarketplaceSettlement.findOne({ organisationId, settlementId });
   if (!settlement) {
     throw new ApiError(404, 'SETTLEMENT_NOT_FOUND', 'Marketplace settlement record not found.');
   }
 
+  const bankTransaction = await PassbookTransaction.findOne({
+    organisationId,
+    $or: [
+      { transactionId: bankMatchReference },
+      { externalReference: bankMatchReference },
+    ],
+  }).lean();
+
+  if (!bankTransaction) {
+    throw new ApiError(
+      404,
+      'BANK_TRANSACTION_NOT_FOUND',
+      'The supplied bank reference does not resolve to an authoritative passbook transaction.'
+    );
+  }
+
+  if (
+    bankTransaction.direction !== 'CREDIT' ||
+    !['POSTED', 'CLEARED'].includes(bankTransaction.status)
+  ) {
+    throw new ApiError(
+      409,
+      'BANK_TRANSACTION_NOT_ELIGIBLE',
+      'Marketplace settlement reconciliation requires a posted/cleared bank credit.'
+    );
+  }
+
+  if (
+    bankTransaction.economicCafeId &&
+    bankTransaction.economicCafeId !== 'ALL' &&
+    bankTransaction.economicCafeId !== settlement.cafeId
+  ) {
+    throw new ApiError(
+      409,
+      'BANK_TRANSACTION_CAFE_MISMATCH',
+      'The bank transaction belongs to a different café economic scope.'
+    );
+  }
+
+  const expectedPaisa = Number(settlement.netSettlementPaisa || 0);
+  const receivedPaisa = Number(bankTransaction.amountPaisa || 0);
+  if (receivedPaisa !== expectedPaisa) {
+    throw new ApiError(
+      409,
+      'MARKETPLACE_SETTLEMENT_AMOUNT_MISMATCH',
+      'The bank credit does not equal the expected marketplace net settlement.',
+      { expectedPaisa, receivedPaisa }
+    );
+  }
+
   settlement.status = 'RECONCILED';
-  settlement.bankMatchReference = bankMatchReference || `MATCH-BANK-${Date.now()}`;
+  settlement.bankMatchReference = bankTransaction.transactionId;
+  settlement.bankReceivedPaisa = receivedPaisa;
+  settlement.variancePaisa = 0;
   await settlement.save();
 
-  return response.status(200).json({ message: 'Marketplace settlement reconciled with bank statement credit.', settlement });
+  return response.status(200).json({
+    success: true,
+    message: 'Marketplace settlement reconciled to an authoritative passbook credit.',
+    settlement,
+  });
 });
 
 // 9. Cash & Bank Accounts
@@ -1059,69 +1814,704 @@ const listBankAccounts = asyncHandler(async (request, response) => {
 
 // 10. Budgets & Allocations
 const getBudgetsAndAllocations = asyncHandler(async (request, response) => {
-  const budgets = [
-    { category: 'COFFEE_RAW_BEANS', monthlyBudgetPaisa: 50000000, committedPaisa: 38000000, actualPaisa: 32000000, variancePaisa: 18000000 },
-    { category: 'DAIRY_AND_MILK', monthlyBudgetPaisa: 25000000, committedPaisa: 21000000, actualPaisa: 19500000, variancePaisa: 5500000 },
-    { category: 'PACKAGING_DISPOSABLES', monthlyBudgetPaisa: 15000000, committedPaisa: 14200000, actualPaisa: 11000000, variancePaisa: 4000000 },
-    { category: 'UTILITIES_ELECTRICITY', monthlyBudgetPaisa: 12000000, committedPaisa: 12000000, actualPaisa: 11800000, variancePaisa: 200000 },
-  ];
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+  const requestedCafeId = normalizeFinanceId(request.query?.cafeId || '');
+  const fiscalYear = String(request.query?.fiscalYear || '').trim().toUpperCase();
 
-  return response.status(200).json({ budgets });
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    ensureCafeAccess(request, requestedCafeId);
+  }
+
+  const filter = {
+    organisationId,
+    status: { $in: ['APPROVED', 'LOCKED'] },
+  };
+
+  if (fiscalYear) filter.fiscalYear = fiscalYear;
+
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    filter.cafeId = requestedCafeId;
+  } else if (role !== 'MASTER') {
+    const cafes = (assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean);
+    filter.cafeId = cafes.length > 0 ? { $in: cafes } : '__NO_AUTHORIZED_CAFE__';
+  }
+
+  const query = BudgetPlan.find(filter).sort({ fiscalYear: -1, month: 1, version: -1 });
+  const plans = query && typeof query.lean === 'function' ? await query.lean() : await query;
+  const rows = Array.isArray(plans) ? plans : [];
+
+  return response.status(200).json({
+    success: true,
+    data: {
+      budgets: rows.map((plan) => ({
+        budgetId: plan.budgetId,
+        cafeId: plan.cafeId || null,
+        fiscalYear: plan.fiscalYear,
+        periodType: plan.periodType,
+        month: plan.month,
+        version: plan.version,
+        status: plan.status,
+        totalPlannedPaisa: Number(plan.totalPlannedPaisa || 0),
+        lines: plan.lines || [],
+        actualsStatus: 'UNAVAILABLE_UNTIL_POSTED_LEDGER_MAPPING',
+        committedStatus: 'UNAVAILABLE_UNTIL_COMMITMENT_LEDGER_MAPPING',
+      })),
+      sourceStatus: rows.length > 0 ? 'AUTHORITATIVE_BUDGET_PLAN' : 'NOT_CONFIGURED',
+    },
+    correlationId: request.correlationId || null,
+  });
 });
 
 // 11. Tax & Statutory Review (GST & TDS)
 const getTaxReview = asyncHandler(async (request, response) => {
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+  const requestedCafeId = normalizeFinanceId(request.query?.cafeId || '');
+  const from = String(request.query?.from || '').trim();
+  const to = String(request.query?.to || '').trim();
+
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    ensureCafeAccess(request, requestedCafeId);
+  }
+
+  const invoiceFilter = {
+    organisationId,
+    status: { $in: ['ISSUED', 'AMENDED'] },
+  };
+
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    invoiceFilter.cafeId = requestedCafeId;
+  } else if (role !== 'MASTER') {
+    const cafes = (assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean);
+    invoiceFilter.cafeId = cafes.length > 0 ? { $in: cafes } : '__NO_AUTHORIZED_CAFE__';
+  }
+
+  if (from || to) {
+    invoiceFilter.invoiceDate = {};
+    if (from) invoiceFilter.invoiceDate.$gte = new Date(`${from}T00:00:00+05:30`);
+    if (to) invoiceFilter.invoiceDate.$lte = new Date(`${to}T23:59:59.999+05:30`);
+  }
+
+  const invoiceQuery = TaxInvoice.find(invoiceFilter);
+  const invoices = invoiceQuery && typeof invoiceQuery.lean === 'function'
+    ? await invoiceQuery.lean()
+    : await invoiceQuery;
+  const rows = Array.isArray(invoices) ? invoices : [];
+
+  const outward = rows.reduce(
+    (acc, invoice) => {
+      acc.invoiceCount += 1;
+      acc.taxablePaisa += Number(invoice.taxSummary?.totalTaxablePaisa || 0);
+      acc.cgstPaisa += Number(invoice.taxSummary?.totalCgstPaisa || 0);
+      acc.sgstPaisa += Number(invoice.taxSummary?.totalSgstPaisa || 0);
+      acc.igstPaisa += Number(invoice.taxSummary?.totalIgstPaisa || 0);
+      acc.totalTaxPaisa += Number(invoice.taxSummary?.totalTaxPaisa || 0);
+      acc.grandTotalPaisa += Number(invoice.taxSummary?.grandTotalPaisa || 0);
+      return acc;
+    },
+    {
+      invoiceCount: 0,
+      taxablePaisa: 0,
+      cgstPaisa: 0,
+      sgstPaisa: 0,
+      igstPaisa: 0,
+      totalTaxPaisa: 0,
+      grandTotalPaisa: 0,
+    }
+  );
+
   return response.status(200).json({
-    gstr1Readiness: { status: 'READY', outwardTaxablePaisa: 126000000, cgstPaisa: 3150000, sgstPaisa: 3150000, totalTaxPaisa: 6300000 },
-    gstr2bReconciliation: { totalInwardInvoices: 48, matchedCount: 46, mismatchCount: 2, itcEligiblePaisa: 4200000 },
-    tdsRegister: { totalDeductedPaisa: 380000, depositedPaisa: 380000, status: 'CURRENT' },
+    success: true,
+    data: {
+      gstr1Readiness: {
+        status: rows.length > 0 ? 'OUTWARD_REGISTER_AVAILABLE' : 'NO_ISSUED_TAX_INVOICES',
+        ...outward,
+        filingReadiness: 'NOT_VERIFIED',
+        filingReadinessReason:
+          'The application can derive the outward invoice register, but no durable GST filing/review sign-off record is configured.',
+      },
+      gstr2bReconciliation: {
+        status: 'UNAVAILABLE',
+        reason: 'No authoritative GSTR-2B inward statement ingestion and reconciliation source is configured.',
+      },
+      tdsRegister: {
+        status: 'UNAVAILABLE',
+        reason: 'No authoritative TDS deduction/deposit register is configured.',
+      },
+    },
+    correlationId: request.correlationId || null,
   });
 });
+
+async function resolveFinancialPeriodForRead(organisationId, requestedPeriodId = null) {
+  if (requestedPeriodId) {
+    const query = FinancialPeriod.findOne({
+      organisationId,
+      periodId: normalizeFinanceId(requestedPeriodId),
+    });
+    return query && typeof query.lean === 'function' ? query.lean() : query;
+  }
+
+  const query = FinancialPeriod.findOne({
+    organisationId,
+    status: { $in: ['OPEN', 'CLOSING', 'REOPENED'] },
+  });
+  if (query && typeof query.sort === 'function') query.sort({ startDate: -1 });
+  return query && typeof query.lean === 'function' ? query.lean() : query;
+}
+
+function periodDateBounds(period) {
+  return {
+    startDate: period?.startDate || null,
+    endDate: period?.endDate || null,
+    startTimestamp: period?.startDate ? new Date(`${period.startDate}T00:00:00+05:30`) : null,
+    endTimestamp: period?.endDate ? new Date(`${period.endDate}T23:59:59.999+05:30`) : null,
+  };
+}
+
+async function buildPeriodCloseAssessment({ organisationId, period }) {
+  if (!period) {
+    return {
+      currentPeriod: null,
+      closeChecklist: [
+        {
+          task: 'Financial Period Configuration',
+          status: 'NOT_CONFIGURED',
+          blocker: true,
+          evidence: 'No OPEN/CLOSING/REOPENED financial period exists.',
+        },
+      ],
+      readyToClose: false,
+      blockerCount: 1,
+    };
+  }
+
+  const { startDate, endDate, startTimestamp, endTimestamp } = periodDateBounds(period);
+
+  const [
+    journals,
+    apInvoices,
+    bankAccounts,
+    storeDays,
+    settlements,
+    taxInvoices,
+    expenses,
+    stockMovements,
+    billCount,
+  ] = await Promise.all([
+    Journal.find({ organisationId, periodId: period.periodId }).lean(),
+    APInvoice.find({
+      organisationId,
+      invoiceDate: { $gte: startDate, $lte: endDate },
+      paymentStatus: { $ne: 'CANCELLED' },
+    }).lean(),
+    BankAccount.find({ organisationId, status: 'ACTIVE' }).lean(),
+    StoreDayAudit.find({
+      organisationId,
+      businessDate: { $gte: startDate, $lte: endDate },
+    }).lean(),
+    MarketplaceSettlement.find({
+      organisationId,
+      periodStart: { $lte: endDate },
+      periodEnd: { $gte: startDate },
+    }).lean(),
+    TaxInvoice.find({
+      organisationId,
+      invoiceDate: { $gte: startTimestamp, $lte: endTimestamp },
+      status: { $in: ['ISSUED', 'AMENDED'] },
+    }).lean(),
+    Expense.find({
+      organisationId,
+      createdAt: { $gte: startTimestamp, $lte: endTimestamp },
+      status: { $in: ['APPROVED', 'PAID', 'POSTED'] },
+    }).lean(),
+    StockMovement.find({
+      organisationId,
+      performedAt: { $gte: startTimestamp, $lte: endTimestamp },
+    }).lean(),
+    typeof Bill.countDocuments === 'function'
+      ? Bill.countDocuments({
+          organisationId,
+          businessDate: { $gte: startDate, $lte: endDate },
+          status: { $in: ['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
+          isTraining: { $ne: true },
+        })
+      : 0,
+  ]);
+
+  const journalRows = Array.isArray(journals) ? journals : [];
+  const apRows = Array.isArray(apInvoices) ? apInvoices : [];
+  const bankRows = Array.isArray(bankAccounts) ? bankAccounts : [];
+  const storeRows = Array.isArray(storeDays) ? storeDays : [];
+  const settlementRows = Array.isArray(settlements) ? settlements : [];
+  const taxRows = Array.isArray(taxInvoices) ? taxInvoices : [];
+  const expenseRows = Array.isArray(expenses) ? expenses : [];
+  const stockRows = Array.isArray(stockMovements) ? stockMovements : [];
+
+  const unbalancedJournals = journalRows.filter(
+    (journal) => Number(journal.totalDebitPaisa || 0) !== Number(journal.totalCreditPaisa || 0)
+  );
+  const unpostedJournals = journalRows.filter(
+    (journal) => !['POSTED', 'REVERSED'].includes(journal.status)
+  );
+
+  const posGaps = storeRows.filter(
+    (row) =>
+      Number(row.financeEventCount || 0) < Number(row.posEventCount || 0) ||
+      !['FINANCE_CLEARED', 'CLOSED'].includes(row.status)
+  );
+
+  const expensePostingGaps = expenseRows.filter(
+    (expense) => String(expense.financeHandoff?.postingStatus || '').toUpperCase() !== 'POSTED'
+  );
+
+  const apPostingGaps = apRows.filter(
+    (invoice) => String(invoice.accountingStatus || '').toUpperCase() !== 'POSTED'
+  );
+
+  const unreconciledBanks = bankRows.filter(
+    (account) => !account.lastReconciledDate || account.lastReconciledDate < endDate
+  );
+
+  const unsettledMarketplace = settlementRows.filter(
+    (row) => !['MATCHED', 'RECONCILED'].includes(row.status)
+  );
+
+  const hasInventoryActivity = stockRows.length > 0;
+  const inventoryJournalCount = journalRows.filter(
+    (journal) => journal.status === 'POSTED' && journal.sourceModule === 'INVENTORY'
+  ).length;
+
+  const closeChecklist = [
+    {
+      task: 'Journal Balance & Posting Completeness',
+      status:
+        unbalancedJournals.length === 0 && unpostedJournals.length === 0
+          ? 'COMPLETED'
+          : 'BLOCKED',
+      blocker: unbalancedJournals.length > 0 || unpostedJournals.length > 0,
+      evidence: {
+        journalCount: journalRows.length,
+        unbalancedJournalCount: unbalancedJournals.length,
+        unpostedJournalCount: unpostedJournals.length,
+      },
+    },
+    {
+      task: 'POS & Billing Completeness',
+      status:
+        Number(billCount || 0) === 0 && storeRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (posGaps.length === 0 && storeRows.length > 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker:
+        !(Number(billCount || 0) === 0 && storeRows.length === 0) &&
+        !(posGaps.length === 0 && storeRows.length > 0),
+      evidence: {
+        billCount: Number(billCount || 0),
+        storeDayCount: storeRows.length,
+        storeDayGapCount: posGaps.length,
+      },
+    },
+    {
+      task: 'Expenses & Credit Ledger Posted',
+      status:
+        expenseRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (expensePostingGaps.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: expensePostingGaps.length > 0,
+      evidence: {
+        expenseCount: expenseRows.length,
+        unpostedExpenseCount: expensePostingGaps.length,
+      },
+    },
+    {
+      task: 'Accounts Payable Invoices Accounted',
+      status:
+        apRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (apPostingGaps.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: apPostingGaps.length > 0,
+      evidence: {
+        invoiceCount: apRows.length,
+        unpostedInvoiceCount: apPostingGaps.length,
+      },
+    },
+    {
+      task: 'Bank Statements Reconciled',
+      status:
+        bankRows.length === 0
+          ? 'NOT_CONFIGURED'
+          : (unreconciledBanks.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: bankRows.length === 0 || unreconciledBanks.length > 0,
+      evidence: {
+        activeBankAccountCount: bankRows.length,
+        unreconciledBankAccountCount: unreconciledBanks.length,
+      },
+    },
+    {
+      task: 'Marketplace Settlements Matched',
+      status:
+        settlementRows.length === 0
+          ? 'NO_ACTIVITY'
+          : (unsettledMarketplace.length === 0 ? 'COMPLETED' : 'BLOCKED'),
+      blocker: unsettledMarketplace.length > 0,
+      evidence: {
+        settlementCount: settlementRows.length,
+        unresolvedSettlementCount: unsettledMarketplace.length,
+      },
+    },
+    {
+      task: 'Inventory Valuation Control Reconciled',
+      status:
+        !hasInventoryActivity
+          ? 'NO_ACTIVITY'
+          : (inventoryJournalCount > 0 ? 'PARTIAL_EVIDENCE' : 'NOT_VERIFIED'),
+      blocker: hasInventoryActivity,
+      evidence: {
+        stockMovementCount: stockRows.length,
+        postedInventoryJournalCount: inventoryJournalCount,
+        reason:
+          hasInventoryActivity
+            ? 'No transaction-level inventory valuation-to-GL reconciliation proof is configured.'
+            : null,
+      },
+    },
+    {
+      task: 'GST & Statutory Review Completed',
+      status: taxRows.length === 0 ? 'NO_ACTIVITY' : 'NOT_VERIFIED',
+      blocker: taxRows.length > 0,
+      evidence: {
+        issuedTaxInvoiceCount: taxRows.length,
+        reason:
+          taxRows.length > 0
+            ? 'No durable GST filing/review sign-off record is configured.'
+            : null,
+      },
+    },
+  ];
+
+  const blockerCount = closeChecklist.filter((item) => item.blocker).length;
+
+  return {
+    currentPeriod: period,
+    closeChecklist,
+    readyToClose: blockerCount === 0,
+    blockerCount,
+  };
+}
+
+async function getPostedLedgerStatement({ organisationId, period, cafeIds = null }) {
+  if (!period) {
+    return {
+      sourceStatus: 'NOT_CONFIGURED',
+      pnl: null,
+      balanceSheet: null,
+      unmappedAccountCodes: [],
+    };
+  }
+
+  const periodJournalFilter = {
+    organisationId,
+    periodId: period.periodId,
+    status: 'POSTED',
+  };
+  if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+    periodJournalFilter.$or = [
+      { cafeId: { $in: cafeIds } },
+      { cafeId: null, 'lines.dimensionCafeId': { $in: cafeIds } },
+    ];
+  }
+
+  const cumulativeJournalFilter = {
+    organisationId,
+    status: 'POSTED',
+    journalDate: { $lte: period.endDate },
+  };
+  if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+    cumulativeJournalFilter.$or = [
+      { cafeId: { $in: cafeIds } },
+      { cafeId: null, 'lines.dimensionCafeId': { $in: cafeIds } },
+    ];
+  }
+
+  const [periodJournals, cumulativeJournals, accounts] = await Promise.all([
+    Journal.find(periodJournalFilter).lean(),
+    Journal.find(cumulativeJournalFilter).lean(),
+    ChartOfAccount.find({ organisationId, status: 'ACTIVE' }).lean(),
+  ]);
+
+  const accountMap = new Map(
+    (accounts || []).map((account) => [normalizeFinanceId(account.accountCode), account])
+  );
+  const allowedCafeSet =
+    Array.isArray(cafeIds) && cafeIds.length > 0 ? new Set(cafeIds) : null;
+
+  const lineAllowed = (journal, line) => {
+    if (!allowedCafeSet) return true;
+    const lineCafe = normalizeFinanceId(line?.dimensionCafeId || journal?.cafeId || '');
+    return Boolean(lineCafe && allowedCafeSet.has(lineCafe));
+  };
+
+  const unmapped = new Set();
+  let revenuePaisa = 0;
+  let cogsPaisa = 0;
+  let operatingExpensePaisa = 0;
+  let revenueLineCount = 0;
+  let cogsLineCount = 0;
+  let operatingExpenseLineCount = 0;
+
+  for (const journal of periodJournals || []) {
+    for (const line of journal.lines || []) {
+      if (!lineAllowed(journal, line)) continue;
+      const code = normalizeFinanceId(line.accountCode);
+      const account = accountMap.get(code);
+      if (!account) {
+        unmapped.add(code);
+        continue;
+      }
+
+      const debit = Number(line.debitPaisa || 0);
+      const credit = Number(line.creditPaisa || 0);
+
+      if (account.accountType === 'REVENUE') {
+        revenuePaisa += credit - debit;
+        revenueLineCount += 1;
+      } else if (account.accountType === 'EXPENSE') {
+        const value = debit - credit;
+        if (String(account.accountGroup || '').toUpperCase() === 'COST_OF_SALES') {
+          cogsPaisa += value;
+          cogsLineCount += 1;
+        } else {
+          operatingExpensePaisa += value;
+          operatingExpenseLineCount += 1;
+        }
+      }
+    }
+  }
+
+  const cumulative = {
+    assetsPaisa: 0,
+    liabilitiesPaisa: 0,
+    equityPaisa: 0,
+  };
+
+  for (const journal of cumulativeJournals || []) {
+    for (const line of journal.lines || []) {
+      if (!lineAllowed(journal, line)) continue;
+      const code = normalizeFinanceId(line.accountCode);
+      const account = accountMap.get(code);
+      if (!account) {
+        unmapped.add(code);
+        continue;
+      }
+
+      const debit = Number(line.debitPaisa || 0);
+      const credit = Number(line.creditPaisa || 0);
+
+      if (account.accountType === 'ASSET') {
+        cumulative.assetsPaisa += debit - credit;
+      } else if (account.accountType === 'LIABILITY') {
+        cumulative.liabilitiesPaisa += credit - debit;
+      } else if (account.accountType === 'EQUITY') {
+        cumulative.equityPaisa += credit - debit;
+      }
+    }
+  }
+
+  const revenueAvailable = revenueLineCount > 0;
+  const cogsAvailable = cogsLineCount > 0;
+  const operatingExpenseAvailable = operatingExpenseLineCount > 0;
+  const grossProfitPaisa =
+    revenueAvailable && cogsAvailable ? revenuePaisa - cogsPaisa : null;
+  const netOperatingProfitPaisa =
+    grossProfitPaisa !== null && operatingExpenseAvailable
+      ? grossProfitPaisa - operatingExpensePaisa
+      : null;
+
+  return {
+    sourceStatus:
+      unmapped.size > 0
+        ? 'PARTIAL_UNMAPPED_ACCOUNT_CODES'
+        : ((periodJournals || []).length > 0 ? 'POSTED_LEDGER' : 'NO_POSTED_JOURNALS'),
+    pnl: {
+      periodId: period.periodId,
+      periodName: period.periodName,
+      startDate: period.startDate,
+      endDate: period.endDate,
+      basis: 'POSTED_ACCOUNTING_JOURNALS',
+      revenue: {
+        totalRevenuePaisa: revenueAvailable ? revenuePaisa : null,
+        status: revenueAvailable ? 'AVAILABLE' : 'UNAVAILABLE_NO_POSTED_REVENUE',
+      },
+      costOfGoodsSold: {
+        totalCogsPaisa: cogsAvailable ? cogsPaisa : null,
+        status: cogsAvailable ? 'AVAILABLE' : 'UNAVAILABLE_NO_POSTED_COGS',
+      },
+      grossProfitPaisa,
+      grossProfitStatus:
+        grossProfitPaisa === null ? 'UNAVAILABLE' : 'AVAILABLE',
+      operatingExpenses: {
+        totalOpexPaisa: operatingExpenseAvailable ? operatingExpensePaisa : null,
+        status:
+          operatingExpenseAvailable ? 'AVAILABLE' : 'UNAVAILABLE_NO_POSTED_OPEX',
+      },
+      netOperatingProfitPaisa,
+      netOperatingProfitStatus:
+        netOperatingProfitPaisa === null ? 'UNAVAILABLE' : 'AVAILABLE',
+    },
+    balanceSheet: {
+      asOf: period.endDate,
+      basis: 'CUMULATIVE_POSTED_ACCOUNTING_JOURNALS',
+      assets: { totalAssetsPaisa: cumulative.assetsPaisa },
+      liabilities: { totalLiabilitiesPaisa: cumulative.liabilitiesPaisa },
+      equity: { totalEquityPaisa: cumulative.equityPaisa },
+      accountingEquationVariancePaisa:
+        cumulative.assetsPaisa -
+        (cumulative.liabilitiesPaisa + cumulative.equityPaisa),
+      status:
+        (cumulativeJournals || []).length > 0 ? 'AVAILABLE' : 'NO_POSTED_JOURNALS',
+    },
+    unmappedAccountCodes: [...unmapped].filter(Boolean).sort(),
+  };
+}
 
 // 12. Period Close Workflow
 const getPeriodCloseStatus = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const currentPeriod = await FinancialPeriod.findOne({ organisationId, status: 'OPEN' }).lean();
-
-  const closeChecklist = [
-    { task: 'POS & Billing Completeness', status: 'COMPLETED', blocker: false },
-    { task: 'Sales Audit & Revenue Assurance Cleared', status: 'COMPLETED', blocker: false },
-    { task: 'Expenses & Credit Ledger Posted', status: 'COMPLETED', blocker: false },
-    { task: 'Accounts Payable Invoices Accounted', status: 'COMPLETED', blocker: false },
-    { task: 'Bank Statements Reconciled', status: 'COMPLETED', blocker: false },
-    { task: 'Marketplace Settlements Matched', status: 'COMPLETED', blocker: false },
-    { task: 'Inventory Valuation Control Reconciled', status: 'COMPLETED', blocker: false },
-    { task: 'GST & Statutory Review Completed', status: 'COMPLETED', blocker: false },
-  ];
+  const requestedPeriodId = request.query?.periodId || null;
+  const period = await resolveFinancialPeriodForRead(organisationId, requestedPeriodId);
+  const assessment = await buildPeriodCloseAssessment({ organisationId, period });
 
   return response.status(200).json({
-    currentPeriod: currentPeriod || { periodId: 'FY2026-P05', periodName: 'August 2026', status: 'OPEN' },
-    closeChecklist,
-    readyToClose: true,
-    blockerCount: 0,
+    ...assessment,
+    correlationId: request.correlationId || null,
   });
 });
 
 const closeFinancialPeriod = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
-  const { periodId } = request.params;
-  const { signOffNotes = '' } = request.body;
+  const periodId = normalizeFinanceId(request.params.periodId);
+  const signOffNotes = String(request.body?.signOffNotes || '').trim();
 
-  const period = await FinancialPeriod.findOne({ organisationId, periodId });
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_REQUIRED',
+      'Only the Primary Master may close a financial accounting period.'
+    );
+  }
+
+  if (signOffNotes.length < 10) {
+    throw new ApiError(
+      400,
+      'PERIOD_CLOSE_SIGNOFF_REQUIRED',
+      'A specific financial close sign-off note of at least 10 characters is required.'
+    );
+  }
+
+  const periodQuery = FinancialPeriod.findOne({ organisationId, periodId });
+  const period =
+    periodQuery && typeof periodQuery.lean === 'function'
+      ? await periodQuery.lean()
+      : await periodQuery;
+
   if (!period) {
     throw new ApiError(404, 'PERIOD_NOT_FOUND', 'Financial period not found.');
   }
+  if (!['OPEN', 'CLOSING', 'REOPENED'].includes(period.status)) {
+    throw new ApiError(
+      409,
+      'PERIOD_NOT_CLOSABLE',
+      `Financial period ${periodId} is currently ${period.status} and cannot be closed.`
+    );
+  }
 
-  period.status = 'CLOSED';
-  period.closeSnapshot = {
-    closedAt: new Date(),
-    closedBy: userId,
-    trialBalanceHash: `TB-HASH-${Date.now()}`,
-    signOffNotes,
-  };
-  await period.save();
+  const assessment = await buildPeriodCloseAssessment({ organisationId, period });
+  if (!assessment.readyToClose) {
+    throw new ApiError(
+      409,
+      'PERIOD_CLOSE_CONTROLS_INCOMPLETE',
+      `Financial period cannot be closed because ${assessment.blockerCount} close control(s) are incomplete.`,
+      { closeChecklist: assessment.closeChecklist }
+    );
+  }
 
-  return response.status(200).json({ message: `Financial period ${periodId} successfully closed and locked.`, period });
+  const statement = await getPostedLedgerStatement({
+    organisationId,
+    period,
+    cafeIds: null,
+  });
+
+  const postedJournalQuery = Journal.find({
+    organisationId,
+    periodId,
+    status: 'POSTED',
+  }).sort({ journalId: 1 });
+  const postedJournals =
+    postedJournalQuery && typeof postedJournalQuery.lean === 'function'
+      ? await postedJournalQuery.lean()
+      : await postedJournalQuery;
+
+  const trialBalanceHash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify(
+        (postedJournals || []).map((journal) => ({
+          journalId: journal.journalId,
+          totalDebitPaisa: journal.totalDebitPaisa,
+          totalCreditPaisa: journal.totalCreditPaisa,
+          lines: (journal.lines || []).map((line) => ({
+            accountCode: line.accountCode,
+            debitPaisa: line.debitPaisa,
+            creditPaisa: line.creditPaisa,
+            dimensionCafeId: line.dimensionCafeId || null,
+          })),
+        }))
+      )
+    )
+    .digest('hex');
+
+  const changed = await FinancialPeriod.findOneAndUpdate(
+    {
+      organisationId,
+      periodId,
+      status: period.status,
+    },
+    {
+      $set: {
+        status: 'CLOSED',
+        closeSnapshot: {
+          closedAt: new Date(),
+          closedBy: userId,
+          trialBalanceHash,
+          totalRevenuePaisa: Number(statement.pnl?.revenue?.totalRevenuePaisa || 0),
+          totalExpensePaisa:
+            Number(statement.pnl?.costOfGoodsSold?.totalCogsPaisa || 0) +
+            Number(statement.pnl?.operatingExpenses?.totalOpexPaisa || 0),
+          netResultPaisa: Number(statement.pnl?.netOperatingProfitPaisa || 0),
+          signOffNotes,
+        },
+      },
+    },
+    { new: true }
+  );
+
+  if (!changed) {
+    throw new ApiError(
+      409,
+      'PERIOD_CLOSE_STATE_CONFLICT',
+      'Financial period status changed while closure was being committed.'
+    );
+  }
+
+  return response.status(200).json({
+    success: true,
+    message: `Financial period ${periodId} successfully closed and locked.`,
+    data: {
+      period: changed,
+      closeChecklist: assessment.closeChecklist,
+      trialBalanceHash,
+    },
+    correlationId: request.correlationId || null,
+  });
 });
 
 const reopenFinancialPeriod = asyncHandler(async (request, response) => {
@@ -1155,147 +2545,274 @@ const reopenFinancialPeriod = asyncHandler(async (request, response) => {
 
 // 13. Financial Statements
 const getFinancialStatements = asyncHandler(async (request, response) => {
-  const pnl = {
-    period: 'August 2026 (MTD)',
-    basis: 'Posted Accounting Ledger',
-    revenue: {
-      beverageSalesPaisa: 82000000,
-      foodSalesPaisa: 34000000,
-      retailMerchandisePaisa: 10000000,
-      totalRevenuePaisa: 126000000,
-    },
-    costOfGoodsSold: {
-      coffeeBeansPaisa: 22000000,
-      dairyFreshMilkPaisa: 11000000,
-      packagingPaisa: 7000000,
-      totalCogsPaisa: 40000000,
-    },
-    grossProfitPaisa: 86000000,
-    operatingExpenses: {
-      staffSalariesPaisa: 32000000,
-      storeRentUtilitiesPaisa: 18000000,
-      repairsMaintenancePaisa: 3500000,
-      marketingOpsPaisa: 4500000,
-      totalOpexPaisa: 58000000,
-    },
-    netOperatingProfitPaisa: 28000000,
-  };
+  const { organisationId, role, assignedCafeIds = [] } = request.auth;
+  const requestedPeriodId = request.query?.periodId || null;
+  const requestedCafeId = normalizeFinanceId(request.query?.cafeId || '');
 
-  const balanceSheet = {
-    asOf: getIstBusinessDate(),
-    assets: {
-      currentAssets: { cashAndBankPaisa: 45000000, accountsReceivablePaisa: 14000000, inventoryValuationPaisa: 28000000 },
-      nonCurrentAssets: { cafeEquipmentPaisa: 85000000, leaseholdImprovementsPaisa: 42000000 },
-      totalAssetsPaisa: 214000000,
-    },
-    liabilities: {
-      currentLiabilities: { accountsPayablePaisa: 38000000, statutoryTaxPayablePaisa: 6300000 },
-      totalLiabilitiesPaisa: 44300000,
-    },
-    equity: {
-      retainedEarningsPaisa: 169700000,
-      totalEquityPaisa: 169700000,
-    },
-  };
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    ensureCafeAccess(request, requestedCafeId);
+  }
 
-  return response.status(200).json({ pnl, balanceSheet });
+  const period = await resolveFinancialPeriodForRead(organisationId, requestedPeriodId);
+
+  let cafeIds = null;
+  if (requestedCafeId && requestedCafeId !== 'ALL') {
+    cafeIds = [requestedCafeId];
+  } else if (role !== 'MASTER') {
+    cafeIds = (assignedCafeIds || []).map(normalizeFinanceId).filter(Boolean);
+    if (cafeIds.length === 0) {
+      return response.status(200).json({
+        success: true,
+        sourceStatus: 'NO_AUTHORIZED_CAFE_SCOPE',
+        pnl: null,
+        balanceSheet: null,
+        unmappedAccountCodes: [],
+        correlationId: request.correlationId || null,
+      });
+    }
+  }
+
+  const statement = await getPostedLedgerStatement({
+    organisationId,
+    period,
+    cafeIds,
+  });
+
+  return response.status(200).json({
+    success: true,
+    period: period || null,
+    ...statement,
+    correlationId: request.correlationId || null,
+  });
 });
 
 // 14. Finance Integrity Engine (18-point automated audit)
 const getFinanceIntegrity = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
 
-  const journals = await Journal.find({ organisationId }).lean();
-  const apInvoices = await APInvoice.find({ organisationId }).lean();
-  const bankAccounts = await BankAccount.find({ organisationId }).lean();
-  const storeDays = await StoreDayAudit.find({ organisationId }).lean();
-  const settlements = await MarketplaceSettlement.find({ organisationId }).lean();
+  const [
+    journals,
+    apInvoices,
+    bankAccounts,
+    storeDays,
+    settlements,
+    periods,
+    chartAccounts,
+  ] = await Promise.all([
+    Journal.find({ organisationId }).lean(),
+    APInvoice.find({ organisationId }).lean(),
+    BankAccount.find({ organisationId }).lean(),
+    StoreDayAudit.find({ organisationId }).lean(),
+    MarketplaceSettlement.find({ organisationId }).lean(),
+    FinancialPeriod.find({ organisationId }).lean(),
+    ChartOfAccount.find({ organisationId, status: 'ACTIVE' }).lean(),
+  ]);
 
-  const issues = [];
+  const journalRows = Array.isArray(journals) ? journals : [];
+  const apRows = Array.isArray(apInvoices) ? apInvoices : [];
+  const bankRows = Array.isArray(bankAccounts) ? bankAccounts : [];
+  const storeRows = Array.isArray(storeDays) ? storeDays : [];
+  const settlementRows = Array.isArray(settlements) ? settlements : [];
+  const periodRows = Array.isArray(periods) ? periods : [];
+  const accountRows = Array.isArray(chartAccounts) ? chartAccounts : [];
 
-  // Check 1: Unbalanced journals (Total Debits !== Total Credits)
-  journals.forEach((j) => {
-    if (j.totalDebitPaisa !== j.totalCreditPaisa) {
-      issues.push({
-        check: 'UNBALANCED_JOURNAL',
-        severity: 'CRITICAL',
-        description: `Journal ${j.journalId} has unequal debits (₹${(j.totalDebitPaisa / 100).toFixed(2)}) and credits (₹${(j.totalCreditPaisa / 100).toFixed(2)}).`,
-      });
+  const checks = [];
+  const addCheck = (check, status, description, evidence = {}) => {
+    checks.push({ check, status, description, evidence });
+  };
+
+  const unbalanced = journalRows.filter(
+    (journal) =>
+      Number(journal.totalDebitPaisa || 0) !== Number(journal.totalCreditPaisa || 0)
+  );
+  addCheck(
+    'JOURNAL_BALANCE',
+    journalRows.length === 0 ? 'NOT_CONFIGURED' : (unbalanced.length === 0 ? 'PASS' : 'FAIL'),
+    journalRows.length === 0
+      ? 'No journal records exist.'
+      : `${journalRows.length} journal(s) inspected; ${unbalanced.length} unbalanced.`,
+    { journalCount: journalRows.length, unbalancedCount: unbalanced.length }
+  );
+
+  const apControlCodes = new Set(
+    accountRows
+      .filter((account) => account.controlAccountType === 'ACCOUNTS_PAYABLE')
+      .map((account) => normalizeFinanceId(account.accountCode))
+  );
+  const apSubledgerPaisa = apRows
+    .filter((invoice) => invoice.paymentStatus !== 'CANCELLED')
+    .reduce((sum, invoice) => sum + Number(invoice.outstandingPaisa || 0), 0);
+  let apGlPaisa = 0;
+  for (const journal of journalRows.filter((row) => row.status === 'POSTED')) {
+    for (const line of journal.lines || []) {
+      if (apControlCodes.has(normalizeFinanceId(line.accountCode))) {
+        apGlPaisa += Number(line.creditPaisa || 0) - Number(line.debitPaisa || 0);
+      }
     }
+  }
+  if (apControlCodes.size === 0) {
+    addCheck(
+      'AP_SUBLEDGER_TO_GL',
+      'NOT_CONFIGURED',
+      'No active Accounts Payable control account is configured.'
+    );
+  } else {
+    addCheck(
+      'AP_SUBLEDGER_TO_GL',
+      apSubledgerPaisa === apGlPaisa ? 'PASS' : 'FAIL',
+      `AP subledger ₹${(apSubledgerPaisa / 100).toFixed(2)} vs posted GL ₹${(apGlPaisa / 100).toFixed(2)}.`,
+      { apSubledgerPaisa, apGlPaisa, variancePaisa: apSubledgerPaisa - apGlPaisa }
+    );
+  }
+
+  const unreconciledBanks = bankRows.filter((account) => !account.lastReconciledDate);
+  addCheck(
+    'BANK_RECONCILIATION',
+    bankRows.length === 0
+      ? 'NOT_CONFIGURED'
+      : (unreconciledBanks.length === 0 ? 'PASS' : 'FAIL'),
+    bankRows.length === 0
+      ? 'No active bank-account reconciliation source is configured.'
+      : `${bankRows.length} bank account(s) inspected; ${unreconciledBanks.length} never reconciled.`,
+    { bankAccountCount: bankRows.length, unreconciledCount: unreconciledBanks.length }
+  );
+
+  const posGaps = storeRows.filter(
+    (row) => Number(row.posEventCount || 0) > Number(row.financeEventCount || 0)
+  );
+  addCheck(
+    'POS_POSTING_COMPLETENESS',
+    storeRows.length === 0 ? 'NOT_CONFIGURED' : (posGaps.length === 0 ? 'PASS' : 'FAIL'),
+    storeRows.length === 0
+      ? 'No StoreDayAudit records exist.'
+      : `${storeRows.length} store-day record(s) inspected; ${posGaps.length} posting gap(s).`,
+    { storeDayCount: storeRows.length, postingGapCount: posGaps.length }
+  );
+
+  const settlementIssues = settlementRows.filter(
+    (settlement) => !['MATCHED', 'RECONCILED'].includes(settlement.status)
+  );
+  addCheck(
+    'MARKETPLACE_SETTLEMENT_RECONCILIATION',
+    settlementRows.length === 0
+      ? 'NO_ACTIVITY'
+      : (settlementIssues.length === 0 ? 'PASS' : 'FAIL'),
+    settlementRows.length === 0
+      ? 'No marketplace settlement activity.'
+      : `${settlementRows.length} settlement(s) inspected; ${settlementIssues.length} unresolved.`,
+    { settlementCount: settlementRows.length, unresolvedCount: settlementIssues.length }
+  );
+
+  const periodById = new Map(periodRows.map((period) => [normalizeFinanceId(period.periodId), period]));
+  const postCloseJournals = journalRows.filter((journal) => {
+    if (journal.status !== 'POSTED' || !journal.postedAt) return false;
+    const period = periodById.get(normalizeFinanceId(journal.periodId));
+    const closedAt = period?.closeSnapshot?.closedAt;
+    return closedAt && new Date(journal.postedAt) > new Date(closedAt);
   });
+  addCheck(
+    'CLOSED_PERIOD_POSTING',
+    periodRows.length === 0
+      ? 'NOT_CONFIGURED'
+      : (postCloseJournals.length === 0 ? 'PASS' : 'FAIL'),
+    periodRows.length === 0
+      ? 'No financial periods exist.'
+      : `${postCloseJournals.length} posted journal(s) were recorded after their period close timestamp.`,
+    { postCloseJournalIds: postCloseJournals.map((journal) => journal.journalId) }
+  );
 
-  // Check 2: AP Subledger to GL control variance
-  const apTotalUnpaidPaisa = apInvoices
-    .filter((inv) => inv.paymentStatus !== 'PAID')
-    .reduce((sum, inv) => sum + (inv.outstandingPaisa || 0), 0);
-  // (AP Control Account matching verification)
+  const duplicateSourceMap = new Map();
+  for (const journal of journalRows.filter(
+    (row) => row.status === 'POSTED' && row.sourceReferenceId
+  )) {
+    const key = `${journal.sourceModule || 'UNKNOWN'}:${journal.sourceReferenceId}`;
+    duplicateSourceMap.set(key, (duplicateSourceMap.get(key) || 0) + 1);
+  }
+  const duplicateSources = [...duplicateSourceMap.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([source, count]) => ({ source, count }));
+  addCheck(
+    'DUPLICATE_SOURCE_POSTING',
+    duplicateSources.length === 0 ? 'PASS' : 'FAIL',
+    `${duplicateSources.length} duplicated posted source reference(s) detected.`,
+    { duplicateSources }
+  );
 
-  // Check 3: AR Subledger to GL control variance
-  // (AR Control Account matching verification)
-
-  // Check 4: Bank accounts with pending reconciliations
-  bankAccounts.forEach((b) => {
-    if (!b.lastReconciledDate) {
-      issues.push({
-        check: 'BANK_RECONCILIATION_PENDING',
-        severity: 'REVIEW',
-        description: `Bank account ${b.accountAlias} (${b.maskedAccountNumber}) has never been reconciled against a bank statement.`,
-      });
+  const missingAccountCodes = new Set();
+  const activeAccountCodes = new Set(accountRows.map((account) => normalizeFinanceId(account.accountCode)));
+  for (const journal of journalRows.filter((row) => row.status === 'POSTED')) {
+    for (const line of journal.lines || []) {
+      const code = normalizeFinanceId(line.accountCode);
+      if (code && !activeAccountCodes.has(code)) missingAccountCodes.add(code);
     }
-  });
+  }
+  addCheck(
+    'POSTED_ACCOUNT_MAPPING',
+    journalRows.some((row) => row.status === 'POSTED') && activeAccountCodes.size === 0
+      ? 'NOT_CONFIGURED'
+      : (missingAccountCodes.size === 0 ? 'PASS' : 'FAIL'),
+    missingAccountCodes.size === 0
+      ? 'All posted journal line account codes resolve to active Chart of Accounts records.'
+      : `${missingAccountCodes.size} posted account code(s) are not active/mapped.`,
+    { missingAccountCodes: [...missingAccountCodes].sort() }
+  );
 
-  // Check 5: POS Posting Completeness
-  storeDays.forEach((s) => {
-    if (s.posEventCount > 0 && s.financeEventCount < s.posEventCount) {
-      issues.push({
-        check: 'POS_POSTING_MISSING',
-        severity: 'CRITICAL',
-        description: `Store Day ${s.storeDayId} is missing ${s.posEventCount - s.financeEventCount} POS finance events.`,
-      });
-    }
-  });
+  const invoiceHolds = apRows.filter(
+    (invoice) => Array.isArray(invoice.holds) && invoice.holds.length > 0
+  );
+  addCheck(
+    'SUPPLIER_INVOICE_HOLDS',
+    apRows.length === 0 ? 'NO_ACTIVITY' : (invoiceHolds.length === 0 ? 'PASS' : 'REVIEW'),
+    apRows.length === 0
+      ? 'No AP invoice activity.'
+      : `${apRows.length} AP invoice(s) inspected; ${invoiceHolds.length} have active hold records.`,
+    { invoiceCount: apRows.length, holdCount: invoiceHolds.length }
+  );
 
-  // Check 6: Marketplace Settlement Missing / Disputed
-  settlements.forEach((m) => {
-    if (m.status === 'DISPUTED') {
-      issues.push({
-        check: 'MARKETPLACE_SETTLEMENT_DISPUTED',
-        severity: 'WARNING',
-        description: `Marketplace batch ${m.settlementId} (${m.platform}) has an active fee/commission dispute.`,
-      });
-    }
-  });
+  // The following controls are intentionally not claimed as verified until
+  // canonical evidence sources or durable linkage are implemented.
+  for (const [check, description] of [
+    ['AR_SUBLEDGER_TO_GL', 'No canonical AR control-account reconciliation is wired.'],
+    ['UPI_SETTLEMENT_DIFFERENCE', 'No canonical UPI settlement feed-to-GL reconciliation is wired.'],
+    ['SUSPENSE_BALANCE', 'No governed suspense-account designation/review workflow is configured.'],
+    ['PAYROLL_POSTING_COMPLETENESS', 'Payroll-to-GL posting linkage is not yet canonical.'],
+    ['INVENTORY_GL_RECONCILIATION', 'Inventory quantity movements are not yet transaction-valued and posted to GL.'],
+    ['GST_CONTROL_RECONCILIATION', 'No durable GST filing/control-account reconciliation sign-off exists.'],
+    ['UNAPPLIED_RECEIPTS', 'No canonical unapplied-receipts control register is configured.'],
+    ['FAILED_ACCOUNTING_EVENTS', 'No durable accounting-event outbox/failure register is configured.'],
+    ['JOURNAL_MAKER_CHECKER', 'A distinct journal checker role is not currently configured; Primary Master is the sole poster.'],
+  ]) {
+    addCheck(check, 'NOT_VERIFIED', description);
+  }
 
-  // Check 7: UPI Settlement Difference
-  // Check 8: Closed Period Posting Attempt
-  // Check 9: Duplicate Journal Reference
-  // Check 10: Suspense Balance
-  // Check 11: Payroll Posting Incomplete
-  // Check 12: Inventory/GL Difference
-  // Check 13: GST Control Difference
-  // Check 14: Unapplied Receipt
-  // Check 15: Supplier Invoice Hold
-  apInvoices.forEach((inv) => {
-    if (inv.holds && inv.holds.length > 0) {
-      issues.push({
-        check: 'SUPPLIER_INVOICE_ON_HOLD',
-        severity: 'REVIEW',
-        description: `Invoice ${inv.invoiceId} from ${inv.vendorName} is held (${inv.holds[0].reason}).`,
-      });
-    }
-  });
+  const verified = checks.filter((entry) =>
+    ['PASS', 'FAIL', 'REVIEW'].includes(entry.status)
+  );
+  const failures = checks.filter((entry) => entry.status === 'FAIL');
+  const reviews = checks.filter((entry) => entry.status === 'REVIEW');
+  const coveragePercent = Number(((verified.length / checks.length) * 100).toFixed(1));
 
-  // Check 16: Failed Accounting Event
-  // Check 17: Missing Account Mapping
-  // Check 18: Duplicate Source Posting
+  const overallStatus =
+    failures.length > 0
+      ? 'ATTENTION_REQUIRED'
+      : (reviews.length > 0 ? 'REVIEW_REQUIRED' : (verified.length === checks.length ? 'VERIFIED' : 'PARTIAL_COVERAGE'));
 
   return response.status(200).json({
-    status: issues.some((i) => i.severity === 'CRITICAL') ? 'CRITICAL' : issues.length > 0 ? 'WARNING' : 'HEALTHY',
-    checksEvaluated: 18,
-    issuesFound: issues.length,
-    issues,
+    success: true,
+    data: {
+      status: overallStatus,
+      checksConfigured: checks.length,
+      checksVerified: verified.length,
+      coveragePercent,
+      failures: failures.length,
+      reviews: reviews.length,
+      checks,
+      sourceStatus: 'EVIDENCE_BASED_PARTIAL_COVERAGE',
+    },
+    correlationId: request.correlationId || null,
   });
 });
+
 
 /**
  * POST /api/v1/finance/invoices/gst
@@ -1464,6 +2981,7 @@ module.exports = {
   listPaymentRuns,
   createPaymentRun,
   decidePaymentRun,
+  executePaymentRun,
   listReceivables,
   recordCustomerReceipt,
   listMarketplaceSettlements,

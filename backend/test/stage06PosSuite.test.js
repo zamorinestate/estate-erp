@@ -18,6 +18,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { PosOrderService } = require('../src/services/posOrderService');
 const { Bill } = require('../src/models/Bill');
@@ -45,6 +47,68 @@ function createAuthContext(role = 'STAFF', cafeId = 'ZC-0001', userId = 'EMP-ZC-
 }
 
 test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
+  await t.test('0. POS catalogue wiring uses canonical MenuItem data and never inventory/SAMPLE preview data', () => {
+    const posSource = fs.readFileSync(
+      path.resolve(__dirname, '../../frontend/src/js/pages/posTill.js'),
+      'utf8'
+    );
+    const menuSource = fs.readFileSync(
+      path.resolve(__dirname, '../../frontend/src/js/pages/menuManagement.js'),
+      'utf8'
+    );
+    const navigationSource = fs.readFileSync(
+      path.resolve(__dirname, '../../frontend/src/js/navigation.js'),
+      'utf8'
+    );
+
+    assert.match(
+      posSource,
+      /apiGet\("\/menu\/items\?concept=CAFE&status=ACTIVE&limit=500"\)/,
+      'POS must load active sellable MenuItem records'
+    );
+    assert.match(
+      posSource,
+      /\/menu\/simulator\?outletId=/,
+      'POS must overlay outlet-specific effective availability and pricing when café context exists'
+    );
+    assert.match(
+      posSource,
+      /await loadPOSMenuCatalogue\(\)/,
+      'POS mount must actually invoke the canonical catalogue loader'
+    );
+    assert.match(
+      posSource,
+      /id="pos-add-menu-item-btn"/,
+      'Primary Master POS must expose a direct Add POS Item action'
+    );
+    assert.match(
+      posSource,
+      /apiPost\("\/menu\/items"/,
+      'Direct POS item creation must persist through the MenuItem API'
+    );
+    assert.match(
+      posSource,
+      /activeCategoryGroup\?\.categories\?\.includes\(item\.category\)/,
+      'POS category chips must map display groups to canonical backend category codes'
+    );
+
+    assert.match(
+      menuSource,
+      /let items = \[\];/,
+      'Menu Item Master must start from authoritative API data, not sample catalogue data'
+    );
+    assert.doesNotMatch(
+      menuSource,
+      /Menu item created \(Preview Mode\)/,
+      'Menu creation failure must never be presented as success'
+    );
+    assert.match(
+      navigationSource,
+      /label: 'POS Menu & Recipes'/,
+      'Navigation must distinguish sellable POS menu data from inventory'
+    );
+  });
+
   // In-memory mock database store
   const mockBills = [];
   const mockSessions = [];
@@ -83,7 +147,9 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
   t.mock.method(IdempotencyRecord, 'deleteOne', async () => ({}));
 
   t.mock.method(BomDepletionService, 'depleteOrderBOM', async () => ({
+    success: true,
     depleted: true,
+    allDeductionsSucceeded: true,
     depletionCount: 1,
     source: 'MOCK',
   }));
@@ -118,12 +184,34 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
 
   t.mock.method(Cafe, 'findOne', async () => ({
     cafeId: 'ZC-0001',
+    organisationId: 'ORG-ZAMORIN',
     name: 'Zamorin Koramangala',
+    displayName: 'Zamorin Koramangala',
     legalName: 'Zamorin Hospitality Private Limited',
-    gstin: '29AABCT1332L1ZV',
-    fssaiLicenseNumber: '11223344556677',
-    address: { line1: '80ft Road, 4th Block', city: 'Bengaluru', pincode: '560095' },
-    contactPhone: '+91 80 2555 1234',
+    status: 'ACTIVE',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '29AABCT1332L1ZV',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin Koramangala',
+        principalPlace: '80ft Road, 4th Block, Bengaluru, Karnataka 560095',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '11223344556677',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin Koramangala',
+      street: '80ft Road',
+      area: '4th Block',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pinCode: '560095',
+    },
+    contacts: { primaryPhone: '+91 80 2555 1234' },
     toObject() { return this; },
   }));
 
@@ -260,7 +348,9 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
 
     assert.equal(result.success, true);
     assert.equal(result.action, 'SAVE_AND_PRINT');
-    assert.equal(result.printed, true);
+    assert.equal(result.printed, false);
+    assert.equal(result.printDispatched, true);
+    assert.equal(result.printStatus, 'PRINT_DISPATCHED');
     assert.ok(result.printBuffer);
     assert.ok(Buffer.isBuffer(result.rawBuffer));
     assert.ok(result.htmlPreview.toUpperCase().includes('ZAMORIN'));
@@ -314,9 +404,17 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
 
     assert.equal(result.success, true);
     assert.equal(result.action, 'PRINT');
-    assert.equal(result.printed, true);
+    assert.equal(result.printed, false);
+    assert.equal(result.printDispatched, true);
+    assert.equal(result.printStatus, 'PRINT_DISPATCHED');
     assert.ok(result.printBuffer);
     assert.equal(result.bill.billId, existingBill.billId);
+    const printBytes = Array.from(result.rawBuffer);
+    assert.equal(
+      printBytes.some((byte, idx) => byte === 0x1B && printBytes[idx + 1] === 0x70),
+      false,
+      'PRINT of an existing cash bill must not kick the cash drawer again'
+    );
   });
 
   // TEST 6: Authorized REPRINT with watermark and copy counter
@@ -333,6 +431,12 @@ test('STAGE 06 — POS & Order Management Master Test Suite', async (t) => {
     assert.equal(result.reprintCount, initialReprintCount + 1);
     assert.ok(result.printBuffer);
     assert.ok(result.htmlPreview);
+    const reprintBytes = Array.from(result.rawBuffer);
+    assert.equal(
+      reprintBytes.some((byte, idx) => byte === 0x1B && reprintBytes[idx + 1] === 0x70),
+      false,
+      'REPRINT must never re-open the cash drawer'
+    );
 
     // Verify reprint record was persisted to bill
     assert.equal(existingBill.reprints.length, initialReprintCount + 1);

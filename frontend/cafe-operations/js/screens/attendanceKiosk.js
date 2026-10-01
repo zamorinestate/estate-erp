@@ -5,23 +5,20 @@
    ACTIVE device with no authenticated Operator/Master. Public-safe only
    — no staff roster, no operational data, ever (Section 32).
 
-   INTEGRATION SEAM: the actual rotating QR / attendance check-in
-   mechanism lives in the existing Attendance module, which isn't part
-   of this conversation's context (see ARCHITECTURE_DECISIONS.md). This
-   screen calls a configurable endpoint for the QR payload
-   (window.CAFE_OPS_ATTENDANCE_QR_ENDPOINT) and, if that isn't wired up
-   yet, shows an honest "not connected yet" placeholder rather than a
-   fake or broken QR — this module owns the kiosk shell and the
-   Cafe Operations entry point, not attendance verification itself.
+   The kiosk consumes the canonical device-bound Attendance QR endpoint.
+   The QR opens the employee Geo-Selfie attendance flow and never exposes
+   roster, payroll, POS, or other operational data.
    ===================================================================== */
 (function (global) {
   'use strict';
   const UI = global.CafeOpsUI;
 
-  const QR_ROTATE_SECONDS = 30;
+  const DEFAULT_QR_ROTATE_SECONDS = 45;
   let clockTimer = null;
   let qrTimer = null;
   let serverOffsetMs = 0;
+  let qrCycleDurationSeconds = DEFAULT_QR_ROTATE_SECONDS;
+  let qrExpiresAtMs = 0;
 
   function istFormatter(opts) {
     return new Intl.DateTimeFormat('en-IN', Object.assign({ timeZone: 'Asia/Kolkata' }, opts));
@@ -64,7 +61,6 @@
 
     startClock();
     refreshQr(root);
-    qrTimer = setInterval(() => refreshQr(root), QR_ROTATE_SECONDS * 1000);
     tickRing(root);
 
     global.CafeOpsApi.deviceStatus()
@@ -102,37 +98,79 @@
   function tickRing(root) {
     const ring = root.querySelector('#qrRingProgress');
     if (!ring) return; // navigated away
-    qrElapsed = (qrElapsed + 1) % QR_ROTATE_SECONDS;
+
     const circumference = 2 * Math.PI * 98;
-    const fraction = qrElapsed / QR_ROTATE_SECONDS;
-    ring.style.strokeDashoffset = String(circumference * fraction);
+    let fraction = 0;
+
+    if (qrExpiresAtMs > 0) {
+      const remainingMs = Math.max(0, qrExpiresAtMs - Date.now());
+      const cycleMs = Math.max(1000, qrCycleDurationSeconds * 1000);
+      fraction = 1 - Math.min(1, remainingMs / cycleMs);
+    } else {
+      qrElapsed = (qrElapsed + 1) % DEFAULT_QR_ROTATE_SECONDS;
+      fraction = qrElapsed / DEFAULT_QR_ROTATE_SECONDS;
+    }
+
+    ring.style.strokeDashoffset = String(circumference * Math.max(0, Math.min(1, fraction)));
     requestAnimationFrame(() => setTimeout(() => tickRing(root), 1000));
+  }
+
+  function scheduleQrRefresh(root, delayMs) {
+    if (qrTimer) clearTimeout(qrTimer);
+    qrTimer = setTimeout(() => refreshQr(root), Math.max(1000, Number(delayMs) || 1000));
   }
 
   async function refreshQr(root) {
     const surface = root.querySelector('#qrSurface');
-    if (!surface) return; // navigated away
+    if (!surface) return;
     qrElapsed = 0;
-    const endpoint = global.CAFE_OPS_ATTENDANCE_QR_ENDPOINT;
-    if (!endpoint) {
-      surface.innerHTML = '<span class="cafeops-qr-refreshing" style="padding:0 14px;text-align:center;line-height:1.4">Attendance check-in connects here once the Attendance module is wired up</span>';
-      return;
-    }
+
     try {
-      const res = await fetch(endpoint);
-      const body = await res.json();
-      if (body && body.qrSvg) surface.innerHTML = body.qrSvg;
-      else if (body && body.qrImageUrl) surface.innerHTML = `<img src="${body.qrImageUrl}" alt="Attendance check-in QR code" />`;
-      else throw new Error('no QR payload');
+      const body = global.CafeOpsApi?.attendanceQr
+        ? await global.CafeOpsApi.attendanceQr()
+        : null;
+
+      if (!body?.attendanceUrl) {
+        throw new Error('ATTENDANCE_QR_URL_UNAVAILABLE');
+      }
+
+      if (!global.QRCode || typeof global.QRCode.toDataURL !== 'function') {
+        surface.innerHTML = '<span class="cafeops-qr-refreshing">Preparing secure QR renderer…</span>';
+        setTimeout(() => refreshQr(root), 500);
+        return;
+      }
+
+      const imageUrl = await global.QRCode.toDataURL(body.attendanceUrl, {
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 200,
+      });
+
+      surface.innerHTML = `<img src="${imageUrl}" alt="Attendance check-in and check-out QR code" style="width:100%;height:100%;object-fit:contain;" />`;
+
+      const serverRemainingSeconds = Number(body.remainingSeconds);
+      const parsedExpiry = Date.parse(body.expiresAt || '');
+      qrCycleDurationSeconds = Number.isFinite(serverRemainingSeconds) && serverRemainingSeconds > 0
+        ? Math.max(1, Math.ceil(serverRemainingSeconds))
+        : DEFAULT_QR_ROTATE_SECONDS;
+      qrExpiresAtMs = Number.isFinite(parsedExpiry) && parsedExpiry > Date.now()
+        ? parsedExpiry
+        : Date.now() + qrCycleDurationSeconds * 1000;
+
+      scheduleQrRefresh(root, qrExpiresAtMs - Date.now() + 250);
     } catch (e) {
-      surface.innerHTML = '<span class="cafeops-qr-refreshing">Unable to load check-in code</span>';
+      qrExpiresAtMs = 0;
+      surface.innerHTML = '<span class="cafeops-qr-refreshing">Unable to load secure attendance code</span>';
+      scheduleQrRefresh(root, 5000);
     }
   }
 
   function stopTimers() {
     stopClock();
-    if (qrTimer) clearInterval(qrTimer);
+    if (qrTimer) clearTimeout(qrTimer);
     qrTimer = null;
+    qrExpiresAtMs = 0;
+    qrCycleDurationSeconds = DEFAULT_QR_ROTATE_SECONDS;
   }
 
   global.CafeOpsScreens = global.CafeOpsScreens || {};

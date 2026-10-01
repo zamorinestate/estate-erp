@@ -175,8 +175,8 @@ if (syntaxFailures === 0) {
   recordCheck('Backend_Syntax', `All ${backendJsFiles.length} Backend JS Files Syntax Valid`, true, 'Zero syntax errors');
 }
 
-// ── 5. INTERACTIVE BUTTON & ACTION HANDLER AUDIT ─────────────────────────────
-console.log('\n\x1b[36m[SECTION 5/5] Auditing Interactive UI Elements & Button Handlers...\x1b[0m');
+// ── 5. STATIC UI ACTION-HANDLER PRESENCE HEURISTIC ─────────────────────────────
+console.log('\n\x1b[36m[SECTION 5/5] Checking static UI action-handler presence heuristics...\x1b[0m');
 
 const pagesDir = path.join(frontendDir, 'src/js/pages');
 const pageFiles = fs.readdirSync(pagesDir).filter(f => f.endsWith('.js'));
@@ -192,16 +192,16 @@ for (const file of pageFiles) {
 }
 
 recordCheck(
-  'Interactive_Buttons',
-  'Page Action Handlers & Event Listeners Bound',
+  'Interactive_Presence_Heuristic',
+  'Page modules contain action-handler indicators',
   interactiveChecksPassed >= 40,
   `${interactiveChecksPassed} / ${pageFiles.length} page modules verified`
 );
 
 // Check standard button classes and modal dismiss handlers
 const componentsJs = fs.readFileSync(path.join(frontendDir, 'src/js/components.js'), 'utf8');
-recordCheck('Interactive_Buttons', 'Modal & Notification Components Present', componentsJs.includes('modal') && componentsJs.includes('showToast'), 'components.js');
-recordCheck('Interactive_Buttons', 'Navigation Controller Operational', navContent.includes('renderNavigation') || navContent.includes('NAVIGATION'), 'navigation.js');
+recordCheck('Interactive_Presence_Heuristic', 'Modal & Notification Components Present', componentsJs.includes('modal') && componentsJs.includes('showToast'), 'components.js');
+recordCheck('Interactive_Presence_Heuristic', 'Navigation Controller Operational', navContent.includes('renderNavigation') || navContent.includes('NAVIGATION'), 'navigation.js');
 
 // ── SUMMARY & REPORT ─────────────────────────────────────────────────────────
 console.log('\n===============================================================================');
@@ -210,7 +210,7 @@ console.log('===================================================================
 console.log(`Total Checks Executed : ${results.totalChecks}`);
 console.log(`Passed Checks         : \x1b[32m${results.passedChecks}\x1b[0m`);
 console.log(`Failed Checks         : ${results.failedChecks > 0 ? `\x1b[31m${results.failedChecks}\x1b[0m` : '\x1b[32m0\x1b[0m'}`);
-console.log(`System Status         : \x1b[32m100% PRODUCTION READY & CERTIFIED\x1b[0m`);
+console.log(`System Status         : ${results.failedChecks === 0 ? '\x1b[32mCORE STATIC VERIFICATION PASSED — RELEASE GATES STILL REQUIRED\x1b[0m' : '\x1b[31mFAILURES DETECTED\x1b[0m'}`);
 console.log('===============================================================================\n');
 
 if (results.failedChecks > 0) {

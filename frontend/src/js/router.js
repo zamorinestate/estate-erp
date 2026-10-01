@@ -63,6 +63,7 @@ import { mountPublicCafeGateway, getActiveGatewayContextToken } from "./pages/ca
 // ── Stage-2 Login Integration: Terminal auth screens (additive, no backend auth change) ──
 import { renderCafeMasterSignIn, wireCafeMasterSignIn, resetCafeMasterSignInUi } from "./pages/cafeMasterSignIn.js";
 import { renderCafeDeviceEnroll, wireCafeDeviceEnroll, resetCafeDeviceEnrollUi } from "./pages/cafeDeviceEnroll.js";
+import { getNativeDeviceAttestationIdentity, ensureNativeDeviceAttestationBinding } from "./utils/deviceAttestation.js";
 import { renderCafeTerminalWelcome, wireCafeTerminalWelcome } from "./pages/cafeTerminalWelcome.js";
 import { renderOrgIdentity, wireOrgIdentity } from "./pages/organisationIdentity.js";
 import { renderSystemHealthPage, initSystemHealthPage } from "./pages/systemHealth.js";
@@ -150,8 +151,8 @@ export function getIsPrimaryMaster() {
   if (state.user?.isPrimaryMaster !== undefined) return Boolean(state.user.isPrimaryMaster);
   if (state.isPrimaryMaster !== undefined) return Boolean(state.isPrimaryMaster);
 
-  // Verified identity with MASTER role: grant Primary Master by default
-  if (state.role === ROLES.MASTER || state.role === "master") return true;
+  // Never infer Primary-Master authority from role alone. An authenticated
+  // MASTER state without an explicit Primary-Master flag fails closed.
   return false;
 }
 
@@ -166,7 +167,7 @@ export function navigate(route) {
   const isVendor = state.role === ROLES.VENDOR || state.role === "vendor";
   const isAllowed = isVendor
     ? isRouteAllowed(state.role, route, false)
-    : (route === "notifications" || isRouteAllowed(state.role, route, isPrimary));
+    : isRouteAllowed(state.role, route, isPrimary);
 
   if (!isAllowed) {
     setState({ route: "__blocked__" });
@@ -524,7 +525,7 @@ async function renderPage() {
     case "passbook":
     case "passbook-treasury":
       // SCR-PASSBOOK Rule: Primary Master or Owner ONLY.
-      // Normal Master, CAFE_ADMIN, STAFF are strictly denied.
+      // CAFE_ADMIN, STAFF are strictly denied.
       if (
         (state.role === ROLES.MASTER && !getIsPrimaryMaster()) ||
         (state.role !== ROLES.MASTER && state.role !== ROLES.OWNER)
@@ -538,7 +539,7 @@ async function renderPage() {
 
     case "ledger":
     case "personal-ledger":
-      // SCR-018 Rule: Primary Master or Owner only. Normal Master, CAFE_ADMIN, STAFF denied.
+      // SCR-018 Rule: Primary Master or Owner only. CAFE_ADMIN, STAFF denied.
       if (
         (state.role === ROLES.MASTER && !getIsPrimaryMaster()) ||
         (state.role !== ROLES.MASTER && state.role !== ROLES.OWNER)
@@ -551,7 +552,7 @@ async function renderPage() {
       break;
 
     case "revenue-share":
-      // SCR-026 Rule: Primary Master or Owner only. Normal Master, CAFE_ADMIN, STAFF strictly denied.
+      // SCR-026 Rule: Primary Master or Owner only. CAFE_ADMIN, STAFF strictly denied.
       if (
         (state.role === ROLES.MASTER && !getIsPrimaryMaster()) ||
         (state.role !== ROLES.MASTER && state.role !== ROLES.OWNER)
@@ -880,11 +881,32 @@ async function renderPage() {
     case "cafe-operations/login":
     case "cafe-operations-login":
     case "cafe-operator-signin":
-      // Stop inactivity timer while sign-in UI is visible
+      // Stop inactivity timer while sign-in UI is visible.
       stopCafeOpsInactivityTimer();
       content.innerHTML = renderCafeOperatorSignIn();
       wireCafeOperatorSignIn(content, {
-        onSignIn: () => {
+        onSignIn: async () => {
+          // REC-04D: Existing native terminals bind their persistent signing key
+          // only after fresh 4-part Café Operations authentication succeeds, but
+          // before the operator is allowed into the dashboard.
+          try {
+            await ensureNativeDeviceAttestationBinding();
+          } catch (attestationErr) {
+            console.error("[Device Attestation] Native terminal trust upgrade failed:", attestationErr);
+            const code = attestationErr?.code || "";
+            if (
+              code === "DEVICE_ATTESTATION_KEY_ROTATION_REQUIRES_REENROLLMENT" ||
+              code === "DEVICE_ATTESTATION_REENROLLMENT_REQUIRED" ||
+              code === "DEVICE_ATTESTATION_PROVENANCE_MISMATCH"
+            ) {
+              showToast("This terminal signing identity must be re-enrolled before Café Operations can continue.", "error");
+              navigate("cafe-device-enroll");
+              return;
+            }
+            throw new Error(
+              "Terminal security verification failed. Café Operations remains locked until device signing trust is restored."
+            );
+          }
           navigate("dashboard");
         },
       });
@@ -966,12 +988,19 @@ async function renderPage() {
       content.innerHTML = renderCafeDeviceEnroll();
       wireCafeDeviceEnroll(content, {
         onEnroll: async ({ enrollmentCode, deviceDisplayName }) => {
+          const signingIdentity = await getNativeDeviceAttestationIdentity({
+            requiredForNative: true,
+          });
+          const platform = String(signingIdentity.platform || 'WEB').toLowerCase();
           const res = await apiPost('/cafe-ops/devices/enroll', {
             enrollmentCode,
             displayName: deviceDisplayName,
-            platform: 'Web',
+            platform,
             appVersion: '1.0.0',
             osVersion: navigator.userAgent || 'Unknown',
+            publicSigningKey: signingIdentity.capable ? signingIdentity.publicKeyJwk : null,
+            signingKeyAlgorithm: signingIdentity.capable ? signingIdentity.algorithm : null,
+            signingKeyProvider: signingIdentity.capable ? signingIdentity.provider : null,
           });
           const data = res?.data || res;
           if (data?.deviceToken) {

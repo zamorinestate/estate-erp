@@ -84,20 +84,20 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
+  const malformedMasterUser = {
     userId: 'MU-NORMAL-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isNormal = token === 'token_malformed_master';
+    const activeUser = isNormal ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -121,7 +121,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'MU-NORMAL-01') {
-      return { ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser };
+      return { ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser };
     }
     return { ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser };
   });
@@ -274,7 +274,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'POST',
       path: '/api/v1/customers',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         name: 'Meera Krishnan',
         phone: '+919845022880',
@@ -294,7 +294,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'POST',
       path: '/api/v1/customers',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         name: 'Meera K',
         phone: '+919845022880_DUPLICATE',
@@ -312,7 +312,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'GET',
       path: '/api/v1/customers/overview',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
     });
 
     assert.equal(res.status, 200);
@@ -326,7 +326,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'GET',
       path: '/api/v1/customers?search=Meera',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
     });
 
     assert.equal(res.status, 200);
@@ -340,7 +340,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'GET',
       path: '/api/v1/customers/CUST-0001',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
     });
 
     assert.equal(res.status, 200);
@@ -355,7 +355,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'POST',
       path: '/api/v1/customers/CUST-0001/loyalty/adjust',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         action: 'ADD',
         points: 100,
@@ -375,7 +375,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'POST',
       path: '/api/v1/customers/merge',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         primaryCustomerId: 'CUST-0001',
         duplicateCustomerId: 'CUST-0002',
@@ -392,7 +392,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'GET',
       path: '/api/v1/customers/rewards/catalogue',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
     });
 
     assert.equal(res.status, 200);
@@ -405,7 +405,7 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
       port,
       method: 'POST',
       path: '/api/v1/customers/feedback',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         customerId: 'CUST-0001',
         cafeId: 'ZC-0001',
@@ -421,12 +421,12 @@ test('Customer Directory & Loyalty Rewards — Screen 006 Integration Test Suite
   });
 
   await t.test('10. POST /api/v1/customers/programme/publish — enforces Primary Master authority', async () => {
-    // Attempt with Normal Master (should fail 403)
+    // Attempt with Malformed MASTER (should fail 403)
     const normalRes = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/customers/programme/publish',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: { version: 'V2.0', spendToPointsRatio: 0.2 },
     });
     assert.equal(normalRes.status, 403);

@@ -16,6 +16,9 @@
 
 const path = require('path');
 const ApiError = require('../utils/ApiError');
+const {
+  isUnsafeAttendanceSecret,
+} = require('./attendanceSecurityConfig');
 
 const PRODUCTION_MANDATORY_SPECS = [
   {
@@ -58,24 +61,41 @@ const PRODUCTION_MANDATORY_SPECS = [
     },
   },
   {
-    key: 'DOCUMENT_STORAGE_DRIVER',
+    key: 'QR_SIGNING_SECRET',
     requiredInProduction: true,
-    description: 'Durable document storage driver (RENDER_PERSISTENT_DISK or PRIVATE_OBJECT_STORAGE)',
-    isSecret: false,
-    validate: (val) => ['RENDER_PERSISTENT_DISK', 'PRIVATE_OBJECT_STORAGE'].includes(val),
-  },
-  {
-    key: 'DOCUMENT_STORAGE_ROOT',
-    requiredInProduction: true,
-    description: 'Persistent disk mount path for business documents',
-    isSecret: false,
+    description: 'HMAC-SHA256 secret for signed attendance QR envelopes',
+    isSecret: true,
     validate: (val, isProd) => {
       if (!isProd) return true;
-      if (!val || typeof val !== 'string' || val.trim() === '') return false;
-      const resolved = path.resolve(val);
-      const appSourceDir = path.resolve(__dirname, '../../..');
-      // Ephemeral storage inside container application source is strictly forbidden
-      return !resolved.startsWith(appSourceDir);
+      return !isUnsafeAttendanceSecret(val);
+    },
+  },
+  {
+    key: 'ATTENDANCE_QR_SECRET',
+    requiredInProduction: true,
+    description: 'HMAC-SHA256 secret for attendance compact tokens and scan grants',
+    isSecret: true,
+    validate: (val, isProd) => {
+      if (!isProd) return true;
+      return !isUnsafeAttendanceSecret(val);
+    },
+  },
+  {
+    key: 'DOCUMENT_STORAGE_PROVIDER',
+    requiredInProduction: true,
+    description: 'Durable document storage provider (GridFS, persistent disk, or private object storage)',
+    isSecret: false,
+    validate: (val) => {
+      const provider = String(val || '').trim().toLowerCase();
+      return [
+        'gridfs',
+        'mongodb',
+        'mongodb_gridfs',
+        'render_persistent_disk',
+        'private_object_storage',
+        's3',
+        's3_compatible',
+      ].includes(provider);
     },
   },
   {
@@ -148,6 +168,21 @@ function validateStartupConfiguration(env = process.env, { failClosed = true } =
       isSecret: spec.isSecret,
       detail: spec.isSecret && isPresent ? 'Configured (Value Redacted)' : detail,
     });
+  }
+
+  if (isProduction) {
+    const qrSigningSecret = String(env.QR_SIGNING_SECRET || '').trim();
+    const attendanceQrSecret = String(env.ATTENDANCE_QR_SECRET || '').trim();
+
+    if (
+      qrSigningSecret &&
+      attendanceQrSecret &&
+      qrSigningSecret === attendanceQrSecret
+    ) {
+      blockingIssues.push(
+        'ATTENDANCE_SECURITY_SECRETS: QR_SIGNING_SECRET and ATTENDANCE_QR_SECRET must be distinct'
+      );
+    }
   }
 
   const isSafe = blockingIssues.length === 0;

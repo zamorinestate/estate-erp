@@ -296,11 +296,33 @@ const trashEntrySchema = new mongoose.Schema(
     attachments: {
       type: [
         {
+          // Legacy display/reference fields are retained for restoration and
+          // backward compatibility. Permanent disposition must never infer a
+          // provider locator from storageUrl or legacy fileId.
           fileId: String,
           fileName: String,
           mimeType: String,
           fileSize: Number,
           storageUrl: String,
+
+          // Canonical deletion locators. At least one of these must be present
+          // before an attachment is eligible for verified permanent deletion.
+          storageKey: {
+            type: String,
+            trim: true,
+            default: null,
+          },
+          gridFsFileId: {
+            type: String,
+            trim: true,
+            default: null,
+          },
+          storageProvider: {
+            type: String,
+            trim: true,
+            uppercase: true,
+            default: null,
+          },
         },
       ],
       default: [],
@@ -319,6 +341,94 @@ const trashEntrySchema = new mongoose.Schema(
     dispositionRequestId: {
       type: String,
       default: null,
+    },
+
+    dispositionRequestedByUserId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
+    dispositionRequestedAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionJustification: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
+    dispositionApprovedByUserId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
+    dispositionApprovedAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionApprovalReason: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 1000,
+    },
+
+    dispositionProcessingStartedAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionProcessingStartedByUserId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
+    dispositionExecutionAuthorizationAuditEventId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
+    dispositionStorageStatus: {
+      type: String,
+      enum: ['NOT_REQUIRED', 'PENDING', 'VERIFIED_DELETED', 'FAILED'],
+      default: 'NOT_REQUIRED',
+      index: true,
+    },
+
+    dispositionStorageVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionStorageLastAttemptAt: {
+      type: Date,
+      default: null,
+    },
+
+    dispositionStorageLastError: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: '',
+    },
+
+    dispositionStorageSummary: {
+      totalAttachments: { type: Number, min: 0, default: 0 },
+      verifiedDeleted: { type: Number, min: 0, default: 0 },
+      alreadyMissing: { type: Number, min: 0, default: 0 },
+      locatorTypes: { type: [String], default: [] },
     },
 
     dispositionCertificateId: {

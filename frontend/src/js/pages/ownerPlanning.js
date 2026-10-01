@@ -46,7 +46,7 @@ export function renderOwnerPlanning() {
           <!-- Cafe Scope Filter -->
           <select id="op-cafe-filter" class="form-select" style="background:var(--surface-card,#1e293b);color:var(--text-primary,#fff);border:1px solid var(--border-color,#334155);padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;">
             <option value="ALL">All Authorized Cafés</option>
-            ${(state.currentUser?.assignedCafeIds || ['ZC-0001', 'ZC-0002'])
+            ${(state.currentUser?.assignedCafeIds || state.user?.assignedCafeIds || [])
               .map((c) => `<option value="${c}" ${selectedCafe === c ? 'selected' : ''}>${c}</option>`)
               .join('')}
           </select>
@@ -816,10 +816,14 @@ function openCreateCapexModal() {
       showToast('Title, purpose, and valid cost are required', 'error');
       return;
     }
+    if (!selectedCafe || selectedCafe === 'ALL') {
+      showToast('Select a specific authorized café before submitting CAPEX.', 'error');
+      return;
+    }
 
     try {
       await apiPost('/planning/capex', {
-        cafeId: selectedCafe !== 'ALL' ? selectedCafe : 'ZC-0001',
+        cafeId: selectedCafe,
         title,
         category,
         estimatedCostPaisa: cost * 100,

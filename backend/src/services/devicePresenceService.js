@@ -14,8 +14,9 @@
 class DevicePresenceService {
   constructor(options = {}) {
     this.redisClient = options.redisClient || null;
-    this.ephemeralPresence = new Map(); // key: deviceId -> { organisationId, cafeId, deviceId, lastHeartbeat, status, ip, appVersion }
-    this.pendingCheckpoints = new Map(); // key: deviceId -> timestamp
+    this.keyPrefix = options.keyPrefix || 'zamorin:';
+    this.ephemeralPresence = new Map(); // key: organisationId:cafeId:deviceId
+    this.pendingCheckpoints = new Map(); // same tenant-scoped key -> timestamp
     this.checkpointWindowMs = options.checkpointWindowMs !== undefined ? options.checkpointWindowMs : 5 * 60 * 1000; // 5 minutes durable coalesce window
     this.baseHeartbeatIntervalSec = options.heartbeatIntervalSec || 30;
     this.jitterRatio = options.jitterRatio || 0.20; // +/- 20% jitter
@@ -25,6 +26,28 @@ class DevicePresenceService {
       coalescedHeartbeats: 0,
       durableWrites: 0,
       stateChanges: 0,
+    };
+  }
+
+  setRedisClient(client, keyPrefix = this.keyPrefix || 'zamorin:') {
+    this.redisClient = client || null;
+    this.keyPrefix = keyPrefix || 'zamorin:';
+  }
+
+  buildPresenceKey({ organisationId, cafeId, deviceId }) {
+    const org = String(organisationId || '').trim().toUpperCase();
+    const cafe = String(cafeId || 'GLOBAL').trim().toUpperCase() || 'GLOBAL';
+    const device = String(deviceId || '').trim().toUpperCase();
+    if (!org || !device) {
+      const error = new Error('PRESENCE_SCOPE_REQUIRED: organisationId and deviceId are required.');
+      error.code = 'PRESENCE_SCOPE_REQUIRED';
+      throw error;
+    }
+    return {
+      org,
+      cafe,
+      device,
+      scopeKey: `${org}:${cafe}:${device}`,
     };
   }
 
@@ -42,8 +65,8 @@ class DevicePresenceService {
    */
   async recordHeartbeat({
     deviceId,
-    organisationId = 'ZAMORIN',
-    cafeId = '*',
+    organisationId = null,
+    cafeId = null,
     status = 'ACTIVE',
     ip = null,
     appVersion = null,
@@ -51,14 +74,15 @@ class DevicePresenceService {
     forceDurable = false,
   }) {
     this.metrics.totalHeartbeats++;
+    const scope = this.buildPresenceKey({ organisationId, cafeId, deviceId });
     const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
-    const existing = this.ephemeralPresence.get(deviceId);
+    const existing = this.ephemeralPresence.get(scope.scopeKey);
     const stateChanged = !existing || existing.status !== status;
 
     const presenceEntry = {
-      deviceId,
-      organisationId,
-      cafeId,
+      deviceId: scope.device,
+      organisationId: scope.org,
+      cafeId: scope.cafe,
       status,
       ip,
       appVersion,
@@ -66,29 +90,29 @@ class DevicePresenceService {
       online: status === 'ACTIVE' || status === 'PENDING',
     };
 
-    this.ephemeralPresence.set(deviceId, presenceEntry);
+    this.ephemeralPresence.set(scope.scopeKey, presenceEntry);
 
     if (this.redisClient) {
       try {
         const ttl = Math.ceil(this.baseHeartbeatIntervalSec * 3);
-        await this.redisClient.set(`presence:${deviceId}`, JSON.stringify(presenceEntry), 'EX', ttl);
+        await this.redisClient.set(`${this.keyPrefix}presence:${scope.scopeKey}`, JSON.stringify(presenceEntry), { EX: ttl });
       } catch (_) {}
     }
 
     // Determine if durable Mongo checkpoint is needed
-    const lastCheckpoint = this.pendingCheckpoints.get(deviceId) || 0;
+    const lastCheckpoint = this.pendingCheckpoints.get(scope.scopeKey) || 0;
     const elapsedSinceLastCheckpoint = nowMs - lastCheckpoint;
 
     if (forceDurable || stateChanged || elapsedSinceLastCheckpoint >= this.checkpointWindowMs) {
-      this.pendingCheckpoints.set(deviceId, nowMs);
+      this.pendingCheckpoints.set(scope.scopeKey, nowMs);
       this.metrics.durableWrites++;
       if (stateChanged) this.metrics.stateChanges++;
 
       // Asynchronously perform durable checkpoint
       await this.persistCheckpoint({
-        deviceId,
-        organisationId,
-        cafeId,
+        deviceId: scope.device,
+        organisationId: scope.org,
+        cafeId: scope.cafe,
         status,
         lastSeenAt: now,
       });
@@ -118,7 +142,13 @@ class DevicePresenceService {
         const { DeviceRegistration } = require('../models/DeviceRegistration');
         if (DeviceRegistration && typeof DeviceRegistration.updateOne === 'function') {
           await DeviceRegistration.updateOne(
-            { deviceId },
+            {
+              deviceId: String(deviceId || '').trim().toUpperCase(),
+              organisationId: String(organisationId || '').trim().toUpperCase(),
+              ...(cafeId && cafeId !== 'GLOBAL'
+                ? { assignedCafeId: String(cafeId).trim().toUpperCase() }
+                : {}),
+            },
             {
               $set: {
                 lastSeenAt,
@@ -148,8 +178,34 @@ class DevicePresenceService {
   /**
    * Queries presence of a specific device.
    */
-  getDevicePresence(deviceId) {
-    return this.ephemeralPresence.get(deviceId) || null;
+  async getDevicePresence(deviceId, organisationId, cafeId = null) {
+    const scope = this.buildPresenceKey({ deviceId, organisationId, cafeId });
+    const local = this.ephemeralPresence.get(scope.scopeKey);
+    if (local) {
+      return local;
+    }
+
+    if (!this.redisClient) {
+      return null;
+    }
+
+    try {
+      const raw = await this.redisClient.get(`${this.keyPrefix}presence:${scope.scopeKey}`);
+      if (!raw) return null;
+
+      const distributed = JSON.parse(raw);
+      const normalized = {
+        ...distributed,
+        deviceId: scope.device,
+        organisationId: scope.org,
+        cafeId: scope.cafe,
+      };
+
+      this.ephemeralPresence.set(scope.scopeKey, normalized);
+      return normalized;
+    } catch (_) {
+      return null;
+    }
   }
 
   /**

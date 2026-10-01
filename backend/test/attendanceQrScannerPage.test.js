@@ -194,6 +194,7 @@ test('AUTH-01: Primary Master can generate rotating challenge across any café i
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0001',
     requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
     requestedByUserId: 'PRIMARY-MASTER-01',
   });
 
@@ -203,17 +204,36 @@ test('AUTH-01: Primary Master can generate rotating challenge across any café i
   assert.ok(challenge.opaqueToken.startsWith('ZAM_ATT_'), 'Must generate high-entropy opaque token');
 });
 
-test('AUTH-02: Normal Master can generate rotating challenge across organisation cafés', async () => {
+test('AUTH-02: non-primary MASTER is rejected by the QR service boundary', async () => {
+  await assert.rejects(
+    async () => attendanceQrService.getActiveOrNewChallenge({
+      organisationId: 'ORG-ZAMORIN',
+      cafeId: 'ZC-0002',
+      requestedByRole: 'MASTER',
+      requestedByUserId: 'MALFORMED-MASTER-02',
+      isPrimaryMaster: false,
+    }),
+    { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
+  );
+});
+
+test('AUTH-02B: non-primary MASTER is rejected when verifying attendance QR', async () => {
   const challenge = await attendanceQrService.getActiveOrNewChallenge({
     organisationId: 'ORG-ZAMORIN',
-    cafeId: 'ZC-0002',
+    cafeId: 'ZC-0001',
     requestedByRole: 'MASTER',
-    requestedByUserId: 'NORMAL-MASTER-02',
+    requestedByUserId: 'PRIMARY-MASTER-01',
+    isPrimaryMaster: true,
   });
 
-  assert.ok(challenge);
-  assert.equal(challenge.cafeId, 'ZC-0002');
-  assert.ok(challenge.opaqueToken);
+  await assert.rejects(
+    async () => attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeRole: 'MASTER',
+      isPrimaryMaster: false,
+    }),
+    { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
+  );
 });
 
 test('AUTH-03: Café Operations device is strictly bound to its assigned café and blocked from other cafés', async () => {
@@ -266,6 +286,7 @@ test('PRIV-01: Opaque Attendance QR token does not expose database identifiers o
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0001',
     requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
   });
 
   const opaqueToken = challenge.opaqueToken;
@@ -283,6 +304,7 @@ test('PRIV-02: Server-side validation resolves authoritative cafeId from opaque 
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0001',
     requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
   });
 
   const resolved = await attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
@@ -363,6 +385,7 @@ test('PRIV-05: 8-second leeway behaves as pre-expiry threshold, not post-expiry 
       organisationId: orgId,
       cafeId,
       requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
     });
     assert.ok(initial && initial.challengeId, 'Must generate initial challenge');
     assert.ok(initial.remainingSeconds > 8, 'Initial challenge must have remaining TTL > 8s threshold');
@@ -372,6 +395,7 @@ test('PRIV-05: 8-second leeway behaves as pre-expiry threshold, not post-expiry 
       organisationId: orgId,
       cafeId,
       requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
     });
     assert.equal(reused.challengeId, initial.challengeId, 'Must reuse active challenge when remaining TTL > 8s');
 
@@ -386,6 +410,7 @@ test('PRIV-05: 8-second leeway behaves as pre-expiry threshold, not post-expiry 
       organisationId: orgId,
       cafeId,
       requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
     });
     assert.notEqual(fresh.challengeId, initial.challengeId, 'Must generate NEW challenge when remaining TTL <= 8s threshold');
     assert.ok(fresh.remainingSeconds > 8, 'Fresh challenge must have remaining TTL > 8s threshold');
@@ -480,6 +505,7 @@ test('DIAG-01: Diagnostic scan verifies challenge validity without creating Atte
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0001',
     requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
   });
 
   const countBefore = await Attendance.countDocuments();
@@ -489,6 +515,7 @@ test('DIAG-01: Diagnostic scan verifies challenge validity without creating Atte
     employeeOrgId: 'ORG-ZAMORIN',
     employeeAssignedCafes: ['ZC-0001'],
     employeeRole: 'MASTER',
+    isPrimaryMaster: true,
   });
 
   const countAfter = await Attendance.countDocuments();
@@ -503,6 +530,7 @@ test('DIAG-02: Diagnostic scan for wrong café rejects with CROSS_CAFE_UNAUTHORI
     organisationId: 'ORG-ZAMORIN',
     cafeId: 'ZC-0002',
     requestedByRole: 'MASTER',
+    isPrimaryMaster: true,
   });
 
   await assert.rejects(
@@ -525,6 +553,7 @@ test('GEO-01: Café with missing coordinates throws GEOFENCE_NOT_CONFIGURED and 
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'ZC-9999',
         latitude: 12.9352,
         longitude: 77.6245,

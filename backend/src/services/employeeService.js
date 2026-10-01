@@ -2,20 +2,12 @@
 
 const mongoose = require('mongoose');
 const { User } = require('../models/User');
-const SequenceCounter = require('../models/SequenceCounter');
+const { SequenceCounter } = require('../models/SequenceCounter');
 const { UniversalQrService } = require('./universalQrService');
 const { ApiError } = require('../utils/ApiError');
 const { hashPassword } = require('./authService');
 const operatorSessionService = require('./operatorSessionService');
-
-function generateTemporaryPassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-  let rand = '';
-  for (let i = 0; i < 6; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `Zamorin@${rand}!`;
-}
+const { generateTemporaryEmployeePassword } = require('../utils/secureRandom');
 
 const LIFECYCLE_STATES = [
   'ACTIVE',
@@ -122,19 +114,14 @@ async function registerEmployee(payload = {}, actor = {}) {
     throw new ApiError(409, 'DUPLICATE_EMPLOYEE', `Employee with email ${email} already exists.`);
   }
 
-  // Generate system-assigned EMP-ZC-{000001}
-  let newUserId;
-  try {
-    newUserId = await SequenceCounter.generateId({
-      organisationId: organisationId.trim().toUpperCase(),
-      sequenceKey: 'EMPLOYEE',
-      prefix: 'EMP-ZC',
-      minimumDigits: 6,
-    });
-  } catch (err) {
-    const count = await User.countDocuments({ organisationId });
-    newUserId = `EMP-ZC-${String(count + 1).padStart(6, '0')}`;
-  }
+  // Generate system-assigned EMP-ZC-{000001}. Sequence failures are
+  // fatal; count-based fallback is race-prone and can create duplicate identities.
+  const newUserId = await SequenceCounter.generateId({
+    organisationId: organisationId.trim().toUpperCase(),
+    sequenceKey: 'EMPLOYEE',
+    prefix: 'EMP-ZC',
+    minimumDigits: 6,
+  });
 
   // Initialize 12-item checklist
   const checklist = {};
@@ -165,7 +152,7 @@ async function registerEmployee(payload = {}, actor = {}) {
   try {
     const qrRecord = await UniversalQrService.createQrRecord({
       organisationId: organisationId.trim().toUpperCase(),
-      cafeId: primaryCafeId || (assignedCafeIds[0] || 'ZC-0001'),
+      cafeId: primaryCafeId || assignedCafeIds[0] || null,
       qrType: 'EMPLOYEE_BADGE',
       targetEntityId: newUserId,
       targetEntityType: 'USER',
@@ -190,7 +177,7 @@ async function registerEmployee(payload = {}, actor = {}) {
     finalPasswordHash = customPasswordHash;
     effectivePassword = null;
   } else {
-    effectivePassword = generateTemporaryPassword();
+    effectivePassword = generateTemporaryEmployeePassword();
     finalPasswordHash = await hashPassword(effectivePassword, { minLength: 8 });
   }
 
@@ -415,7 +402,7 @@ async function generateEmployeeBadgeQr(userId, actor = {}) {
       // Fallback create
       qrRecord = await UniversalQrService.createQrRecord({
         organisationId: organisationId.trim().toUpperCase(),
-        cafeId: employee.primaryCafeId || 'ZC-0001',
+        cafeId: employee.primaryCafeId || (employee.assignedCafeIds && employee.assignedCafeIds[0]) || null,
         qrType: 'EMPLOYEE_BADGE',
         targetEntityId: employee.userId,
         targetEntityType: 'USER',
@@ -426,7 +413,7 @@ async function generateEmployeeBadgeQr(userId, actor = {}) {
   } else {
     qrRecord = await UniversalQrService.createQrRecord({
       organisationId: organisationId.trim().toUpperCase(),
-      cafeId: employee.primaryCafeId || 'ZC-0001',
+      cafeId: employee.primaryCafeId || (employee.assignedCafeIds && employee.assignedCafeIds[0]) || null,
       qrType: 'EMPLOYEE_BADGE',
       targetEntityId: employee.userId,
       targetEntityType: 'USER',

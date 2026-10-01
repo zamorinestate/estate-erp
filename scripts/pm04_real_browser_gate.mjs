@@ -92,7 +92,6 @@ function startServer() {
             data: {
               users: [
                 { userId: 'MU-0001', name: 'Primary Master', email: 'master@zamorincafe.com', role: 'MASTER', accountStatus: 'ACTIVE', isPrimaryMaster: true, assignedCafeIds: [] },
-                { userId: 'MU-0002', name: 'Normal Master', email: 'normal.master@zamorincafe.com', role: 'MASTER', accountStatus: 'ACTIVE', isPrimaryMaster: false, assignedCafeIds: [] },
                 { userId: 'OW-0001', name: 'Zamorin Owner', email: 'owner@zamorincafe.com', role: 'OWNER', accountStatus: 'ACTIVE', isPrimaryMaster: false, assignedCafeIds: ['ZC-0001'] },
                 { userId: 'AD-0001', name: 'Kozhikode Admin', email: 'admin.kozhikode@zamorincafe.com', role: 'CAFE_ADMIN', accountStatus: 'ACTIVE', isPrimaryMaster: false, assignedCafeIds: ['ZC-0001'] },
                 { userId: 'ST-0001', name: 'Kozhikode Barista', email: 'barista.kozhikode@zamorincafe.com', role: 'STAFF', accountStatus: 'ACTIVE', isPrimaryMaster: false, assignedCafeIds: ['ZC-0001'] },
@@ -305,22 +304,8 @@ async function runRealBrowserGate() {
     console.log(" - Primary Master Admin Shell loaded:", pmAdminCheck.hasAdmin);
     auditReport.projectionsAudited.primaryMaster = pmAdminCheck;
 
-    // 2. NORMAL MASTER PROJECTION
-    console.log("\n[Projection 2/5] Testing Normal Master view...");
-    await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=master&isPrimaryMaster=false#admin` });
-    await delay(1000);
-    const nmAdminCheck = await cdp.eval(`
-      ({
-        hasAdmin: Boolean(document.querySelector('.admin-page') || document.querySelector('#page-content')),
-        role: 'MASTER',
-        isPrimaryMaster: false
-      })
-    `);
-    console.log(" - Normal Master projection rendered canonically:", nmAdminCheck.hasAdmin);
-    auditReport.projectionsAudited.normalMaster = nmAdminCheck;
-
-    // 3. OWNER PROJECTION
-    console.log("\n[Projection 3/5] Testing Owner view...");
+    // 2. OWNER PROJECTION
+    console.log("\n[Projection 2/4] Testing Owner view...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=owner#dashboard` });
     await delay(1000);
     const ownerCheck = await cdp.eval(`
@@ -334,7 +319,7 @@ async function runRealBrowserGate() {
     auditReport.projectionsAudited.owner = ownerCheck;
 
     // 4. CAFE_ADMIN PROJECTION
-    console.log("\n[Projection 4/5] Testing CAFE_ADMIN view...");
+    console.log("\n[Projection 3/4] Testing CAFE_ADMIN view...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=cafe_admin#dashboard` });
     await delay(1000);
     const cafeAdminCheck = await cdp.eval(`
@@ -348,7 +333,7 @@ async function runRealBrowserGate() {
     auditReport.projectionsAudited.cafeAdmin = cafeAdminCheck;
 
     // 5. STAFF PROJECTION
-    console.log("\n[Projection 5/5] Testing STAFF view...");
+    console.log("\n[Projection 4/4] Testing STAFF view...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=staff#staff-home` });
     await delay(1000);
     const staffCheck = await cdp.eval(`

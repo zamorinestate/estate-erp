@@ -76,7 +76,8 @@ describe('REC-06 — Universal Durable Private Document Storage & Security Certi
   const cafeIdA = 'ZC-CAF-01';
   const cafeIdB = 'ZC-CAF-02';
 
-  const masterAuth = { userId: 'USR-MASTER-01', role: 'MASTER', organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
+  const masterAuth = { userId: 'USR-MASTER-01', role: 'MASTER', isPrimaryMaster: true, organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
+  const malformedMasterAuth = { userId: 'USR-MASTER-MALFORMED', role: 'MASTER', isPrimaryMaster: false, organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
   const ownerAuth = { userId: 'USR-OWNER-01', role: 'OWNER', organisationId: orgId, assignedCafeIds: ['GLOBAL'] };
   const cafeAdminAAuth = { userId: 'USR-ADMIN-01', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdA, assignedCafeIds: [cafeIdA] };
   const cafeAdminBAuth = { userId: 'USR-ADMIN-02', role: 'CAFE_ADMIN', organisationId: orgId, primaryCafeId: cafeIdB, assignedCafeIds: [cafeIdB] };
@@ -491,6 +492,36 @@ describe('REC-06 — Universal Durable Private Document Storage & Security Certi
     };
 
     assert.strictEqual(DocumentAttachmentService.assertDocumentAuthorization(docB, masterAuth, 'DOWNLOAD'), true);
+  });
+
+  // 20A. Malformed MASTER must fail closed even on direct service invocation
+  it('20A. Malformed non-primary MASTER has zero document governance authority', () => {
+    const docB = {
+      organisationId: orgId,
+      cafeId: cafeIdB,
+      entityType: 'PURCHASE_ORDER',
+      classification: 'PROCUREMENT',
+      uploadStatus: 'AVAILABLE',
+      scanStatus: 'CLEAN',
+    };
+
+    assert.throws(
+      () => DocumentAttachmentService.assertDocumentAuthorization(docB, malformedMasterAuth, 'DOWNLOAD'),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    assert.throws(
+      () => DocumentAttachmentService.assertDocumentAuthorization(docB, malformedMasterAuth, 'PERMANENT_DELETE'),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 
   // 21. Owner according to frozen policy

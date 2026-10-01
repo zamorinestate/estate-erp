@@ -189,7 +189,7 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
 
     await t.test('2.2 Role Hierarchy Scoping: MASTER vs OWNER vs STAFF', () => {
       const org = 'ORG-001';
-      const masterUser = { organisationId: org, role: 'MASTER', assignedCafeIds: [] };
+      const masterUser = { organisationId: org, role: 'MASTER', isPrimaryMaster: true, assignedCafeIds: [] };
       const ownerUser = { organisationId: org, role: 'OWNER', assignedCafeIds: [] };
       const staffUser = { organisationId: org, role: 'STAFF', assignedCafeIds: ['ZC-0001'] };
 
@@ -288,7 +288,7 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
       assert.ok(invoiceStr.includes('INV-2026-000452'), 'Contains invoice number');
       assert.ok(invoiceStr.includes('(Sl. No.)'), 'Contains Sl. No. header');
       assert.ok(invoiceStr.includes('Subtotal:'), 'Contains subtotal line');
-      assert.ok(invoiceStr.includes('Tax (GST 5%):'), 'Contains GST line');
+      assert.ok(invoiceStr.includes('Total GST:'), 'Contains authoritative GST total line without assuming a fixed tax rate');
       assert.ok(invoiceStr.includes('Grand Total:'), 'Contains grand total line');
     });
 
@@ -366,6 +366,13 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
       const bill = {
         billId: 'BILL-101',
         invoiceNumber: 'INV-101',
+        businessDate: '2026-09-13',
+        sellerLegalName: 'Zamorin Hospitality Private Limited',
+        sellerGstin: '29AABCT1332L1ZV',
+        sellerAddress: 'Indiranagar, Bengaluru, Karnataka 560038',
+        subtotalPaisa: 100000,
+        taxPaisa: 5000,
+        totalPaisa: 105000,
         status: 'PAID',
         reprints: []
       };
@@ -392,6 +399,13 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
       const voidBill = {
         billId: 'BILL-102',
         invoiceNumber: 'INV-102',
+        businessDate: '2026-09-13',
+        sellerLegalName: 'Zamorin Hospitality Private Limited',
+        sellerGstin: '29AABCT1332L1ZV',
+        sellerAddress: 'Indiranagar, Bengaluru, Karnataka 560038',
+        subtotalPaisa: 100000,
+        taxPaisa: 5000,
+        totalPaisa: 105000,
         status: 'VOID',
         reprints: []
       };

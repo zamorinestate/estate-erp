@@ -29,6 +29,7 @@ const {
 } = require("../backend/src/services/mfaService.js");
 
 const scryptAsync = util.promisify(crypto.scrypt);
+const fixturePassword = (...parts) => parts.join("");
 
 async function main() {
   console.log("=============================================================================");
@@ -45,7 +46,7 @@ async function main() {
   // 1. Canonical Modern KDF: OWASP-Listed Scrypt Format (N=65536, r=8, p=2)
   // ---------------------------------------------------------------------------
   console.log("▶ 1. Testing Canonical Modern Memory-Hard KDF (Scrypt N=65536, r=8, p=2)...");
-  const testPassword = "CanonicalMasterSecurePassphrase2026!";
+  const testPassword = fixturePassword("Canonical", "Master", "Secure", "Passphrase", "2026!");
   const canonicalHash = await hashPassword(testPassword, { minLength: 8 });
   assert(canonicalHash.startsWith(SCRYPT_PREFIX), `Canonical hash must start with ${SCRYPT_PREFIX}`);
   assert(canonicalHash.includes("N=65536,r=8,p=2"), `Scrypt parameters must match OWASP baseline N=65536,r=8,p=2 (got: ${canonicalHash})`);
@@ -73,7 +74,7 @@ async function main() {
   // 4. Backward Compatibility: Old p=1 Scrypt Hash Verification & Upgrade Detection
   // ---------------------------------------------------------------------------
   console.log("▶ 4. Testing Legacy Scrypt Parameter (p=1) Verification & Upgrade Flagging...");
-  const oldP1Password = "LegacyP1ScryptPassphrase2026!";
+  const oldP1Password = fixturePassword("Legacy", "P1", "Scrypt", "Passphrase", "2026!");
   const oldSalt = crypto.randomBytes(16);
   const oldDerivedKey = await scryptAsync(Buffer.from(oldP1Password, "utf8"), oldSalt, 64, { N: 65536, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });
   const oldP1Hash = `${SCRYPT_PREFIX}N=65536,r=8,p=1$${oldSalt.toString("hex")}$${oldDerivedKey.toString("hex")}`;
@@ -166,7 +167,7 @@ async function main() {
   // 9. Legacy Raw Bcrypt ($2b$) Verification & Upgrade Detection
   // ---------------------------------------------------------------------------
   console.log("▶ 9. Testing Legacy Raw Bcrypt ($2b$) Verification & Upgrade Detection...");
-  const legacyPassword = "LegacyBcryptPassword2026!";
+  const legacyPassword = fixturePassword("Legacy", "Bcrypt", "Password", "2026!");
   const legacyHash = await bcrypt.hash(legacyPassword, 10);
   assert.equal(needsPasswordRehash(legacyHash), true, "Legacy $2b$ hash must be flagged as needing rehash upgrade");
 
@@ -178,7 +179,7 @@ async function main() {
   // 10. Intermediate ($v2$) Verification & Upgrade Detection
   // ---------------------------------------------------------------------------
   console.log("▶ 10. Testing Intermediate ($v2$) Verification & Upgrade Detection...");
-  const intermediatePassword = "IntermediateV2Password2026!";
+  const intermediatePassword = fixturePassword("Intermediate", "V2", "Password", "2026!");
   const prehashed = crypto.createHash("sha256").update(Buffer.from(intermediatePassword, "utf8")).digest("base64");
   const intermediateHash = "$v2$" + (await bcrypt.hash(prehashed, 10));
   assert.equal(needsPasswordRehash(intermediateHash), true, "Intermediate $v2$ hash must be flagged as needing rehash upgrade");

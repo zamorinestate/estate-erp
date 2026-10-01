@@ -28,28 +28,26 @@ const companyIdentitySchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      uppercase: true,
       index: true,
-      default: 'ORG-ZAMORIN-01',
     },
 
     legalName: {
       type: String,
       required: true,
       trim: true,
-      default: 'Zamorin Speciality Coffee & Kitchens Pvt. Ltd.',
     },
 
     brandName: {
       type: String,
       required: true,
       trim: true,
-      default: 'Zamorin Café',
     },
 
     tagline: {
       type: String,
       trim: true,
-      default: 'Speciality Coffee & Estate Kitchens',
+      default: '',
     },
 
     logo: {
@@ -64,81 +62,61 @@ const companyIdentitySchema = new mongoose.Schema(
       type: String,
       trim: true,
       uppercase: true,
-      default: 'AABCT1332L',
+      default: '',
     },
 
     cin: {
       type: String,
       trim: true,
       uppercase: true,
-      default: 'U55101KA2024PTC189201',
+      default: '',
     },
 
     udyamNumber: {
       type: String,
       trim: true,
-      default: 'UDYAM-KR-03-0019284',
+      default: '',
     },
 
     registeredAddress: {
-      line1: { type: String, trim: true, default: '12th Main Road, 5th Block' },
-      line2: { type: String, trim: true, default: 'Koramangala' },
-      city: { type: String, trim: true, default: 'Bengaluru' },
-      state: { type: String, trim: true, default: 'Karnataka' },
-      stateCode: { type: String, trim: true, default: '29' },
-      pincode: { type: String, trim: true, default: '560095' },
+      line1: { type: String, trim: true, default: '' },
+      line2: { type: String, trim: true, default: '' },
+      city: { type: String, trim: true, default: '' },
+      state: { type: String, trim: true, default: '' },
+      stateCode: { type: String, trim: true, default: '' },
+      pincode: { type: String, trim: true, default: '' },
       country: { type: String, trim: true, default: 'India' },
     },
 
     gstin: {
       type: [gstinItemSchema],
-      default: [
-        {
-          state: 'Karnataka',
-          stateCode: '29',
-          number: '29AABCT1332L1ZV',
-          isPrimary: true,
-        },
-        {
-          state: 'Kerala',
-          stateCode: '32',
-          number: '32AABCZ1234M1Z8',
-          isPrimary: false,
-        },
-      ],
+      default: [],
     },
 
     licences: {
       type: [licenceItemSchema],
-      default: [
-        {
-          type: 'FSSAI Central Head Office',
-          number: '10024043000192',
-          validFrom: new Date('2024-01-01'),
-          validTill: new Date('2029-12-31'),
-        },
-      ],
+      default: [],
     },
 
     contact: {
-      phone: { type: String, trim: true, default: '+91 80 4123 9876' },
-      supportPhone: { type: String, trim: true, default: '+91 80 4123 9800' },
-      email: { type: String, trim: true, lowercase: true, default: 'corporate@zamorin.cafe' },
-      supportEmail: { type: String, trim: true, lowercase: true, default: 'support@zamorin.cafe' },
-      website: { type: String, trim: true, default: 'https://zamorin.cafe' },
-      whatsapp: { type: String, trim: true, default: '+91 98450 12345' },
+      phone: { type: String, trim: true, default: '' },
+      supportPhone: { type: String, trim: true, default: '' },
+      email: { type: String, trim: true, lowercase: true, default: '' },
+      supportEmail: { type: String, trim: true, lowercase: true, default: '' },
+      website: { type: String, trim: true, default: '' },
+      whatsapp: { type: String, trim: true, default: '' },
     },
 
     banking: {
-      accountName: { type: String, trim: true, default: 'Zamorin Estate Pvt. Ltd.' },
-      bankName: { type: String, trim: true, default: 'HDFC Bank Ltd.' },
-      accountNumberMasked: { type: String, trim: true, default: 'XXXX-XXXX-8921' },
-      ifsc: { type: String, trim: true, uppercase: true, default: 'HDFC0001742' },
+      accountName: { type: String, trim: true, default: '' },
+      bankName: { type: String, trim: true, default: '' },
+      accountNumberMasked: { type: String, trim: true, default: '' },
+      ifsc: { type: String, trim: true, uppercase: true, default: '' },
     },
 
     authorisedSignatory: {
-      name: { type: String, trim: true, default: 'Managing Director' },
-      designation: { type: String, trim: true, default: 'Authorised Signatory' },
+      name: { type: String, trim: true, default: '' },
+      designation: { type: String, trim: true, default: '' },
     },
 
     financialYearStartMonth: {
@@ -172,12 +150,12 @@ const companyIdentitySchema = new mongoose.Schema(
 
     createdBy: {
       type: String,
-      default: 'System Provisioner',
+      default: 'SYSTEM',
     },
 
     changeReason: {
       type: String,
-      default: 'Initial Canonical Company Identity Provisioning',
+      default: '',
     },
 
     supersedesId: {
@@ -199,7 +177,10 @@ const companyIdentitySchema = new mongoose.Schema(
 );
 
 companyIdentitySchema.index({ organisationId: 1, status: 1 });
-companyIdentitySchema.index({ organisationId: 1, version: -1 });
+companyIdentitySchema.index(
+  { organisationId: 1, version: 1 },
+  { unique: true, name: 'uq_company_identity_org_version' }
+);
 
 const CompanyIdentity = mongoose.model('CompanyIdentity', companyIdentitySchema);
 

@@ -554,15 +554,16 @@ test('CAFÉ OPS-03 — Full 25-Screen Control Audit & Wiring Parity Suite', asyn
     });
     assert.ok(s3.status !== 404, `Screen 3 Bills route should exist (got ${s3.status})`);
 
-    // Screen 4: Kiosk Attendance (POST /api/v1/devices/attendance/challenges)
+    // Screen 4: Kiosk Attendance uses the canonical enrolled-device QR route.
+    // This parity test only asserts that the route is mounted; deviceContext may
+    // correctly return 401 when no CafeOps device token is provisioned here.
     const s4 = await makeRequest({
       port,
-      method: 'POST',
-      path: '/api/v1/devices/attendance/challenges',
+      method: 'GET',
+      path: '/api/v1/devices/attendance/qr',
       headers: { Authorization: 'Bearer token_admin' },
-      body: { cafeId: 'ZC-0001', deviceId: 'DEV-POS-01' },
     });
-    assert.ok(s4.status !== 404, `Screen 4 Kiosk route should exist (got ${s4.status})`);
+    assert.ok(s4.status !== 404, `Screen 4 canonical Kiosk QR route should exist (got ${s4.status})`);
 
     // Screen 5: Staff Attendance (GET /api/v1/attendance)
     const s5 = await makeRequest({

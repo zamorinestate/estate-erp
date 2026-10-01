@@ -29,6 +29,7 @@ const { StockMovement } = require('../src/models/StockMovement');
 const { CashTransaction } = require('../src/models/CashTransaction');
 const { PosReconciliationJob } = require('../src/models/PosReconciliationJob');
 const { OperationalAlert } = require('../src/models/OperationalAlert');
+const { User } = require('../src/models/User');
 const auditService = require('../src/services/auditService');
 
 const ORG = 'ORG-ZAMORIN';
@@ -73,6 +74,29 @@ function makeOrder(overrides = {}) {
   };
 }
 
+function invokeController(controllerFn, request) {
+  return new Promise((resolve, reject) => {
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+        resolve(this);
+        return this;
+      },
+    };
+    const next = (err) => {
+      if (err) reject(err);
+      else resolve(response);
+    };
+    Promise.resolve(controllerFn(request, response, next)).catch(reject);
+  });
+}
+
 test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Reconciliation', async (t) => {
   // Shared mock in-memory stores simulating MongoDB collections
   const mockBills = [];
@@ -87,11 +111,42 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
     bomThrows: false,
     bomAlreadyDepleted: false,
     cashSaveThrows: false,
+    catalogMode: 'ACTIVE',
   };
 
   // ─── AUDIT SERVICE ────────────────────────────────────────────────────────
   t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
   t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
+
+  // ─── REC-04B CANONICAL REVIEWER USERS ─────────────────────────────────────
+  t.mock.method(User, 'findOne', (q = {}) => ({
+    lean: async () => {
+      const userId = String(q.userId || '').trim().toUpperCase();
+      if (userId === 'EMP-B04-01') {
+        return {
+          userId,
+          organisationId: ORG,
+          role: 'CAFE_ADMIN',
+          accountStatus: 'ACTIVE',
+          assignedCafeIds: [CAFE],
+          primaryCafeId: CAFE,
+          isPrimaryMaster: false,
+        };
+      }
+      if (userId === 'EMP-B04-FOREIGN') {
+        return {
+          userId,
+          organisationId: ORG,
+          role: 'CAFE_ADMIN',
+          accountStatus: 'ACTIVE',
+          assignedCafeIds: ['ZC-REC04B-FOREIGN'],
+          primaryCafeId: 'ZC-REC04B-FOREIGN',
+          isPrimaryMaster: false,
+        };
+      }
+      return null;
+    },
+  }));
 
   // ─── SEQUENCE COUNTER ─────────────────────────────────────────────────────
   t.mock.method(SequenceCounter, 'generateId', async ({ prefix }) => {
@@ -112,12 +167,25 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
 
   // ─── MENU ITEM ────────────────────────────────────────────────────────────
   t.mock.method(MenuItem, 'find', () => ({
-    lean: async () => [{
-      menuItemId: 'MNU-B04-COFFEE',
-      name: 'Zamorin B04 Filter Coffee',
-      currentPricePaisa: 15000,
-      taxRatePercent: 5,
-    }],
+    lean: async () => {
+      if (behavior.catalogMode === 'THROW') {
+        throw new Error('Simulated catalog database outage');
+      }
+      if (behavior.catalogMode === 'MISSING') return [];
+
+      return [{
+        menuItemId: 'MNU-B04-COFFEE',
+        name: 'Zamorin B04 Filter Coffee',
+        currentPricePaisa: 15000,
+        taxRatePercent: 5,
+        taxClassification: 'GST_5',
+        status: behavior.catalogMode === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+        availableCafeIds:
+          behavior.catalogMode === 'FOREIGN_CAFE'
+            ? ['ZC-REC04B-FOREIGN']
+            : [],
+      }];
+    },
   }));
 
   // ─── REGISTER SESSION ─────────────────────────────────────────────────────
@@ -356,6 +424,94 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B00A-E: Server-authoritative catalog identity, price, tax and café scope
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B00A: Canonical catalog overrides client item name, price and tax', async () => {
+    behavior.catalogMode = 'ACTIVE';
+    const order = makeOrder({
+      lineItems: [makeLine({
+        name: 'Client Forged Name',
+        unitPricePaisa: 1,
+        taxRatePercent: 0,
+        taxClassification: 'GST_0',
+      })],
+    });
+
+    const result = await PosOrderService.processOrder(order, makeAuth(), 'SAVE');
+    assert.equal(result.success, true);
+
+    const line = result.bill.lineItems[0];
+    assert.equal(line.itemNameSnapshot, 'Zamorin B04 Filter Coffee');
+    assert.equal(line.unitPricePaisa, 15000);
+    assert.equal(line.taxRatePercent, 5);
+    assert.equal(line.taxClassification, 'GST_5');
+  });
+
+  await t.test('TC-B00B: Unknown menu item cannot fall back to client-supplied price', async () => {
+    behavior.catalogMode = 'MISSING';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 409);
+          assert.equal(err.code, 'POS_CATALOG_ITEM_NOT_FOUND');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
+
+  await t.test('TC-B00C: Inactive menu item cannot be financially committed', async () => {
+    behavior.catalogMode = 'INACTIVE';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 409);
+          assert.equal(err.code, 'POS_CATALOG_ITEM_UNAVAILABLE');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
+
+  await t.test('TC-B00D: Menu item restricted to another café cannot be sold locally', async () => {
+    behavior.catalogMode = 'FOREIGN_CAFE';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 409);
+          assert.equal(err.code, 'POS_CATALOG_ITEM_NOT_AVAILABLE_AT_CAFE');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
+
+  await t.test('TC-B00E: Catalog lookup failure fails closed instead of trusting client prices', async () => {
+    behavior.catalogMode = 'THROW';
+    try {
+      await assert.rejects(
+        () => PosOrderService.processOrder(makeOrder(), makeAuth(), 'SAVE'),
+        (err) => {
+          assert.equal(err.statusCode, 503);
+          assert.equal(err.code, 'POS_CATALOG_UNAVAILABLE');
+          return true;
+        }
+      );
+    } finally {
+      behavior.catalogMode = 'ACTIVE';
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // TC-B01: Process restart simulation — in-memory cache wiped, DB protects
   // ═══════════════════════════════════════════════════════════════════════════
   await t.test('TC-B01: Process restart replay returns original bill without second bill creation', async () => {
@@ -498,6 +654,49 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
     // Assert: status for B must be NOT_RECEIVED, NOT Customer A's bill!
     assert.equal(controllerResponse.status, 'NOT_RECEIVED');
     assert.notEqual(controllerResponse.billId, billAId, 'Must NEVER return prior customer bill');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B05A/B: Recovery scope is mandatory and café-isolated
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B05A: Unknown-outcome recovery fails closed when cafeId is omitted', async () => {
+    const auth = makeAuth();
+    await assert.rejects(
+      () => invokeController(getOrderStatusByIdempotency, {
+        params: { transactionId: K('IDEM-NO-CAFE') },
+        query: {},
+        auth,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'CAFE_ID_REQUIRED');
+        return true;
+      }
+    );
+  });
+
+  await t.test('TC-B05B: Unknown-outcome recovery denies a foreign-cafe caller even with a valid transaction identity', async () => {
+    const order = makeOrder();
+    const commitRes = await PosOrderService.processOrder(order, makeAuth(), 'SAVE_AND_PRINT');
+    assert.equal(commitRes.success, true);
+
+    const foreignAuth = makeAuth('CAFE_ADMIN', 'ZC-REC04B-FOREIGN');
+
+    await assert.rejects(
+      () => invokeController(getOrderStatusByIdempotency, {
+        params: { transactionId: order.idempotencyKey },
+        query: { cafeId: CAFE },
+        auth: foreignAuth,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.ok(
+          ['CROSS_CAFE_RESOURCE_DENIED', 'CAFE_ACCESS_DENIED'].includes(err.code),
+          `Unexpected cross-café denial code: ${err.code}`
+        );
+        return true;
+      }
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -658,5 +857,118 @@ test('REC-04B — Distributed Idempotency, Unknown-Outcome Recovery & Durable Re
     await getPendingReconciliations(req, res);
     assert.equal(controllerResponse.success, true);
     assert.ok(controllerResponse.count >= 1);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B13: Reconciliation list requires explicit café scope for Café Admin
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B13: Café Admin cannot list organisation-wide reconciliation jobs without cafeId', async () => {
+    await assert.rejects(
+      () => invokeController(getPendingReconciliations, {
+        query: {},
+        auth: makeAuth(),
+        params: {},
+        body: {},
+        headers: {},
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'CAFE_ID_REQUIRED');
+        return true;
+      }
+    );
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TC-B14: Retry governance rejects Owner, malformed MASTER and foreign Admin
+  // ═══════════════════════════════════════════════════════════════════════════
+  await t.test('TC-B14: Reconciliation retry is restricted to live assigned Café Admin or Primary Master', async () => {
+    const targetJob = mockReconJobs.find((job) =>
+      ['PENDING_RECONCILIATION', 'MANUAL_REVIEW_REQUIRED', 'RESOLVED'].includes(job.status)
+    );
+    assert.ok(targetJob, 'At least one reconciliation job must exist for governance testing');
+
+    await assert.rejects(
+      () => PosReconciliationService.retryJob(targetJob.jobId, {
+        userId: 'OW-B04-01',
+        organisationId: ORG,
+        role: 'OWNER',
+        assignedCafeIds: [CAFE],
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => PosReconciliationService.retryJob(targetJob.jobId, {
+        userId: 'MU-B04-MALFORMED',
+        organisationId: ORG,
+        role: 'MASTER',
+        isPrimaryMaster: false,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => PosReconciliationService.retryJob(targetJob.jobId, {
+        userId: 'EMP-B04-FOREIGN',
+        organisationId: ORG,
+        role: 'CAFE_ADMIN',
+        assignedCafeIds: ['ZC-REC04B-FOREIGN'],
+        primaryCafeId: 'ZC-REC04B-FOREIGN',
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CAFE_ACCESS_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(retryReconciliation, {
+        auth: {
+          userId: 'OW-B04-01',
+          organisationId: ORG,
+          role: 'OWNER',
+          assignedCafeIds: [CAFE],
+        },
+        params: { jobId: targetJob.jobId },
+        query: {},
+        body: {},
+        headers: {},
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(retryReconciliation, {
+        auth: {
+          userId: 'MU-B04-MALFORMED',
+          organisationId: ORG,
+          role: 'MASTER',
+          isPrimaryMaster: false,
+        },
+        params: { jobId: targetJob.jobId },
+        query: {},
+        body: {},
+        headers: {},
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
   });
 });

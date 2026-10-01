@@ -16,6 +16,50 @@ const PIN_LOCK_MINUTES = 15;
 const INACTIVITY_LOCK_MINUTES = 30;
 
 class OperatorSessionService {
+  async _assertPrimaryMasterActor({
+    organisationId,
+    actorUserId,
+    actorRole,
+    actorIsPrimaryMaster,
+    code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+    message = 'Primary Master authority is required for this action.',
+  }) {
+    if (String(actorRole || '').toUpperCase() !== 'MASTER') {
+      throw new ApiError(403, code, message);
+    }
+
+    if (actorIsPrimaryMaster === true) return true;
+    if (actorIsPrimaryMaster === false) {
+      throw new ApiError(403, code, message);
+    }
+
+    const orgId = String(organisationId || 'ZAMORIN').trim().toUpperCase();
+    const userId = String(actorUserId || '').trim().toUpperCase();
+    if (!userId) {
+      throw new ApiError(403, code, message);
+    }
+
+    const actor = await User.findOne({
+      organisationId: orgId,
+      userId,
+    })
+      .select('userId role isPrimaryMaster accountStatus')
+      .lean();
+
+    if (
+      !actor ||
+      actor.role !== 'MASTER' ||
+      actor.isPrimaryMaster !== true ||
+      actor.accountStatus === 'INACTIVE' ||
+      actor.accountStatus === 'SUSPENDED' ||
+      actor.accountStatus === 'DISABLED'
+    ) {
+      throw new ApiError(403, code, message);
+    }
+
+    return true;
+  }
+
   /**
    * Safe audit logging helper.
    */
@@ -70,8 +114,11 @@ class OperatorSessionService {
 
       User.find({
         organisationId: orgId,
-        role: { $in: ['CAFE_ADMIN', 'MASTER'] },
         accountStatus: 'ACTIVE',
+        $or: [
+          { role: 'CAFE_ADMIN' },
+          { role: 'MASTER', isPrimaryMaster: true },
+        ],
       })
         .select('userId name role primaryCafeId assignedCafeIds isPrimaryMaster')
         .sort({ name: 1 })
@@ -102,7 +149,7 @@ class OperatorSessionService {
   /**
    * Sets or resets the 6-digit Cafe Operations PIN for a cafe.
    */
-  async setCafePin({ organisationId, cafeId, actorUserId, actorRole, newPin, pin }) {
+  async setCafePin({ organisationId, cafeId, actorUserId, actorRole, actorIsPrimaryMaster, newPin, pin }) {
     const rawPin = newPin || pin;
     if (!rawPin || !/^\d{6}$/.test(String(rawPin))) {
       throw new ApiError(400, 'INVALID_CAFE_PIN', 'Cafe Operations PIN must be exactly 6 numeric digits.');
@@ -113,9 +160,14 @@ class OperatorSessionService {
       throw new ApiError(400, 'WEAK_PIN_REJECTED', 'Please choose a stronger, non-sequential 6-digit Café PIN.');
     }
 
-    if (actorRole !== 'MASTER') {
-      throw new ApiError(403, 'UNAUTHORIZED_CAFE_PIN_SETUP', 'Only Master Administrator can configure Cafe PIN.');
-    }
+    await this._assertPrimaryMasterActor({
+      organisationId,
+      actorUserId,
+      actorRole,
+      actorIsPrimaryMaster,
+      code: 'UNAUTHORIZED_CAFE_PIN_SETUP',
+      message: 'Only Primary Master can configure Café Operations PIN.',
+    });
 
     const cafe = await Cafe.findOne({
       organisationId: (organisationId || 'ZAMORIN').toUpperCase(),
@@ -172,7 +224,7 @@ class OperatorSessionService {
   /**
    * Sets or resets an Operator PIN for an eligible employee.
    */
-  async setOperatorPin({ organisationId, targetUserId, actorUserId, actorRole, newPin }) {
+  async setOperatorPin({ organisationId, targetUserId, actorUserId, actorRole, actorIsPrimaryMaster, newPin }) {
     if (!newPin || !/^\d{6}$/.test(String(newPin))) {
       throw new ApiError(400, 'INVALID_OPERATOR_PIN', 'Operator PIN must be exactly 6 numeric digits.');
     }
@@ -192,9 +244,21 @@ class OperatorSessionService {
       throw new ApiError(404, 'USER_NOT_FOUND', `User ${targetUserId} was not found.`);
     }
 
-    // Role check: Only MASTER or the user themselves can set their PIN
-    if (actorRole !== 'MASTER' && actorUserId !== targetUserId) {
-      throw new ApiError(403, 'UNAUTHORIZED_PIN_SETUP', 'Only Master or the user themselves can configure Operator PIN.');
+    if (String(actorRole || '').toUpperCase() === 'MASTER') {
+      await this._assertPrimaryMasterActor({
+        organisationId,
+        actorUserId,
+        actorRole,
+        actorIsPrimaryMaster,
+        code: 'UNAUTHORIZED_PIN_SETUP',
+        message: 'Only Primary Master or the user themselves can configure Operator PIN.',
+      });
+    } else if (String(actorUserId || '').toUpperCase() !== String(targetUserId || '').toUpperCase()) {
+      throw new ApiError(
+        403,
+        'UNAUTHORIZED_PIN_SETUP',
+        'Only Primary Master or the user themselves can configure Operator PIN.'
+      );
     }
 
     const pinHash = await this.hashPin(newPin);
@@ -248,8 +312,10 @@ class OperatorSessionService {
         throw new ApiError(401, 'INVALID_GATEWAY_CONTEXT', 'Cafe Operations access is unavailable or invalid.');
       }
 
-      // P0-01B: Expiration check (independent of MongoDB TTL monitor)
-      if (!gatewayContext.expiresAt || new Date(gatewayContext.expiresAt) <= new Date() || gatewayContext.status === 'EXPIRED') {
+      const now = new Date();
+
+      // Expiration is checked independently of MongoDB TTL cleanup.
+      if (!gatewayContext.expiresAt || new Date(gatewayContext.expiresAt) <= now || gatewayContext.status === 'EXPIRED') {
         throw new ApiError(401, 'GATEWAY_CONTEXT_EXPIRED', 'This access session has expired. Please start again.');
       }
 
@@ -261,43 +327,86 @@ class OperatorSessionService {
         throw new ApiError(403, 'GATEWAY_CONTEXT_INACTIVE', 'Cafe Operations access is currently unavailable.');
       }
 
-      // Check CafeAccess record & emergency lock
-      const { CafeAccess } = require('../models/CafeAccess');
-      const cafeAccessDoc = await CafeAccess.findOne({
-        organisationId: gatewayContext.organisationId,
-        cafeId: gatewayContext.cafeId,
-      });
-
-      if (!cafeAccessDoc || cafeAccessDoc.accessStatus === 'LOCKED' || cafeAccessDoc.accessStatus === 'DISABLED') {
-        throw new ApiError(403, 'CAFE_ACCESS_UNAVAILABLE', 'Café Operations access is currently unavailable.');
-      }
-
-      // Check parent cafe status
-      cafe = await Cafe.findOne({
-        organisationId: gatewayContext.organisationId,
-        cafeId: gatewayContext.cafeId,
-      });
-
-      if (!cafe || cafe.status === 'ARCHIVED' || cafe.status === 'CLOSED') {
-        throw new ApiError(403, 'CAFE_INACTIVE', 'Café Operations access is currently unavailable.');
-      }
-
-      // Authoritative derivation from server Gateway Context (P0-01)
+      // Authoritative derivation from the server-issued Gateway Context.
       orgId = gatewayContext.organisationId;
       targetCafeId = gatewayContext.cafeId;
       accessMethod = gatewayContext.accessMethod || 'GATEWAY';
 
-      // Security Invariant: Client-supplied cafeId is NEVER authoritative; if supplied, reject tampering
       if (cafeId && cafeId.trim().toUpperCase() !== targetCafeId) {
         throw new ApiError(403, 'CAFE_MISMATCH', 'Selected cafe does not match the active gateway context.');
       }
 
-      // Mark gateway context consumed
-      gatewayContext.consumed = true;
-      gatewayContext.status = 'CONSUMED';
-      gatewayContext.consumedAt = new Date();
-      gatewayContext.consumedByUserId = (effectiveOperatorUserId || '').toUpperCase();
-      await gatewayContext.save().catch(() => {});
+      // Atomically consume the one-time context using its expected current
+      // state. Only one concurrent request can transition ACTIVE -> CONSUMED.
+      const consumedAt = new Date();
+      const claimedGatewayContext = await CafeGatewayContext.findOneAndUpdate(
+        {
+          _id: gatewayContext._id,
+          gatewayContextId: cleanGatewayToken,
+          organisationId: gatewayContext.organisationId,
+          cafeId: gatewayContext.cafeId,
+          status: 'ACTIVE',
+          consumed: { $ne: true },
+          expiresAt: { $gt: consumedAt },
+        },
+        {
+          $set: {
+            consumed: true,
+            status: 'CONSUMED',
+            consumedAt,
+            consumedByUserId: (effectiveOperatorUserId || '').toUpperCase(),
+          },
+        },
+        { new: true }
+      );
+
+      if (!claimedGatewayContext) {
+        const latestGatewayContext = await CafeGatewayContext.findOne({
+          gatewayContextId: cleanGatewayToken,
+        }).lean();
+
+        if (
+          latestGatewayContext?.consumed === true ||
+          latestGatewayContext?.status === 'CONSUMED'
+        ) {
+          throw new ApiError(401, 'GATEWAY_CONTEXT_CONSUMED', 'This access context has already been used. Please scan or enter PIN again.');
+        }
+
+        if (
+          !latestGatewayContext?.expiresAt ||
+          new Date(latestGatewayContext.expiresAt) <= new Date() ||
+          latestGatewayContext?.status === 'EXPIRED'
+        ) {
+          throw new ApiError(401, 'GATEWAY_CONTEXT_EXPIRED', 'This access session has expired. Please start again.');
+        }
+
+        throw new ApiError(
+          409,
+          'GATEWAY_CONTEXT_STATE_CONFLICT',
+          'This access context changed while sign-in was being processed. Please scan or open the café link again.'
+        );
+      }
+
+      // Re-read café access state AFTER the atomic claim so a concurrent café
+      // closure or suspension cannot be bypassed by a stale pre-claim read.
+      const { CafeAccess } = require('../models/CafeAccess');
+      const cafeAccessDoc = await CafeAccess.findOne({
+        organisationId: claimedGatewayContext.organisationId,
+        cafeId: claimedGatewayContext.cafeId,
+      });
+
+      if (!cafeAccessDoc || cafeAccessDoc.accessStatus !== 'ACTIVE') {
+        throw new ApiError(403, 'CAFE_ACCESS_UNAVAILABLE', 'Café Operations access is currently unavailable.');
+      }
+
+      cafe = await Cafe.findOne({
+        organisationId: claimedGatewayContext.organisationId,
+        cafeId: claimedGatewayContext.cafeId,
+      });
+
+      if (!cafe || !['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
+        throw new ApiError(403, 'CAFE_INACTIVE', 'Café Operations access is currently unavailable.');
+      }
     } else {
       // Direct registered device sign-in
       const resolvedDeviceId = deviceId;
@@ -360,7 +469,7 @@ class OperatorSessionService {
         throw new ApiError(404, 'CAFE_NOT_FOUND', `Cafe ${targetCafeId} was not found.`);
       }
 
-      if (cafe.status !== 'ACTIVE') {
+      if (!['TEST_MODE', 'ACTIVE'].includes(cafe.status)) {
         throw new ApiError(403, 'CAFE_INACTIVE', `Cafe ${targetCafeId} is currently ${cafe.status}. Operations access is blocked.`);
       }
 
@@ -487,7 +596,15 @@ class OperatorSessionService {
       throw new ApiError(403, 'STAFF_ELEVATION_DENIED', 'Staff users cannot access Cafe Operations without explicit Operator authorization.');
     }
 
-    // Only CAFE_ADMIN and MASTER can operate
+    if (user.role === 'MASTER' && user.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER Café Operations access.'
+      );
+    }
+
+    // Only CAFE_ADMIN and the designated Primary Master can operate
     if (user.role !== 'CAFE_ADMIN' && user.role !== 'MASTER') {
       throw new ApiError(403, 'UNAUTHORIZED_ROLE', 'User does not possess Cafe Operations authority.');
     }
@@ -920,8 +1037,12 @@ class OperatorSessionService {
       userId: masterUserId.toUpperCase(),
     }).select('+passwordHash +mfaSecret');
 
-    if (!user || user.role !== 'MASTER') {
-      throw new ApiError(401, 'INVALID_MASTER_CREDENTIALS', 'Invalid Master credentials.');
+    if (!user || user.role !== 'MASTER' || user.isPrimaryMaster !== true) {
+      throw new ApiError(
+        401,
+        'INVALID_MASTER_CREDENTIALS',
+        'Invalid Primary Master credentials.'
+      );
     }
 
     if (user.accountStatus !== 'ACTIVE') {

@@ -19,7 +19,7 @@
  *  8. Staff-to-Staff IDOR (cross-user profile/payslip/preferences denied)
  *  9. Café Admin cross-café IDOR (foreign café bills/inventory denied)
  * 10. Cross-org IDOR (foreign organisation data strictly unreachable)
- * 11. Personal Ledger restriction (Master/Owner authority, normal Master denied)
+ * 11. Personal Ledger restriction (Primary Master/Owner authority; malformed non-primary MASTER denied)
  * 12. Expense approval restriction (Staff/Admin cannot approve, Master/Owner required)
  * 13. Expense paid/reversal restriction (strictly Master-only)
  * 14. POS foreign bill denial (cannot reprint/refund bill from another café)
@@ -56,7 +56,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const bcrypt = require('bcrypt');
 
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'a_very_secure_and_long_jwt_access_secret_32bytes_long!';
@@ -101,7 +101,6 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   const CAFE_B1 = 'ZC-2001';
 
   let primaryMasterUser;
-  let normalMasterUser;
   let ownerUser;
   let adminA1User;
   let adminA2User;
@@ -116,7 +115,7 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   let billA2Id;
 
   t.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri());
 
     cafeAccessCryptoService.verifySecretKeys();
@@ -202,18 +201,6 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
       primaryMasterDesignatedAt: new Date(),
       primaryMasterDesignatedBy: 'SYSTEM',
       primaryMasterDesignationReason: 'REC-11 Primary Master Bootstrap',
-      accountStatus: 'ACTIVE',
-      passwordHash,
-      createdBy: 'SYSTEM',
-    });
-
-    normalMasterUser = await User.create({
-      userId: 'MU-9002',
-      organisationId: ORG_A,
-      name: 'Normal Master Operator',
-      email: 'normal.master@zamorin.cafe',
-      role: 'MASTER',
-      isPrimaryMaster: false,
       accountStatus: 'ACTIVE',
       passwordHash,
       createdBy: 'SYSTEM',
@@ -357,9 +344,9 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   });
 
   // ===========================================================================
-  // 1. MASTER ALLOWED GOVERNANCE ACTION
+  // 1. PRIMARY MASTER ALLOWED GOVERNANCE ACTION
   // ===========================================================================
-  await t.test('1. Master Governance: Master has organisation-wide authority for café governance', async () => {
+  await t.test('1. Primary Master Governance: Primary Master has organisation-wide authority for café governance', async () => {
     // Master can view and verify all cafe access bindings across org
     const binding = await cafeService.verifyCafeAccessBinding({
       userId: primaryMasterUser.userId,
@@ -373,19 +360,66 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
     assert.equal(binding.targetCafeId, CAFE_A1);
   });
 
+  await t.test('1A. Malformed non-primary MASTER has zero café binding authority', async () => {
+    await assert.rejects(
+      () => cafeService.verifyCafeAccessBinding({
+        userId: 'MU-MALFORMED-BINDING',
+        role: 'MASTER',
+        organisationId: ORG_A,
+        assignedCafeIds: [CAFE_A1],
+        primaryCafeId: CAFE_A1,
+        targetCafeId: CAFE_A1,
+        isPrimaryMaster: false,
+      }),
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+  });
+
   // ===========================================================================
   // 2. OWNER DENIED POS MUTATION
   // ===========================================================================
   await t.test('2. Owner Denied POS Mutation: Owner cannot process POS transactions (strict read-only)', async () => {
     await assert.rejects(
       async () => {
-        // Owner context rejected at offline/review or operational level
+        // Owner context rejected at offline/review governance level.
         await OfflineSyncService.reviewItem({
           reviewId: 'REV-DUMMY-01',
           action: 'APPROVE_AND_FINALIZE',
           authContext: { role: 'OWNER', userId: ownerUser.userId, organisationId: ORG_A },
         });
       },
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    // Even an artificially over-scoped Owner token must not gain operational
+    // POS mutation authority merely because a café assignment is present.
+    await assert.rejects(
+      () => PosOrderService.processOrder({
+        cafeId: CAFE_A1,
+        orderType: 'QUICK_SALE',
+        paymentMethod: 'CASH',
+        idempotencyKey: 'IDEM-OWNER-MUTATION-DENIED-01',
+        lineItems: [{
+          menuItemId: 'MENU-101',
+          name: 'Malabar Cold Brew',
+          quantity: 1,
+          unitPricePaisa: 20000,
+        }],
+      }, {
+        role: 'OWNER',
+        userId: ownerUser.userId,
+        organisationId: ORG_A,
+        assignedCafeIds: [CAFE_A1],
+        primaryCafeId: CAFE_A1,
+      }),
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.equal(err.code, 'AUTHORIZATION_DENIED');
@@ -542,12 +576,12 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   // ===========================================================================
   // 11. PERSONAL LEDGER RESTRICTION (REC-11B AUTHORITATIVE RULE)
   // ===========================================================================
-  await t.test('11. Personal Ledger Authority: Primary Master & Owner ALLOWED; Normal Master, Café Admin & Staff DENIED', async () => {
+  await t.test('11. Personal Ledger Authority: Primary Master & Owner ALLOWED; Malformed MASTER, Café Admin & Staff DENIED', async () => {
     function authorizePersonalLedger(authCtx) {
       const { role, isPrimaryMaster } = authCtx || {};
       if (role === 'MASTER') {
         if (!isPrimaryMaster) {
-          throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'This action requires Primary Master authority. Normal Masters are denied access.');
+          throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'This action requires Primary Master authority. Malformed MASTERs are denied access.');
         }
         return 'PRIMARY_MASTER';
       }
@@ -565,9 +599,9 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
     const ownerAccess = authorizePersonalLedger({ role: 'OWNER', isPrimaryMaster: false, userId: ownerUser.userId });
     assert.equal(ownerAccess, 'OWNER');
 
-    // 3. Normal Master (role = MASTER, isPrimaryMaster = false) is DENIED (403)
+    // 3. Malformed MASTER (role = MASTER, isPrimaryMaster = false) is DENIED (403)
     assert.throws(
-      () => authorizePersonalLedger({ role: 'MASTER', isPrimaryMaster: false, userId: normalMasterUser.userId }),
+      () => authorizePersonalLedger({ role: 'MASTER', isPrimaryMaster: false, userId: 'MU-MALFORMED-9002' }),
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
@@ -595,7 +629,7 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
       }
     );
 
-    // 6. Execution-Time Role Change: Primary Master demoted to Normal Master -> DENIED
+    // 6. Execution-Time Role Change: Primary Master demoted to Malformed MASTER -> DENIED
     const stalePmCtx = { role: 'MASTER', isPrimaryMaster: false };
     assert.throws(
       () => authorizePersonalLedger(stalePmCtx),
@@ -647,11 +681,14 @@ test('REC-11: Final Cross-Role Regression, Multi-Tenant Security Boundary & Inte
   // 13. EXPENSE PAID/REVERSAL RESTRICTION
   // ===========================================================================
   await t.test('13. Expense Pay / Reversal: Strictly Master-only (Owner, Admin, Staff denied)', async () => {
-    const payAllowedRoles = ['MASTER'];
-    assert.equal(payAllowedRoles.includes(ownerUser.role), false);
-    assert.equal(payAllowedRoles.includes(adminA1User.role), false);
-    assert.equal(payAllowedRoles.includes(staffA1User.role), false);
-    assert.equal(payAllowedRoles.includes(normalMasterUser.role), true);
+    const canPayExpense = (authCtx) =>
+      authCtx?.role === 'MASTER' && authCtx?.isPrimaryMaster === true;
+
+    assert.equal(canPayExpense({ role: ownerUser.role, isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: adminA1User.role, isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: staffA1User.role, isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: 'MASTER', isPrimaryMaster: false }), false);
+    assert.equal(canPayExpense({ role: 'MASTER', isPrimaryMaster: true }), true);
   });
 
   // ===========================================================================

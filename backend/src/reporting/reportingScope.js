@@ -20,7 +20,6 @@ const { resolveEffectiveCafeScope } = require('../utils/cafeScope');
 /**
  * Canonical Role Authority Matrix for Zamorin Reporting:
  * - PRIMARY_MASTER: Organisation-wide portfolio authority across all reports including HIGHLY_CONFIDENTIAL.
- * - NORMAL_MASTER: Organisation-wide operational authority across standard reports; restricted from executive governance/passbook targets.
  * - OWNER: Bound strictly to assignedCafeIds portfolio; can view multiple assigned cafés.
  * - CAFE_ADMIN: Bound strictly to assignedCafeIds portfolio (supports multi-branch admins outside POS device binding); cross-café queries to unassigned cafés prohibited.
  * - STAFF: Zero general / enterprise report access; authorized solely for defined self-service personal reports.
@@ -32,14 +31,6 @@ const ROLE_AUTHORITY_MATRIX = {
     multiCafe: true,
     enterpriseReports: true,
     highlyConfidential: true,
-    selfServiceOnly: false,
-  },
-  NORMAL_MASTER: {
-    authorityType: 'NORMAL_MASTER',
-    scope: 'ORGANISATION_WIDE_OPERATIONAL',
-    multiCafe: true,
-    enterpriseReports: true,
-    highlyConfidential: false,
     selfServiceOnly: false,
   },
   OWNER: {
@@ -105,7 +96,6 @@ function resolveReportScope(req, queryParamsOrReportDef = {}, maybeReportDefinit
 
   const role = String(auth.role || '').toUpperCase();
   const isPrimaryMaster = Boolean(auth.isPrimaryMaster || (role === 'MASTER' && auth.userId === 'MU-0001'));
-  const isNormalMaster = role === 'MASTER' && !isPrimaryMaster;
   const isOwner = role === 'OWNER';
   const isCafeAdmin = role === 'CAFE_ADMIN';
   const isStaff = role === 'STAFF';
@@ -230,9 +220,9 @@ function resolveReportScope(req, queryParamsOrReportDef = {}, maybeReportDefinit
     };
   }
 
-  // Primary Master / Normal Master scoping
-  if (isPrimaryMaster || isNormalMaster) {
-    const authorityType = isPrimaryMaster ? 'PRIMARY_MASTER' : 'NORMAL_MASTER';
+  // Primary Master scoping
+  if (isPrimaryMaster) {
+    const authorityType = 'PRIMARY_MASTER';
     if (requestedCafeId) {
       return {
         organisationId,
@@ -252,6 +242,13 @@ function resolveReportScope(req, queryParamsOrReportDef = {}, maybeReportDefinit
       authorityType,
       role,
     };
+  }
+
+  if (role === 'MASTER') {
+    const err = new Error('Primary Master authority is required for MASTER report access.');
+    err.statusCode = 403;
+    err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
+    throw err;
   }
 
   // Fallback safe resolver using cafeScope.js

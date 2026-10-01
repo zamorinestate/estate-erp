@@ -25,6 +25,8 @@ const { CashTransaction } = require('../models/CashTransaction');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { IdempotencyRecord } = require('../models/IdempotencyRecord');
 const { PrintJob } = require('../models/PrintJob');
+const { OperatorSession } = require('../models/OperatorSession');
+const { DeviceRegistration } = require('../models/DeviceRegistration');
 const { BomDepletionService } = require('./bomDepletionService');
 const {
   allocateInvoiceNumber,
@@ -36,12 +38,23 @@ const {
 const { PosReconciliationService } = require('./posReconciliationService');
 const crypto = require('node:crypto');
 const { ApiError } = require('../utils/ApiError');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 const auditService = require('./auditService');
+const {
+  PRINT_ATTESTATION_VERSION,
+  ATTESTATION_ALGORITHM,
+  PRINT_ACK_CHALLENGE_TTL_MS,
+  createChallenge,
+  buildPrintAckPayload,
+  verifyPrintAckSignature,
+  publicKeyThumbprint,
+} = require('./deviceAttestationService');
 const {
   compileThermalReceipt,
   generateFallbackHtmlReceipt,
   buildDrawerKickBuffer,
 } = require('./hardwareBridgeService');
+const { createPrintDispatchAuthorization } = require('./printDispatchAuthorizationService');
 
 // In-memory idempotency cache (TTL: 60 minutes) — fast path read cache
 const IDEMPOTENCY_TTL_MS = 60 * 60 * 1000;
@@ -52,6 +65,14 @@ const idempotencyCache = new Map();
 // The authoritative correctness barrier across processes/instances lives in MongoDB:
 // unique indexes on IdempotencyRecord and Bill, plus atomic database state transitions.
 const activeIdempotencyLocks = new Map();
+
+function optionalPrintDispatchAuthorization(binding) {
+  try { return createPrintDispatchAuthorization(binding); }
+  catch (error) {
+    console.error('[POS Print] Server dispatch authorization unavailable:', error?.code || error?.message);
+    return null;
+  }
+}
 
 function cleanExpiredIdempotency() {
   const now = Date.now();
@@ -69,13 +90,93 @@ function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
+function formatAuthoritativeCafeAddress(address = {}, gstDetails = {}) {
+  const principalPlace = String(gstDetails?.principalPlace || '').trim();
+  if (principalPlace) return principalPlace;
+
+  const parts = [
+    address?.building,
+    address?.unit,
+    address?.floor,
+    address?.street,
+    address?.area,
+    address?.city,
+    address?.district,
+    address?.state,
+    address?.pinCode,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  return parts.join(', ');
+}
+
+function assertReceiptCafeIdentity(cafeInfo = {}, billData = {}) {
+  const brandName = String(cafeInfo.brandName || '').trim();
+  const legalName = String(cafeInfo.legalName || '').trim();
+  const address = String(cafeInfo.address || '').trim();
+  const gstin = String(cafeInfo.gstin || '').trim().toUpperCase();
+  const fssai = String(cafeInfo.fssai || '').trim();
+  const gstRegistered = cafeInfo.gstRegistered === true;
+  const fssaiApplicable = cafeInfo.fssaiApplicable !== false;
+  const hasTax =
+    Number(billData.taxPaisa || 0) !== 0 ||
+    Number(billData.cgstPaisa || 0) !== 0 ||
+    Number(billData.sgstPaisa || 0) !== 0 ||
+    Number(billData.igstPaisa || 0) !== 0;
+
+  const missing = [];
+  if (!brandName) missing.push('brandName');
+  if (!legalName) missing.push('legalName');
+  if (!address) missing.push('address');
+  if ((gstRegistered || hasTax) && !/^[0-9A-Z]{15}$/.test(gstin)) missing.push('gstin');
+  if (fssaiApplicable && !/^\d{14}$/.test(fssai)) missing.push('fssai');
+
+  if (missing.length > 0) {
+    throw new ApiError(
+      409,
+      'POS_RECEIPT_LEGAL_IDENTITY_INCOMPLETE',
+      `Receipt generation is blocked because authoritative café identity is incomplete: ${missing.join(', ')}.`,
+      { missingFields: missing }
+    );
+  }
+
+  return {
+    brandName,
+    legalName,
+    address,
+    gstin: gstin || '',
+    fssai: fssai || '',
+    phone: String(cafeInfo.phone || '').trim(),
+  };
+}
+
 function assertCafeAccess(authContext = {}, cafeId) {
   const normCafeId = normalizeId(cafeId);
   if (!normCafeId) return;
-  if (authContext.role === 'MASTER' || authContext.role === 'OWNER') return;
+
+  const role = normalizeId(authContext.role);
+  if (role === 'OWNER') {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Owner role is read-only for POS and cannot execute operational POS actions.'
+    );
+  }
+
+  if (role === 'MASTER') {
+    if (authContext.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER POS access.'
+    );
+  }
+
   const assigned = Array.isArray(authContext.assignedCafeIds)
     ? authContext.assignedCafeIds.map(normalizeId)
     : authContext.primaryCafeId ? [normalizeId(authContext.primaryCafeId)] : [];
+
   if (!assigned.includes(normCafeId)) {
     throw new ApiError(
       403,
@@ -84,6 +185,144 @@ function assertCafeAccess(authContext = {}, cafeId) {
     );
   }
 }
+
+function requireOrganisationId(authContext = {}) {
+  const organisationId = normalizeId(authContext.organisationId);
+  if (!organisationId) {
+    throw new ApiError(
+      401,
+      'ORGANISATION_CONTEXT_REQUIRED',
+      'Authenticated organisation context is required for POS transactions.'
+    );
+  }
+  return organisationId;
+}
+
+function createPrintJobId(jobType = 'RECEIPT') {
+  const normalizedType = normalizeId(jobType);
+  const tag = normalizedType === 'REPRINT' ? 'REP' : 'PRT';
+  return `PJ-${tag}-${crypto.randomUUID().toUpperCase()}`;
+}
+
+function resolveDispatchDeviceId(authContext = {}, cafeId) {
+  const device = authContext.deviceContext || {};
+  const deviceId = normalizeId(device.deviceId);
+  const boundCafeId = normalizeId(device.boundCafeId);
+  const targetCafeId = normalizeId(cafeId);
+
+  if (
+    deviceId &&
+    deviceId !== 'UNKNOWN_PERSONAL_DEVICE' &&
+    normalizeId(device.deviceClass) === 'CAFE_OWNED' &&
+    normalizeId(device.status) === 'ACTIVE' &&
+    boundCafeId &&
+    boundCafeId === targetCafeId
+  ) {
+    return deviceId;
+  }
+
+  return null;
+}
+
+function hasCashTender(billData = {}) {
+  return normalizeId(billData.paymentMethod) === 'CASH' ||
+    (Array.isArray(billData.tenders) && billData.tenders.some((t) => normalizeId(t.paymentMethod) === 'CASH'));
+}
+
+async function resolveAttestationBinding(authContext = {}, cafeId) {
+  const deviceId = resolveDispatchDeviceId(authContext, cafeId);
+  if (!deviceId) {
+    return {
+      required: false,
+      supported: false,
+      platform: null,
+      unavailableReason: 'DEVICE_NOT_BOUND',
+      challenge: null,
+      challengeIssuedAt: null,
+      challengeExpiresAt: null,
+      challengeIssuedAtEpochMs: null,
+      challengeExpiresAtEpochMs: null,
+      keyThumbprint: null,
+      keyProvider: null,
+      keyHardwareBackedVerified: false,
+      keyHardwareSecurityLevel: 'UNKNOWN',
+      algorithm: null,
+    };
+  }
+
+  const registration = await DeviceRegistration.findOne({
+    deviceId,
+    organisationId: requireOrganisationId(authContext),
+    assignedCafeId: normalizeId(cafeId),
+    status: 'ACTIVE',
+  }).lean();
+
+  const platform = normalizeId(registration?.platform || 'UNKNOWN');
+  const supported = platform === 'ANDROID';
+  const signingProvider = normalizeId(registration?.signingKeyProvider || 'UNKNOWN');
+  const signingCapable = Boolean(
+    supported &&
+    signingProvider === 'ANDROID_KEYSTORE' &&
+    registration?.publicSigningKey &&
+    normalizeId(registration.signingKeyAlgorithm) === ATTESTATION_ALGORITHM
+  );
+
+  if (!signingCapable) {
+    return {
+      required: false,
+      supported,
+      platform,
+      unavailableReason: supported
+        ? (
+            signingProvider !== 'ANDROID_KEYSTORE'
+              ? 'DEVICE_SIGNING_PROVIDER_UNTRUSTED'
+              : 'DEVICE_SIGNING_KEY_UNAVAILABLE'
+          )
+        : 'PLATFORM_PRINT_ATTESTOR_UNAVAILABLE',
+      challenge: null,
+      challengeIssuedAt: null,
+      challengeExpiresAt: null,
+      challengeIssuedAtEpochMs: null,
+      challengeExpiresAtEpochMs: null,
+      keyThumbprint: null,
+      keyProvider: null,
+      keyHardwareBackedVerified: false,
+      keyHardwareSecurityLevel: 'UNKNOWN',
+      algorithm: null,
+    };
+  }
+
+  const challengeIssuedAt = new Date();
+  const challengeExpiresAt = new Date(challengeIssuedAt.getTime() + PRINT_ACK_CHALLENGE_TTL_MS);
+
+  return {
+    required: true,
+    supported: true,
+    platform,
+    unavailableReason: null,
+    challenge: createChallenge(),
+    challengeIssuedAt,
+    challengeExpiresAt,
+    challengeIssuedAtEpochMs: challengeIssuedAt.getTime(),
+    challengeExpiresAtEpochMs: challengeExpiresAt.getTime(),
+    keyThumbprint:
+      registration.signingKeyThumbprint ||
+      publicKeyThumbprint(registration.publicSigningKey),
+    keyProvider: signingProvider,
+    keyHardwareBackedVerified: registration.signingKeyHardwareBackedVerified === true,
+    keyHardwareSecurityLevel: normalizeId(registration.signingKeyHardwareSecurityLevel || 'UNKNOWN'),
+    algorithm: ATTESTATION_ALGORITHM,
+  };
+}
+
+const SETTLEMENT_TENDER_METHODS = new Set([
+  'CASH',
+  'UPI',
+  'CARD',
+  'CREDIT',
+  'COMPLIMENTARY',
+  'STAFF_MEAL',
+]);
 
 function computeRequestFingerprint(orderPayload = {}) {
   const normItems = (orderPayload.lineItems || []).map((li) => ({
@@ -375,7 +614,8 @@ class PosOrderService {
     }
 
     const cafeId = normalizeId(orderPayload.cafeId);
-    const orgId = normalizeId(authContext.organisationId || 'ORG-ZAMORIN');
+    const orgId = requireOrganisationId(authContext);
+    assertCafeAccess(authContext, cafeId);
     const idempotencyKey = String(orderPayload.idempotencyKey || options.idempotencyKey || '').trim();
 
     const saleAttemptId = String(
@@ -612,7 +852,8 @@ class PosOrderService {
     this.validateOrderPayload(orderPayload);
 
     const cafeId = normalizeId(orderPayload.cafeId);
-    const orgId = normalizeId(authContext.organisationId || 'ORG-ZAMORIN');
+    const orgId = requireOrganisationId(authContext);
+    assertCafeAccess(authContext, cafeId);
     let cutoffHour = 4;
 
     // REC-13: Validate café operational status before financial commit
@@ -646,40 +887,108 @@ class PosOrderService {
       );
     }
 
-    // 2. Resolve line item prices if not supplied in payload
-    const itemIds = (orderPayload.lineItems || []).map((li) => normalizeId(li.menuItemId)).filter(Boolean);
-    let itemMap = {};
-    if (itemIds.length > 0) {
-      try {
-        const foundItems = await MenuItem.find({
-          organisationId: orgId,
-          menuItemId: { $in: itemIds },
-        });
-        const itemsList = foundItems && typeof foundItems.lean === 'function' ? await foundItems.lean() : foundItems;
-        if (Array.isArray(itemsList)) {
-          for (const it of itemsList) {
-            itemMap[it.menuItemId] = it;
-          }
-        }
-      } catch {
-        // Fallback to payload prices
+    // 2. Resolve every financial line item from the canonical server catalog.
+    // Client-supplied price, tax, item name or catalog existence is never an
+    // authoritative input for a committed POS sale.
+    const itemIds = (orderPayload.lineItems || [])
+      .map((li) => normalizeId(li.menuItemId))
+      .filter(Boolean);
+
+    if (itemIds.length !== (orderPayload.lineItems || []).length) {
+      throw new ApiError(
+        400,
+        'POS_CATALOG_ITEM_ID_REQUIRED',
+        'Every committed POS line item must reference a canonical menuItemId.'
+      );
+    }
+
+    let itemsList;
+    try {
+      const foundItems = await MenuItem.find({
+        organisationId: orgId,
+        menuItemId: { $in: [...new Set(itemIds)] },
+      });
+      itemsList = foundItems && typeof foundItems.lean === 'function'
+        ? await foundItems.lean()
+        : foundItems;
+    } catch (catalogError) {
+      throw new ApiError(
+        503,
+        'POS_CATALOG_UNAVAILABLE',
+        'The canonical POS catalog could not be verified. The sale was not committed.'
+      );
+    }
+
+    const itemMap = {};
+    if (Array.isArray(itemsList)) {
+      for (const item of itemsList) {
+        const id = normalizeId(item?.menuItemId);
+        if (id) itemMap[id] = item;
       }
     }
 
-    // Enrich line items with catalog metadata if available
-    // REC-13: Server Catalog Pricing Authority — client IndexedDB prices cannot override catalog
+    // REC-13 / REC-04B: Server Catalog Financial Authority.
     const enrichedItems = orderPayload.lineItems.map((li) => {
-      const catalogItem = itemMap[normalizeId(li.menuItemId)];
-      const authoritativeUnitPrice = (catalogItem && catalogItem.currentPricePaisa != null)
-        ? catalogItem.currentPricePaisa
-        : (li.unitPricePaisa ?? li.pricePaisa ?? (li.price != null ? li.price * 100 : 0));
+      const menuItemId = normalizeId(li.menuItemId);
+      const catalogItem = itemMap[menuItemId];
+
+      if (!catalogItem) {
+        throw new ApiError(
+          409,
+          'POS_CATALOG_ITEM_NOT_FOUND',
+          `Menu item ${menuItemId} does not exist in the canonical organisation catalog.`
+        );
+      }
+
+      const lifecycleStatus = normalizeId(catalogItem.status || 'ACTIVE');
+      if (lifecycleStatus !== 'ACTIVE') {
+        throw new ApiError(
+          409,
+          'POS_CATALOG_ITEM_UNAVAILABLE',
+          `Menu item ${menuItemId} is not active for POS sale.`
+        );
+      }
+
+      const availableCafeIds = Array.isArray(catalogItem.availableCafeIds)
+        ? catalogItem.availableCafeIds.filter(Boolean).map(normalizeId)
+        : [];
+      if (availableCafeIds.length > 0 && !availableCafeIds.includes(cafeId)) {
+        throw new ApiError(
+          409,
+          'POS_CATALOG_ITEM_NOT_AVAILABLE_AT_CAFE',
+          `Menu item ${menuItemId} is not available at café ${cafeId}.`
+        );
+      }
+
+      const authoritativeUnitPrice = Number(catalogItem.currentPricePaisa);
+      if (!Number.isInteger(authoritativeUnitPrice) || authoritativeUnitPrice < 0) {
+        throw new ApiError(
+          503,
+          'POS_CATALOG_PRICE_INVALID',
+          `Menu item ${menuItemId} does not have a valid canonical price.`
+        );
+      }
+
+      const authoritativeTaxRate =
+        Number.isFinite(Number(catalogItem.taxRatePercent))
+          ? Number(catalogItem.taxRatePercent)
+          : 5;
+
+      const explicitTaxClassification = normalizeId(catalogItem.taxClassification || '');
+      const taxClassification =
+        ['GST_5', 'GST_12', 'GST_18', 'GST_28', 'EXEMPT', 'NIL'].includes(explicitTaxClassification)
+          ? explicitTaxClassification
+          : ([5, 12, 18, 28].includes(authoritativeTaxRate)
+              ? `GST_${authoritativeTaxRate}`
+              : (authoritativeTaxRate === 0 ? 'NIL' : 'GST_5'));
 
       return {
         ...li,
-        itemNameSnapshot: li.itemNameSnapshot || li.name || catalogItem?.name || 'Item',
+        menuItemId,
+        itemNameSnapshot: catalogItem.name || catalogItem.receiptName || catalogItem.posShortName || menuItemId,
         unitPricePaisa: authoritativeUnitPrice,
-        taxRatePercent: li.taxRatePercent ?? catalogItem?.taxRatePercent ?? 5,
-        taxClassification: li.taxClassification || catalogItem?.taxClassification || 'GST_5',
+        taxRatePercent: authoritativeTaxRate,
+        taxClassification,
       };
     });
 
@@ -701,9 +1010,12 @@ class PosOrderService {
         prefix: `BILL-${datePart}`,
         minimumDigits: 4,
       });
-    } catch {
-      const randSuffix = Math.floor(1000 + Math.random() * 9000);
-      billId = `BILL-${datePart}-${randSuffix}`;
+    } catch (sequenceError) {
+      throw new ApiError(
+        503,
+        'POS_SEQUENCE_UNAVAILABLE',
+        'Unable to allocate a canonical POS bill number. The sale was not committed.'
+      );
     }
 
     try {
@@ -715,22 +1027,25 @@ class PosOrderService {
         seriesPrefix: 'P',
       });
       invoiceNumber = invoiceAlloc.invoiceNumber;
-    } catch {
-      const compactBranch = cafeId.replace(/[^A-Za-z0-9]/g, '').slice(-4).padStart(2, '0');
-      const seqTail = billId.split('-').pop();
-      invoiceNumber = `P/${compactBranch}/2627/${seqTail}`.slice(0, 16);
+    } catch (invoiceError) {
+      throw new ApiError(
+        503,
+        'POS_INVOICE_SEQUENCE_UNAVAILABLE',
+        'Unable to allocate the canonical tax invoice number. The sale was not committed.'
+      );
     }
 
-    // 5. Build Tenders & Payment Status
-    const paymentMethod = normalizeId(orderPayload.paymentMethod || 'CASH') || 'CASH';
+    // 5. Canonical settlement: every financial side effect derives from the same
+    // validated tender allocation persisted on the Bill.
+    const requestedPaymentMethod = normalizeId(orderPayload.paymentMethod || 'CASH') || 'CASH';
     const isImmediateCompletion = orderPayload.isImmediateCompletion !== false;
     const initialStatus = isImmediateCompletion ? 'COMPLETED' : 'OPEN';
     const paymentStatus = isImmediateCompletion ? 'PAID' : 'UNPAID';
 
     const tenders = Array.isArray(orderPayload.tenders) && orderPayload.tenders.length > 0
       ? orderPayload.tenders.map((t) => ({
-          paymentMethod: normalizeId(t.paymentMethod || paymentMethod),
-          amountPaisa: Math.max(0, Math.round(Number(t.amountPaisa || 0))),
+          paymentMethod: normalizeId(t.paymentMethod || requestedPaymentMethod),
+          amountPaisa: Math.round(Number(t.amountPaisa || 0)),
           status: 'COMPLETED',
           provider: t.provider || '',
           paymentReference: t.paymentReference || '',
@@ -741,7 +1056,7 @@ class PosOrderService {
       : isImmediateCompletion
         ? [
             {
-              paymentMethod,
+              paymentMethod: requestedPaymentMethod,
               amountPaisa: totals.totalPaisa,
               status: 'COMPLETED',
               provider: orderPayload.provider || '',
@@ -751,6 +1066,74 @@ class PosOrderService {
             },
           ]
         : [];
+
+    if (isImmediateCompletion) {
+      if (tenders.length === 0) {
+        throw new ApiError(400, 'PAYMENT_TENDER_REQUIRED', 'A completed sale requires at least one payment tender.');
+      }
+      for (const tender of tenders) {
+        if (!SETTLEMENT_TENDER_METHODS.has(tender.paymentMethod)) {
+          throw new ApiError(
+            400,
+            'INVALID_TENDER_PAYMENT_METHOD',
+            `Tender payment method ${tender.paymentMethod || 'UNKNOWN'} is not a settlement method.`
+          );
+        }
+        if (!Number.isInteger(tender.amountPaisa) || tender.amountPaisa <= 0) {
+          throw new ApiError(400, 'INVALID_TENDER_AMOUNT', 'Each completed payment tender must have a positive integer amountPaisa.');
+        }
+      }
+      const tenderTotalPaisa = tenders.reduce((sum, tender) => sum + tender.amountPaisa, 0);
+      if (tenderTotalPaisa !== totals.totalPaisa) {
+        throw new ApiError(
+          409,
+          'PAYMENT_SETTLEMENT_MISMATCH',
+          `Tender total ${tenderTotalPaisa} does not equal bill total ${totals.totalPaisa} paisa.`
+        );
+      }
+    }
+
+    const distinctTenderMethods = [...new Set(tenders.map((t) => t.paymentMethod))];
+    const paymentMethod = isImmediateCompletion
+      ? (distinctTenderMethods.length > 1 ? 'MIXED' : (distinctTenderMethods[0] || requestedPaymentMethod))
+      : requestedPaymentMethod;
+    const cashPaidPaisa = tenders
+      .filter((t) => t.paymentMethod === 'CASH')
+      .reduce((sum, t) => sum + t.amountPaisa, 0);
+    const upiPaidPaisa = tenders
+      .filter((t) => t.paymentMethod === 'UPI')
+      .reduce((sum, t) => sum + t.amountPaisa, 0);
+    const cardPaidPaisa = tenders
+      .filter((t) => t.paymentMethod === 'CARD')
+      .reduce((sum, t) => sum + t.amountPaisa, 0);
+    const isTraining = Boolean(orderPayload.isTraining || options.isTraining);
+    const registerSessionId = normalizeId(orderPayload.registerSessionId || '');
+    const registerId = normalizeId(orderPayload.registerId || '');
+
+    if (registerSessionId && !registerId) {
+      throw new ApiError(
+        400,
+        'REGISTER_ID_REQUIRED',
+        'registerId is required whenever registerSessionId is supplied.'
+      );
+    }
+
+    if (!isTraining && registerSessionId) {
+      const scopedSession = await RegisterSession.findOne({
+        registerSessionId,
+        organisationId: orgId,
+        cafeId,
+        registerId,
+        status: 'OPEN',
+      });
+      if (!scopedSession) {
+        throw new ApiError(
+          409,
+          'REGISTER_SESSION_SCOPE_MISMATCH',
+          'The supplied register session is not open in the authenticated organisation/café/register scope.'
+        );
+      }
+    }
 
     const idempotencyKey = String(orderPayload.idempotencyKey || options.idempotencyKey || '').trim();
 
@@ -769,8 +1152,8 @@ class PosOrderService {
       customerPhone: String(orderPayload.customerPhone || '').trim(),
       b2bCustomerGstin: normalizeId(orderPayload.b2bCustomerGstin || ''),
       b2bCustomerLegalName: String(orderPayload.b2bCustomerLegalName || '').trim(),
-      registerId: orderPayload.registerId || 'REG-01',
-      registerSessionId: orderPayload.registerSessionId || '',
+      registerId,
+      registerSessionId,
       financialYear: orderPayload.financialYear || '2026-2027',
       lineItems: totals.lineItems,
       subtotalPaisa: totals.subtotalPaisa,
@@ -790,11 +1173,14 @@ class PosOrderService {
       tenders,
       reprints: [],
       refunds: [],
-      isTraining: Boolean(orderPayload.isTraining || options.isTraining),
+      isTraining,
       printStatus: action === 'SAVE_AND_PRINT' ? 'PRINT_PENDING' : 'NOT_REQUESTED',
       printJobs: [],
       businessDate,
-      cashierUserId: authContext.userId || 'CASHIER-01',
+      cashierUserId:
+        options.originatingCashierUserId ||
+        authContext.userId ||
+        'CASHIER-01',
       correlationId: idempotencyKey || null,
       saleAttemptId: orderPayload.saleAttemptId || null,
       isOfflineReplay: Boolean(orderPayload.isOfflineReplay || options.isOfflineReplay),
@@ -848,19 +1234,55 @@ class PosOrderService {
           userId: authContext.userId || 'CASHIER-01',
           businessDate,
         });
-        // Mark successful depletion on bill
-        const deplStatus = bomResult?.alreadyDepleted ? 'ALREADY_DEPLETED' : 'DEPLETED';
-        try {
-          billDoc.bomDepletionStatus = deplStatus;
-          await billDoc.save();
-        } catch { /* non-fatal */ }
+        // BomDepletionService owns the durable bill depletion state.
+        // Reflect it on the in-memory response object without issuing a stale
+        // second save that could overwrite the transactional claim/finalization.
+        if (bomResult?.noInventoryRequirements) {
+          billDoc.bomDepletionStatus = 'NOT_ATTEMPTED';
+        } else if (bomResult?.alreadyDepleted) {
+          // Preserve the idempotent guard outcome distinctly from a depletion
+          // performed by this request. This makes replay/reconciliation state
+          // observable without implying that stock moved twice.
+          billDoc.bomDepletionStatus = 'ALREADY_DEPLETED';
+        } else if (bomResult?.allDeductionsSucceeded === true) {
+          billDoc.bomDepletionStatus = 'DEPLETED';
+        } else {
+          throw new ApiError(
+            409,
+            'BOM_DEPLETION_INCOMPLETE',
+            'Inventory depletion did not complete for every required ingredient.'
+          );
+        }
+        billDoc.bomDepletionError = null;
       } catch (invErr) {
         console.warn('[POS] BOM depletion failed for bill', billId, invErr?.message);
+        const depletionError = String(invErr?.code || invErr?.message || 'UNKNOWN').slice(0, 250);
+        billDoc.bomDepletionStatus = 'FAILED';
+        billDoc.bomDepletionError = depletionError;
+
         try {
-          billDoc.bomDepletionStatus = 'FAILED';
-          billDoc.bomDepletionError = String(invErr?.message || 'UNKNOWN').slice(0, 250);
-          await billDoc.save();
-        } catch { /* non-fatal */ }
+          await Bill.findOneAndUpdate(
+            {
+              organisationId: orgId,
+              cafeId,
+              billId,
+              bomDepletionStatus: { $in: ['NOT_ATTEMPTED', 'PROCESSING', 'FAILED'] },
+            },
+            {
+              $set: {
+                bomDepletionStatus: 'FAILED',
+                bomDepletionError: depletionError,
+              },
+            },
+            { new: true }
+          );
+        } catch (stateErr) {
+          console.error(
+            '[POS] Failed to persist BOM failure state for bill',
+            billId,
+            stateErr?.message
+          );
+        }
 
         try {
           await PosReconciliationService.recordReconciliationFailure({
@@ -878,44 +1300,98 @@ class PosOrderService {
         }
       }
     } else {
-      billDoc.bomDepletionStatus = 'TRAINING_MODE_SKIPPED';
-      await billDoc.save().catch(() => {});
+      // Training transactions never mutate real inventory. Keep the canonical
+      // bill state as NOT_ATTEMPTED instead of introducing a non-schema status.
+      billDoc.bomDepletionStatus = 'NOT_ATTEMPTED';
     }
 
     // 7. Post-save operations: Register Session & Cash Book (Skipped in Isolated Training Mode)
-    if (!billDoc.isTraining && orderPayload.registerSessionId) {
+    if (!billDoc.isTraining && registerSessionId) {
       try {
-        const session = await RegisterSession.findOne({
-          registerSessionId: orderPayload.registerSessionId,
-          status: 'OPEN',
-        });
-        if (session) {
-          session.orderCount = (session.orderCount || 0) + 1;
-          session.totalSalesPaisa = (session.totalSalesPaisa || 0) + totals.totalPaisa;
-          if (paymentMethod === 'CASH') {
-            session.totalCashSalesPaisa = (session.totalCashSalesPaisa || 0) + totals.totalPaisa;
-            session.cashEvents = session.cashEvents || [];
-            session.cashEvents.push({
+        const registerUpdate = {
+          $inc: {
+            orderCount: 1,
+            totalSalesPaisa: totals.totalPaisa,
+            totalCashSalesPaisa: cashPaidPaisa,
+            totalUpiSalesPaisa: upiPaidPaisa,
+            totalCardSalesPaisa: cardPaidPaisa,
+          },
+          $addToSet: { settledBillIds: billId },
+        };
+        if (cashPaidPaisa > 0) {
+          registerUpdate.$push = {
+            cashEvents: {
               eventType: 'CASH_SALE',
-              amountPaisa: totals.totalPaisa,
+              amountPaisa: cashPaidPaisa,
               reason: `Bill ${billId}`,
               actorId: authContext.userId,
               reference: billId,
               timestamp: new Date(),
-            });
-          } else if (paymentMethod === 'UPI') {
-            session.totalUpiSalesPaisa = (session.totalUpiSalesPaisa || 0) + totals.totalPaisa;
-          } else if (paymentMethod === 'CARD') {
-            session.totalCardSalesPaisa = (session.totalCardSalesPaisa || 0) + totals.totalPaisa;
+            },
+          };
+        }
+
+        const updatedSession = await RegisterSession.findOneAndUpdate(
+          {
+            registerSessionId,
+            organisationId: orgId,
+            cafeId,
+            registerId,
+            status: 'OPEN',
+            settledBillIds: { $ne: billId },
+          },
+          registerUpdate,
+          { new: true }
+        );
+
+        if (!updatedSession) {
+          const alreadySettled = await RegisterSession.findOne({
+            registerSessionId,
+            organisationId: orgId,
+            cafeId,
+            registerId,
+            status: 'OPEN',
+            settledBillIds: billId,
+          });
+          if (!alreadySettled) {
+            throw new ApiError(
+              409,
+              'REGISTER_SESSION_SETTLEMENT_CONFLICT',
+              'The committed bill could not be applied to its scoped register session.'
+            );
           }
-          await session.save();
         }
       } catch (err) {
         console.error('Failed to update register session for bill', billId, err);
+        try {
+          await PosReconciliationService.recordReconciliationFailure({
+            organisationId: orgId,
+            cafeId,
+            billId,
+            invoiceNumber,
+            effectType: 'REGISTER_SESSION',
+            error: err,
+            expectedAmount: totals.totalPaisa,
+            payloadSnapshot: {
+              registerSessionId,
+              registerId,
+              totalSalesPaisa: totals.totalPaisa,
+              cashPaidPaisa,
+              upiPaidPaisa,
+              cardPaidPaisa,
+              cashierUserId:
+                options.originatingCashierUserId ||
+                authContext.userId,
+              businessDate,
+            },
+          });
+        } catch (recErr) {
+          console.error('[POS] Failed to record Register Session reconciliation job for bill', billId, recErr?.message);
+        }
       }
     }
 
-    if (isImmediateCompletion && paymentMethod === 'CASH') {
+    if (isImmediateCompletion && cashPaidPaisa > 0) {
       try {
         const ctSeqId = await SequenceCounter.generateId({
           organisationId: orgId,
@@ -932,7 +1408,7 @@ class PosOrderService {
           transactionType: 'CASH_IN',
           direction: 'IN',
           category: 'POS_SALE',
-          amount: Math.max(0.01, totals.totalPaisa / 100),
+          amount: cashPaidPaisa / 100,
           paymentMethod: 'CASH',
           status: 'POSTED',
           description: `POS Sale Receipt #${invoiceNumber}`,
@@ -954,12 +1430,14 @@ class PosOrderService {
             invoiceNumber,
             effectType: 'CASH_LEDGER',
             error: err,
-            expectedAmount: Math.max(0.01, totals.totalPaisa / 100),
+            expectedAmount: cashPaidPaisa / 100,
             payloadSnapshot: {
-              amount: Math.max(0.01, totals.totalPaisa / 100),
+              amount: cashPaidPaisa / 100,
               invoiceNumber,
               businessDate,
-              cashierUserId: authContext.userId,
+              cashierUserId:
+                options.originatingCashierUserId ||
+                authContext.userId,
             },
           });
         } catch (recErr) {
@@ -1013,13 +1491,23 @@ class PosOrderService {
 
     // 10. If action is SAVE_AND_PRINT: compile receipt and handle printer failure safely
     // Safe Printer Failure Resilience: DB commit is NEVER rolled back if printer fails!
-    const printJobId = `PJ-${datePart}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const printJobId = createPrintJobId('RECEIPT');
     try {
       if (options.simulatePrinterFailure) {
         throw new Error('Simulated printer hardware timeout / disconnect.');
       }
 
-      const printResult = await this.generatePrintArtifacts(savedBillData, options);
+      const printResult = await this.generatePrintArtifacts(savedBillData, {
+        ...options,
+        allowDrawerKick: true,
+      });
+      const dispatchedDeviceId = resolveDispatchDeviceId(authContext, cafeId);
+      const attestationBinding = await resolveAttestationBinding(authContext, cafeId);
+      const drawerKickRequested = printResult.drawerKickIncluded === true;
+
+      let printTrackingPersisted = false;
+      let billPrintStatePersisted = false;
+      const printTrackingWarnings = [];
 
       try {
         const pj = new PrintJob({
@@ -1029,36 +1517,134 @@ class PosOrderService {
           billId,
           invoiceNumber,
           jobType: 'RECEIPT',
-          status: 'PRINTED',
+          status: 'DISPATCHED',
           requestedBy: authContext.userId || 'CASHIER',
-          completedAt: new Date(),
+          dispatchedDeviceId,
+          ackChallenge: attestationBinding.challenge,
+          ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+          ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
+          attestationVersion: PRINT_ATTESTATION_VERSION,
+          payloadSha256: printResult.payloadSha256,
+          payloadBytes: printResult.payloadBytes,
+          printerTarget: 'DEFAULT_THERMAL',
+          attestationRequired: attestationBinding.required,
+          attestationKeyThumbprint: attestationBinding.keyThumbprint,
+          attestationKeyProvider: attestationBinding.keyProvider,
+          attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+          attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
+          drawerKickRequested,
+          drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
           printBufferBase64: printResult.printBufferBase64,
+          htmlPreview: printResult.htmlPreview,
         });
         await pj.save();
-        billDoc.printStatus = 'PRINTED';
+        printTrackingPersisted = true;
+      } catch (trackingErr) {
+        printTrackingWarnings.push('PRINT_JOB_PERSISTENCE_FAILED');
+        console.error('[POS Print] Failed to persist dispatched PrintJob', printJobId, trackingErr);
+      }
+
+      const printDispatchAuthorized = printTrackingPersisted === true;
+      const printDispatchAuthorization = printDispatchAuthorized
+        ? optionalPrintDispatchAuthorization({
+            organisationId: orgId, cafeId, deviceId: dispatchedDeviceId, printJobId,
+            payloadSha256: printResult.payloadSha256, payloadBytes: printResult.payloadBytes,
+            printerTarget: 'DEFAULT_THERMAL', drawerKickRequested,
+          })
+        : null;
+
+      try {
+        billDoc.printStatus = printDispatchAuthorized ? 'PRINT_DISPATCHED' : 'PRINT_PENDING';
         billDoc.printJobs = billDoc.printJobs || [];
-        billDoc.printJobs.push({
-          printJobId,
-          jobType: 'RECEIPT',
-          status: 'PRINTED',
-          completedAt: new Date(),
-        });
+        if (printDispatchAuthorized) {
+          billDoc.printJobs.push({
+            printJobId,
+            jobType: 'RECEIPT',
+            status: 'DISPATCHED',
+            dispatchedAt: new Date(),
+            dispatchedDeviceId,
+            attestationRequired: attestationBinding.required,
+            attestationVersion: PRINT_ATTESTATION_VERSION,
+            attestationKeyThumbprint: attestationBinding.keyThumbprint,
+            attestationKeyProvider: attestationBinding.keyProvider,
+            attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+            attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
+            payloadSha256: printResult.payloadSha256,
+            payloadBytes: printResult.payloadBytes,
+            printerTarget: 'DEFAULT_THERMAL',
+            transportMode: 'UNBOUND',
+            evidenceLevel: 'NONE',
+            contentBindingVerified: false,
+            printerIdentityVerified: false,
+            drawerKickRequested,
+            drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
+          });
+        }
         await billDoc.save();
-      } catch {}
+        savedBillData.printStatus = billDoc.printStatus;
+        billPrintStatePersisted = true;
+      } catch (billPrintErr) {
+        printTrackingWarnings.push('BILL_PRINT_STATE_PERSISTENCE_FAILED');
+        console.error('[POS Print] Failed to persist bill print dispatch state', billId, billPrintErr);
+      }
 
       return {
         success: true,
         action: 'SAVE_AND_PRINT',
         saleFinalized: true,
-        message: 'Order saved and receipt printed successfully.',
+        message: printDispatchAuthorized
+          ? 'Order saved and receipt dispatch is durably tracked.'
+          : 'Order saved, but automatic receipt dispatch was withheld because durable print tracking is unavailable.',
         bill: savedBillData,
         data: savedBillData,
-        printed: true,
-        printStatus: 'PRINTED',
-        printJobId,
-        printBuffer: printResult.printBufferBase64,
+        printed: false,
+        printDispatched: printDispatchAuthorized,
+        printDispatchAuthorized,
+        printStatus: printDispatchAuthorized ? 'PRINT_DISPATCHED' : 'PRINT_PENDING',
+        printJobId: printDispatchAuthorized ? printJobId : null,
+        printTrackingPersisted,
+        billPrintStatePersisted,
+        printTrackingWarning: printTrackingWarnings[0] || null,
+        printTrackingWarnings,
+        printDispatchBlockedReason: printDispatchAuthorized ? null : 'PRINT_JOB_PERSISTENCE_FAILED',
+        reprintAvailable: !printDispatchAuthorized,
+        dispatchedDeviceId: printDispatchAuthorized ? dispatchedDeviceId : null,
+        deviceAcknowledgementRequired: printDispatchAuthorized && attestationBinding.required,
+        deviceAcknowledgementSupported: attestationBinding.supported,
+        deviceAcknowledgementPlatform: attestationBinding.platform,
+        deviceAcknowledgementUnavailableReason: attestationBinding.unavailableReason,
+        cryptographicAttestationRequired: printDispatchAuthorized && attestationBinding.required,
+        attestationAlgorithm: printDispatchAuthorized ? attestationBinding.algorithm : null,
+        attestationKeyThumbprint: printDispatchAuthorized ? attestationBinding.keyThumbprint : null,
+        attestationKeyProvider: printDispatchAuthorized ? attestationBinding.keyProvider : null,
+        attestationKeyHardwareBackedVerified: printDispatchAuthorized && attestationBinding.keyHardwareBackedVerified === true,
+        attestationKeyHardwareSecurityLevel: printDispatchAuthorized ? attestationBinding.keyHardwareSecurityLevel : 'UNKNOWN',
+        ackChallenge: printDispatchAuthorized ? attestationBinding.challenge : null,
+        ackChallengeIssuedAt: printDispatchAuthorized ? attestationBinding.challengeIssuedAt : null,
+        ackChallengeExpiresAt: printDispatchAuthorized ? attestationBinding.challengeExpiresAt : null,
+        attestationContext: printDispatchAuthorized && attestationBinding.required ? {
+          version: PRINT_ATTESTATION_VERSION,
+          algorithm: ATTESTATION_ALGORITHM,
+          organisationId: orgId,
+          cafeId,
+          deviceId: dispatchedDeviceId,
+          printJobId,
+          challenge: attestationBinding.challenge,
+          challengeIssuedAtEpochMs: attestationBinding.challengeIssuedAtEpochMs,
+          challengeExpiresAtEpochMs: attestationBinding.challengeExpiresAtEpochMs,
+          expectedPayloadSha256: printResult.payloadSha256,
+          expectedPayloadBytes: printResult.payloadBytes,
+          printerTarget: 'DEFAULT_THERMAL',
+        } : null,
+        drawerKickRequested,
+        drawerKickStatus: drawerKickRequested ? 'REQUESTED' : 'NOT_REQUESTED',
+        payloadSha256: printDispatchAuthorized ? printResult.payloadSha256 : null,
+        payloadBytes: printDispatchAuthorized ? printResult.payloadBytes : null,
+        printerTarget: printDispatchAuthorized ? 'DEFAULT_THERMAL' : null,
+        printDispatchAuthorization,
+        printBuffer: printDispatchAuthorized ? printResult.printBufferBase64 : null,
         htmlPreview: printResult.htmlPreview,
-        rawBuffer: printResult.rawBuffer,
+        rawBuffer: printDispatchAuthorized ? printResult.rawBuffer : null,
       };
     } catch (printerErr) {
       // THE TRANSACTION REMAINS COMMITTED!
@@ -1085,7 +1671,9 @@ class PosOrderService {
           failureCode: 'PRINTER_OFFLINE',
         });
         await billDoc.save();
-      } catch {}
+      } catch (trackingErr) {
+        console.error('[POS Print] Failed to persist printer-failure audit state', printJobId, trackingErr);
+      }
 
       return {
         success: true,
@@ -1107,39 +1695,69 @@ class PosOrderService {
    * Helper to compile ESC/POS binary buffer, drawer kick, and HTML preview.
    */
   static async generatePrintArtifacts(billData = {}, options = {}) {
-    let cafeInfo = options.cafeInfo;
-    if (!cafeInfo && billData.cafeId) {
-      try {
-        const foundCafe = await Cafe.findOne({
-          organisationId: billData.organisationId,
-          cafeId: billData.cafeId,
-        });
-        if (foundCafe) {
-          const cafeObj = typeof foundCafe.toObject === 'function' ? foundCafe.toObject() : foundCafe;
-          cafeInfo = {
-            brandName: cafeObj.name || 'ZAMORIN CAFE',
-            legalName: cafeObj.legalName || 'Zamorin Hospitality Private Limited',
-            gstin: cafeObj.gstin || '29AABCT1332L1ZV',
-            fssai: cafeObj.fssaiLicenseNumber || cafeObj.fssai || '11223344556677',
-            address: cafeObj.address?.line1 ? `${cafeObj.address.line1}, ${cafeObj.address.city || ''} - ${cafeObj.address.pincode || ''}` : 'Koramangala, Bengaluru',
-            phone: cafeObj.contactPhone || '+91 80 2555 1234',
-          };
-        }
-      } catch {
-        // Fallback default info
-      }
-    }
+    let cafeInfo = options.cafeInfo || null;
 
-    if (!cafeInfo) {
+    if (!cafeInfo && billData.cafeId) {
+      const cafeSourceAvailable = Boolean(
+        Cafe.db?.readyState === 1 ||
+        Cafe.findOne?.mock ||
+        typeof Cafe.findOne?.restore === 'function'
+      );
+
+      if (!cafeSourceAvailable) {
+        throw new ApiError(
+          503,
+          'POS_RECEIPT_CAFE_IDENTITY_UNAVAILABLE',
+          'Receipt generation requires the authoritative café master, which is unavailable in the current runtime.'
+        );
+      }
+
+      const foundCafeQuery = Cafe.findOne({
+        organisationId: billData.organisationId,
+        cafeId: billData.cafeId,
+      });
+      const foundCafe = foundCafeQuery && typeof foundCafeQuery.lean === 'function'
+        ? await foundCafeQuery.lean()
+        : await foundCafeQuery;
+
+      if (!foundCafe) {
+        throw new ApiError(
+          404,
+          'POS_RECEIPT_CAFE_NOT_FOUND',
+          'Receipt generation is blocked because the café master record was not found.'
+        );
+      }
+
+      const gstDetails = foundCafe.registrations?.gstDetails || {};
+      const fssai = foundCafe.registrations?.fssai || {};
       cafeInfo = {
-        brandName: 'ZAMORIN CAFE',
-        legalName: 'Zamorin Hospitality Private Limited',
-        gstin: '29AABCT1332L1ZV',
-        fssai: '11223344556677',
-        address: 'Koramangala, Bengaluru - 560095',
-        phone: '+91 80 2555 1234',
+        brandName:
+          gstDetails.tradeName ||
+          foundCafe.displayName ||
+          foundCafe.name ||
+          '',
+        legalName:
+          gstDetails.legalName ||
+          foundCafe.legalName ||
+          '',
+        gstin:
+          gstDetails.gstin ||
+          foundCafe.registrations?.gstin ||
+          '',
+        gstRegistered:
+          gstDetails.isRegistered === true ||
+          Boolean(gstDetails.gstin || foundCafe.registrations?.gstin),
+        fssai: fssai.number || '',
+        fssaiApplicable: fssai.isApplicable !== false,
+        address: formatAuthoritativeCafeAddress(foundCafe.address, gstDetails),
+        phone:
+          foundCafe.contacts?.primaryPhone ||
+          foundCafe.contactProfile?.primaryContact?.mobile ||
+          '',
       };
     }
+
+    cafeInfo = assertReceiptCafeIdentity(cafeInfo || {}, billData);
 
     const items = (billData.lineItems || []).map((li) => ({
       name: li.itemNameSnapshot || li.name || 'Item',
@@ -1169,8 +1787,8 @@ class PosOrderService {
       isReprint: Boolean(options.isReprint),
       reprintCount: options.reprintCount || (billData.reprints ? billData.reprints.length : 0),
       isVoid: billData.status === 'VOIDED',
-      triggerDrawerKick: billData.paymentMethod === 'CASH' || (billData.tenders && billData.tenders.some((t) => t.paymentMethod === 'CASH')),
-      upiQrString: billData.upiPaymentIntent?.upiString || `upi://pay?pa=zamorin@icici&pn=Zamorin%20Cafe&am=${((billData.totalPaisa || 0) / 100).toFixed(2)}&tr=${billData.billId}`,
+      triggerDrawerKick: options.allowDrawerKick === true && hasCashTender(billData),
+      upiQrString: billData.upiPaymentIntent?.upiString || '',
     };
 
     const terminalConfig = options.terminalConfig || {
@@ -1184,7 +1802,806 @@ class PosOrderService {
     return {
       rawBuffer: escPosBuffer,
       printBufferBase64: escPosBuffer.toString('base64'),
+      payloadSha256: crypto.createHash('sha256').update(escPosBuffer).digest('hex'),
+      payloadBytes: escPosBuffer.length,
       htmlPreview: htmlReceipt,
+      drawerKickIncluded: orderDataForPrinter.triggerDrawerKick === true,
+    };
+  }
+
+  /**
+   * REC-04C: Accepts a terminal print result only from the exact active café-owned
+   * device that received the dispatched print job. Browser print dialogs are not
+   * eligible to self-assert physical completion.
+   */
+  static async acknowledgePrintJob(printJobId, authContext = {}, acknowledgement = {}) {
+    const orgId = requireOrganisationId(authContext);
+    const normPrintJobId = normalizeId(printJobId);
+    const ackStatus = normalizeId(acknowledgement.status);
+    const allowedStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
+
+    if (!normPrintJobId) {
+      throw new ApiError(400, 'PRINT_JOB_ID_REQUIRED', 'printJobId is required.');
+    }
+    if (!allowedStatuses.has(ackStatus)) {
+      throw new ApiError(
+        400,
+        'INVALID_PRINT_ACK_STATUS',
+        'Print acknowledgement status must be PRINTED, FAILED, or CANCELLED.'
+      );
+    }
+
+    const device = authContext.deviceContext || {};
+    const deviceId = normalizeId(device.deviceId);
+    const boundCafeId = normalizeId(device.boundCafeId);
+    if (
+      !deviceId ||
+      deviceId === 'UNKNOWN_PERSONAL_DEVICE' ||
+      normalizeId(device.deviceClass) !== 'CAFE_OWNED' ||
+      normalizeId(device.status) !== 'ACTIVE' ||
+      !boundCafeId
+    ) {
+      throw new ApiError(
+        403,
+        'PRINT_DEVICE_TRUST_REQUIRED',
+        'Physical print acknowledgement requires an active café-owned device.'
+      );
+    }
+
+    const operatorSessionId = normalizeId(authContext.operatorSessionId);
+    if (!operatorSessionId) {
+      throw new ApiError(
+        403,
+        'ACTIVE_OPERATOR_SESSION_REQUIRED',
+        'Physical print acknowledgement requires an active operator session bound to this device.'
+      );
+    }
+
+    const operatorSession = await OperatorSession.findOne({
+      operatorSessionId,
+      organisationId: orgId,
+      cafeId: boundCafeId,
+      deviceId,
+      operatorUserId: normalizeId(authContext.userId),
+      status: 'ACTIVE',
+    }).lean();
+
+    if (!operatorSession) {
+      throw new ApiError(
+        403,
+        'OPERATOR_SESSION_DEVICE_MISMATCH',
+        'The active operator session could not be verified for this user, café, and device.'
+      );
+    }
+
+    const job = await PrintJob.findOne({
+      organisationId: orgId,
+      printJobId: normPrintJobId,
+    });
+    if (!job) {
+      throw new ApiError(404, 'PRINT_JOB_NOT_FOUND', 'Print job does not exist in the authenticated organisation.');
+    }
+
+    const jobCafeId = normalizeId(job.cafeId);
+    if (jobCafeId !== boundCafeId) {
+      throw new ApiError(
+        403,
+        'CROSS_CAFE_PRINT_ACK_DENIED',
+        'The acknowledging device is not bound to the print job café.'
+      );
+    }
+
+    const dispatchedDeviceId = normalizeId(job.dispatchedDeviceId);
+    if (!dispatchedDeviceId) {
+      throw new ApiError(
+        409,
+        'PRINT_JOB_NOT_DEVICE_BOUND',
+        'This print job was not dispatched to a verifiable café-owned device and cannot be marked physically complete.'
+      );
+    }
+    if (dispatchedDeviceId !== deviceId) {
+      throw new ApiError(
+        403,
+        'PRINT_JOB_DEVICE_MISMATCH',
+        'Only the device that received this print job may acknowledge its physical result.'
+      );
+    }
+
+    const requestedDrawerStatus = acknowledgement.drawerKickStatus
+      ? normalizeId(acknowledgement.drawerKickStatus)
+      : null;
+    if (requestedDrawerStatus) {
+      const allowedDrawerStatuses = new Set(['ACKNOWLEDGED', 'FAILED', 'UNKNOWN']);
+      if (!job.drawerKickRequested) {
+        throw new ApiError(
+          409,
+          'DRAWER_ACK_NOT_APPLICABLE',
+          'This print job did not request a cash drawer kick.'
+        );
+      }
+      if (!allowedDrawerStatuses.has(requestedDrawerStatus)) {
+        throw new ApiError(
+          400,
+          'INVALID_DRAWER_ACK_STATUS',
+          'drawerKickStatus must be ACKNOWLEDGED, FAILED, or UNKNOWN.'
+        );
+      }
+    }
+
+    const resolvedFailureCode =
+      ackStatus === 'FAILED'
+        ? normalizeId(acknowledgement.failureCode || 'DEVICE_PRINT_FAILED')
+        : ackStatus === 'CANCELLED'
+          ? normalizeId(acknowledgement.failureCode || 'PRINT_CANCELLED')
+          : 'NONE';
+    const resolvedFailureReason =
+      ackStatus === 'FAILED'
+        ? String(acknowledgement.failureReason || 'Physical print device reported failure.').slice(0, 500)
+        : ackStatus === 'CANCELLED'
+          ? String(acknowledgement.failureReason || 'Physical print job was cancelled.').slice(0, 500)
+          : '';
+
+    const currentStatus = normalizeId(job.status);
+    const terminalStatuses = new Set(['PRINTED', 'FAILED', 'CANCELLED']);
+    const isContentBoundJob =
+      normalizeId(job.attestationVersion) === PRINT_ATTESTATION_VERSION ||
+      Boolean(job.payloadSha256);
+    let attestationProof = null;
+    let attestationProvider = null;
+    let transportEvidence = null;
+
+    if (isContentBoundJob && job.attestationRequired !== true) {
+      throw new ApiError(
+        409,
+        'PRINT_ATTESTATION_REQUIRED',
+        'Content-bound REC-04E print jobs cannot be terminally acknowledged without enrolled cryptographic device attestation.'
+      );
+    }
+
+    if (
+      job.attestationRequired &&
+      !terminalStatuses.has(currentStatus) &&
+      job.ackChallengeExpiresAt &&
+      new Date(job.ackChallengeExpiresAt).getTime() <= Date.now()
+    ) {
+      throw new ApiError(409, 'PRINT_ACK_CHALLENGE_EXPIRED', 'The print acknowledgement challenge expired before a terminal result was received.');
+    }
+
+    if (job.attestationRequired) {
+      const registration = await DeviceRegistration.findOne({
+        deviceId,
+        organisationId: orgId,
+        assignedCafeId: jobCafeId,
+        status: 'ACTIVE',
+      }).lean();
+
+      if (
+        !registration?.publicSigningKey ||
+        normalizeId(registration.signingKeyAlgorithm) !== ATTESTATION_ALGORITHM
+      ) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_KEY_UNAVAILABLE',
+          'The enrolled device signing key is unavailable or no longer valid.'
+        );
+      }
+
+      const liveProvider = normalizeId(registration.signingKeyProvider || 'UNKNOWN');
+      attestationProvider = liveProvider;
+
+      if (isContentBoundJob && liveProvider !== 'ANDROID_KEYSTORE') {
+        throw new ApiError(
+          409,
+          'DEVICE_ATTESTATION_PROVIDER_UNTRUSTED',
+          'REC-04E print acknowledgement requires the enrolled Android Keystore signing provider.'
+        );
+      }
+
+      const expectedProvider = normalizeId(job.attestationKeyProvider || '');
+      if (expectedProvider && expectedProvider !== liveProvider) {
+        throw new ApiError(
+          409,
+          'DEVICE_ATTESTATION_PROVIDER_CHANGED',
+          'The enrolled device signing provider changed after this print job was dispatched.'
+        );
+      }
+
+      const suppliedProvider = normalizeId(acknowledgement.attestation?.provider || '');
+      if (suppliedProvider && suppliedProvider !== liveProvider) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_PROVIDER_MISMATCH',
+          'The acknowledgement reported a signing provider that does not match the enrolled device.'
+        );
+      }
+
+      const liveKeyThumbprint =
+        registration.signingKeyThumbprint ||
+        publicKeyThumbprint(registration.publicSigningKey);
+      if (
+        job.attestationKeyThumbprint &&
+        String(job.attestationKeyThumbprint).toLowerCase() !== String(liveKeyThumbprint).toLowerCase()
+      ) {
+        throw new ApiError(
+          409,
+          'DEVICE_ATTESTATION_KEY_CHANGED',
+          'The enrolled device signing key changed after this print job was dispatched.'
+        );
+      }
+
+      const suppliedThumbprint = acknowledgement.attestation?.keyThumbprint;
+      if (
+        suppliedThumbprint &&
+        String(suppliedThumbprint).toLowerCase() !== String(liveKeyThumbprint).toLowerCase()
+      ) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_KEY_MISMATCH',
+          'The acknowledgement was signed by an unexpected device key.'
+        );
+      }
+
+      const isContentBoundEnvelope = Boolean(job.payloadSha256);
+      if (isContentBoundEnvelope) {
+        const attestation = acknowledgement.attestation || {};
+        const signedProvider = normalizeId(attestation.provider || '');
+        const transportMode = normalizeId(attestation.transportMode || '');
+        const evidenceLevel = normalizeId(attestation.evidenceLevel || '');
+        const contentBindingVerified = attestation.contentBindingVerified === true;
+        const printerIdentityVerified = attestation.printerIdentityVerified === true;
+        const platformJobId = String(attestation.platformJobId || '').trim();
+        const printerIdentity = String(attestation.printerIdentity || '').trim();
+
+        if (!transportMode || !evidenceLevel || !platformJobId || !signedProvider) {
+          throw new ApiError(400, 'PRINT_TRANSPORT_EVIDENCE_REQUIRED', 'REC-04E acknowledgement requires signing provider, transportMode, evidenceLevel, and platformJobId.');
+        }
+        if (signedProvider !== 'ANDROID_KEYSTORE') {
+          throw new ApiError(
+            409,
+            'ANDROID_SIGNING_PROVIDER_OVERCLAIM',
+            'Android system-print acknowledgement must be signed by the enrolled Android Keystore provider.'
+          );
+        }
+
+        // REC-04E currently has exactly one implemented purpose-bound native
+        // transport attestor: Android's application-owned system print job.
+        // Do not let an enrolled key invent a stronger or unknown transport.
+        if (transportMode !== 'ANDROID_SYSTEM_PRINT') {
+          throw new ApiError(
+            409,
+            'UNSUPPORTED_PRINT_TRANSPORT_MODE',
+            'No purpose-bound attestor is implemented for the supplied print transport mode.'
+          );
+        }
+
+        const expectedAndroidEvidence =
+          ackStatus === 'PRINTED' ? 'SPOOLER_COMPLETION' : 'SPOOLER_TERMINAL_STATE';
+        const expectedAndroidDrawerStatus =
+          job.drawerKickRequested ? 'UNKNOWN' : 'UNCHANGED';
+        if (
+          (requestedDrawerStatus || 'UNCHANGED') !== expectedAndroidDrawerStatus
+        ) {
+          throw new ApiError(
+            409,
+            'ANDROID_DRAWER_EVIDENCE_OVERCLAIM',
+            'Android system print cannot claim cash-drawer actuation; requested drawer evidence must remain UNKNOWN until hardware acknowledgement exists.'
+          );
+        }
+        if (
+          evidenceLevel !== expectedAndroidEvidence ||
+          contentBindingVerified ||
+          printerIdentityVerified
+        ) {
+          throw new ApiError(
+            409,
+            'ANDROID_PRINT_EVIDENCE_OVERCLAIM',
+            'Android system print may report only its actual spooler terminal evidence and cannot claim exact-byte delivery or independently verified printer identity.'
+          );
+        }
+
+        transportEvidence = {
+          transportMode,
+          platformJobId,
+          evidenceLevel,
+          contentBindingVerified,
+          printerIdentity: printerIdentity || null,
+          printerIdentityVerified,
+        };
+      }
+
+      const signedPayload = buildPrintAckPayload({
+        organisationId: orgId,
+        cafeId: jobCafeId,
+        deviceId,
+        printJobId: normPrintJobId,
+        challenge: job.ackChallenge,
+        status: ackStatus,
+        drawerKickStatus: requestedDrawerStatus || 'UNCHANGED',
+        failureCode: resolvedFailureCode,
+        failureReason: resolvedFailureReason,
+        expectedPayloadSha256: job.payloadSha256 || null,
+        expectedPayloadBytes: job.payloadBytes || null,
+        printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+        transportMode: transportEvidence?.transportMode || 'UNBOUND',
+        platformJobId: transportEvidence?.platformJobId || '',
+        evidenceLevel: transportEvidence?.evidenceLevel || 'NONE',
+        contentBindingVerified: transportEvidence?.contentBindingVerified === true,
+        printerIdentity: transportEvidence?.printerIdentity || '',
+        printerIdentityVerified: transportEvidence?.printerIdentityVerified === true,
+      });
+
+      attestationProof = verifyPrintAckSignature({
+        publicSigningKey: registration.publicSigningKey,
+        signatureBase64Url: acknowledgement.attestation?.signature,
+        payload: signedPayload,
+      });
+
+      if (
+        String(attestationProof.keyThumbprint).toLowerCase() !== String(liveKeyThumbprint).toLowerCase()
+      ) {
+        throw new ApiError(
+          403,
+          'DEVICE_ATTESTATION_KEY_MISMATCH',
+          'Verified acknowledgement key does not match the enrolled device key.'
+        );
+      }
+    }
+
+    if (terminalStatuses.has(currentStatus) && currentStatus !== ackStatus) {
+      throw new ApiError(
+        409,
+        'PRINT_JOB_TERMINAL_STATE_CONFLICT',
+        `Print job is already finalized as ${currentStatus} and cannot transition to ${ackStatus}.`
+      );
+    }
+    if (!terminalStatuses.has(currentStatus) && currentStatus !== 'DISPATCHED') {
+      throw new ApiError(
+        409,
+        'INVALID_PRINT_JOB_TRANSITION',
+        `Print job in state ${currentStatus || 'UNKNOWN'} cannot be acknowledged as ${ackStatus}.`
+      );
+    }
+
+    const now = new Date();
+    const statusChanged = currentStatus !== ackStatus;
+
+    if (!statusChanged) {
+      const storedDrawerStatus = normalizeId(job.drawerKickStatus || 'NOT_REQUESTED');
+      const storedPrinterIdentity = String(job.actualPrinterId || '').trim();
+      if (
+        (requestedDrawerStatus && requestedDrawerStatus !== storedDrawerStatus) ||
+        (transportEvidence && (
+          normalizeId(job.transportMode || 'UNBOUND') !== transportEvidence.transportMode ||
+          String(job.platformJobId || '').trim() !== transportEvidence.platformJobId ||
+          normalizeId(job.evidenceLevel || 'NONE') !== transportEvidence.evidenceLevel ||
+          job.contentBindingVerified === true !== transportEvidence.contentBindingVerified ||
+          storedPrinterIdentity !== String(transportEvidence.printerIdentity || '').trim() ||
+          job.printerIdentityVerified === true !== transportEvidence.printerIdentityVerified
+        ))
+      ) {
+        throw new ApiError(
+          409,
+          'PRINT_ACK_REPLAY_EVIDENCE_MISMATCH',
+          'A finalized print job may only be retried with the same terminal evidence.'
+        );
+      }
+    }
+
+    const applyTerminalJobMutation = () => {
+      if (!statusChanged) return;
+
+      if (requestedDrawerStatus) {
+        job.drawerKickStatus = requestedDrawerStatus;
+      }
+      job.status = ackStatus;
+      job.acknowledgedByDeviceId = deviceId;
+      job.acknowledgedAt = now;
+      job.completedAt = now;
+      if (job.attestationRequired) job.ackChallengeConsumedAt = now;
+
+      if (transportEvidence) {
+        job.transportMode = transportEvidence.transportMode;
+        job.platformJobId = transportEvidence.platformJobId;
+        job.evidenceLevel = transportEvidence.evidenceLevel;
+        job.contentBindingVerified = transportEvidence.contentBindingVerified;
+        job.actualPrinterId = transportEvidence.printerIdentity;
+        job.printerIdentityVerified = transportEvidence.printerIdentityVerified;
+      }
+
+      if (ackStatus === 'FAILED' || ackStatus === 'CANCELLED') {
+        job.failureCode = resolvedFailureCode;
+        job.failureReason = resolvedFailureReason;
+      } else {
+        job.failureCode = null;
+        job.failureReason = null;
+      }
+
+      if (attestationProof) {
+        job.attestationVerifiedAt = now;
+        job.ackSignatureHash = attestationProof.signatureHash;
+        if (!job.attestationKeyProvider && attestationProvider) {
+          job.attestationKeyProvider = attestationProvider;
+        }
+      }
+    };
+
+    // REC-04E: terminal print evidence, device verification metadata, and the
+    // Bill audit copy form one financial/audit state transition. In production,
+    // require MongoDB transaction support so a Bill write failure cannot leave a
+    // terminal PrintJob without its corresponding Bill lineage. The non-
+    // transactional test/dev fallback remains idempotently repairable on retry.
+    await executeTransactionWithRetry(async (session) => {
+      if (process.env.NODE_ENV === 'production' && !session) {
+        throw new ApiError(
+          503,
+          'PRINT_ACK_TRANSACTION_REQUIRED',
+          'Production print acknowledgement requires MongoDB transaction support.'
+        );
+      }
+
+      const readLean = async (query) => {
+        const scoped =
+          session && query && typeof query.session === 'function'
+            ? query.session(session)
+            : query;
+        return scoped && typeof scoped.lean === 'function'
+          ? await scoped.lean()
+          : await scoped;
+      };
+
+      // Revalidate execution-time authority inside the same transaction that
+      // commits terminal print evidence. This closes revocation/session/key
+      // races between the initial signature verification and durable writes.
+      const liveOperatorSession = await readLean(OperatorSession.findOne({
+        operatorSessionId,
+        organisationId: orgId,
+        cafeId: boundCafeId,
+        deviceId,
+        operatorUserId: normalizeId(authContext.userId),
+        status: 'ACTIVE',
+      }));
+      if (!liveOperatorSession) {
+        throw new ApiError(
+          409,
+          'OPERATOR_SESSION_ENDED_DURING_ACK',
+          'The operator session ended before print acknowledgement could be finalized.'
+        );
+      }
+
+      const liveJob = await readLean(PrintJob.findOne({
+        organisationId: orgId,
+        printJobId: normPrintJobId,
+      }));
+      if (!liveJob) {
+        throw new ApiError(
+          409,
+          'PRINT_JOB_CHANGED_DURING_FINALIZATION',
+          'The print job disappeared before acknowledgement could be finalized.'
+        );
+      }
+
+      const liveStatus = normalizeId(liveJob.status);
+      const bindingChanged =
+        liveStatus !== currentStatus ||
+        normalizeId(liveJob.cafeId) !== jobCafeId ||
+        normalizeId(liveJob.dispatchedDeviceId) !== dispatchedDeviceId ||
+        String(liveJob.ackChallenge || '') !== String(job.ackChallenge || '') ||
+        String(liveJob.payloadSha256 || '').toLowerCase() !== String(job.payloadSha256 || '').toLowerCase() ||
+        Number(liveJob.payloadBytes || 0) !== Number(job.payloadBytes || 0) ||
+        String(liveJob.attestationKeyThumbprint || '').toLowerCase() !== String(job.attestationKeyThumbprint || '').toLowerCase() ||
+        normalizeId(liveJob.attestationKeyProvider || '') !== normalizeId(job.attestationKeyProvider || '');
+
+      if (bindingChanged) {
+        throw new ApiError(
+          409,
+          'PRINT_JOB_CHANGED_DURING_FINALIZATION',
+          'Print-job state or attestation binding changed during acknowledgement finalization. Retry against fresh state.'
+        );
+      }
+
+      if (
+        job.attestationRequired &&
+        !terminalStatuses.has(liveStatus) &&
+        liveJob.ackChallengeExpiresAt &&
+        new Date(liveJob.ackChallengeExpiresAt).getTime() <= Date.now()
+      ) {
+        throw new ApiError(
+          409,
+          'PRINT_ACK_CHALLENGE_EXPIRED',
+          'The print acknowledgement challenge expired before finalization committed.'
+        );
+      }
+
+      if (job.attestationRequired) {
+        const liveRegistration = await readLean(DeviceRegistration.findOne({
+          deviceId,
+          organisationId: orgId,
+          assignedCafeId: jobCafeId,
+          status: 'ACTIVE',
+        }));
+
+        if (
+          !liveRegistration?.publicSigningKey ||
+          normalizeId(liveRegistration.signingKeyAlgorithm) !== ATTESTATION_ALGORITHM
+        ) {
+          throw new ApiError(
+            409,
+            'DEVICE_ATTESTATION_REVOKED_DURING_ACK',
+            'The device registration was revoked, reassigned, suspended, or lost its signing key before acknowledgement committed.'
+          );
+        }
+
+        const liveProviderAtCommit = normalizeId(
+          liveRegistration.signingKeyProvider || 'UNKNOWN'
+        );
+        if (
+          liveProviderAtCommit !== attestationProvider ||
+          (
+            job.attestationKeyProvider &&
+            liveProviderAtCommit !== normalizeId(job.attestationKeyProvider)
+          )
+        ) {
+          throw new ApiError(
+            409,
+            'DEVICE_ATTESTATION_PROVIDER_CHANGED',
+            'The enrolled signing provider changed before acknowledgement committed.'
+          );
+        }
+
+        const liveThumbprintAtCommit =
+          liveRegistration.signingKeyThumbprint ||
+          publicKeyThumbprint(liveRegistration.publicSigningKey);
+        if (
+          (
+            job.attestationKeyThumbprint &&
+            String(liveThumbprintAtCommit).toLowerCase() !==
+              String(job.attestationKeyThumbprint).toLowerCase()
+          ) ||
+          (
+            attestationProof &&
+            String(liveThumbprintAtCommit).toLowerCase() !==
+              String(attestationProof.keyThumbprint).toLowerCase()
+          )
+        ) {
+          throw new ApiError(
+            409,
+            'DEVICE_ATTESTATION_KEY_CHANGED',
+            'The enrolled device signing key changed before acknowledgement committed.'
+          );
+        }
+      }
+
+      if (statusChanged) {
+        // Apply the terminal mutation only after live operator, job binding,
+        // challenge, and device trust have all been revalidated in the same
+        // finalization transaction. This prevents aborted acknowledgements from
+        // leaving misleading in-memory terminal state in fallback/test paths.
+        applyTerminalJobMutation();
+        await job.save(session ? { session } : undefined);
+      }
+
+      if (statusChanged && attestationProof) {
+        await DeviceRegistration.updateOne(
+          {
+            deviceId,
+            organisationId: orgId,
+            assignedCafeId: jobCafeId,
+            status: 'ACTIVE',
+          },
+          {
+            $set: {
+              signingKeyLastVerifiedAt: now,
+              'metadata.lastAttestationKeyThumbprint': attestationProof.keyThumbprint,
+            },
+          },
+          session ? { session } : undefined
+        );
+      }
+
+      const billQuery = Bill.findOne({
+        organisationId: orgId,
+        cafeId: jobCafeId,
+        billId: normalizeId(job.billId),
+      });
+      const bill =
+        session && billQuery && typeof billQuery.session === 'function'
+          ? await billQuery.session(session)
+          : await billQuery;
+
+      if (!bill) return;
+
+      bill.printJobs = Array.isArray(bill.printJobs) ? bill.printJobs : [];
+      let billPrintJob = bill.printJobs.find((entry) =>
+        normalizeId(entry.printJobId) === normPrintJobId
+      );
+
+      const expectedReceiptPrintStatus =
+        ackStatus === 'PRINTED'
+          ? 'PRINTED'
+          : ackStatus === 'CANCELLED'
+            ? 'PRINT_CANCELLED'
+            : 'PRINT_FAILED';
+
+      const billNeedsRepair =
+        !billPrintJob ||
+        normalizeId(billPrintJob.status) !== ackStatus ||
+        normalizeId(billPrintJob.acknowledgedByDeviceId) !== deviceId ||
+        normalizeId(billPrintJob.evidenceLevel || 'NONE') !== normalizeId(job.evidenceLevel || 'NONE') ||
+        String(billPrintJob.platformJobId || '').trim() !== String(job.platformJobId || '').trim() ||
+        String(billPrintJob.ackSignatureHash || '').trim() !== String(job.ackSignatureHash || '').trim() ||
+        (
+          normalizeId(job.jobType) === 'RECEIPT' &&
+          normalizeId(bill.printStatus) !== expectedReceiptPrintStatus
+        );
+
+      if (!statusChanged && !billNeedsRepair) return;
+
+      if (!billPrintJob) {
+        bill.printJobs.push({
+          printJobId: normPrintJobId,
+          jobType: job.jobType,
+          status: ackStatus,
+          dispatchedAt: job.requestedAt || job.createdAt || now,
+          dispatchedDeviceId,
+          acknowledgedByDeviceId: deviceId,
+          acknowledgedAt: job.acknowledgedAt || now,
+          attestationRequired: Boolean(job.attestationRequired),
+          attestationVersion: job.attestationVersion || null,
+          attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+          attestationKeyProvider: job.attestationKeyProvider || null,
+          attestationKeyHardwareBackedVerified: job.attestationKeyHardwareBackedVerified === true,
+          attestationKeyHardwareSecurityLevel: job.attestationKeyHardwareSecurityLevel || 'UNKNOWN',
+          attestationVerifiedAt: job.attestationVerifiedAt || null,
+          ackSignatureHash: job.ackSignatureHash || null,
+          payloadSha256: job.payloadSha256 || null,
+          payloadBytes: job.payloadBytes || null,
+          printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+          transportMode: job.transportMode || 'UNBOUND',
+          platformJobId: job.platformJobId || null,
+          evidenceLevel: job.evidenceLevel || 'NONE',
+          contentBindingVerified: job.contentBindingVerified === true,
+          actualPrinterId: job.actualPrinterId || null,
+          printerIdentityVerified: job.printerIdentityVerified === true,
+          completedAt: job.completedAt || now,
+          failureCode: job.failureCode || null,
+          drawerKickRequested: Boolean(job.drawerKickRequested),
+          drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+        });
+      } else {
+        billPrintJob.status = ackStatus;
+        billPrintJob.acknowledgedByDeviceId = deviceId;
+        billPrintJob.acknowledgedAt = job.acknowledgedAt || now;
+        billPrintJob.attestationRequired = Boolean(job.attestationRequired);
+        billPrintJob.attestationVersion = job.attestationVersion || null;
+        billPrintJob.attestationKeyThumbprint = job.attestationKeyThumbprint || null;
+        billPrintJob.attestationKeyProvider = job.attestationKeyProvider || null;
+        billPrintJob.attestationKeyHardwareBackedVerified = job.attestationKeyHardwareBackedVerified === true;
+        billPrintJob.attestationKeyHardwareSecurityLevel = job.attestationKeyHardwareSecurityLevel || 'UNKNOWN';
+        billPrintJob.attestationVerifiedAt = job.attestationVerifiedAt || null;
+        billPrintJob.ackSignatureHash = job.ackSignatureHash || null;
+        billPrintJob.payloadSha256 = job.payloadSha256 || null;
+        billPrintJob.payloadBytes = job.payloadBytes || null;
+        billPrintJob.printerTarget = job.printerTarget || 'DEFAULT_THERMAL';
+        billPrintJob.transportMode = job.transportMode || 'UNBOUND';
+        billPrintJob.platformJobId = job.platformJobId || null;
+        billPrintJob.evidenceLevel = job.evidenceLevel || 'NONE';
+        billPrintJob.contentBindingVerified = job.contentBindingVerified === true;
+        billPrintJob.actualPrinterId = job.actualPrinterId || null;
+        billPrintJob.printerIdentityVerified = job.printerIdentityVerified === true;
+        billPrintJob.completedAt = job.completedAt || now;
+        billPrintJob.failureCode = job.failureCode || null;
+        billPrintJob.drawerKickStatus = job.drawerKickStatus || 'NOT_REQUESTED';
+      }
+
+      if (normalizeId(job.jobType) === 'RECEIPT') {
+        bill.printStatus = expectedReceiptPrintStatus;
+      }
+
+      try {
+        await bill.save(session ? { session } : undefined);
+      } catch (error) {
+        const syncError = new ApiError(
+          503,
+          'PRINT_ACK_BILL_SYNC_FAILED',
+          'Print acknowledgement was not fully synchronized to the Bill audit record. Retry the same acknowledgement safely.'
+        );
+        syncError.originalError = error;
+        throw syncError;
+      }
+    });
+
+    const spoolerCompletionVerified =
+      normalizeId(job.evidenceLevel || 'NONE') === 'SPOOLER_COMPLETION';
+    const contentBoundDeliveryVerified =
+      ['CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'].includes(
+        normalizeId(job.evidenceLevel || 'NONE')
+      ) &&
+      job.contentBindingVerified === true &&
+      job.printerIdentityVerified === true;
+    const physicalPrintVerified =
+      normalizeId(job.evidenceLevel || 'NONE') === 'HARDWARE_CONFIRMED' &&
+      contentBoundDeliveryVerified;
+
+    try {
+      await auditService.recordAuditEvent({
+        organisationId: orgId,
+        cafeId: jobCafeId,
+        actorUserId: authContext.userId || 'DEVICE',
+        actorRole: authContext.role || 'STAFF',
+        module: 'POS_PRINTING',
+        action: 'PRINT_JOB_ACKNOWLEDGED',
+        entityType: 'PRINT_JOB',
+        entityId: normPrintJobId,
+        result: ackStatus === 'PRINTED' ? 'SUCCESS' : 'FAILED',
+        reason: acknowledgement.failureReason || `Device acknowledged print job as ${ackStatus}.`,
+        metadata: {
+          printJobId: normPrintJobId,
+          billId: job.billId,
+          jobType: job.jobType,
+          deviceId,
+          status: ackStatus,
+          drawerKickRequested: Boolean(job.drawerKickRequested),
+          drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+          attestationRequired: Boolean(job.attestationRequired),
+          attestationVersion: job.attestationVersion || null,
+          attestationVerified: Boolean(attestationProof),
+          signatureVerified: Boolean(attestationProof),
+          hardwareBackedKeyVerified: job.attestationKeyHardwareBackedVerified === true,
+          attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+          attestationKeyProvider: job.attestationKeyProvider || null,
+          attestationKeyHardwareBackedVerified: job.attestationKeyHardwareBackedVerified === true,
+          attestationKeyHardwareSecurityLevel: job.attestationKeyHardwareSecurityLevel || 'UNKNOWN',
+          ackSignatureHash: job.ackSignatureHash || null,
+          payloadSha256: job.payloadSha256 || null,
+          payloadBytes: job.payloadBytes || null,
+          printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+          transportMode: job.transportMode || 'UNBOUND',
+          platformJobId: job.platformJobId || null,
+          evidenceLevel: job.evidenceLevel || 'NONE',
+          spoolerCompletionVerified,
+          contentBoundDeliveryVerified,
+          physicalPrintVerified,
+          contentBindingVerified: job.contentBindingVerified === true,
+          actualPrinterId: job.actualPrinterId || null,
+          printerIdentityVerified: job.printerIdentityVerified === true,
+          idempotentReplay: !statusChanged,
+        },
+      });
+    } catch {}
+
+    return {
+      success: true,
+      printJobId: normPrintJobId,
+      billId: job.billId,
+      jobType: job.jobType,
+      status: job.status,
+      printed: job.status === 'PRINTED',
+      spoolerCompletionVerified,
+      contentBoundDeliveryVerified,
+      physicalPrintVerified,
+      acknowledgedByDeviceId: job.acknowledgedByDeviceId,
+      acknowledgedAt: job.acknowledgedAt,
+      drawerKickRequested: Boolean(job.drawerKickRequested),
+      drawerKickStatus: job.drawerKickStatus || 'NOT_REQUESTED',
+      attestationRequired: Boolean(job.attestationRequired),
+      attestationVersion: job.attestationVersion || null,
+      attestationVerified: Boolean(attestationProof),
+      signatureVerified: Boolean(attestationProof),
+      hardwareBackedKeyVerified: job.attestationKeyHardwareBackedVerified === true,
+      attestationKeyThumbprint: job.attestationKeyThumbprint || null,
+      attestationKeyProvider: job.attestationKeyProvider || null,
+      attestationKeyHardwareBackedVerified: job.attestationKeyHardwareBackedVerified === true,
+      attestationKeyHardwareSecurityLevel: job.attestationKeyHardwareSecurityLevel || 'UNKNOWN',
+      payloadSha256: job.payloadSha256 || null,
+      payloadBytes: job.payloadBytes || null,
+      printerTarget: job.printerTarget || 'DEFAULT_THERMAL',
+      transportMode: job.transportMode || 'UNBOUND',
+      platformJobId: job.platformJobId || null,
+      evidenceLevel: job.evidenceLevel || 'NONE',
+      contentBindingVerified: job.contentBindingVerified === true,
+      actualPrinterId: job.actualPrinterId || null,
+      printerIdentityVerified: job.printerIdentityVerified === true,
+      idempotentReplay: !statusChanged,
     };
   }
 
@@ -1195,7 +2612,7 @@ class PosOrderService {
     const normBillId = normalizeId(billId);
     const bill = await Bill.findOne({
       $or: [{ billId: normBillId }, { invoiceNumber: normBillId }],
-      organisationId: authContext.organisationId || 'ORG-ZAMORIN',
+      organisationId: requireOrganisationId(authContext),
     });
 
     if (!bill) {
@@ -1205,9 +2622,16 @@ class PosOrderService {
     assertCafeAccess(authContext, bill.cafeId);
 
     const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
-    const printResult = await this.generatePrintArtifacts(billData, options);
+    const printResult = await this.generatePrintArtifacts(billData, {
+      ...options,
+      allowDrawerKick: false,
+    });
+    const dispatchedDeviceId = resolveDispatchDeviceId(authContext, bill.cafeId);
+    const attestationBinding = await resolveAttestationBinding(authContext, bill.cafeId);
 
-    const printJobId = `PJ-PRT-${Date.now()}`;
+    const printJobId = createPrintJobId('RECEIPT');
+    let printTrackingPersisted = false;
+    let printTrackingWarning = null;
     try {
       const pj = new PrintJob({
         printJobId,
@@ -1216,21 +2640,92 @@ class PosOrderService {
         billId: bill.billId,
         invoiceNumber: bill.invoiceNumber,
         jobType: 'RECEIPT',
-        status: 'PRINTED',
+        status: 'DISPATCHED',
         requestedBy: authContext.userId || 'STAFF',
-        completedAt: new Date(),
+        dispatchedDeviceId,
+        ackChallenge: attestationBinding.challenge,
+        ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+        ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
+        attestationVersion: PRINT_ATTESTATION_VERSION,
+        payloadSha256: printResult.payloadSha256,
+        payloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
+        attestationRequired: attestationBinding.required,
+        attestationKeyThumbprint: attestationBinding.keyThumbprint,
+        attestationKeyProvider: attestationBinding.keyProvider,
+        attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+        attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
+        drawerKickRequested: false,
+        drawerKickStatus: 'NOT_REQUESTED',
         printBufferBase64: printResult.printBufferBase64,
+        htmlPreview: printResult.htmlPreview,
       });
       await pj.save();
-    } catch {}
+      printTrackingPersisted = true;
+    } catch (trackingErr) {
+      printTrackingWarning = 'PRINT_JOB_PERSISTENCE_FAILED';
+      console.error('[POS Print] Failed to persist standalone PrintJob', printJobId, trackingErr);
+    }
+
+    if (!printTrackingPersisted) {
+      throw new ApiError(
+        503,
+        'PRINT_TRACKING_UNAVAILABLE',
+        'Receipt dispatch was withheld because durable print tracking could not be established. Retry the print request.'
+      );
+    }
+
+    const printDispatchAuthorization = optionalPrintDispatchAuthorization({
+      organisationId: normalizeId(bill.organisationId), cafeId: normalizeId(bill.cafeId),
+      deviceId: dispatchedDeviceId, printJobId, payloadSha256: printResult.payloadSha256,
+      payloadBytes: printResult.payloadBytes, printerTarget: 'DEFAULT_THERMAL', drawerKickRequested: false,
+    });
 
     return {
       success: true,
       action: 'PRINT',
       bill: billData,
-      printed: true,
-      printStatus: 'PRINTED',
+      printed: false,
+      printDispatched: true,
+      printDispatchAuthorized: true,
+      printStatus: 'PRINT_DISPATCHED',
       printJobId,
+      printTrackingPersisted,
+      printTrackingWarning,
+      dispatchedDeviceId,
+      deviceAcknowledgementRequired: attestationBinding.required,
+      deviceAcknowledgementSupported: attestationBinding.supported,
+      deviceAcknowledgementPlatform: attestationBinding.platform,
+      deviceAcknowledgementUnavailableReason: attestationBinding.unavailableReason,
+      cryptographicAttestationRequired: attestationBinding.required,
+      attestationAlgorithm: attestationBinding.algorithm,
+      attestationKeyThumbprint: attestationBinding.keyThumbprint,
+      attestationKeyProvider: attestationBinding.keyProvider,
+      attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified === true,
+      attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
+      ackChallenge: attestationBinding.challenge,
+      ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+      ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
+      attestationContext: attestationBinding.required ? {
+        version: PRINT_ATTESTATION_VERSION,
+        algorithm: ATTESTATION_ALGORITHM,
+        organisationId: normalizeId(bill.organisationId),
+        cafeId: normalizeId(bill.cafeId),
+        deviceId: dispatchedDeviceId,
+        printJobId,
+        challenge: attestationBinding.challenge,
+        challengeIssuedAtEpochMs: attestationBinding.challengeIssuedAtEpochMs,
+        challengeExpiresAtEpochMs: attestationBinding.challengeExpiresAtEpochMs,
+        expectedPayloadSha256: printResult.payloadSha256,
+        expectedPayloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
+      } : null,
+      drawerKickRequested: false,
+      drawerKickStatus: 'NOT_REQUESTED',
+      payloadSha256: printResult.payloadSha256,
+      payloadBytes: printResult.payloadBytes,
+      printerTarget: 'DEFAULT_THERMAL',
+      printDispatchAuthorization,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,
@@ -1244,7 +2739,7 @@ class PosOrderService {
     const normBillId = normalizeId(billId);
     const bill = await Bill.findOne({
       $or: [{ billId: normBillId }, { invoiceNumber: normBillId }],
-      organisationId: authContext.organisationId || 'ORG-ZAMORIN',
+      organisationId: requireOrganisationId(authContext),
     });
 
     if (!bill) {
@@ -1259,15 +2754,90 @@ class PosOrderService {
     }
 
     bill.reprints = Array.isArray(bill.reprints) ? bill.reprints : [];
+    const nextReprintCount = bill.reprints.length + 1;
+    const billDataBeforeReprint = typeof bill.toObject === 'function' ? bill.toObject() : bill;
+    const printResult = await this.generatePrintArtifacts(billDataBeforeReprint, {
+      ...options,
+      isReprint: true,
+      reprintCount: nextReprintCount,
+      allowDrawerKick: false,
+    });
+    const dispatchedDeviceId = resolveDispatchDeviceId(authContext, bill.cafeId);
+    const attestationBinding = await resolveAttestationBinding(authContext, bill.cafeId);
+
+    const printJobId = createPrintJobId('REPRINT');
+    let printTrackingPersisted = false;
+    let printTrackingWarning = null;
+    let persistedPrintJob = null;
+    try {
+      const pj = new PrintJob({
+        printJobId,
+        organisationId: bill.organisationId,
+        cafeId: bill.cafeId,
+        billId: bill.billId,
+        invoiceNumber: bill.invoiceNumber,
+        jobType: 'REPRINT',
+        status: 'DISPATCHED',
+        requestedBy: authContext.userId || 'STAFF',
+        dispatchedDeviceId,
+        ackChallenge: attestationBinding.challenge,
+        ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+        ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
+        attestationVersion: PRINT_ATTESTATION_VERSION,
+        payloadSha256: printResult.payloadSha256,
+        payloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
+        attestationRequired: attestationBinding.required,
+        attestationKeyThumbprint: attestationBinding.keyThumbprint,
+        attestationKeyProvider: attestationBinding.keyProvider,
+        attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified,
+        attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
+        drawerKickRequested: false,
+        drawerKickStatus: 'NOT_REQUESTED',
+        printBufferBase64: printResult.printBufferBase64,
+        htmlPreview: printResult.htmlPreview,
+      });
+      await pj.save();
+      persistedPrintJob = pj;
+      printTrackingPersisted = true;
+    } catch (trackingErr) {
+      printTrackingWarning = 'PRINT_JOB_PERSISTENCE_FAILED';
+      console.error('[POS Print] Failed to persist reprint PrintJob', printJobId, trackingErr);
+    }
+
+    if (!printTrackingPersisted) {
+      throw new ApiError(
+        503,
+        'PRINT_TRACKING_UNAVAILABLE',
+        'Reprint dispatch was withheld because durable print tracking could not be established. Retry the reprint request.'
+      );
+    }
+
     bill.reprints.push({
       reprintedBy: authContext.userId || 'STAFF',
       reprintedAt: new Date(),
       reason: cleanReason,
     });
 
-    await bill.save();
+    try {
+      await bill.save();
+    } catch (reprintStateErr) {
+      if (persistedPrintJob) {
+        try {
+          persistedPrintJob.status = 'CANCELLED';
+          persistedPrintJob.failureCode = 'REPRINT_STATE_PERSISTENCE_FAILED';
+          persistedPrintJob.failureReason = reprintStateErr?.message || 'Reprint state persistence failed.';
+          persistedPrintJob.completedAt = new Date();
+          await persistedPrintJob.save();
+        } catch (_) {}
+      }
+      throw new ApiError(
+        503,
+        'REPRINT_STATE_PERSISTENCE_FAILED',
+        'Reprint dispatch was withheld because the audited reprint state could not be persisted.'
+      );
+    }
 
-    // Audit Logging
     try {
       await auditService.recordRequestAudit({
         request: {
@@ -1287,43 +2857,64 @@ class PosOrderService {
         riskClassification: 'LOW',
       });
     } catch {
-      // Audit non-fatal
+      // Audit delivery is non-fatal after durable print tracking and reprint state exist.
     }
 
     const billData = typeof bill.toObject === 'function' ? bill.toObject() : bill;
-    const printResult = await this.generatePrintArtifacts(billData, {
-      ...options,
-      isReprint: true,
-      reprintCount: bill.reprints.length,
+    const printDispatchAuthorization = optionalPrintDispatchAuthorization({
+      organisationId: normalizeId(bill.organisationId), cafeId: normalizeId(bill.cafeId),
+      deviceId: dispatchedDeviceId, printJobId, payloadSha256: printResult.payloadSha256,
+      payloadBytes: printResult.payloadBytes, printerTarget: 'DEFAULT_THERMAL', drawerKickRequested: false,
     });
-
-    const printJobId = `PJ-REP-${Date.now()}`;
-    try {
-      const pj = new PrintJob({
-        printJobId,
-        organisationId: bill.organisationId,
-        cafeId: bill.cafeId,
-        billId: bill.billId,
-        invoiceNumber: bill.invoiceNumber,
-        jobType: 'REPRINT',
-        status: 'PRINTED',
-        requestedBy: authContext.userId || 'STAFF',
-        completedAt: new Date(),
-        printBufferBase64: printResult.printBufferBase64,
-      });
-      await pj.save();
-    } catch {}
 
     return {
       success: true,
       action: 'REPRINT',
-      message: `Receipt reprinted (Copy #${bill.reprints.length}).`,
+      message: `Receipt reprint dispatch is durably tracked (Request #${bill.reprints.length}).`,
       bill: billData,
       isReprint: true,
       reprintCount: bill.reprints.length,
-      printed: true,
-      printStatus: 'PRINTED',
+      printed: false,
+      printDispatched: true,
+      printDispatchAuthorized: true,
+      printStatus: 'PRINT_DISPATCHED',
       printJobId,
+      printTrackingPersisted,
+      printTrackingWarning,
+      dispatchedDeviceId,
+      deviceAcknowledgementRequired: attestationBinding.required,
+      deviceAcknowledgementSupported: attestationBinding.supported,
+      deviceAcknowledgementPlatform: attestationBinding.platform,
+      deviceAcknowledgementUnavailableReason: attestationBinding.unavailableReason,
+      cryptographicAttestationRequired: attestationBinding.required,
+      attestationAlgorithm: attestationBinding.algorithm,
+      attestationKeyThumbprint: attestationBinding.keyThumbprint,
+      attestationKeyProvider: attestationBinding.keyProvider,
+      attestationKeyHardwareBackedVerified: attestationBinding.keyHardwareBackedVerified === true,
+      attestationKeyHardwareSecurityLevel: attestationBinding.keyHardwareSecurityLevel,
+      ackChallenge: attestationBinding.challenge,
+      ackChallengeIssuedAt: attestationBinding.challengeIssuedAt,
+      ackChallengeExpiresAt: attestationBinding.challengeExpiresAt,
+      attestationContext: attestationBinding.required ? {
+        version: PRINT_ATTESTATION_VERSION,
+        algorithm: ATTESTATION_ALGORITHM,
+        organisationId: normalizeId(bill.organisationId),
+        cafeId: normalizeId(bill.cafeId),
+        deviceId: dispatchedDeviceId,
+        printJobId,
+        challenge: attestationBinding.challenge,
+        challengeIssuedAtEpochMs: attestationBinding.challengeIssuedAtEpochMs,
+        challengeExpiresAtEpochMs: attestationBinding.challengeExpiresAtEpochMs,
+        expectedPayloadSha256: printResult.payloadSha256,
+        expectedPayloadBytes: printResult.payloadBytes,
+        printerTarget: 'DEFAULT_THERMAL',
+      } : null,
+      drawerKickRequested: false,
+      drawerKickStatus: 'NOT_REQUESTED',
+      payloadSha256: printResult.payloadSha256,
+      payloadBytes: printResult.payloadBytes,
+      printerTarget: 'DEFAULT_THERMAL',
+      printDispatchAuthorization,
       printBuffer: printResult.printBufferBase64,
       htmlPreview: printResult.htmlPreview,
       rawBuffer: printResult.rawBuffer,

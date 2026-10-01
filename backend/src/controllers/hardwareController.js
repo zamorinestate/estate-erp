@@ -33,7 +33,8 @@ const saveTerminalConfig = asyncHandler(async (req, res) => {
 });
 
 /**
- * Issue a diagnostic test print ticket for a target terminal.
+ * Prepare a diagnostic ESC/POS test payload for a target terminal.
+ * This endpoint does not itself dispatch bytes to physical hardware.
  */
 const issueDiagnosticTestPrint = asyncHandler(async (req, res) => {
   const { terminalId, format = 'binary' } = req.body;
@@ -70,6 +71,10 @@ const issueDiagnosticTestPrint = asyncHandler(async (req, res) => {
 
   return res.status(200).json({
     success: true,
+    prepared: true,
+    dispatched: false,
+    acknowledged: false,
+    evidenceLevel: 'NONE',
     terminalId: terminal.terminalId,
     bytesLength: rawBuffer.length,
     base64Payload: rawBuffer.toString('base64'),
@@ -92,11 +97,14 @@ const triggerDrawerKick = asyncHandler(async (req, res) => {
 
   return res.status(200).json({
     success: true,
-    message: 'Cash drawer kick pulse emitted.',
+    message: 'Cash drawer kick command prepared. Physical drawer opening is not yet acknowledged.',
     data: {
       terminalId: result.terminalId,
       pin: result.pin,
-      triggeredAt: result.triggeredAt,
+      status: result.status,
+      dispatched: result.dispatched,
+      acknowledged: result.acknowledged,
+      preparedAt: result.preparedAt,
       base64Pulse: result.kickBuffer.toString('base64'),
     },
   });

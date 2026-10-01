@@ -26,6 +26,7 @@ const { ZurfService } = require('../services/zurfService');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { executeTransactionWithRetry } = require('../utils/transactionHelper');
+const { documentStorageAdapter } = require('../services/documentStorageAdapter');
 
 // Global emergency disposition pause state
 let _globalDispositionPaused = false;
@@ -161,10 +162,28 @@ const listTrashItems = asyncHandler(async (request, response) => {
   const now = new Date();
   const processedItems = items.map((i) => {
     const daysRemaining = Math.max(0, Math.ceil((new Date(i.expiresAt) - now) / (1000 * 60 * 60 * 24)));
+    const isHoldActive = i.holdState === 'ACTIVE' || i.holds?.some((h) => !h.releasedAt);
+    const frozenStates = new Set([
+      'DISPOSITION_REVIEW',
+      'DISPOSITION_APPROVED',
+      'DISPOSITION_PROCESSING',
+      'DISPOSED',
+      'RESTORED',
+    ]);
+    let effectiveLifecycleStatus = i.lifecycleStatus;
+    if (isHoldActive) {
+      effectiveLifecycleStatus = 'ON_HOLD';
+    } else if (!frozenStates.has(i.lifecycleStatus)) {
+      effectiveLifecycleStatus = new Date(i.expiresAt) <= now
+        ? 'RETENTION_COMPLETE'
+        : (daysRemaining <= 7 ? 'EXPIRING_SOON' : 'RECOVERABLE');
+    }
+
     return {
       ...i,
+      lifecycleStatus: effectiveLifecycleStatus,
       daysRemaining,
-      isHoldActive: i.holdState === 'ACTIVE' || i.holds?.some((h) => !h.releasedAt),
+      isHoldActive,
     };
   });
 
@@ -477,34 +496,80 @@ const placePreservationHold = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'CANNOT_HOLD_DISPOSED', 'Cannot place a hold on an already disposed record.');
   }
 
-  const holdId = `HOLD-${Date.now().toString().slice(-6)}`;
-  await executeTransactionWithRetry(async (session) => {
-    if (!item.holds.some((h) => h.holdId === holdId)) {
-      item.holds.push({
-        holdId,
-        reason: reason.trim(),
-        scope,
-        placedByUserId: userId,
-        placedByName: userName,
-        placedAt: new Date(),
-        reviewDate: reviewDate ? new Date(reviewDate) : null,
-      });
-    }
+  if (item.lifecycleStatus === 'DISPOSITION_PROCESSING') {
+    throw new ApiError(
+      409,
+      'DISPOSITION_ALREADY_IRREVERSIBLE',
+      'A new preservation hold cannot be placed after irreversible disposition processing has started.'
+    );
+  }
 
-    item.holdState = 'ACTIVE';
-    item.lifecycleStatus = 'ON_HOLD';
-    await item.save(session ? { session } : {});
+  const holdDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const holdId = await SequenceCounter.generateId({
+    organisationId: orgId,
+    sequenceKey: `TRASH_HOLD_${holdDate}`,
+    prefix: `HOLD-${holdDate}`,
+    minimumDigits: 5,
+  });
+
+  let changedItem = null;
+
+  await executeTransactionWithRetry(async (session) => {
+    changedItem = await TrashEntry.findOneAndUpdate(
+      {
+        _id: item._id,
+        organisationId: orgId,
+        lifecycleStatus: {
+          $nin: ['DISPOSITION_PROCESSING', 'DISPOSED', 'RESTORED'],
+        },
+        holdState: { $ne: 'ACTIVE' },
+      },
+      {
+        $push: {
+          holds: {
+            holdId,
+            reason: reason.trim(),
+            scope,
+            placedByUserId: userId,
+            placedByName: userName,
+            placedAt: new Date(),
+            reviewDate: reviewDate ? new Date(reviewDate) : null,
+          },
+        },
+        $set: {
+          holdState: 'ACTIVE',
+          lifecycleStatus: 'ON_HOLD',
+        },
+      },
+      {
+        new: true,
+        ...(session ? { session } : {}),
+      }
+    );
+
+    if (!changedItem) {
+      throw new ApiError(
+        409,
+        'PRESERVATION_HOLD_STATE_CONFLICT',
+        'The Trash record changed state before the hold could be placed. No hold was applied.'
+      );
+    }
 
     if (request.auth) {
       await recordRequestAudit({
         request,
         module: 'TRASH_BIN',
         action: 'PLACE_PRESERVATION_HOLD',
-        entityType: item.entityType,
-        entityId: item.entityId,
+        entityType: changedItem.entityType,
+        entityId: changedItem.entityId,
         result: 'SUCCESS',
         riskClassification: 'HIGH',
-        metadata: { trashId: item.trashId, holdId, reason },
+        metadata: {
+          trashId: changedItem.trashId,
+          holdId,
+          reason,
+          previousLifecycleStatus: item.lifecycleStatus,
+        },
         session,
       });
     }
@@ -512,7 +577,7 @@ const placePreservationHold = asyncHandler(async (request, response) => {
 
   return response.status(200).json({
     success: true,
-    message: `Preservation hold placed on ${item.recordReference}. Permanent disposition is strictly suspended.`,
+    message: `Preservation hold placed on ${changedItem.recordReference}. Permanent disposition is strictly suspended.`,
     data: { holdId, holdState: 'ACTIVE' },
   });
 });
@@ -578,12 +643,131 @@ const releasePreservationHold = asyncHandler(async (request, response) => {
 // 7. DISPOSITION REVIEW & EXECUTION (Multi-Store Purge & Proof Certificate)
 // ═════════════════════════════════════════════════════════════════════════════
 
+async function loadExactRetentionPolicy(item, organisationId, session = null) {
+  const query = RetentionPolicy.findOne({
+    organisationId,
+    policyId: String(item?.retentionPolicyId || '').trim().toUpperCase(),
+    version: Number(item?.retentionPolicyVersion || 0),
+    entityType: String(item?.entityType || '').trim().toUpperCase(),
+  });
+  const policy = session && typeof query.session === 'function'
+    ? await query.session(session)
+    : await query;
+
+  if (!policy) {
+    throw new ApiError(
+      409,
+      'RETENTION_POLICY_NOT_FOUND',
+      'Permanent disposition is blocked because the exact retention policy/version for this Trash record is unavailable.'
+    );
+  }
+  if (policy.permanentDispositionAllowed !== true) {
+    throw new ApiError(
+      403,
+      'PERMANENT_DISPOSITION_NOT_ALLOWED',
+      'The governing retention policy does not permit permanent disposition.'
+    );
+  }
+  return policy;
+}
+
+function assertDispositionRetentionComplete(item, now = new Date()) {
+  const expiresAt = item?.expiresAt ? new Date(item.expiresAt) : null;
+  if (!expiresAt || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() > now.getTime()) {
+    throw new ApiError(
+      409,
+      'RETENTION_PERIOD_ACTIVE',
+      'Permanent disposition is blocked until the governing retention period has completed.'
+    );
+  }
+}
+
+function assertNoActiveDispositionHold(item) {
+  const activeHold = item?.holdState === 'ACTIVE' ||
+    (Array.isArray(item?.holds) && item.holds.some((hold) => !hold?.releasedAt));
+  if (activeHold) {
+    throw new ApiError(
+      403,
+      'HOLD_ACTIVE',
+      'Permanent disposition is blocked while an active preservation hold exists.'
+    );
+  }
+}
+
+function getCanonicalTrashAttachmentLocators(item) {
+  const attachments = Array.isArray(item?.attachments) ? item.attachments : [];
+  return attachments.map((attachment, index) => {
+    const storageKey = String(attachment?.storageKey || '').trim() || null;
+    const gridFsFileId = String(attachment?.gridFsFileId || '').trim() || null;
+
+    if (!storageKey && !gridFsFileId) {
+      throw new ApiError(
+        503,
+        'DISPOSITION_ATTACHMENT_LOCATOR_REQUIRED',
+        `Attachment ${index + 1} cannot be permanently disposed because it has no canonical storageKey or gridFsFileId. Legacy storageUrl/fileId values are not deletion authority.`
+      );
+    }
+
+    return {
+      storageKey,
+      fileId: gridFsFileId,
+      locatorType: storageKey ? 'STORAGE_KEY' : 'GRIDFS_FILE_ID',
+      fileName: String(attachment?.fileName || '').trim() || null,
+    };
+  });
+}
+
+async function deleteAndVerifyTrashAttachments(item) {
+  const locators = getCanonicalTrashAttachmentLocators(item);
+  const summary = {
+    totalAttachments: locators.length,
+    verifiedDeleted: 0,
+    alreadyMissing: 0,
+    locatorTypes: [...new Set(locators.map((locator) => locator.locatorType))],
+  };
+
+  for (const locator of locators) {
+    const storageArgs = {
+      storageKey: locator.storageKey,
+      fileId: locator.fileId,
+    };
+
+    const existedBefore = await documentStorageAdapter.exists(storageArgs);
+    if (existedBefore) {
+      await documentStorageAdapter.delete(storageArgs);
+      summary.verifiedDeleted += 1;
+    } else {
+      summary.alreadyMissing += 1;
+    }
+
+    const existsAfter = await documentStorageAdapter.exists(storageArgs);
+    if (existsAfter) {
+      throw new ApiError(
+        503,
+        'DISPOSITION_ATTACHMENT_DELETE_UNVERIFIED',
+        'An attachment storage object still exists after the permanent-deletion attempt.'
+      );
+    }
+  }
+
+  return summary;
+}
+
 const submitDispositionRequest = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
+  assertPrimaryMaster(auth, 'submit a permanent disposition request');
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
   const userId = auth.userId || 'MU-0001';
   const { trashId } = request.params;
-  const { justification } = request.body;
+  const justification = String(request.body?.justification || '').trim();
+
+  if (justification.length < 10) {
+    throw new ApiError(
+      400,
+      'DISPOSITION_JUSTIFICATION_REQUIRED',
+      'A specific disposition justification of at least 10 characters is required.'
+    );
+  }
 
   const item = await TrashEntry.findOne({
     trashId: trashId.trim().toUpperCase(),
@@ -594,40 +778,85 @@ const submitDispositionRequest = asyncHandler(async (request, response) => {
     throw new ApiError(404, 'NOT_FOUND', 'Trash record not found.');
   }
 
-  if (item.holdState === 'ACTIVE' || item.holds.some((h) => !h.releasedAt)) {
-    throw new ApiError(403, 'HOLD_ACTIVE', 'Cannot submit for disposition while an active preservation hold exists.');
+  assertNoActiveDispositionHold(item);
+  assertDispositionRetentionComplete(item);
+  await loadExactRetentionPolicy(item, orgId);
+
+  if (['DISPOSED', 'RESTORED', 'DISPOSITION_PROCESSING'].includes(item.lifecycleStatus)) {
+    throw new ApiError(
+      409,
+      'DISPOSITION_STATE_INVALID',
+      `Record in ${item.lifecycleStatus} state cannot enter disposition review.`
+    );
+  }
+
+  const requestAudit = await recordRequestAudit({
+    request,
+    module: 'TRASH_BIN',
+    action: 'SUBMIT_DISPOSITION_REQUEST_AUTHORIZED',
+    entityType: item.entityType,
+    entityId: item.entityId,
+    result: 'SUCCESS',
+    riskClassification: 'HIGH',
+    reason: justification,
+    metadata: {
+      trashId: item.trashId,
+      currentState: item.lifecycleStatus,
+    },
+  });
+
+  if (!requestAudit?.auditEventId) {
+    throw new ApiError(
+      503,
+      'DISPOSITION_REQUEST_AUDIT_NOT_CONFIRMED',
+      'Disposition request was not applied because immutable authorization audit could not be confirmed.'
+    );
   }
 
   item.lifecycleStatus = 'DISPOSITION_REVIEW';
   item.dispositionRequestId = `DISP-REQ-${Date.now().toString().slice(-6)}`;
+  item.dispositionRequestedByUserId = userId;
+  item.dispositionRequestedAt = new Date();
+  item.dispositionJustification = justification;
+  item.dispositionApprovedByUserId = null;
+  item.dispositionApprovedAt = null;
+  item.dispositionApprovalReason = '';
   await item.save();
-
-  try {
-    if (request.auth) {
-      await recordRequestAudit({
-        request,
-        module: 'TRASH_BIN',
-        action: 'SUBMIT_DISPOSITION_REQUEST',
-        entityType: item.entityType,
-        entityId: item.entityId,
-        result: 'SUCCESS',
-        metadata: { trashId: item.trashId, justification },
-      });
-    }
-  } catch (err) {}
 
   return response.status(200).json({
     success: true,
     message: `Record ${item.recordReference} submitted for governed disposition review.`,
-    data: { requestId: item.dispositionRequestId, status: 'DISPOSITION_REVIEW' },
+    data: {
+      requestId: item.dispositionRequestId,
+      status: 'DISPOSITION_REVIEW',
+      authorizationAuditEventId: requestAudit.auditEventId,
+    },
   });
 });
 
 const approveDisposition = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
+  assertPrimaryMaster(auth, 'approve permanent disposition');
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
   const userId = auth.userId || 'MU-0001';
   const { trashId } = request.params;
+  const approvalReason = String(request.body?.reason || '').trim();
+  const confirmation = String(request.body?.confirmation || '').trim();
+
+  if (confirmation !== 'APPROVE_PERMANENT_DISPOSITION') {
+    throw new ApiError(
+      400,
+      'DISPOSITION_APPROVAL_CONFIRMATION_REQUIRED',
+      'Disposition approval requires confirmation APPROVE_PERMANENT_DISPOSITION.'
+    );
+  }
+  if (approvalReason.length < 10) {
+    throw new ApiError(
+      400,
+      'DISPOSITION_APPROVAL_REASON_REQUIRED',
+      'A specific approval reason of at least 10 characters is required.'
+    );
+  }
 
   const item = await TrashEntry.findOne({
     trashId: trashId.trim().toUpperCase(),
@@ -635,24 +864,98 @@ const approveDisposition = asyncHandler(async (request, response) => {
   });
 
   if (!item) throw new ApiError(404, 'NOT_FOUND', 'Trash record not found.');
-
-  if (item.holdState === 'ACTIVE') {
-    throw new ApiError(403, 'HOLD_ACTIVE', 'Preservation hold prevents approval.');
+  if (item.lifecycleStatus !== 'DISPOSITION_REVIEW') {
+    throw new ApiError(
+      409,
+      'DISPOSITION_NOT_IN_REVIEW',
+      'Only a record currently in DISPOSITION_REVIEW may be approved.'
+    );
   }
 
-  item.lifecycleStatus = 'DISPOSITION_APPROVED';
-  await item.save();
+  assertNoActiveDispositionHold(item);
+  assertDispositionRetentionComplete(item);
+  const policy = await loadExactRetentionPolicy(item, orgId);
+
+  if (
+    policy.makerCheckerRequired === true &&
+    String(item.dispositionRequestedByUserId || '').trim().toUpperCase() ===
+      String(userId || '').trim().toUpperCase()
+  ) {
+    throw new ApiError(
+      409,
+      'MAKER_CHECKER_REQUIRED',
+      'This retention policy requires a distinct checker. The same actor cannot request and approve disposition.'
+    );
+  }
+
+  const approvalAudit = await recordRequestAudit({
+    request,
+    module: 'TRASH_BIN',
+    action: 'APPROVE_DISPOSITION_AUTHORIZED',
+    entityType: item.entityType,
+    entityId: item.entityId,
+    result: 'SUCCESS',
+    riskClassification: 'CRITICAL',
+    reason: approvalReason,
+    metadata: {
+      trashId: item.trashId,
+      dispositionRequestId: item.dispositionRequestId,
+      requestedByUserId: item.dispositionRequestedByUserId || null,
+      makerCheckerRequired: Boolean(policy.makerCheckerRequired),
+    },
+  });
+
+  if (!approvalAudit?.auditEventId) {
+    throw new ApiError(
+      503,
+      'DISPOSITION_APPROVAL_AUDIT_NOT_CONFIRMED',
+      'Disposition approval was not applied because immutable authorization audit could not be confirmed.'
+    );
+  }
+
+  const changed = await TrashEntry.findOneAndUpdate(
+    {
+      _id: item._id,
+      organisationId: orgId,
+      lifecycleStatus: 'DISPOSITION_REVIEW',
+      holdState: { $ne: 'ACTIVE' },
+    },
+    {
+      $set: {
+        lifecycleStatus: 'DISPOSITION_APPROVED',
+        dispositionApprovedByUserId: userId,
+        dispositionApprovedAt: new Date(),
+        dispositionApprovalReason: approvalReason,
+      },
+    },
+    { new: true }
+  );
+
+  if (!changed) {
+    throw new ApiError(
+      409,
+      'DISPOSITION_APPROVAL_STATE_CONFLICT',
+      'Disposition state changed while approval was being applied.'
+    );
+  }
 
   return response.status(200).json({
     success: true,
-    message: `Disposition approved for ${item.recordReference}. Ready for multi-store purge.`,
-    data: { status: 'DISPOSITION_APPROVED' },
+    message: `Disposition approved for ${item.recordReference}. Execution remains subject to final server-side retention and proof checks.`,
+    data: {
+      status: 'DISPOSITION_APPROVED',
+      authorizationAuditEventId: approvalAudit.auditEventId,
+    },
   });
 });
 
 const executeDispositionPurge = asyncHandler(async (request, response) => {
   if (_globalDispositionPaused) {
-    throw new ApiError(503, 'DISPOSITION_PAUSED', `Automated and manual disposition is currently PAUSED: ${_globalDispositionPauseReason}`);
+    throw new ApiError(
+      503,
+      'DISPOSITION_PAUSED',
+      `Automated and manual disposition is currently PAUSED: ${_globalDispositionPauseReason}`
+    );
   }
 
   const auth = request.auth || request.user || {};
@@ -660,28 +963,244 @@ const executeDispositionPurge = asyncHandler(async (request, response) => {
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
   const userId = auth.userId || 'MU-0001';
   const { trashId } = request.params;
+  const confirmation = String(request.body?.confirmation || '').trim();
+  const executionReason = String(request.body?.reason || '').trim();
 
-  const item = await TrashEntry.findOne({
+  if (confirmation !== 'PERMANENTLY_DISPOSE_TRASH_RECORD') {
+    throw new ApiError(
+      400,
+      'PERMANENT_DISPOSITION_CONFIRMATION_REQUIRED',
+      'Permanent disposition requires confirmation PERMANENTLY_DISPOSE_TRASH_RECORD.'
+    );
+  }
+  if (executionReason.length < 10) {
+    throw new ApiError(
+      400,
+      'PERMANENT_DISPOSITION_REASON_REQUIRED',
+      'A specific permanent-disposition reason of at least 10 characters is required.'
+    );
+  }
+
+  let item = await TrashEntry.findOne({
     trashId: trashId.trim().toUpperCase(),
     organisationId: orgId,
   });
 
   if (!item) throw new ApiError(404, 'NOT_FOUND', 'Trash record not found.');
 
-  if (item.holdState === 'ACTIVE' || item.holds.some((h) => !h.releasedAt)) {
-    throw new ApiError(403, 'HOLD_ACTIVE', 'Cannot purge record with active preservation hold.');
+  if (item.lifecycleStatus === 'DISPOSED' && item.dispositionCertificateId) {
+    const existingCert = await DispositionCertificate.findOne({
+      organisationId: orgId,
+      certificateId: item.dispositionCertificateId,
+    }).lean();
+
+    return response.status(200).json({
+      success: true,
+      message: `Record ${item.recordReference} was already permanently disposed.`,
+      data: {
+        certificateId: item.dispositionCertificateId,
+        status: 'DISPOSED',
+        propagation: existingCert?.propagationStages || null,
+        proofScope: 'VERIFIED_STAGES_ONLY',
+        idempotent: true,
+      },
+    });
   }
 
-  // Multi-Store Propagation Execution
-  const propagation = {
-    primaryDatabase: 'COMPLETED',
-    searchIndex: 'COMPLETED',
-    fileStorage: item.attachments?.length > 0 ? 'COMPLETED' : 'NOT_APPLICABLE',
-    cacheLayer: 'COMPLETED',
-    analyticsReadModel: 'COMPLETED',
-  };
+  if (!['DISPOSITION_APPROVED', 'DISPOSITION_PROCESSING'].includes(item.lifecycleStatus)) {
+    throw new ApiError(
+      409,
+      'DISPOSITION_NOT_APPROVED',
+      'Permanent disposition requires an approved record or a resumable in-progress disposition.'
+    );
+  }
 
-  // Generate safe ZURF Proof of Disposition Certificate (Minimal metadata, zero payload)
+  assertNoActiveDispositionHold(item);
+  assertDispositionRetentionComplete(item);
+
+  const policy = await loadExactRetentionPolicy(item, orgId);
+  if (policy.makerCheckerRequired === true) {
+    const requester = String(item.dispositionRequestedByUserId || '').trim().toUpperCase();
+    const approver = String(item.dispositionApprovedByUserId || '').trim().toUpperCase();
+    if (!requester || !approver || requester === approver) {
+      throw new ApiError(
+        409,
+        'MAKER_CHECKER_REQUIRED',
+        'This policy requires distinct disposition requester and approver identities.'
+      );
+    }
+  }
+
+  if (!item.dispositionApprovedByUserId || !item.dispositionApprovedAt) {
+    throw new ApiError(
+      409,
+      'DISPOSITION_APPROVAL_PROOF_MISSING',
+      'Permanent disposition is blocked because durable approval lineage is incomplete.'
+    );
+  }
+
+  const attachmentLocators = getCanonicalTrashAttachmentLocators(item);
+  const hasAttachments = attachmentLocators.length > 0;
+
+  if (
+    item.lifecycleStatus === 'DISPOSITION_PROCESSING' &&
+    item.dispositionStorageStatus === 'PENDING'
+  ) {
+    throw new ApiError(
+      409,
+      'DISPOSITION_ALREADY_PROCESSING',
+      'This disposition already has an active storage-deletion attempt. Reconcile or retry after the attempt is no longer pending.'
+    );
+  }
+
+  let executionAudit = null;
+  if (item.lifecycleStatus === 'DISPOSITION_APPROVED') {
+    executionAudit = await recordRequestAudit({
+      request,
+      module: 'TRASH_BIN',
+      action: 'EXECUTE_PERMANENT_DISPOSITION_AUTHORIZED',
+      entityType: item.entityType,
+      entityId: item.entityId,
+      result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
+      reason: executionReason,
+      metadata: {
+        trashId: item.trashId,
+        dispositionRequestId: item.dispositionRequestId,
+        requestedByUserId: item.dispositionRequestedByUserId || null,
+        approvedByUserId: item.dispositionApprovedByUserId || null,
+        retentionPolicyId: item.retentionPolicyId,
+        retentionPolicyVersion: item.retentionPolicyVersion,
+        attachmentCount: attachmentLocators.length,
+      },
+    });
+
+    if (!executionAudit?.auditEventId) {
+      throw new ApiError(
+        503,
+        'DISPOSITION_EXECUTION_AUDIT_NOT_CONFIRMED',
+        'Permanent disposition was not started because immutable execution authorization could not be confirmed.'
+      );
+    }
+
+    const claimTime = new Date();
+    const claimed = await TrashEntry.findOneAndUpdate(
+      {
+        _id: item._id,
+        organisationId: orgId,
+        lifecycleStatus: 'DISPOSITION_APPROVED',
+        holdState: { $ne: 'ACTIVE' },
+        dispositionApprovedByUserId: item.dispositionApprovedByUserId,
+        dispositionApprovedAt: item.dispositionApprovedAt,
+      },
+      {
+        $set: {
+          lifecycleStatus: 'DISPOSITION_PROCESSING',
+          dispositionProcessingStartedAt: claimTime,
+          dispositionProcessingStartedByUserId: userId,
+          dispositionExecutionAuthorizationAuditEventId: executionAudit.auditEventId,
+          dispositionStorageStatus: hasAttachments ? 'PENDING' : 'NOT_REQUIRED',
+          dispositionStorageVerifiedAt: null,
+          dispositionStorageLastAttemptAt: hasAttachments ? claimTime : null,
+          dispositionStorageLastError: '',
+          dispositionStorageSummary: {
+            totalAttachments: attachmentLocators.length,
+            verifiedDeleted: 0,
+            alreadyMissing: 0,
+            locatorTypes: [...new Set(attachmentLocators.map((locator) => locator.locatorType))],
+          },
+        },
+      },
+      { new: true }
+    );
+
+    if (!claimed) {
+      throw new ApiError(
+        409,
+        'DISPOSITION_EXECUTION_STATE_CONFLICT',
+        'Disposition state or approval lineage changed before execution; no purge was performed.'
+      );
+    }
+
+    item = claimed;
+  }
+
+  assertNoActiveDispositionHold(item);
+  assertDispositionRetentionComplete(item);
+
+  if (
+    hasAttachments &&
+    item.dispositionStorageStatus !== 'VERIFIED_DELETED'
+  ) {
+    try {
+      const storageSummary = await deleteAndVerifyTrashAttachments(item);
+      const verifiedAt = new Date();
+
+      const storageProof = await TrashEntry.findOneAndUpdate(
+        {
+          _id: item._id,
+          organisationId: orgId,
+          lifecycleStatus: 'DISPOSITION_PROCESSING',
+          dispositionStorageStatus: { $in: ['PENDING', 'FAILED'] },
+          dispositionProcessingStartedAt: item.dispositionProcessingStartedAt,
+        },
+        {
+          $set: {
+            dispositionStorageStatus: 'VERIFIED_DELETED',
+            dispositionStorageVerifiedAt: verifiedAt,
+            dispositionStorageLastAttemptAt: verifiedAt,
+            dispositionStorageLastError: '',
+            dispositionStorageSummary: storageSummary,
+          },
+        },
+        { new: true }
+      );
+
+      if (!storageProof) {
+        throw new ApiError(
+          409,
+          'DISPOSITION_STORAGE_PROOF_STATE_CONFLICT',
+          'Attachment deletion was verified, but the Trash disposition state changed before storage proof could be recorded.'
+        );
+      }
+
+      item = storageProof;
+    } catch (error) {
+      await TrashEntry.updateOne(
+        {
+          _id: item._id,
+          organisationId: orgId,
+          lifecycleStatus: 'DISPOSITION_PROCESSING',
+          dispositionProcessingStartedAt: item.dispositionProcessingStartedAt,
+          dispositionStorageStatus: { $in: ['PENDING', 'FAILED'] },
+        },
+        {
+          $set: {
+            dispositionStorageStatus: 'FAILED',
+            dispositionStorageLastAttemptAt: new Date(),
+            dispositionStorageLastError: String(
+              error?.code || error?.message || 'ATTACHMENT_DELETE_FAILED'
+            ).slice(0, 1000),
+          },
+        }
+      ).catch(() => {});
+
+      throw error;
+    }
+  }
+
+  const requiredStorageStatus = hasAttachments
+    ? 'VERIFIED_DELETED'
+    : 'NOT_REQUIRED';
+
+  if (item.dispositionStorageStatus !== requiredStorageStatus) {
+    throw new ApiError(
+      409,
+      'DISPOSITION_STORAGE_PROOF_INCOMPLETE',
+      'Permanent disposition cannot finalize until attachment storage disposition is verified.'
+    );
+  }
+
   const now = new Date();
   const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
   const certId = await SequenceCounter.generateId({
@@ -691,55 +1210,136 @@ const executeDispositionPurge = asyncHandler(async (request, response) => {
     minimumDigits: 5,
   });
 
+  const propagation = {
+    primaryDatabase: 'COMPLETED',
+    searchIndex: 'NOT_APPLICABLE',
+    fileStorage: hasAttachments ? 'COMPLETED' : 'NOT_APPLICABLE',
+    cacheLayer: 'NOT_APPLICABLE',
+    analyticsReadModel: 'NOT_APPLICABLE',
+  };
+
   await executeTransactionWithRetry(async (session) => {
+    const claimed = await TrashEntry.findOne({
+      _id: item._id,
+      organisationId: orgId,
+      lifecycleStatus: 'DISPOSITION_PROCESSING',
+      dispositionProcessingStartedAt: item.dispositionProcessingStartedAt,
+      dispositionStorageStatus: requiredStorageStatus,
+      dispositionExecutionAuthorizationAuditEventId: { $ne: null },
+    }).session(session);
+
+    if (!claimed) {
+      throw new ApiError(
+        409,
+        'DISPOSITION_FINALIZE_STATE_CONFLICT',
+        'Disposition state changed before finalization; no certificate was issued.'
+      );
+    }
+
+    assertNoActiveDispositionHold(claimed);
+    assertDispositionRetentionComplete(claimed, now);
+
+    const transactionPolicy = await loadExactRetentionPolicy(claimed, orgId, session);
+    if (transactionPolicy.permanentDispositionAllowed !== true) {
+      throw new ApiError(
+        403,
+        'PERMANENT_DISPOSITION_NOT_ALLOWED',
+        'The governing retention policy no longer permits permanent disposition.'
+      );
+    }
+
+    if (hasAttachments) {
+      const summary = claimed.dispositionStorageSummary || {};
+      const accounted =
+        Number(summary.verifiedDeleted || 0) +
+        Number(summary.alreadyMissing || 0);
+      if (
+        claimed.dispositionStorageStatus !== 'VERIFIED_DELETED' ||
+        !claimed.dispositionStorageVerifiedAt ||
+        accounted !== Number(summary.totalAttachments || 0) ||
+        Number(summary.totalAttachments || 0) !== claimed.attachments.length
+      ) {
+        throw new ApiError(
+          409,
+          'DISPOSITION_STORAGE_PROOF_INCONSISTENT',
+          'Attachment storage proof is incomplete or inconsistent with the Trash attachment set.'
+        );
+      }
+    }
+
     const cert = new DispositionCertificate({
       certificateId: certId,
       organisationId: orgId,
-      cafeId: item.cafeId,
-      trashId: item.trashId,
-      sourceModule: item.sourceModule,
-      entityType: item.entityType,
-      entityId: item.entityId,
-      recordReference: item.recordReference,
-      policyId: item.retentionPolicyId,
-      policyVersion: item.retentionPolicyVersion,
-      retentionCompletedAt: item.expiresAt,
-      requestedByUserId: item.deletedByUserId,
-      approvedByUserId: userId,
+      cafeId: claimed.cafeId,
+      trashId: claimed.trashId,
+      sourceModule: claimed.sourceModule,
+      entityType: claimed.entityType,
+      entityId: claimed.entityId,
+      recordReference: claimed.recordReference,
+      policyId: claimed.retentionPolicyId,
+      policyVersion: claimed.retentionPolicyVersion,
+      retentionCompletedAt: claimed.expiresAt,
+      requestedByUserId: claimed.dispositionRequestedByUserId || claimed.deletedByUserId,
+      approvedByUserId: claimed.dispositionApprovedByUserId,
       executedByUserId: userId,
-      executedAt: new Date(),
+      executedAt: now,
       propagationStages: propagation,
     });
-    await cert.save(session ? { session } : {});
+    await cert.save({ session });
 
-    // Permanently erase the serialized payload snapshot
-    item.payload = null;
-    item.attachments = [];
-    item.lifecycleStatus = 'DISPOSED';
-    item.dispositionCertificateId = certId;
-    await item.save(session ? { session } : {});
+    claimed.payload = null;
+    claimed.attachments = [];
+    claimed.lifecycleStatus = 'DISPOSED';
+    claimed.dispositionCertificateId = certId;
+    await claimed.save({ session });
 
-    if (request.auth) {
-      await recordRequestAudit({
-        request,
-        module: 'TRASH_BIN',
-        action: 'EXECUTE_PERMANENT_DISPOSITION',
-        entityType: item.entityType,
-        entityId: item.entityId,
-        result: 'SUCCESS',
-        riskClassification: 'CRITICAL',
-        metadata: { certificateId: certId, trashId: item.trashId, recordReference: item.recordReference },
-        session,
-      });
-    }
-  });
+    await recordRequestAudit({
+      request,
+      module: 'TRASH_BIN',
+      action: 'EXECUTE_PERMANENT_DISPOSITION',
+      entityType: claimed.entityType,
+      entityId: claimed.entityId,
+      result: 'SUCCESS',
+      riskClassification: 'CRITICAL',
+      reason: executionReason,
+      metadata: {
+        authorizationAuditEventId:
+          claimed.dispositionExecutionAuthorizationAuditEventId,
+        certificateId: certId,
+        trashId: claimed.trashId,
+        recordReference: claimed.recordReference,
+        propagationStages: propagation,
+        storageProof: {
+          status: claimed.dispositionStorageStatus,
+          verifiedAt: claimed.dispositionStorageVerifiedAt,
+          summary: claimed.dispositionStorageSummary,
+        },
+      },
+      session,
+    });
+  }, { requireTransactions: true });
 
   return response.status(200).json({
     success: true,
-    message: `Permanent disposition completed for ${item.recordReference}. Proof Certificate issued.`,
-    data: { certificateId: certId, status: 'DISPOSED', propagation },
+    message: hasAttachments
+      ? `Permanent payload and verified attachment disposition completed for ${item.recordReference}.`
+      : `Permanent MongoDB payload disposition completed for ${item.recordReference}.`,
+    data: {
+      certificateId: certId,
+      status: 'DISPOSED',
+      propagation,
+      storageProof: hasAttachments
+        ? {
+            status: item.dispositionStorageStatus,
+            verifiedAt: item.dispositionStorageVerifiedAt,
+            summary: item.dispositionStorageSummary,
+          }
+        : null,
+      proofScope: 'VERIFIED_STAGES_ONLY',
+    },
   });
 });
+
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 8. DISPOSITION CERTIFICATES & ZURF PROOF PDF
@@ -769,7 +1369,9 @@ const getDispositionCertificatePdf = asyncHandler(async (request, response) => {
 
   if (!cert) throw new ApiError(404, 'NOT_FOUND', 'Certificate not found.');
 
-  const html = ZurfService.renderZurfHtml({
+  const html = await ZurfService.renderZurfHtml({
+    organisationId: orgId,
+    cafeId: cert.cafeId || null,
     reportTitle: `CERTIFICATE OF PERMANENT DATA DISPOSITION — ${cert.certificateId}`,
     scope: `Café: ${cert.cafeId} · Module: ${cert.sourceModule}`,
     period: `Executed: ${new Date(cert.executedAt).toLocaleDateString('en-IN')}`,
@@ -778,21 +1380,21 @@ const getDispositionCertificatePdf = asyncHandler(async (request, response) => {
     kpiCards: [
       { label: 'RECORD REFERENCE', value: cert.recordReference, trend: cert.entityType, tone: 'neutral' },
       { label: 'RETENTION POLICY', value: cert.policyId, trend: `v${cert.policyVersion}`, tone: 'neutral' },
-      { label: 'STATUS', value: 'IRREVERSIBLY DISPOSED', trend: 'Verified Multi-Store Purge', tone: 'positive' },
+      { label: 'STATUS', value: 'DISPOSITION RECORDED', trend: 'Verified stages only', tone: 'positive' },
     ],
     columns: [
       { key: 'propStage', label: 'Technical Storage Location' },
-      { key: 'status', label: 'Purge Status' },
-      { key: 'timestamp', label: 'Execution Timestamp' },
+      { key: 'status', label: 'Verified Disposition Status' },
+      { key: 'timestamp', label: 'Certificate Timestamp' },
     ],
     rows: [
-      { propStage: 'Primary MongoDB Cluster', status: 'PURGED & UNINDEXED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Search Index Projections', status: 'REMOVED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Encrypted Object / File Storage', status: 'DELETED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Application Cache Layer', status: 'INVALIDATED', timestamp: new Date(cert.executedAt).toISOString() },
-      { propStage: 'Reporting Read Model Projections', status: 'SYNCHRONIZED', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Primary MongoDB Payload Snapshot', status: cert.propagationStages?.primaryDatabase || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Search Index Projections', status: cert.propagationStages?.searchIndex || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Encrypted Object / File Storage', status: cert.propagationStages?.fileStorage || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Application Cache Layer', status: cert.propagationStages?.cacheLayer || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
+      { propStage: 'Reporting Read Model Projections', status: cert.propagationStages?.analyticsReadModel || 'NOT_APPLICABLE', timestamp: new Date(cert.executedAt).toISOString() },
     ],
-    notes: 'This certificate serves as definitive proof under Zamorin Information Security and DPDP Data Governance standards that the business payload has been purged across all designated application data stores. Minimal metadata is retained solely for audit verification.',
+    notes: 'This certificate records only disposition stages actually verified by the server. NOT_APPLICABLE means no verified deletion adapter was required or executed for that stage. The certificate must not be interpreted as proof of deletion from an external store unless that stage is explicitly marked COMPLETED.',
   });
 
   return response.status(200).json({

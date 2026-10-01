@@ -224,6 +224,13 @@ const apInvoiceSchema = new mongoose.Schema(
         paidByUserId: { type: String, required: true },
         paymentMethod: { type: String, default: 'BANK_TRANSFER' },
         reference: { type: String, default: '' },
+        bankTransactionId: {
+          type: String,
+          trim: true,
+          uppercase: true,
+          default: null,
+          index: true,
+        },
       },
     ],
     gstMonitoring: {

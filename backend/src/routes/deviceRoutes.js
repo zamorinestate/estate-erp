@@ -69,13 +69,7 @@ router.post(
   (req, res, next) => deviceController.replaceDevice(req, res, next)
 );
 
-// 4. Issue Rotating QR Challenge (CAFE_OWNED device capability)
-router.post(
-  '/attendance/challenges',
-  authenticate,
-  attachDeviceContext,
-  (req, res, next) => deviceController.issueChallenge(req, res, next)
-);
+// Attendance QR issuance is canonicalized under GET /devices/attendance/qr via deviceEnrollmentRoutes.
 
 // 5. Issue Offline Signing Lease (CAFE_ADMIN / MASTER on CAFE_OWNED device)
 router.post(

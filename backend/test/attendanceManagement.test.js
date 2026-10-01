@@ -79,20 +79,20 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
-    userId: 'MU-NORMAL-01',
+  const malformedMasterUser = {
+    userId: 'MU-MALFORMED-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'malformed MASTER claim',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isMalformed = token === 'token_malformed_master';
+    const activeUser = isMalformed ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -114,9 +114,23 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
     };
   });
 
+  const targetEmployee = {
+    userId: 'EMP-001',
+    role: 'STAFF',
+    organisationId: 'ORG-ZAMORIN',
+    name: 'Attendance Test Employee',
+    accountStatus: 'ACTIVE',
+    employmentStatus: 'ACTIVE',
+    primaryCafeId: 'ZC-0001',
+    assignedCafeIds: ['ZC-0001'],
+  };
+
   t.mock.method(User, 'findOne', async (query) => {
-    if (query?.userId === 'MU-NORMAL-01') {
-      return { ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser };
+    if (query?.userId === 'MU-MALFORMED-01') {
+      return { ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser };
+    }
+    if (query?.userId === 'EMP-001') {
+      return { ...targetEmployee, toObject: () => targetEmployee };
     }
     return { ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser };
   });
@@ -206,41 +220,38 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
   }));
 
   // 1. GET /api/v1/attendance/overview
-  await t.test('Master receives real-time Attendance Overview and staffing KPIs', async () => {
+  await t.test('retired/non-primary MASTER is rejected from Attendance Overview', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
       path: '/api/v1/attendance/overview',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
-    assert.equal(res.status, 200);
-    assert.equal(res.data.success, true);
-    assert.equal(res.data.data.kpis.presentNow, 1);
-    assert.equal(res.data.data.cafeWorkforce.length, 2);
+    assert.equal(res.status, 403);
+    assert.equal(res.data?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
   });
 
   // 2. GET /api/v1/attendance/live
-  await t.test('Master receives live multi-cafe attendance presence table', async () => {
+  await t.test('retired/non-primary MASTER is rejected from live attendance administration', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
       path: '/api/v1/attendance/live',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
-    assert.equal(res.status, 200);
-    assert.equal(res.data.success, true);
-    assert.equal(res.data.data.attendance.length, 1);
+    assert.equal(res.status, 403);
+    assert.equal(res.data?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
   });
 
-  // 3. POST /api/v1/attendance/master-manual (Normal Master marks manual punch)
-  await t.test('Normal Master can record manual attendance for ANY employee across ANY cafe', async () => {
+  // 3. POST /api/v1/attendance/master-manual
+  await t.test('retired/non-primary MASTER cannot record manual attendance', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/attendance/master-manual',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         userId: 'EMP-001',
         cafeId: 'ZC-0001',
@@ -249,24 +260,21 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
       },
     });
 
-    assert.equal(res.status, 200);
-    assert.equal(res.data.success, true);
-    assert.equal(res.data.data.attendance.isManualEntry, true);
+    assert.equal(res.status, 403);
+    assert.equal(res.data?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
   });
 
   // 4. GET /api/v1/attendance/calendar-360/:userId
-  await t.test('Master receives Employee Attendance 360 monthly matrix', async () => {
+  await t.test('retired/non-primary MASTER is rejected from Employee Attendance 360', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
       path: '/api/v1/attendance/calendar-360/EMP-001?year=2026&month=8',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
     });
 
-    assert.equal(res.status, 200);
-    assert.equal(res.data.success, true);
-    assert.equal(res.data.data.userId, 'EMP-001');
-    assert.equal(res.data.data.summary.daysPresent, 1);
+    assert.equal(res.status, 403);
+    assert.equal(res.data?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
   });
 
   // 5. POST /api/v1/attendance/overtime/decide (Primary Master final decision)
@@ -320,8 +328,8 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
     assert.equal(res.data.data.period.status, 'OPEN');
   });
 
-  // 8. POST /api/v1/attendance/evidence/purge (Primary Master selfie purge)
-  await t.test('Primary Master can execute selfie evidence retention purge', async () => {
+  // 8. POST /api/v1/attendance/evidence/purge
+  await t.test('Primary Master selfie evidence purge fails closed until physical deletion policy is configured', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
@@ -329,8 +337,7 @@ test('Attendance & Shifts — Screen 004 Integration Test Suite', async (t) => {
       headers: { Authorization: `Bearer token_primary_master` },
     });
 
-    assert.equal(res.status, 200);
-    assert.equal(res.data.success, true);
-    assert.match(res.data.message, /Purged selfie evidence/);
+    assert.equal(res.status, 503);
+    assert.equal(res.data?.error?.code, 'EVIDENCE_PURGE_NOT_CONFIGURED');
   });
 });

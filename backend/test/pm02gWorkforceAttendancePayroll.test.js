@@ -838,10 +838,10 @@ describe('PM-02G S14: Gross-vs-Net Payroll Source Integrity Suite', () => {
     }
   });
 
-  it('15.10 Normal Master lacks Primary Master authority for individual compensation management', () => {
+  it('15.10 Malformed MASTER lacks Primary Master authority for individual compensation management', () => {
     const { requirePayrollManagementAccess } = require('../src/controllers/payrollManagementController');
-    const normalMasterReq = { auth: { role: 'MASTER', isPrimaryMaster: false } };
-    assert.throws(() => requirePayrollManagementAccess(normalMasterReq), (err) => {
+    const malformedMasterReq = { auth: { role: 'MASTER', isPrimaryMaster: false } };
+    assert.throws(() => requirePayrollManagementAccess(malformedMasterReq), (err) => {
       return err.statusCode === 403 && err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
     });
     const primaryMasterReq = { auth: { role: 'MASTER', isPrimaryMaster: true } };
@@ -1021,7 +1021,7 @@ describe('PM-02G S16: Break Source, Role Snapshot & Drill Integrity Suite (R5)',
     }
   });
 
-  it('16.7 Direct Drill Security: Normal Master is denied listPayrollRunPayslips (403 PRIMARY_MASTER_AUTHORITY_REQUIRED)', async () => {
+  it('16.7 Direct Drill Security: Malformed MASTER is denied listPayrollRunPayslips (403 PRIMARY_MASTER_AUTHORITY_REQUIRED)', async () => {
     const { listPayrollRunPayslips } = require('../src/controllers/payrollManagementController');
     const req = {
       auth: { userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-01' },

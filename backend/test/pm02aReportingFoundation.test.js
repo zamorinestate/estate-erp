@@ -605,7 +605,7 @@ test('PM-02A: Reporting Foundation & Architecture Test Suite', async (suite) => 
     assert.equal(measurableDq.completenessRatio, 0.8);
   });
 
-  await suite.test('9.9 Scope & Authority: Primary Master vs Normal Master vs Staff vs Cafe Admin', () => {
+  await suite.test('9.9 Scope & Authority: Primary Master vs Malformed MASTER vs Staff vs Cafe Admin', () => {
     // Register temporary test report with HIGHLY_CONFIDENTIAL classification
     ReportRegistry.registerReport({
       reportId: 'test-exec-audit',
@@ -620,15 +620,15 @@ test('PM-02A: Reporting Foundation & Architecture Test Suite', async (suite) => 
       const pmAuth = { userId: 'PM-01', role: 'MASTER', isPrimaryMaster: true, organisationId: 'ORG-ZAMORIN' };
       assert.doesNotThrow(() => ReportRegistry.assertReportAccess('test-exec-audit', pmAuth));
 
-      // Normal Master (MASTER without isPrimaryMaster) is denied HIGHLY_CONFIDENTIAL
-      const normalMasterAuth = { userId: 'NM-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' };
+      // Malformed MASTER (MASTER without isPrimaryMaster) is denied HIGHLY_CONFIDENTIAL
+      const malformedMasterAuth = { userId: 'NM-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' };
       assert.throws(
-        () => ReportRegistry.assertReportAccess('test-exec-audit', normalMasterAuth),
+        () => ReportRegistry.assertReportAccess('test-exec-audit', malformedMasterAuth),
         (err) => err.statusCode === 403 && err.code === 'PRIMARY_MASTER_REQUIRED'
       );
 
-      // Normal Master CAN access CONFIDENTIAL reports
-      assert.doesNotThrow(() => ReportRegistry.assertReportAccess('pl-statement', normalMasterAuth));
+      // Malformed MASTER CAN access CONFIDENTIAL reports
+      assert.doesNotThrow(() => ReportRegistry.assertReportAccess('pl-statement', malformedMasterAuth));
     } finally {
       ReportRegistry.unregisterReport('test-exec-audit');
     }

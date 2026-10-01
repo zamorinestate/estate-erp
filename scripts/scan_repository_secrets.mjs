@@ -20,13 +20,22 @@ const SECRET_PATTERNS = [
   { name: 'AWS Secret Access Key', regex: /\baws_secret_access_key\s*=\s*[A-Za-z0-9\/+=]{40}\b/i },
   { name: 'MongoDB Connection with Auth', regex: /mongodb(?:\+srv)?:\/\/[a-zA-Z0-9_-]+:(?!<|placeholder)[^@\s]+@[a-zA-Z0-9.-]+/i },
   { name: 'High-Entropy Bearer Token', regex: /Bearer\s+[A-Za-z0-9_\-\.]{50,}/i },
-  { name: 'Hardcoded Production Password', regex: /(?:password|secret|apiKey|api_key)\s*[:=]\s*['"][a-zA-Z0-9!@#$%^&*()_+=-]{12,}['"]/i }
+  { name: 'Hardcoded Production Password', regex: /(?:password|secret|apiKey|api_key)\s*[:=]\s*['"][a-zA-Z0-9!@#$%^&*()_+=-]{12,}['"]/i },
+  { name: 'Hardcoded Browser Password Input', regex: /(?:page\.)?type\(\s*['"][^'"]*(?:password|pwd)[^'"]*['"]\s*,\s*['"][^'"\n]{8,}['"]\s*\)/i },
+  { name: 'Hardcoded Login Helper Password', regex: /\b(?:testLogin|loginUser)\(\s*[^,\n]+,\s*['"][^'"\n]{8,}['"]/i }
 ];
+
+const TEST_FIXTURE_ALLOWED_SECRET_PATTERNS = new Set([
+  'Hardcoded Production Password',
+  'Hardcoded Browser Password Input',
+  'Hardcoded Login Helper Password',
+]);
 
 const IGNORE_PATTERNS = [
   /node_modules/,
   /\.git/,
   /package-lock\.json/,
+  /\.env(\..+)?$/,
   /\.png$/,
   /\.jpg$/,
   /\.webp$/,
@@ -44,11 +53,11 @@ function scanFile(filePath) {
 
   totalFilesScanned++;
   const content = fs.readFileSync(filePath, 'utf8');
-  const isTestFile = filePath.includes(path.join('backend', 'test')) || filePath.includes('fixtures') || filePath.includes('scripts');
+  const isTestFile = filePath.includes(path.join('backend', 'test')) || filePath.includes('fixtures');
 
   for (const pattern of SECRET_PATTERNS) {
-    if (isTestFile && pattern.name === 'Hardcoded Production Password') {
-      // Test files use dummy sample passwords like "Password123!" for API assertions
+    if (isTestFile && TEST_FIXTURE_ALLOWED_SECRET_PATTERNS.has(pattern.name)) {
+      // Dedicated test/fixture files may use isolated synthetic credentials for assertions.
       continue;
     }
 

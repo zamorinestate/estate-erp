@@ -208,7 +208,7 @@ test('Zamorin Cafe Operations Foundation — Comprehensive Security Test Matrix 
   });
 
   // Test 18: Primary Master Only Routes Enforcement
-  await t.test('18. TEST_PRIMARY_MASTER_SENSITIVE_ROUTES: Normal Master is denied sensitive finance routes', () => {
+  await t.test('18. TEST_PRIMARY_MASTER_SENSITIVE_ROUTES: Malformed MASTER is denied sensitive finance routes', () => {
     assert.equal(isRouteAllowed(ROLES.MASTER, 'ledger', false), false);
     assert.equal(isRouteAllowed(ROLES.MASTER, 'payroll', false), false);
     assert.equal(isRouteAllowed(ROLES.MASTER, 'revenue-share', false), false);

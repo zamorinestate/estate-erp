@@ -1,16 +1,20 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { generateSixDigitPin } = require('../utils/secureRandom');
 const { AttendanceQrChallenge } = require('../models/AttendanceQrChallenge');
-const { AttendanceSubmission } = require('../models/AttendanceSubmission');
 const { AttendanceOfflineLease } = require('../models/AttendanceOfflineLease');
 const { DeviceRegistration } = require('../models/DeviceRegistration');
 const { DeviceSecurityEvent } = require('../models/DeviceSecurityEvent');
-const { Attendance } = require('../modules/attendance/Attendance');
 const { Cafe } = require('../models/Cafe');
 const ApiError = require('../utils/ApiError');
+const { getPublicAppOrigin } = require('./cafeAccessCryptoService');
+const {
+  getQrSigningSecret,
+  getAttendanceTokenSecret,
+} = require('../config/attendanceSecurityConfig');
 
-const QR_SIGNING_SECRET = process.env.QR_SIGNING_SECRET || 'zamorin_qr_master_signing_secret_key_2026_dsec';
+const ATTENDANCE_SCAN_GRANT_TTL_SECONDS = 180;
 
 function calculateDistanceMetres(lat1, lon1, lat2, lon2) {
   const R = 6371000; // Earth radius in metres
@@ -50,7 +54,7 @@ class AttendanceQrService {
    */
   signPayload(payload) {
     const serialized = JSON.stringify(payload);
-    return crypto.createHmac('sha256', QR_SIGNING_SECRET).update(serialized).digest('hex');
+    return crypto.createHmac('sha256', getQrSigningSecret()).update(serialized).digest('hex');
   }
 
   /**
@@ -62,6 +66,7 @@ class AttendanceQrService {
     deviceId = 'OPS_CONSOLE',
     requestedByUserId = 'SYSTEM',
     requestedByRole = 'SYSTEM',
+    isPrimaryMaster = false,
     assignedCafeIds = [],
     rotationIntervalSeconds = 45,
   }) {
@@ -74,6 +79,14 @@ class AttendanceQrService {
       throw new ApiError(403, 'FORBIDDEN', 'Staff members are not permitted to generate or view raw QR challenges.');
     }
 
+    if (requestedByRole === 'MASTER' && isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Attendance QR issuance requires the designated Primary Master.'
+      );
+    }
+
     if (requestedByRole === 'CAFE_ADMIN' && Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0) {
       const allowedSet = new Set(assignedCafeIds.map((c) => String(c).toUpperCase()));
       if (!allowedSet.has(String(cafeId).toUpperCase())) {
@@ -84,6 +97,23 @@ class AttendanceQrService {
     const cafe = await Cafe.findOne({ cafeId, organisationId }).lean();
     if (!cafe) {
       throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found in organisation.');
+    }
+
+    const cafeLatitude = cafe.address?.latitude;
+    const cafeLongitude = cafe.address?.longitude;
+    const geofenceRadiusMetres = Number(cafe.address?.geofenceRadiusMetres ?? 100);
+    if (
+      !Number.isFinite(cafeLatitude) ||
+      !Number.isFinite(cafeLongitude) ||
+      !Number.isFinite(geofenceRadiusMetres) ||
+      geofenceRadiusMetres < 10 ||
+      geofenceRadiusMetres > 1000
+    ) {
+      throw new ApiError(
+        422,
+        'GEOFENCE_NOT_CONFIGURED',
+        'Attendance QR is unavailable until this café has valid latitude, longitude, and geofence radius configured.'
+      );
     }
 
     // 8-Second Pre-Expiry Threshold:
@@ -100,7 +130,7 @@ class AttendanceQrService {
     if (!challenge) {
       const challengeId = `CHL_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
       const opaqueToken = `ZAM_ATT_${crypto.randomBytes(32).toString('hex')}`;
-      const fallbackPin = Math.floor(100000 + Math.random() * 900000).toString();
+      const fallbackPin = generateSixDigitPin();
       const issuedAt = new Date();
       const expiresAt = new Date(Date.now() + rotationIntervalSeconds * 1000);
       const nonce = crypto.randomBytes(16).toString('hex');
@@ -154,12 +184,15 @@ class AttendanceQrService {
       sig: challenge.signature,
     };
 
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceTokenSecret();
     const expiresAtSec = Math.floor(challenge.expiresAt.getTime() / 1000);
     const issuedAtSec = Math.floor(challenge.issuedAt.getTime() / 1000);
     const dotPayload = `${challenge.challengeId}.${challenge.organisationId}.${challenge.cafeId}.${issuedAtSec}.${expiresAtSec}`;
     const dotSig = crypto.createHmac('sha256', secret).update(dotPayload).digest('hex');
     const dotToken = `${challenge.challengeId}.${challenge.organisationId}.${challenge.cafeId}.${expiresAtSec}.${dotSig}`;
+
+    const attendanceUrl =
+      `${getPublicAppOrigin()}/?returnTo=staff-attendance&attendanceQr=${encodeURIComponent(challenge.opaqueToken)}`;
 
     return {
       challengeId: challenge.challengeId,
@@ -168,6 +201,7 @@ class AttendanceQrService {
       qrToken: dotToken,
       dotToken,
       opaqueToken: challenge.opaqueToken,
+      attendanceUrl,
       qrString: JSON.stringify(envelope),
       cafeId: challenge.cafeId,
       cafeName: cafe.name,
@@ -187,7 +221,40 @@ class AttendanceQrService {
       throw new ApiError(400, 'QR_TOKEN_REQUIRED', 'Attendance QR token is required.');
     }
 
-    const trimmedToken = typeof qrToken === 'string' ? qrToken.trim() : '';
+    if (employeeRole === 'MASTER' && isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Attendance QR verification requires the designated Primary Master.'
+      );
+    }
+
+    let trimmedToken = typeof qrToken === 'string' ? qrToken.trim() : '';
+
+    // A scanner may return the canonical HTTPS attendance deep-link rather
+    // than only the embedded opaque challenge. Accept only our configured
+    // frontend origin and extract the short-lived challenge server-side.
+    if (/^https?:\/\//i.test(trimmedToken)) {
+      let parsed;
+      try {
+        parsed = new URL(trimmedToken);
+      } catch (_) {
+        throw new ApiError(400, 'INVALID_CHALLENGE_FORMAT', 'Attendance QR URL format is invalid.');
+      }
+
+      const trustedOrigin = getPublicAppOrigin();
+      if (
+        parsed.origin !== trustedOrigin ||
+        parsed.searchParams.get('returnTo') !== 'staff-attendance'
+      ) {
+        throw new ApiError(403, 'UNTRUSTED_ATTENDANCE_QR_ORIGIN', 'Attendance QR URL does not belong to the trusted Zamorin application origin.');
+      }
+
+      trimmedToken = String(parsed.searchParams.get('attendanceQr') || '').trim();
+      if (!trimmedToken) {
+        throw new ApiError(400, 'QR_TOKEN_REQUIRED', 'Attendance QR URL does not contain a challenge token.');
+      }
+    }
 
     // Branch 0: Opaque High-Entropy Token (ZAM_ATT_<hex>)
     // Privacy-hardened architecture: Does not expose organisationId, cafeId, or DB identifiers in QR payload
@@ -235,11 +302,11 @@ class AttendanceQrService {
       };
     }
 
-    const secret = process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026';
+    const secret = getAttendanceTokenSecret();
 
     // Branch A: Dot-separated compact token (challengeId.orgId.cafeId.expiresAt.signature)
-    if (typeof qrToken === 'string' && !qrToken.trim().startsWith('{')) {
-      const parts = qrToken.split('.');
+    if (trimmedToken && !trimmedToken.startsWith('{')) {
+      const parts = trimmedToken.split('.');
       if (parts.length !== 5) {
         throw new ApiError(400, 'INVALID_CHALLENGE_FORMAT', 'Attendance QR token format is invalid.');
       }
@@ -381,22 +448,156 @@ class AttendanceQrService {
   }
 
   /**
-   * Server-authoritative distance calculation and geofence verification against Cafe.address.
+   * Converts a freshly verified rotating QR into a short-lived, user-bound
+   * scan grant. This lets GPS + selfie capture finish without weakening the
+   * 45-second display rotation. The grant is bound to user, organisation,
+   * cafe, original challenge, device, and expected transition.
    */
-  async verifyGeofence({ cafeId, latitude, longitude, accuracyMeters }) {
-    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-      throw new ApiError(400, 'COORDINATES_REQUIRED', 'Valid numeric GPS latitude and longitude are required.');
+  issueScanGrant({ verification, userId, organisationId, transition }) {
+    const normalizedTransition = String(transition || '').toUpperCase();
+    if (!verification?.valid || !verification?.challengeId || !verification?.resolvedCafeId) {
+      throw new ApiError(400, 'ATTENDANCE_QR_VERIFICATION_REQUIRED', 'A verified attendance QR is required before issuing a scan grant.');
+    }
+    if (!userId || !organisationId || !['CHECK_IN', 'CHECK_OUT'].includes(normalizedTransition)) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_CONTEXT_INVALID', 'Attendance scan grant context is incomplete.');
     }
 
-    const cafeDoc = await Cafe.findOne({ cafeId }).lean();
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const payload = {
+      v: 1,
+      purpose: 'ATTENDANCE_SCAN_GRANT',
+      uid: String(userId).trim().toUpperCase(),
+      oid: String(organisationId).trim().toUpperCase(),
+      cafeId: String(verification.resolvedCafeId).trim().toUpperCase(),
+      cid: String(verification.challengeId),
+      did: String(verification.challenge?.deviceId || 'OPS_CONSOLE'),
+      transition: normalizedTransition,
+      iat: issuedAt,
+      exp: issuedAt + ATTENDANCE_SCAN_GRANT_TTL_SECONDS,
+      nonce: crypto.randomBytes(12).toString('hex'),
+    };
+
+    const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const secret = getAttendanceTokenSecret();
+    const signature = crypto.createHmac('sha256', secret).update(encodedPayload).digest('hex');
+
+    return {
+      token: `ZAM_ASG_${encodedPayload}.${signature}`,
+      expiresAt: new Date(payload.exp * 1000),
+      transition: normalizedTransition,
+    };
+  }
+
+  validateScanGrant(token, { employeeOrgId, employeeUserId, expectedTransition }) {
+    const raw = String(token || '').trim();
+    if (!raw.startsWith('ZAM_ASG_')) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_FORMAT_INVALID', 'Attendance scan grant format is invalid.');
+    }
+
+    const serialized = raw.slice('ZAM_ASG_'.length);
+    const separator = serialized.lastIndexOf('.');
+    if (separator <= 0) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_FORMAT_INVALID', 'Attendance scan grant format is invalid.');
+    }
+
+    const encodedPayload = serialized.slice(0, separator);
+    const suppliedSignature = serialized.slice(separator + 1);
+    const secret = getAttendanceTokenSecret();
+    const expectedSignature = crypto.createHmac('sha256', secret).update(encodedPayload).digest('hex');
+
+    const suppliedBuffer = Buffer.from(suppliedSignature, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    if (
+      suppliedBuffer.length !== expectedBuffer.length ||
+      !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)
+    ) {
+      throw new ApiError(403, 'ATTENDANCE_SCAN_GRANT_SIGNATURE_INVALID', 'Attendance scan grant signature is invalid.');
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+    } catch (_) {
+      throw new ApiError(400, 'ATTENDANCE_SCAN_GRANT_FORMAT_INVALID', 'Attendance scan grant payload is invalid.');
+    }
+
+    const orgId = String(employeeOrgId || '').trim().toUpperCase();
+    const userId = String(employeeUserId || '').trim().toUpperCase();
+    const transition = String(expectedTransition || '').trim().toUpperCase();
+
+    if (
+      payload?.v !== 1 ||
+      payload?.purpose !== 'ATTENDANCE_SCAN_GRANT' ||
+      payload?.oid !== orgId ||
+      payload?.uid !== userId ||
+      payload?.transition !== transition
+    ) {
+      throw new ApiError(403, 'ATTENDANCE_SCAN_GRANT_SCOPE_MISMATCH', 'Attendance scan grant does not match this employee or punch transition.');
+    }
+
+    if (!Number.isSafeInteger(payload.exp) || Date.now() > payload.exp * 1000) {
+      throw new ApiError(403, 'ATTENDANCE_SCAN_GRANT_EXPIRED', 'Attendance scan grant expired. Please scan the current Café QR again.');
+    }
+
+    return {
+      valid: true,
+      verified: true,
+      challengeId: payload.cid,
+      resolvedCafeId: payload.cafeId,
+      cafeId: payload.cafeId,
+      organisationId: payload.oid,
+      issuedAt: new Date(payload.iat * 1000),
+      expiresAt: new Date(payload.exp * 1000),
+      purpose: 'ATTENDANCE_PUNCH',
+      challenge: { deviceId: payload.did },
+      scanGrantVerified: true,
+    };
+  }
+
+  async validatePunchQrProof(qrToken, context = {}) {
+    if (String(qrToken || '').trim().startsWith('ZAM_ASG_')) {
+      return this.validateScanGrant(qrToken, {
+        employeeOrgId: context.employeeOrgId,
+        employeeUserId: context.employeeUserId,
+        expectedTransition: context.expectedTransition,
+      });
+    }
+
+    return this.validateChallengeToken(qrToken, context);
+  }
+
+  /**
+   * Server-authoritative distance calculation and geofence verification against Cafe.address.
+   */
+  async verifyGeofence({ organisationId, cafeId, latitude, longitude, accuracyMeters }) {
+    const cleanOrganisationId = String(organisationId || '').trim().toUpperCase();
+    if (!cleanOrganisationId) {
+      throw new ApiError(401, 'ORGANISATION_CONTEXT_REQUIRED', 'Authenticated organisation context is required for attendance geofence verification.');
+    }
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new ApiError(400, 'COORDINATES_REQUIRED', 'Valid finite GPS latitude and longitude are required.');
+    }
+
+    const cafeDoc = await Cafe.findOne({
+      organisationId: cleanOrganisationId,
+      cafeId: String(cafeId || '').trim().toUpperCase(),
+    }).lean();
     if (!cafeDoc) {
       throw new ApiError(404, 'CAFE_NOT_FOUND', 'Café not found.');
     }
 
     if (
       !cafeDoc.address ||
-      typeof cafeDoc.address.latitude !== 'number' ||
-      typeof cafeDoc.address.longitude !== 'number'
+      !Number.isFinite(cafeDoc.address.latitude) ||
+      !Number.isFinite(cafeDoc.address.longitude)
     ) {
       throw new ApiError(
         422,
@@ -405,7 +606,19 @@ class AttendanceQrService {
       );
     }
 
-    if (typeof accuracyMeters === 'number' && accuracyMeters > 100) {
+    if (accuracyMeters === undefined || accuracyMeters === null) {
+      throw new ApiError(
+        400,
+        'GPS_ACCURACY_REQUIRED',
+        'A browser-reported GPS accuracy value is required for attendance presence verification.'
+      );
+    }
+
+    if (!Number.isFinite(accuracyMeters) || accuracyMeters < 0) {
+      throw new ApiError(400, 'GPS_ACCURACY_INVALID', 'GPS accuracy must be a finite non-negative number.');
+    }
+
+    if (accuracyMeters > 100) {
       throw new ApiError(
         422,
         'LOW_GPS_ACCURACY',
@@ -435,288 +648,12 @@ class AttendanceQrService {
       geofenceVerified: true,
       distanceMeters: Math.round(distance),
       allowedRadiusMeters: allowedRadius,
-      accuracyMeters: typeof accuracyMeters === 'number' ? Math.round(accuracyMeters) : null,
+      accuracyMeters: Math.round(accuracyMeters),
       cafeId,
       cafeName: cafeDoc.name,
-    };
-  }
-
-  /**
-   * Issues a rotating QR attendance challenge for an active bound cafe device.
-   */
-  async issueChallenge({ organisationId, deviceId, cafeId, correlationId }) {
-    const device = await DeviceRegistration.findOne({ deviceId, status: 'ACTIVE', deviceClass: 'CAFE_OWNED' });
-    if (!device) {
-      throw new Error('DEVICE_NOT_REGISTERED_OR_INACTIVE');
-    }
-
-    if (device.assignedCafeId !== cafeId) {
-      throw new Error('DEVICE_CAFE_SCOPE_MISMATCH');
-    }
-
-    const challengeId = `CHL_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const fallbackPin = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
-    const issuedAt = new Date();
-    const expiresAt = new Date(Date.now() + 60 * 1000); // 60 seconds TTL
-    const nonce = crypto.randomBytes(8).toString('hex');
-
-    const envelopeData = {
-      ver: 1,
-      cid: challengeId,
-      did: deviceId,
-      cafeId,
-      iat: Math.floor(issuedAt.getTime() / 1000),
-      exp: Math.floor(expiresAt.getTime() / 1000),
-      nonce,
-    };
-
-    const signature = this.signPayload(envelopeData);
-
-    const challengeDoc = await AttendanceQrChallenge.create({
-      challengeId,
-      organisationId,
-      deviceId,
-      cafeId,
-      fallbackPin,
-      issuedAt,
-      expiresAt,
-      nonce,
-      signature,
-    });
-
-    return {
-      challengeId,
-      envelope: {
-        ...envelopeData,
-        sig: signature,
-      },
-      fallbackPin,
-      expiresAt,
-      rotationIntervalSeconds: 20,
-    };
-  }
-
-  /**
-   * Submits and validates a QR attendance scan from an authenticated staff personal session.
-   */
-  async submitAttendance({ organisationId, userId, cafeId, challengeEnvelope, fallbackPin, idempotencyKey, clientScannedAt, latitude, longitude, correlationId }) {
-    if (!idempotencyKey) {
-      throw new Error('IDEMPOTENCY_KEY_REQUIRED');
-    }
-
-    const idempotencyKeyHash = crypto.createHash('sha256').update(String(idempotencyKey)).digest('hex');
-
-    // 1. Check Idempotency Submission
-    const existingSubmission = await AttendanceSubmission.findOne({
-      organisationId,
-      userId,
-      idempotencyKeyHash,
-    });
-
-    if (existingSubmission) {
-      return {
-        submissionId: existingSubmission.submissionId,
-        result: existingSubmission.result,
-        transition: existingSubmission.transition,
-        serverReceivedAt: existingSubmission.serverReceivedAt,
-        idempotentReplay: true,
-      };
-    }
-
-    // Geofence Validation if coordinates are provided
-    if (typeof latitude === 'number' && typeof longitude === 'number') {
-      const cafeDoc = await Cafe.findOne({ cafeId }).lean();
-      if (
-        cafeDoc &&
-        cafeDoc.address &&
-        typeof cafeDoc.address.latitude === 'number' &&
-        typeof cafeDoc.address.longitude === 'number'
-      ) {
-        const distance = calculateDistanceMetres(
-          latitude,
-          longitude,
-          cafeDoc.address.latitude,
-          cafeDoc.address.longitude
-        );
-        const maxRadius = cafeDoc.address.geofenceRadiusMetres || 100;
-        if (distance > maxRadius) {
-          throw new Error(
-            `GEOFENCE_RADIUS_EXCEEDED: Distance ${Math.round(distance)}m exceeds allowed radius of ${maxRadius}m`
-          );
-        }
-      }
-    }
-
-    // 2. Resolve and Validate Challenge
-    let challenge = null;
-    let envelopeData = null;
-
-    if (challengeEnvelope) {
-      if (typeof challengeEnvelope === 'string') {
-        try {
-          envelopeData = JSON.parse(Buffer.from(challengeEnvelope, 'base64').toString('utf8'));
-        } catch (e) {
-          envelopeData = JSON.parse(challengeEnvelope);
-        }
-      } else {
-        envelopeData = challengeEnvelope;
-      }
-
-      const { sig, ...dataToVerify } = envelopeData;
-      const expectedSig = this.signPayload(dataToVerify);
-      if (sig !== expectedSig) {
-        throw new Error('INVALID_QR_SIGNATURE');
-      }
-
-      challenge = await AttendanceQrChallenge.findOne({ challengeId: envelopeData.cid });
-    } else if (fallbackPin) {
-      const userAttempt = this.getUserPinAttemptState(userId);
-      if (userAttempt.lockedUntil && userAttempt.lockedUntil > new Date()) {
-        throw new Error('FALLBACK_PIN_USER_LOCKED_TOO_MANY_ATTEMPTS');
-      }
-
-      challenge = await AttendanceQrChallenge.findOne({
-        cafeId,
-        fallbackPin,
-        expiresAt: { $gt: new Date() },
-      });
-
-      if (!challenge) {
-        userAttempt.failedAttempts += 1;
-        if (userAttempt.failedAttempts >= 5) {
-          userAttempt.lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-        }
-        this.setUserPinAttemptState(userId, userAttempt);
-        throw new Error('INVALID_OR_EXPIRED_FALLBACK_PIN');
-      }
-
-      // Reset user failure counter on successful PIN match
-      this.clearUserPinAttemptState(userId);
-    } else {
-      throw new Error('CHALLENGE_ENVELOPE_OR_PIN_REQUIRED');
-    }
-
-    if (!challenge) {
-      throw new Error('CHALLENGE_NOT_FOUND_OR_EXPIRED');
-    }
-
-    if (new Date() > challenge.expiresAt) {
-      throw new Error('QR_CHALLENGE_EXPIRED');
-    }
-
-    if (challenge.cafeId !== cafeId) {
-      throw new Error('QR_CAFE_SCOPE_MISMATCH');
-    }
-
-    // 3. Determine Transition & Prevent Tuple Replay
-    const today = new Date().toISOString().split('T')[0];
-    let attendance = await Attendance.findOne({
-      organisationId,
-      userId,
-      businessDate: today,
-    });
-
-    let transition = 'CHECK_IN';
-    if (attendance && attendance.checkInAt && !attendance.checkOutAt) {
-      transition = 'CHECK_OUT';
-    } else if (attendance && attendance.checkInAt && attendance.checkOutAt) {
-      throw new Error('ATTENDANCE_ALREADY_COMPLETED_FOR_TODAY');
-    }
-
-    // Check challenge tuple replay
-    const tupleCheck = await AttendanceSubmission.findOne({
-      challengeId: challenge.challengeId,
-      userId,
-      transition,
-    });
-
-    if (tupleCheck) {
-      throw new Error('QR_CHALLENGE_ALREADY_USED_BY_USER_FOR_TRANSITION');
-    }
-
-    const submissionId = `SUB_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const serverReceivedAt = new Date();
-
-    // 4. Atomic Attendance Record Update
-    const datePart = today.replaceAll('-', '');
-    const timeSlice = Date.now().toString().slice(-6);
-    const randDigits = Math.floor(1000 + Math.random() * 9000).toString();
-    const generatedAttendanceId = `AT-${datePart}-${timeSlice}${randDigits}`;
-
-    if (transition === 'CHECK_IN') {
-      if (!attendance) {
-        attendance = new Attendance({
-          attendanceId: generatedAttendanceId,
-          organisationId,
-          cafeId,
-          userId,
-          businessDate: today,
-          checkInAt: serverReceivedAt,
-          status: 'CHECKED_IN',
-          checkInSource: 'SELF',
-          checkInRecordedBy: userId,
-          timezone: 'Asia/Kolkata',
-          createdBy: userId,
-          updatedBy: userId,
-        });
-      } else {
-        attendance.checkInAt = serverReceivedAt;
-        attendance.status = 'CHECKED_IN';
-        attendance.checkInSource = 'SELF';
-        attendance.checkInRecordedBy = userId;
-        attendance.updatedBy = userId;
-      }
-    } else {
-      if (attendance) {
-        attendance.checkOutAt = serverReceivedAt;
-        attendance.status = 'CHECKED_OUT';
-        attendance.checkOutSource = 'SELF';
-        attendance.checkOutRecordedBy = userId;
-        attendance.updatedBy = userId;
-      } else {
-        attendance = new Attendance({
-          attendanceId: generatedAttendanceId,
-          organisationId,
-          cafeId,
-          userId,
-          businessDate: today,
-          checkOutAt: serverReceivedAt,
-          status: 'CHECKED_OUT',
-          checkOutSource: 'SELF',
-          checkOutRecordedBy: userId,
-          timezone: 'Asia/Kolkata',
-          createdBy: userId,
-          updatedBy: userId,
-        });
-      }
-    }
-
-    await attendance.save();
-
-    // 5. Save Immutable Submission Record
-    await AttendanceSubmission.create({
-      submissionId,
-      organisationId,
-      userId,
-      cafeId,
-      deviceId: challenge.deviceId,
-      challengeId: challenge.challengeId,
-      idempotencyKeyHash,
-      transition,
-      challengeIssuedAt: challenge.issuedAt,
-      clientScannedAt: clientScannedAt ? new Date(clientScannedAt) : serverReceivedAt,
-      serverReceivedAt,
-      isOffline: false,
-      result: 'ACCEPTED',
-      correlationId,
-    });
-
-    return {
-      submissionId,
-      result: 'ACCEPTED',
-      transition,
-      serverReceivedAt,
-      idempotentReplay: false,
+      cafeLatitude: cafeDoc.address.latitude,
+      cafeLongitude: cafeDoc.address.longitude,
+      geofencePolicyVersion: 1,
     };
   }
 

@@ -6,7 +6,7 @@ This document establishes the mandatory, locked architectural constraints for th
 
 1. **Vendor Procurement & Order Verification Lifecycle**:
    - **Rule File**: [.agents/rules/vendor_order_lifecycle_freeze.md](file:///.agents/rules/vendor_order_lifecycle_freeze.md)
-   - **Directive**: The end-to-end lifecycle between Café Staff (Cashier / Café Admin) and Master (Primary & Normal Master) is **permanently locked**.
+   - **Directive**: The end-to-end lifecycle between Café Staff (Cashier / Café Admin) and Primary Master is **permanently locked**.
    - **Key Guarantees**:
      - Cashier order request creation with Same Day (Today) / Next Day (Tomorrow) timing.
      - Arriving delivery physical counting with automatic shortage calculation and mandatory discrepancy reasons.
@@ -22,8 +22,8 @@ This document establishes the mandatory, locked architectural constraints for th
    - **Rule File**: [.agents/rules/auth_design_freeze.md](file:///.agents/rules/auth_design_freeze.md)
    - **Directive**: The visual layout, styling, dimensions, card size, and branding of Login 2.0 (`frontend/src/js/pages/login2.js`, `frontend/src/styles/login2.css`) are strictly finalized and frozen. Zero modifications permitted.
 
-3. **Permanent 4-Window Topology & Normal Master Abolition**:
-   - By explicit user mandate, the **Normal Master** role and window have been permanently deleted and abolished.
+3. **Permanent Primary-Master Topology**:
+   - The system has exactly one MASTER persona: the designated **Primary Master**.
    - The ERP operates with strictly **4 dedicated windows**:
      1. **Primary Master Window**: Exclusively held by Pradeesh K (`MU-0001` / `pradeeshk331@gmail.com`). Sole Master account with full system governance.
      2. **Owner Portal** (`OWNER`): Executive reporting, P&L, CAPEX, risk, and corporate oversight.

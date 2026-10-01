@@ -209,12 +209,12 @@ test('Primary Master self-demotion and self-archive are blocked', async () => {
   }
 });
 
-test('Secondary Master cannot modify, change status, or archive Primary Master', () => {
-  const secMaster = createMockUser({ userId: 'MU-0002', isPrimaryMaster: false });
+test('Malformed non-primary MASTER cannot modify, change status, or archive Primary Master', () => {
+  const malformedMaster = createMockUser({ userId: 'MU-0002', isPrimaryMaster: false });
   const pm = createMockUser({ userId: 'MU-0001', isPrimaryMaster: true });
 
   assert.throws(
-    () => assertPrimaryMasterAuthority(secMaster, 'modify Primary Master'),
+    () => assertPrimaryMasterAuthority(malformedMaster, 'modify Primary Master'),
     (err) => err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
   );
   assert.throws(
@@ -231,7 +231,7 @@ test('Failed Primary Master takeover attempts do not revoke sessions, increment 
     permissionsVersion: 5,
   });
 
-  const secMaster = createMockUser({
+  const malformedMaster = createMockUser({
     userId: 'MU-0002',
     isPrimaryMaster: false,
   });
@@ -248,7 +248,7 @@ test('Failed Primary Master takeover attempts do not revoke sessions, increment 
   const origRevoke = auditService.recordRequestAudit;
 
   User.findOne = async (filter) => {
-    if (filter.userId === 'MU-0002') return secMaster;
+    if (filter.userId === 'MU-0002') return malformedMaster;
     if (filter.userId === 'MU-0001') return pm;
     return null;
   };
@@ -274,23 +274,23 @@ test('Failed Primary Master takeover attempts do not revoke sessions, increment 
 // BATCH C: MASTER GOVERNANCE MATRIX
 // =============================================================================
 
-test('Secondary Master cannot grant or revoke MASTER role, or administer another MASTER account', () => {
-  const secMaster = createMockUser({ userId: 'MU-0002', isPrimaryMaster: false });
+test('Malformed non-primary MASTER cannot grant MASTER role or administer a MASTER account', () => {
+  const malformedMaster = createMockUser({ userId: 'MU-0002', isPrimaryMaster: false });
   const otherMaster = createMockUser({ userId: 'MU-0003', isPrimaryMaster: false });
 
   assert.throws(
-    () => assertPrimaryMasterAuthority(secMaster, 'grant MASTER'),
+    () => assertPrimaryMasterAuthority(malformedMaster, 'grant MASTER'),
     (err) => err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
   );
 
   assert.throws(
-    () => assertMayActOnMasterTarget(secMaster, otherMaster),
+    () => assertMayActOnMasterTarget(malformedMaster, otherMaster),
     (err) => err.code === 'MASTER_ROLE_GOVERNANCE_FORBIDDEN'
   );
 });
 
-test('Secondary Master cannot deactivate, suspend, disable, or archive another MASTER', async () => {
-  const secMaster = createMockUser({ userId: 'MU-0002', isPrimaryMaster: false });
+test('Malformed non-primary MASTER cannot deactivate, suspend, disable, or archive a MASTER target', async () => {
+  const malformedMaster = createMockUser({ userId: 'MU-0002', isPrimaryMaster: false });
   const targetMaster = createMockUser({ userId: 'MU-0003', isPrimaryMaster: false });
 
   const req = createMockRequest({
@@ -302,7 +302,7 @@ test('Secondary Master cannot deactivate, suspend, disable, or archive another M
 
   const origFindOne = User.findOne;
   User.findOne = async (filter) => {
-    if (filter.userId === 'MU-0002') return secMaster;
+    if (filter.userId === 'MU-0002') return malformedMaster;
     if (filter.userId === 'MU-0003') return targetMaster;
     return null;
   };
@@ -318,15 +318,18 @@ test('Secondary Master cannot deactivate, suspend, disable, or archive another M
   }
 });
 
-test('Primary Master can promote eligible STAFF/OWNER/CAFE_ADMIN to MASTER and demote non-primary MASTER', () => {
+test('MASTER is singleton-only: no user may be promoted to MASTER; malformed legacy MASTER may be repaired by Primary Master', () => {
   const pm = createMockUser({ userId: 'MU-0001', isPrimaryMaster: true });
-  const staff = createMockUser({ userId: 'ST-0001', role: 'STAFF', isPrimaryMaster: false });
-  const nonPrimaryMaster = createMockUser({ userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false });
+  const malformedMaster = createMockUser({ userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false });
 
-  assert.doesNotThrow(() => assertPrimaryMasterAuthority(pm, 'promote user'));
-  assert.doesNotThrow(() => assertMayActOnMasterTarget(pm, nonPrimaryMaster));
-  assert.doesNotThrow(() => validateProposedRole('MASTER'));
-  assert.doesNotThrow(() => assertRoleIsNotNoOp(staff.role, 'MASTER'));
+  assert.throws(
+    () => validateProposedRole('MASTER'),
+    (err) => err.code === 'MASTER_SINGLETON_ROLE_RESTRICTED'
+  );
+  assert.doesNotThrow(() => assertPrimaryMasterAuthority(pm, 'repair malformed MASTER role'));
+  assert.doesNotThrow(() => assertMayActOnMasterTarget(pm, malformedMaster));
+  assert.doesNotThrow(() => validateProposedRole('OWNER'));
+  assert.doesNotThrow(() => assertRoleIsNotNoOp(malformedMaster.role, 'OWNER'));
 });
 
 test('Direct creation with role MASTER remains blocked in createUser', async () => {

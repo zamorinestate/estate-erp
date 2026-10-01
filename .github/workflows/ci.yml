@@ -7,6 +7,10 @@ on:
     branches: [ main, master, 'owner-strategic-*' ]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -38,7 +42,7 @@ jobs:
         run: npm run check
 
       - name: Scan Repository for Committed Secrets
-        run: node scripts/scan_secrets.mjs
+        run: node scripts/scan_secrets.mjs && node scripts/scan_repository_secrets.mjs
 
       - name: Run Canonical Regression Suite
         run: npm test

@@ -15,6 +15,7 @@ const { ShiftRoster } = require('../src/models/ShiftRoster');
 const { Cafe } = require('../src/models/Cafe');
 const { AuditEvent } = require('../src/models/AuditEvent');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
+const { User } = require('../src/models/User');
 
 // SequenceCounter mocks
 SequenceCounter.generateId = async ({ prefix }) => `${prefix}-0001`;
@@ -107,7 +108,25 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     save: async function () { return this; },
   };
 
-  const mockAttendance = [sampleAttendance, sampleAttendance2];
+  const sampleOvertimeAttendance = {
+    attendanceId: 'AT-20260822-003',
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'ZC-0001',
+    userId: 'EMP-001',
+    businessDate: '2026-08-22',
+    status: 'CHECKED_OUT',
+    checkInAt: new Date('2026-08-22T06:00:00Z'),
+    checkOutAt: new Date('2026-08-22T15:30:00Z'),
+    regularMinutes: 480,
+    isLate: false,
+    overtimeStatus: 'PENDING_REVIEW',
+    detectedOvertimeMinutes: 90,
+    approvedOvertimeMinutes: 0,
+    rawTimeEvents: [],
+    save: async function () { return this; },
+  };
+
+  const mockAttendance = [sampleAttendance, sampleAttendance2, sampleOvertimeAttendance];
 
   t.mock.method(Attendance, 'find', (query = {}) => {
     let filtered = [...mockAttendance];
@@ -147,6 +166,31 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
   });
 
   t.mock.method(Attendance, 'updateMany', async () => ({ modifiedCount: 148 }));
+
+  t.mock.method(User, 'findOne', async (query = {}) => {
+    const users = [
+      {
+        userId: 'EMP-001',
+        organisationId: 'ORG-ZAMORIN',
+        assignedCafeIds: ['ZC-0001'],
+        primaryCafeId: 'ZC-0001',
+        accountStatus: 'ACTIVE',
+        employmentStatus: 'ACTIVE',
+      },
+      {
+        userId: 'EMP-002',
+        organisationId: 'ORG-ZAMORIN',
+        assignedCafeIds: ['ZC-0002'],
+        primaryCafeId: 'ZC-0002',
+        accountStatus: 'ACTIVE',
+        employmentStatus: 'ACTIVE',
+      },
+    ];
+    return users.find((user) =>
+      (!query.userId || user.userId === query.userId) &&
+      (!query.organisationId || user.organisationId === query.organisationId)
+    ) || null;
+  });
 
   t.mock.method(Cafe, 'find', (query = {}) => ({
     lean: async () => {
@@ -336,7 +380,7 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     const failApproveReq = {
       auth: adminAuth,
       body: {
-        attendanceId: 'AT-20260822-001',
+        attendanceId: 'AT-20260822-003',
         decision: 'APPROVE',
         approvedMinutes: 90,
       },
@@ -349,7 +393,7 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     const verifyReq = {
       auth: adminAuth,
       body: {
-        attendanceId: 'AT-20260822-001',
+        attendanceId: 'AT-20260822-003',
         decision: 'VERIFY_ADMIN',
       },
     };
@@ -367,7 +411,7 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     const masterApproveReq = {
       auth: primaryMasterAuth,
       body: {
-        attendanceId: 'AT-20260822-001',
+        attendanceId: 'AT-20260822-003',
         decision: 'APPROVE',
         approvedMinutes: 90,
         reason: 'Authorized peak hours shift extension',
@@ -415,11 +459,12 @@ test('ADM-SCR-003: Attendance & Shifts Canonical Security & Authority Test Suite
     });
     assert.equal(adminPurgeRes.statusCode, 403);
 
-    // Primary Master purge selfies -> 200
+    // Primary Master reaches the purge boundary, but physical deletion fails closed
+    // until explicit retention cutoff + provider deletion are configured.
     const masterPurgeRes = await invokeHandler(attendanceController.purgeSelfieEvidence, {
       auth: primaryMasterAuth,
     });
-    assert.equal(masterPurgeRes.statusCode, 200);
-    assert.equal(masterPurgeRes.body.success, true);
+    assert.equal(masterPurgeRes.statusCode, 503);
+    assert.equal(masterPurgeRes.body.code, 'EVIDENCE_PURGE_NOT_CONFIGURED');
   });
 });

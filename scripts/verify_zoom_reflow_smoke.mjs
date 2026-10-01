@@ -210,7 +210,6 @@ async function main() {
   console.log('\n--- SECTION 2: FOUR PROFILE SMOKE VERIFICATION ---');
   const profiles = [
     { role: 'master', name: 'PRIMARY MASTER', testOverview: '#finance', testChild: '#finance/gl-journals', expectedPermitted: true },
-    { role: 'master_normal', name: 'NORMAL MASTER', testOverview: '#inventory', testChild: '#inventory/stock-by-cafe', expectedPermitted: true },
     { role: 'owner', name: 'OWNER', testOverview: '#bills', testChild: '#bills/bills', expectedPermitted: true },
     { role: 'cafe_admin', name: 'CAFE OPERATIONS', testOverview: '#cafe-ops-devices', testChild: '#devices/devices', expectedPermitted: true },
   ];

@@ -2,10 +2,10 @@
  * e2e_internal_roles_gate.mjs
  * 
  * Comprehensive Browser E2E Certification for all 4 Internal ERP Roles:
- * 1. Primary Master (MU-0001 / pradeeshk331@gmail.com)
- * 2. Staff / Employee (ST-0001 / staff@example.com)
- * 3. Cafe Admin / Operations (AD-0003 / admin@example.com)
- * 4. Owner (OW-0001 / owner@example.com)
+ * 1. Primary Master
+ * 2. Staff / Employee
+ * 3. Cafe Admin / Operations
+ * 4. Owner
  * 
  * Verifies in actual headless Chrome:
  * - Real login form interaction (typing, submit button, loading state).
@@ -18,14 +18,29 @@
 
 import puppeteer from 'puppeteer-core';
 
-const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const BASE_URL = "http://localhost:3000";
+const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const BASE_URL = process.env.E2E_BASE_URL || "http://localhost:3000";
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; E2E credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
+const STAFF_EMAIL = requiredEnv('E2E_STAFF_EMAIL');
+const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
+const CAFE_ADMIN_EMAIL = requiredEnv('E2E_CAFE_ADMIN_EMAIL');
+const CAFE_ADMIN_PASSWORD = requiredEnv('E2E_CAFE_ADMIN_PASSWORD');
+const OWNER_EMAIL = requiredEnv('E2E_OWNER_EMAIL');
+const OWNER_PASSWORD = requiredEnv('E2E_OWNER_PASSWORD');
 
 const USERS = [
   {
     role: 'PRIMARY MASTER',
-    email: 'pradeeshk331@gmail.com',
-    password: 'PRADEESHK@94309',
+    email: PRIMARY_MASTER_EMAIL,
+    password: PRIMARY_MASTER_PASSWORD,
     landingRoute: '#dashboard',
     routesToWalk: [
       { id: '#dashboard', name: 'Command Centre' },
@@ -39,8 +54,8 @@ const USERS = [
   },
   {
     role: 'STAFF',
-    email: 'staff@example.com',
-    password: 'PK@NilaVega_8427!Cedar',
+    email: STAFF_EMAIL,
+    password: STAFF_PASSWORD,
     landingRoute: '#staff-home',
     routesToWalk: [
       { id: '#staff-home', name: 'Staff Home' },
@@ -52,8 +67,8 @@ const USERS = [
   },
   {
     role: 'CAFE ADMIN',
-    email: 'admin@example.com',
-    password: 'PK@NilaVega_8427!Cedar',
+    email: CAFE_ADMIN_EMAIL,
+    password: CAFE_ADMIN_PASSWORD,
     landingRoute: '#dashboard',
     routesToWalk: [
       { id: '#dashboard', name: 'Cafe Operations Dashboard' },
@@ -67,8 +82,8 @@ const USERS = [
   },
   {
     role: 'OWNER',
-    email: 'owner@example.com',
-    password: 'PK@NilaVega_8427!Cedar',
+    email: OWNER_EMAIL,
+    password: OWNER_PASSWORD,
     landingRoute: '#dashboard',
     routesToWalk: [
       { id: '#dashboard', name: 'Owner Overview' },
@@ -210,7 +225,7 @@ async function run() {
     }
 
     await browser.close();
-    console.log('\n=== BROWSER E2E CERTIFICATION PASSED: GO! ===');
+    console.log('\n=== BROWSER E2E GATE PASSED ===');
   } catch (err) {
     await browser.close();
     console.error('\n❌ BROWSER E2E FAILED:', err);

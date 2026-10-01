@@ -26,6 +26,7 @@ const { QualityChecklist } = require('../src/models/QualityChecklist');
 const { Task } = require('../src/models/Task');
 const { LoyaltyLedger } = require('../src/models/LoyaltyLedger');
 const { DeviceRegistration } = require('../src/models/DeviceRegistration');
+const { CompanyIdentity } = require('../src/models/CompanyIdentity');
 
 const authService = require('../src/services/authService');
 const auditService = require('../src/services/auditService');
@@ -233,10 +234,59 @@ test('CAFÉ OPS-02 — P1 Functional Integrity & Reliability Suite (P1-1 to P1-6
     organisationId: 'ORG-ZAMORIN',
     name: `Zamorin Cafe ${query?.cafeId || 'ZC-0001'}`,
     city: 'Calicut',
-    address: 'Beach Road',
+    address: {
+      line1: 'Beach Road',
+      city: 'Calicut',
+      state: 'Kerala',
+      postalCode: '673001',
+      country: 'India',
+    },
     phone: '+91 9876543210',
     status: 'ACTIVE',
     operatingStatus: 'OPEN',
+    registrations: {
+      fssai: {
+        isApplicable: true,
+        number: '11226999000123',
+        status: 'ACTIVE',
+      },
+      gstDetails: {
+        gstin: '32ABCDE1234F1Z7',
+      },
+    },
+  }));
+
+  t.mock.method(CompanyIdentity, 'findOne', () => createQueryMock({
+    organisationId: 'ORG-ZAMORIN',
+    status: 'CURRENT',
+    legalName: 'Zamorin Estate Hospitality Private Limited',
+    brandName: 'Zamorin Café',
+    tagline: 'Café Operations',
+    pan: 'ABCDE1234F',
+    cin: 'U55101KL2026PTC123456',
+    udyamNumber: 'UDYAM-KL-00-0123456',
+    gstin: [
+      {
+        number: '32ABCDE1234F1Z7',
+        state: 'Kerala',
+        isPrimary: true,
+      },
+    ],
+    licences: [
+      {
+        type: 'FSSAI',
+        number: '11226999000123',
+      },
+    ],
+    registeredAddress: {
+      line1: 'Zamorin Estate',
+      city: 'Calicut',
+      state: 'Kerala',
+      postalCode: '673001',
+      country: 'India',
+    },
+    createdBy: 'MU-PRIMARY-01',
+    changeReason: 'Authoritative company identity fixture for report integration tests.',
   }));
 
   let Attendance;
@@ -323,7 +373,7 @@ test('CAFÉ OPS-02 — P1 Functional Integrity & Reliability Suite (P1-1 to P1-6
     assert.equal(res.data.error.code, 'CROSS_CAFE_RESOURCE_DENIED');
   });
 
-  await t.test('P1-1.3: Master in Café Operations workspace is clamped to effective cafe', async () => {
+  await t.test('P1-1.3: Primary Master in Café Operations workspace is clamped to effective cafe', async () => {
     t.mock.method(Bill, 'aggregate', async (pipeline) => {
       const matchStage = pipeline.find((s) => s.$match)?.$match || {};
       assert.equal(matchStage.cafeId, 'ZC-0001');

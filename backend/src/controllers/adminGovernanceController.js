@@ -33,7 +33,7 @@ const getAdminOverview = asyncHandler(async (request, response) => {
   // 3. MASTER accounts
   const masterUsers = users.filter((u) => u.role === 'MASTER');
   const primaryMasters = masterUsers.filter((u) => u.isPrimaryMaster === true).length;
-  const normalMasters = masterUsers.filter((u) => u.isPrimaryMaster !== true).length;
+  const invalidMasterAccounts = masterUsers.filter((u) => u.isPrimaryMaster !== true).length;
 
   // 4. CAFE_ADMIN accounts
   const cafeAdmins = users.filter((u) => u.role === 'CAFE_ADMIN');
@@ -53,9 +53,7 @@ const getAdminOverview = asyncHandler(async (request, response) => {
 
   // 7. Control Status calculation
   const controls = [
-    { id: 'PRIMARY_MASTER_INVARIANT', label: 'Exactly one Primary Master', status: primaryMasters === 1 ? 'PASS' : 'CRITICAL', detail: `${primaryMasters} active Primary Master found.` },
-    { id: 'NORMAL_MASTER_LEDGER_RESTRICTION', label: 'Normal Master Personal Ledger restriction', status: 'PASS', detail: 'Protected at route and middleware level.' },
-    { id: 'NORMAL_MASTER_PAYROLL_RESTRICTION', label: 'Normal Master payroll restriction', status: 'PASS', detail: 'Protected at controller level.' },
+    { id: 'PRIMARY_MASTER_INVARIANT', label: 'Exactly one Primary Master and no other MASTER accounts', status: primaryMasters === 1 && invalidMasterAccounts === 0 ? 'PASS' : 'CRITICAL', detail: `${primaryMasters} Primary Master account(s); ${invalidMasterAccounts} invalid MASTER account(s).` },
     { id: 'STAFF_SELF_ONLY', label: 'STAFF SELF_ONLY policy', status: 'PASS', detail: 'Self-service restricted.' },
     { id: 'CAFE_ADMIN_DEVICE_BOUND', label: 'CAFE_ADMIN device-bound access', status: 'PASS', detail: 'Enforced via device fingerprint check.' },
     { id: 'ORPHAN_ACCOUNT_CHECK', label: 'Orphan account check', status: reviewAdmins === 0 ? 'PASS' : 'WARNING', detail: reviewAdmins === 0 ? 'All admins mapped to valid cafés.' : `${reviewAdmins} admin(s) without café assignment.` },
@@ -71,10 +69,10 @@ const getAdminOverview = asyncHandler(async (request, response) => {
       kpis: {
         cafes: { active: activeCafes, setup: setupCafes, total: totalCafes },
         users: { active: activeUsers, pending: pendingUsers, suspended: suspendedUsers, total: users.length },
-        masters: { primary: primaryMasters, normal: normalMasters, total: masterUsers.length },
+        masters: { primary: primaryMasters, invalid: invalidMasterAccounts, total: masterUsers.length },
         cafeAdmins: { active: activeAdmins, needsReview: reviewAdmins, total: cafeAdmins.length },
         devices: { active: activeDevices, attention: attentionDevices, total: devices.length },
-        exceptions: { count: reviewAdmins + (primaryMasters !== 1 ? 1 : 0) },
+        exceptions: { count: reviewAdmins + (primaryMasters !== 1 ? 1 : 0) + invalidMasterAccounts },
         pendingRequests: { count: pendingRequests },
         controlStatus: { passed: passedControls, warnings: warningControls, total: controls.length },
       },
@@ -172,7 +170,7 @@ const listAdminRequests = asyncHandler(async (request, response) => {
   const { organisationId, isPrimaryMaster, userId } = request.auth;
 
   const filter = { organisationId };
-  // Normal master sees own submitted requests; Primary Master sees all organisation requests
+  // Primary Master sees all organisation requests; other authorized callers see their own requests
   if (!isPrimaryMaster) {
     filter.requestedByUserId = userId;
   }
@@ -308,7 +306,7 @@ const createAccessReview = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'CAMPAIGN_NAME_REQUIRED', 'Campaign name is required.');
   }
 
-  // If Normal Master, scope is restricted to STAFF / CAFE_ADMIN
+  // Non-primary governance callers are restricted to STAFF / CAFE_ADMIN scope
   let targetRoleFilter = {};
   if (!isPrimaryMaster) {
     targetRoleFilter.role = { $in: ['STAFF', 'CAFE_ADMIN'] };
@@ -379,7 +377,7 @@ const decideAccessFinding = asyncHandler(async (request, response) => {
     throw new ApiError(404, 'TARGET_NOT_IN_REVIEW', 'Target user is not part of this review.');
   }
 
-  // Normal Master cannot decide on MASTER users
+  // Only Primary Master may decide on MASTER users
   if (!isPrimaryMaster && finding.role === 'MASTER') {
     throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Only Primary Master may certify MASTER accounts.');
   }

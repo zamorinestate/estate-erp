@@ -4,7 +4,16 @@
  */
 import http from 'http';
 
-const BASE = 'http://localhost:4000/api/v1';
+const BASE = process.env.E2E_API_BASE_URL || 'http://localhost:4000/api/v1';
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; integration credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
 
 function request(method, path, body, token) {
   return new Promise((resolve, reject) => {
@@ -47,8 +56,8 @@ async function run() {
   section('STEP 1: Master Login');
   const loginRes = await request('POST', '/auth/login', {
     organisationId: 'ZAMORIN',
-    email: 'pradeeshk331@gmail.com',
-    password: 'PRADEESHK@94309',
+    email: PRIMARY_MASTER_EMAIL,
+    password: PRIMARY_MASTER_PASSWORD,
     device: { deviceId: 'TEST-NODE-CLI-001', deviceName: 'Node CLI', deviceType: 'DESKTOP', operatingSystem: 'Windows', browser: 'Node.js' },
   });
 

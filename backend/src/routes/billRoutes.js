@@ -14,7 +14,6 @@ const {
   listBills,
   getBill,
   getBillPdf,
-  createBill,
   syncOfflineBills,
   reprintBill,
   voidBill,
@@ -30,7 +29,6 @@ const {
   recordCashEvent,
   closeRegisterSession,
   getRegisterSession,
-  splitBill,
 } = require('../controllers/billController');
 
 const router = express.Router();
@@ -64,11 +62,22 @@ router.get('/:billId/pdf', getBillPdf);
 router.get('/:billId', getBill);
 
 // POS Sale Creation & Settlement
-router.post('/', createBill);
-router.post('/commit', require('../controllers/posController').commitOrder);
+const { commitOrder: canonicalCommitOrder } = require('../controllers/posController');
+
+router.post('/', canonicalCommitOrder);
+router.post('/commit', canonicalCommitOrder);
 router.post('/preview', require('../controllers/posController').previewOrder);
 router.post('/offline-sync', syncOfflineBills);
-router.post('/:billId/split', splitBill);
+router.post('/:billId/split', (request, response) => {
+  return response.status(410).json({
+    success: false,
+    error: {
+      code: 'LEGACY_POS_SETTLEMENT_RETIRED',
+      message: 'Post-hoc split settlement is retired. Submit the complete tender allocation through the canonical POS commit endpoint.',
+    },
+    correlationId: request.correlationId || null,
+  });
+});
 
 // Post-Sale Adjustments
 router.post('/:billId/reprint', reprintBill);

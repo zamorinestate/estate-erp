@@ -24,7 +24,7 @@
  *  16 tampered QR denied
  *  17 suspended café QR denied
  *  18 Primary Master login
- *  19 Normal Master login
+ *  19 MASTER singleton invariant
  *  20 Owner login
  *  21 Café Admin login
  *  22 Staff login
@@ -178,20 +178,6 @@ test('REC-18 Canonical Login Page 2.0 & Legacy Login Permanent Removal 40-Point 
       primaryMasterDesignatedBy: 'SYSTEM_BOOTSTRAP',
       primaryMasterDesignationReason: 'Initial setup',
       createdBy: 'SYSTEM',
-    });
-
-    // Normal Master
-    await User.create({
-      organisationId: TEST_ORG,
-      userId: 'MU-0002',
-      name: 'Normal Master User',
-      email: 'normal.master@zamorin.com',
-      passwordHash,
-      role: 'MASTER',
-      accountStatus: 'ACTIVE',
-      status: 'ACTIVE',
-      isPrimaryMaster: false,
-      createdBy: 'MU-0001',
     });
 
     // Owner
@@ -480,14 +466,19 @@ test('REC-18 Canonical Login Page 2.0 & Legacy Login Permanent Removal 40-Point 
     assert.equal(sessionData.session.roleSnapshot, 'MASTER');
   });
 
-  await t.test('19. Normal Master login', async () => {
-    const authResult = await authService.authenticatePassword({
+  await t.test('19. MASTER singleton invariant', async () => {
+    const masterCount = await User.countDocuments({
       organisationId: TEST_ORG,
-      email: 'normal.master@zamorin.com',
-      password: 'Password@123',
+      role: 'MASTER',
     });
-    assert.equal(authResult.user.role, 'MASTER');
-    assert.equal(authResult.user.isPrimaryMaster, false);
+    assert.equal(masterCount, 1);
+
+    const master = await User.findOne({
+      organisationId: TEST_ORG,
+      role: 'MASTER',
+    });
+    assert.equal(master.userId, 'MU-0001');
+    assert.equal(master.isPrimaryMaster, true);
   });
 
   await t.test('20. Owner login', async () => {

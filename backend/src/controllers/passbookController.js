@@ -265,6 +265,7 @@ const exportPassbookPdf = asyncHandler(async (req, res) => {
 
   if (req.query.format === 'XLSX') {
     const xlsx = await ZurfService.renderXlsx({
+      organisationId: req.auth?.organisationId,
       sheetName: 'Passbook Statement',
       reportTitle: account ? `Passbook Statement - ${account.accountName}` : 'Consolidated Treasury Passbook',
       columns,
@@ -277,6 +278,7 @@ const exportPassbookPdf = asyncHandler(async (req, res) => {
 
   if (req.query.format === 'CSV') {
     const csv = await ZurfService.renderCsv({
+      organisationId: req.auth?.organisationId,
       reportTitle: account ? `Passbook Statement - ${account.accountName}` : 'Consolidated Treasury Passbook',
       columns,
       rows,
@@ -288,6 +290,7 @@ const exportPassbookPdf = asyncHandler(async (req, res) => {
 
   if (req.query.format === 'PDF' || req.headers.accept === 'application/pdf') {
     const pdf = await ZurfService.renderBinaryPdf({
+      organisationId: req.auth?.organisationId,
       reportTitle: account ? `PASSBOOK STATEMENT — ${account.accountName} (${account.maskedAccountNumber})` : 'CONSOLIDATED TREASURY PASSBOOK STATEMENT',
       reportCode: 'ZURF-PB-01',
       scope: account ? `Account: ${account.accountName}` : 'All Accounts — Global Portfolio',
@@ -301,6 +304,7 @@ const exportPassbookPdf = asyncHandler(async (req, res) => {
   }
 
   const html = await ZurfService.renderZurfHtml({
+    organisationId: req.auth?.organisationId,
     reportTitle: account ? `PASSBOOK STATEMENT — ${account.accountName} (${account.maskedAccountNumber})` : 'CONSOLIDATED TREASURY PASSBOOK STATEMENT',
     scope: account ? `Account: ${account.accountName}` : 'All Accounts — Global Portfolio',
     period: period || 'August 2026',

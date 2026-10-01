@@ -3,17 +3,19 @@
 //
 // Shared canonical POS engine supporting:
 //   - Primary Master (Full org scope, void authority)
-//   - Normal Master (Full org scope, void authority)
 //   - Cafe Operations / CAFE_ADMIN (Strict single-cafe scope, Operator Session attribution,
 //     no void authority, fixed device context)
 // =============================================================================
-import { apiGet, apiPost } from "../apiClient.js";
+import { apiGet, apiPost, getCanonicalDeviceId } from "../apiClient.js";
 import { showToast, openModal, closeModal, confirmAction } from "../components.js";
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
 import { generateInvoicePdf } from "../utils/invoicePdfGenerator.js";
 import { offlineManager, QUEUE_STATUSES } from "../utils/offlineManager.js";
 import { generateQR, buildUpiUri, initClipboard, initSpeedDial } from "../flowbiteUtils.js";
+import { NativeCapabilities } from "../utils/nativeCapabilities.js";
+import { monitorAndroidPrintAndAcknowledge } from "../utils/deviceAttestation.js";
+import { hardwareBridge } from "../services/hardwareBridgeClient.js";
 
 
 function resolvePosCafeId() {
@@ -49,13 +51,201 @@ function getOperatorSession() {
     role: user.role || state.role || "CAFE_ADMIN",
     primaryCafeId: resolvedCafe,
     primaryCafeName: user.primaryCafeName || (resolvedCafe ? `Outlet ${resolvedCafe}` : "Café Outlet"),
-    deviceId: user.deviceId || "DEV-POS-01",
+    deviceId: user.deviceId || state.deviceId || getCanonicalDeviceId() || "",
     businessDate: new Date().toISOString().slice(0, 10),
   };
 }
 
-// Master menu catalogue (Loaded dynamically from database)
+async function dispatchReceiptToClient(dispatch, bill, { isReprint = false } = {}) {
+  const billIdentity = String(bill?.billId || bill?.invoiceNumber || "");
+  const officialBill = Boolean(billIdentity && !billIdentity.startsWith("PREVIEW"));
+  if (
+    officialBill &&
+    (
+      dispatch?.printDispatchAuthorized !== true ||
+      dispatch?.printTrackingPersisted !== true ||
+      !dispatch?.printJobId
+    )
+  ) {
+    const err = new Error(
+      "Durable print tracking was not established; physical receipt dispatch is withheld. Retry the print."
+    );
+    err.code = "PRINT_DISPATCH_NOT_AUTHORIZED";
+    throw err;
+  }
+
+  const capabilities = NativeCapabilities.getCapabilities();
+  const jobName = `Zamorin_${isReprint ? "Reprint" : "Receipt"}_${bill?.invoiceNumber || bill?.billId || "POS"}`;
+
+  if (capabilities.isNative && capabilities.canPrint) {
+    const nativeResponse = await NativeCapabilities.sendNativeMessage(
+      "OPEN_SYSTEM_PRINT",
+      {
+        jobName,
+        attestationContext:
+          dispatch?.cryptographicAttestationRequired === true && dispatch?.attestationContext
+            ? {
+                ...dispatch.attestationContext,
+                drawerKickRequested: Boolean(dispatch.drawerKickRequested),
+              }
+            : null,
+      }
+    );
+    const nativeResult = nativeResponse?.result || nativeResponse || {};
+
+    if (nativeResponse?.success !== true) {
+      const err = new Error(
+        nativeResponse?.errorMessage ||
+        nativeResult?.error ||
+        "Native print operation was cancelled or could not be started."
+      );
+      err.code = nativeResponse?.errorCode || "NATIVE_PRINT_NOT_STARTED";
+      throw err;
+    }
+
+    if (
+      String(capabilities.platform || "").toUpperCase() === "ANDROID" &&
+      dispatch?.cryptographicAttestationRequired === true &&
+      dispatch?.attestationContext &&
+      nativeResult?.platformJobId
+    ) {
+      monitorAndroidPrintAndAcknowledge(dispatch, nativeResponse).catch((ackErr) => {
+        console.warn("[REC-04D] Android signed print acknowledgement deferred:", ackErr?.message || ackErr);
+      });
+    }
+
+    return {
+      method: "NATIVE_SYSTEM_PRINT",
+      platform: capabilities.platform,
+      nativeResult,
+    };
+  }
+
+  try {
+    const bridgeResult = await hardwareBridge.printCanonicalEscPos(dispatch);
+    if (bridgeResult?.success === true) {
+      return {
+        method: "LOCAL_RAW_ESC_POS",
+        platform: "WEB",
+        nativeResult: bridgeResult,
+        transportAccepted: bridgeResult.transportAccepted === true,
+        contentBindingVerified: bridgeResult.contentBindingVerified === true,
+        printerIdentityVerified: bridgeResult.printerIdentityVerified === true,
+        physicalCompletionVerified: false,
+      };
+    }
+  } catch (bridgeErr) {
+    console.warn("[REC-04E] Local raw ESC/POS transport unavailable:", bridgeErr?.message || bridgeErr);
+  }
+
+  window.print();
+  return {
+    method: "BROWSER_PRINT_DIALOG",
+    platform: "WEB",
+    physicalCompletionVerified: false,
+  };
+}
+
+// Canonical POS menu catalogue. This is intentionally distinct from GlobalInventoryItem:
+// sellable MenuItem records populate the till; inventory ingredients/packaging stay in Inventory.
 let _menuCatalogue = [];
+let _menuCatalogueLoadState = "IDLE"; // IDLE | LOADING | LOADED | ERROR
+let _menuCatalogueLoadError = "";
+
+const POS_CATEGORY_GROUPS = Object.freeze([
+  { key: "ALL", label: "All Items", categories: null },
+  { key: "HOT_COFFEES", label: "Hot Coffees", categories: ["COFFEE"] },
+  { key: "COLD_BREWS", label: "Cold Brews & Teas", categories: ["TEA", "BEVERAGES_OTHER"] },
+  { key: "BAKERY", label: "Bakery & Viennoiserie", categories: ["BAKERY"] },
+  { key: "SAVOURIES_MAINS", label: "Savouries & Mains", categories: ["SNACKS", "STARTERS", "SOUPS", "SALADS", "MAIN_COURSE", "SIDES"] },
+  { key: "DESSERTS", label: "Desserts", categories: ["DESSERTS"] },
+  { key: "OTHER", label: "Other & Retail", categories: ["MERCHANDISE", "OTHER"] },
+]);
+
+function canManagePosMenu() {
+  const user = state.auth?.user || state.user || {};
+  const role = user.role || state.role;
+  return role === ROLES.MASTER && user.isPrimaryMaster === true;
+}
+
+function normalizePosMenuItem(item, effective = null) {
+  const menuItemId = item?.menuItemId || item?.id || "";
+  const effectivePrice =
+    effective?.effectivePriceRupees ??
+    item?.price ??
+    (Number.isFinite(Number(item?.currentPricePaisa)) ? Number(item.currentPricePaisa) / 100 : 0);
+
+  return {
+    id: menuItemId,
+    menuItemId,
+    code: item?.plu || item?.itemCode || menuItemId,
+    name: item?.name || menuItemId,
+    category: item?.category || "OTHER",
+    conceptEligibility: item?.conceptEligibility || "CAFE",
+    price: Number(effectivePrice || 0),
+    currentPricePaisa:
+      Number.isFinite(Number(effective?.effectivePricePaisa))
+        ? Number(effective.effectivePricePaisa)
+        : Number(item?.currentPricePaisa || Math.round(Number(effectivePrice || 0) * 100)),
+    foodType:
+      item?.foodType ||
+      (Array.isArray(item?.dietaryTags) && item.dietaryTags.includes("NON_VEG") ? "Non-Veg" : "Veg"),
+    dietaryTags: Array.isArray(item?.dietaryTags) ? item.dietaryTags : [],
+    description: item?.description || "",
+    hasModifiers: Number(item?.variantsCount || 0) > 0,
+    isAvailable:
+      item?.isAvailable !== false &&
+      item?.status !== "INACTIVE" &&
+      item?.status !== "RETIRED" &&
+      effective?.isAvailable !== false,
+    availabilityReason: effective?.availabilityReason || null,
+    priceSourceExplanation: effective?.sourceExplanation || "Global Base Price",
+  };
+}
+
+async function loadPOSMenuCatalogue() {
+  _menuCatalogueLoadState = "LOADING";
+  _menuCatalogueLoadError = "";
+
+  try {
+    const itemResponse = await apiGet("/menu/items?concept=CAFE&status=ACTIVE&limit=500");
+    const sourceItems = Array.isArray(itemResponse?.items)
+      ? itemResponse.items
+      : (Array.isArray(itemResponse?.data?.items) ? itemResponse.data.items : []);
+
+    const cafeId = resolvePosCafeId();
+    let effectiveByItemId = new Map();
+
+    if (cafeId) {
+      try {
+        const effectiveResponse = await apiGet(
+          `/menu/simulator?outletId=${encodeURIComponent(cafeId)}&serviceMode=${encodeURIComponent(activeServiceMode)}`
+        );
+        const effectiveItems = Array.isArray(effectiveResponse?.simulatedItems)
+          ? effectiveResponse.simulatedItems
+          : (Array.isArray(effectiveResponse?.data?.simulatedItems) ? effectiveResponse.data.simulatedItems : []);
+        effectiveByItemId = new Map(
+          effectiveItems.map((item) => [String(item.menuItemId || ""), item])
+        );
+      } catch (effectiveError) {
+        // The global active catalogue remains usable if outlet simulation is temporarily unavailable.
+        console.warn("POS effective menu overlay unavailable:", effectiveError?.message || effectiveError);
+      }
+    }
+
+    _menuCatalogue = sourceItems
+      .map((item) => normalizePosMenuItem(item, effectiveByItemId.get(String(item.menuItemId || item.id || ""))))
+      .filter((item) => item.id && item.isAvailable);
+
+    _menuCatalogueLoadState = "LOADED";
+    return _menuCatalogue;
+  } catch (error) {
+    _menuCatalogue = [];
+    _menuCatalogueLoadState = "ERROR";
+    _menuCatalogueLoadError = error?.message || "Unable to load the POS menu.";
+    throw error;
+  }
+}
 
 // POS State
 let cart = []; // Array of { lineId, item, qty, modifiers, notes }
@@ -125,8 +315,11 @@ function renderTerminalView() {
     year: "numeric",
   }).format(new Date());
 
+  const activeCategoryGroup = POS_CATEGORY_GROUPS.find((group) => group.key === activeCategory);
   const filteredItems = _menuCatalogue.filter((item) => {
-    const matchesCat = activeCategory === "ALL" || item.category === activeCategory;
+    const matchesCat =
+      activeCategory === "ALL" ||
+      Boolean(activeCategoryGroup?.categories?.includes(item.category));
     const matchesSearch = !searchQuery ||
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.code.toLowerCase().includes(searchQuery.toLowerCase());
@@ -144,7 +337,7 @@ function renderTerminalView() {
   const gst = isZeroCollectMode ? 0 : Math.round(taxableAmount * 0.05);
   const grandTotal = isZeroCollectMode ? 0 : (taxableAmount + gst);
 
-  const categories = ["ALL", "Hot Coffees", "Cold Brews", "Bakery & Viennoiserie", "Savouries & Mains", "Desserts"];
+  const categories = POS_CATEGORY_GROUPS;
   const totalItemCount = cart.reduce((a, c) => a + c.qty, 0);
 
   return `
@@ -257,6 +450,14 @@ function renderTerminalView() {
 
         <!-- Top Right Actions -->
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          ${canManagePosMenu() ? `
+            <button class="btn btn-sm btn-primary" id="pos-add-menu-item-btn" style="font-size:12px;padding:6px 12px;font-weight:700;min-height:32px;" type="button" title="Create a sellable POS menu item">
+              ＋ Add POS Item
+            </button>
+          ` : ""}
+          <button class="pos-service-mode-btn" id="pos-refresh-menu-btn" style="padding:6px 10px;font-size:12px;" type="button" title="Reload sellable menu items">
+            ↻ Menu
+          </button>
           <button class="pos-service-mode-btn ${state.isTrainingMode ? 'active' : ''}" id="toggle-training-mode-btn" style="padding:6px 12px;font-size:12px; ${state.isTrainingMode ? 'background:#fef3c7; color:#92400e; border-color:#f59e0b;' : ''}" type="button" title="Toggle Isolated Training Mode (Practice without affecting live sales)">
             🎓 ${state.isTrainingMode ? 'Training ACTIVE' : 'Training Mode'}
           </button>
@@ -303,13 +504,13 @@ function renderTerminalView() {
             <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;max-width:100%;-webkit-overflow-scrolling:touch;">
               ${categories.map((cat) => `
                 <button
-                  class="pos-cat-pill-btn ${activeCategory === cat ? "active" : ""}"
-                  data-pos-cat="${cat}"
+                  class="pos-cat-pill-btn ${activeCategory === cat.key ? "active" : ""}"
+                  data-pos-cat="${cat.key}"
                   style="
                     display:inline-flex;
                     align-items:center;
                     gap:4px;
-                    border:1.5px solid ${activeCategory === cat ? "var(--ink, #18181b)" : "var(--line, #e2e8f0)"};
+                    border:1.5px solid ${activeCategory === cat.key ? "var(--ink, #18181b)" : "var(--line, #e2e8f0)"};
                     outline:none;
                     cursor:pointer;
                     padding:5px 13px;
@@ -319,13 +520,13 @@ function renderTerminalView() {
                     border-radius:20px;
                     white-space:nowrap;
                     transition:all 0.15s ease;
-                    background:${activeCategory === cat ? "var(--ink, #18181b)" : "var(--surface, #ffffff)"};
-                    color:${activeCategory === cat ? "#ffffff" : "var(--ink, #1e293b)"};
-                    box-shadow:${activeCategory === cat ? "0 2px 4px rgba(0,0,0,0.15)" : "0 1px 2px rgba(0,0,0,0.04)"};
+                    background:${activeCategory === cat.key ? "var(--ink, #18181b)" : "var(--surface, #ffffff)"};
+                    color:${activeCategory === cat.key ? "#ffffff" : "var(--ink, #1e293b)"};
+                    box-shadow:${activeCategory === cat.key ? "0 2px 4px rgba(0,0,0,0.15)" : "0 1px 2px rgba(0,0,0,0.04)"};
                   "
                   type="button"
                 >
-                  ${cat === "ALL" ? "☕ All Items" : cat}
+                  ${cat.key === "ALL" ? "☕ " : ""}${cat.label}
                 </button>
               `).join("")}
             </div>
@@ -355,10 +556,33 @@ function renderTerminalView() {
                 ${searchQuery ? `
                   <p style="font-size:13px;margin:0;">No menu items match "<strong>${escapeHtml(searchQuery)}</strong>"</p>
                   <button class="btn btn-sm btn-secondary" id="pos-reset-search-btn" style="margin-top:8px;font-size:11.5px;" type="button">Clear Search</button>
+                ` : (_menuCatalogueLoadState === "IDLE" || _menuCatalogueLoadState === "LOADING") ? `
+                  <div style="font-size:32px;margin-bottom:8px;">⏳</div>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">Loading POS Menu…</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">Fetching active sellable MenuItem records.</p>
+                ` : _menuCatalogueLoadState === "ERROR" ? `
+                  <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">POS Menu Could Not Load</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">${escapeHtml(_menuCatalogueLoadError)}</p>
+                  <button class="btn btn-sm btn-secondary" id="pos-retry-menu-btn" style="margin-top:10px;font-size:11.5px;" type="button">Retry Menu Load</button>
+                ` : _menuCatalogue.length > 0 && activeCategory !== "ALL" ? `
+                  <div style="font-size:32px;margin-bottom:8px;">🔎</div>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">No Items in This Category</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">
+                    The POS catalogue contains ${_menuCatalogue.length} active item${_menuCatalogue.length === 1 ? "" : "s"}, but none match ${escapeHtml(activeCategoryGroup?.label || activeCategory)}.
+                  </p>
+                  <button class="btn btn-sm btn-secondary" id="pos-show-all-items-btn" style="margin-top:10px;font-size:11.5px;" type="button">Show All Items</button>
                 ` : `
                   <div style="font-size:32px;margin-bottom:8px;">☕</div>
-                  <strong style="font-size:14px;display:block;color:var(--ink);">No Menu Products Configured</strong>
-                  <p style="font-size:12px;margin:4px 0 0;">Create products in Menu Management or configure your café POS catalogue.</p>
+                  <strong style="font-size:14px;display:block;color:var(--ink);">No POS Menu Items Yet</strong>
+                  <p style="font-size:12px;margin:4px 0 0;">
+                    ${canManagePosMenu()
+                      ? "Create the first sellable item here. Inventory ingredients remain separate."
+                      : "The Primary Master must create an active sellable menu item."}
+                  </p>
+                  ${canManagePosMenu() ? `
+                    <button class="btn btn-sm btn-primary" id="pos-empty-add-menu-item-btn" style="margin-top:10px;font-size:11.5px;" type="button">＋ Add First POS Item</button>
+                  ` : ""}
                 `}
               </div>
             `}
@@ -907,10 +1131,122 @@ function renderKdsView() {
   `;
 }
 
+function openPosMenuItemModal(root) {
+  if (!canManagePosMenu()) {
+    showToast("Only the Primary Master can create global POS menu items.", "warning");
+    return;
+  }
+
+  const modalHtml = `
+    <div style="padding:6px;">
+      <h3 style="font-size:18px;font-weight:800;margin:0 0 6px;color:var(--ink);">Add POS Menu Item</h3>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">
+        Creates a sellable MenuItem. It does not create or alter inventory ingredients.
+      </p>
+      <form id="form-pos-add-menu-item">
+        <div style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;font-weight:600;">Item Name</label>
+          <input type="text" name="name" class="form-input" placeholder="e.g. Cappuccino" required maxlength="200">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Category</label>
+            <select name="category" class="form-input" required>
+              <option value="COFFEE">Hot Coffee</option>
+              <option value="TEA">Tea / Cold Brew</option>
+              <option value="BEVERAGES_OTHER">Other Beverage</option>
+              <option value="BAKERY">Bakery & Viennoiserie</option>
+              <option value="SNACKS">Snacks</option>
+              <option value="MAIN_COURSE">Savouries & Mains</option>
+              <option value="DESSERTS">Desserts</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Selling Price (₹)</label>
+            <input type="number" name="price" class="form-input" min="0.01" step="0.01" placeholder="180.00" required>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Dietary</label>
+            <select name="dietary" class="form-input">
+              <option value="VEG">Vegetarian</option>
+              <option value="NON_VEG">Non-Vegetarian</option>
+              <option value="VEGAN">Vegan</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label" style="font-size:12px;font-weight:600;">Concept</label>
+            <select name="conceptEligibility" class="form-input">
+              <option value="CAFE">Zamorin Café</option>
+              <option value="SHARED">Shared Café / Restaurant</option>
+              <option value="RESTAURANT">Restaurant</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label class="form-label" style="font-size:12px;font-weight:600;">Description</label>
+          <textarea name="description" class="form-input" rows="3" maxlength="1000" placeholder="Customer-facing item description"></textarea>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <button type="button" class="btn btn-secondary" id="pos-add-item-cancel-btn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="pos-add-item-submit-btn">Create & Add to POS</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  openModal(modalHtml);
+
+  document.querySelector("#pos-add-item-cancel-btn")?.addEventListener("click", () => closeModal());
+
+  const form = document.querySelector("#form-pos-add-menu-item");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const fd = new FormData(form);
+    const submitBtn = document.querySelector("#pos-add-item-submit-btn");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating…";
+    }
+
+    try {
+      const dietary = String(fd.get("dietary") || "VEG");
+      await apiPost("/menu/items", {
+        name: String(fd.get("name") || "").trim(),
+        category: String(fd.get("category") || "OTHER"),
+        price: Number(fd.get("price")),
+        conceptEligibility: String(fd.get("conceptEligibility") || "CAFE"),
+        dietaryTags: dietary === "VEGAN" ? ["VEG", "VEGAN"] : [dietary],
+        description: String(fd.get("description") || "").trim(),
+      });
+
+      await loadPOSMenuCatalogue();
+      closeModal();
+      root.innerHTML = renderPOS();
+      wirePOSEventListeners(root);
+      showToast("POS menu item created and loaded into the till.", "success");
+    } catch (error) {
+      showToast(error?.message || "Could not create the POS menu item.", "error");
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create & Add to POS";
+      }
+    }
+  });
+}
+
 // -----------------------------------------------------------------------------
 // EVENT WIRING & INTERACTION LOGIC
 // -----------------------------------------------------------------------------
 export async function wirePOS(root) {
+  try {
+    await loadPOSMenuCatalogue();
+  } catch (error) {
+    console.warn("POS menu catalogue load failed:", error?.message || error);
+  }
+
   // Load background operational data exactly once per mount
   try {
     const statsRes = await apiGet("/bills/history/stats");
@@ -922,8 +1258,11 @@ export async function wirePOS(root) {
     const openRes = await apiGet("/bills/tickets/open");
     if (openRes?.data?.tickets) openTicketsList = openRes.data.tickets;
 
-    const sessionRes = await apiGet("/bills/register/session/current");
-    if (sessionRes?.data) activeRegisterSession = sessionRes.data;
+    const registerId = getOperatorSession().deviceId;
+    if (registerId) {
+      const sessionRes = await apiGet(`/bills/register/session/current?registerId=${encodeURIComponent(registerId)}`);
+      if (sessionRes?.data) activeRegisterSession = sessionRes.data;
+    }
 
     // REC-13: Fetch pending offline sales count from IndexedDB
     const cafeId = resolvePosCafeId();
@@ -931,6 +1270,9 @@ export async function wirePOS(root) {
   } catch (e) {
     console.warn("POS background data load notice:", e.message);
   }
+
+  // Re-render after the asynchronous menu/background load so sellable products are visible.
+  root.innerHTML = renderPOS();
 
   // REC-13: Subscribe to offlineManager events for real-time queue badge & connectivity
   offlineManager.subscribe(async ({ pendingCount, isOnline }) => {
@@ -952,6 +1294,34 @@ export async function wirePOS(root) {
 }
 
 function wirePOSEventListeners(root) {
+  const addMenuItem = () => openPosMenuItemModal(root);
+  root.querySelector("#pos-add-menu-item-btn")?.addEventListener("click", addMenuItem);
+  root.querySelector("#pos-empty-add-menu-item-btn")?.addEventListener("click", addMenuItem);
+
+  const reloadMenu = async (button) => {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "⏳ Loading…";
+    }
+    try {
+      await loadPOSMenuCatalogue();
+      root.innerHTML = renderPOS();
+      wirePOSEventListeners(root);
+      showToast("POS menu refreshed.", "success");
+    } catch (error) {
+      root.innerHTML = renderPOS();
+      wirePOSEventListeners(root);
+      showToast(error?.message || "Could not reload the POS menu.", "error");
+    }
+  };
+
+  root.querySelector("#pos-refresh-menu-btn")?.addEventListener("click", (event) => reloadMenu(event.currentTarget));
+  root.querySelector("#pos-retry-menu-btn")?.addEventListener("click", (event) => reloadMenu(event.currentTarget));
+  root.querySelector("#pos-show-all-items-btn")?.addEventListener("click", () => {
+    activeCategory = "ALL";
+    refreshPOSView(root);
+  });
+
   // Keyboard shortcut listener: Ctrl+K or F2 focuses search
   const handleKeydown = (e) => {
     if ((e.ctrlKey && e.key === "k") || e.key === "F2") {
@@ -1011,7 +1381,10 @@ function wirePOSEventListeners(root) {
     root.querySelector("#preview-receipt-btn")?.click();
   });
   root.querySelector("#pos-sd-drawer")?.addEventListener("click", () => {
-    showToast("Cash drawer kick pulse sent to thermal printer.", "info");
+    showToast(
+      "Manual cash-drawer opening is unavailable until a verified hardware transport can acknowledge drawer actuation.",
+      "warning"
+    );
   });
 
   // Subview toggle
@@ -1509,17 +1882,15 @@ function wirePOSEventListeners(root) {
   });
 
   root.querySelectorAll("[data-reprint-bill]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
       const bId = btn.dataset.reprintBill;
-      try {
-        await apiPost(`/bills/${bId}/reprint`, { reason: "Customer Request" });
-        const order = pastOrdersList.find((o) => o.billId === bId);
-        if (order) {
-          openReceiptModal(order, true);
-        }
-      } catch (err) {
-        showToast(err.message || "Failed to reprint", "error");
+      const order = pastOrdersList.find((o) => o.billId === bId);
+      if (!order) {
+        showToast("Unable to load the selected bill for reprint.", "error");
+        return;
       }
+      openReceiptModal(order, true);
+      showToast("Reprint mode opened. The audit event is recorded when the reprint is dispatched.", "mint");
     });
   });
 
@@ -1889,7 +2260,7 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
       guestCovers,
       discountPaisa: effectiveDiscountPaisa,
       paymentMethod: tender,
-      registerId: "REG-01",
+      registerId: activeRegisterSession?.registerId || getOperatorSession().deviceId || "",
       registerSessionId: activeRegisterSession?.registerSessionId || "",
       idempotencyKey,
       saleAttemptId,
@@ -2000,9 +2371,9 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
           }
         }
       } else {
-        // Route definitively absent (rolling deployment) — safe to use legacy endpoint
-        console.warn("[POS] /pos/orders/commit not found on this server version (HTTP " + status + "), using /bills fallback");
-        res = await apiPost("/bills", payload);
+        throw new Error(
+          "Canonical POS commit endpoint is unavailable on this server version. Sale was not submitted through a legacy fallback."
+        );
       }
     }
 
@@ -2023,14 +2394,21 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
     };
 
     // Surface any printer warning from the backend (non-fatal — DB commit is already done)
-    if (res?.printerWarning || res?.printStatus === "FAILED") {
+    if (res?.printStatus === "PRINT_PENDING" || res?.printDispatchBlockedReason === "PRINT_JOB_PERSISTENCE_FAILED") {
+      showToast(
+        `⚠️ Bill saved (${billData.invoiceNumber || billData.billId}). Automatic printing was withheld because durable print tracking is unavailable. Use Thermal Print to retry.`,
+        "warning"
+      );
+    } else if (res?.printerWarning || res?.printStatus === "FAILED") {
       showToast(
         `⚠️ Bill saved (${billData.invoiceNumber || billData.billId}). Printer offline — use Reprint when ready.`,
         "warning"
       );
     } else {
       showToast(
-        posAction === "SAVE" ? `Bill saved: ${billData.invoiceNumber || billData.billId}` : `Payment of ₹${grandTotal} confirmed — receipt issued.`,
+        posAction === "SAVE"
+          ? `Bill saved: ${billData.invoiceNumber || billData.billId}`
+          : `Payment of ₹${grandTotal} confirmed — receipt dispatch prepared.`,
         "mint"
       );
     }
@@ -2041,7 +2419,14 @@ async function executeFinalSale(grandTotal, tender, root, paymentRef = "", custo
     cashReceivedAmount = 0;
     isPaymentInProgress = false;
 
-    openReceiptModal(billData, false);
+    const originalPrintDispatch =
+      posAction === "SAVE_AND_PRINT" &&
+      res?.printDispatchAuthorized === true &&
+      res?.printTrackingPersisted === true &&
+      res?.printJobId
+        ? res
+        : null;
+    openReceiptModal(billData, false, originalPrintDispatch);
     refreshPOSView(root);
   } catch (err) {
     isPaymentInProgress = false;
@@ -2121,7 +2506,7 @@ function openOfflineReceiptModal(queued) {
 }
 
 
-function openReceiptModal(bill, isReprint = false) {
+function openReceiptModal(bill, isReprint = false, initialDispatch = null) {
   const subtotal = bill.subtotalPaisa ? bill.subtotalPaisa / 100 : bill.totalPaisa ? bill.totalPaisa / 100 : 0;
   const gst = bill.taxPaisa ? bill.taxPaisa / 100 : Math.round(subtotal * 0.05);
   const grandTotal = bill.totalPaisa ? bill.totalPaisa / 100 : subtotal + gst;
@@ -2153,6 +2538,7 @@ function openReceiptModal(bill, isReprint = false) {
   };
 
   let isPrintingActive = false;
+  let pendingInitialDispatch = initialDispatch?.printJobId ? initialDispatch : null;
   const printThermal = async () => {
     if (isPrintingActive) return;
     isPrintingActive = true;
@@ -2162,22 +2548,50 @@ function openReceiptModal(bill, isReprint = false) {
       printBtn.textContent = "⏳ Printing...";
     }
 
-    // REC-04: Send print command to backend (logs PrintJob, generates thermal buffer)
-    // then invoke browser print as the local rendering fallback.
-    if (bill.billId && !bill.billId.startsWith("PREVIEW")) {
-      try {
-        await apiPost(`/pos/orders/${bill.billId}/print`, {
+    // REC-04C/04D: Consume the original SAVE_AND_PRINT dispatch exactly once.
+    // Subsequent explicit print clicks create a new canonical PrintJob.
+    let dispatch = pendingInitialDispatch;
+    pendingInitialDispatch = null;
+
+    try {
+      if (!dispatch && bill.billId && !bill.billId.startsWith("PREVIEW")) {
+        const endpoint = isReprint
+          ? `/pos/orders/${bill.billId}/reprint`
+          : `/pos/orders/${bill.billId}/print`;
+        dispatch = await apiPost(endpoint, {
           reason: isReprint ? "Terminal duplicate receipt reprint" : "Terminal thermal print",
           paperWidth: currentPaperWidth,
         });
-        showToast("Thermal print job queued on POS printer.", "mint");
-      } catch (printErr) {
-        // Non-fatal: log and fall through to browser print
-        console.warn("[POS] Backend print endpoint error:", printErr.message);
-        showToast("Printer bridge unavailable — printing via browser fallback.", "warning");
       }
+
+      if (dispatch?.printTrackingWarning) {
+        showToast("Print payload prepared, but durable print tracking reported a warning.", "warning");
+      }
+
+      await dispatchReceiptToClient(dispatch, bill, { isReprint });
+
+      showToast(
+        isReprint ? "Reprint submitted to the print client." : "Receipt submitted to the print client.",
+        "mint"
+      );
+    } catch (printErr) {
+      // Sale state is already committed. A print error must never recreate the sale.
+      console.warn("[POS] Print client error:", printErr?.message || printErr);
+      const trackingBlocked = [
+        "PRINT_TRACKING_UNAVAILABLE",
+        "PRINT_DISPATCH_NOT_AUTHORIZED",
+        "REPRINT_STATE_PERSISTENCE_FAILED",
+      ].includes(printErr?.code);
+      showToast(
+        printErr?.code === "NATIVE_PRINT_NOT_STARTED"
+          ? "Print was cancelled or could not be started. The bill remains safely saved."
+          : trackingBlocked
+            ? "Physical printing was withheld because durable print tracking is unavailable. Retry the print."
+            : "Print client unavailable. The bill remains safely saved and can be reprinted.",
+        "warning"
+      );
     }
-    window.print();
+
     setTimeout(() => {
       isPrintingActive = false;
       if (printBtn) {
@@ -2287,9 +2701,10 @@ function openReceiptModal(bill, isReprint = false) {
         <button type="button" class="btn btn-sm btn-primary" id="posReceiptSaveAndPrintBtn" style="justify-content:center;">
           ⚡ Save & Print
         </button>
+        ${isReprint ? "" : `
         <button type="button" class="btn btn-sm btn-outline" id="posReceiptReprintBtn" style="justify-content:center;">
           🔁 Reprint Receipt
-        </button>
+        </button>`}
       </div>
     `,
     cancelLabel: "Close",
@@ -2348,27 +2763,28 @@ function openReceiptModal(bill, isReprint = false) {
       printThermal();
     });
 
-    // Audit-tracked Reprint (Section 52)
+    // Canonical Reprint Mode (Section 52)
     modalEl.querySelector("#posReceiptReprintBtn")?.addEventListener("click", async () => {
       const confirmReprint = await confirmAction({
         title: "Confirm Receipt Reprint",
-        message: `Generate duplicate receipt reprint for invoice ${bill.invoiceNumber || bill.billId}? This action is recorded in the operational audit log.`,
-        confirmText: "Reprint Receipt",
+        message: `Open audited reprint mode for invoice ${bill.invoiceNumber || bill.billId}? The audit event is recorded when the reprint is dispatched.`,
+        confirmText: "Open Reprint Mode",
         cancelText: "Cancel",
       });
 
       if (!confirmReprint) return;
 
-      try {
-        const res = await apiPost(`/bills/${bill.billId}/reprint`, { reason: "Customer request / terminal reprint" });
-        showToast("Reprint logged to operational audit register.", "mint");
-        closeModal();
-        const updatedBill = { ...bill, reprints: res?.data?.reprints || [...(bill.reprints || []), { reprintedAt: new Date() }] };
-        openReceiptModal(updatedBill, true);
-      } catch (err) {
-        showToast(err?.message || "Failed to log reprint", "coral");
-      }
+      closeModal();
+      openReceiptModal(bill, true);
+      showToast("Reprint mode opened. Use Thermal Print or Save & Print to dispatch the audited reprint.", "mint");
     });
+
+    if (pendingInitialDispatch) {
+      // SAVE_AND_PRINT must use the PrintJob created by the sale commit itself;
+      // do not create a second print job merely to start client rendering.
+      printThermal();
+    }
+
   }, 50);
 }
 

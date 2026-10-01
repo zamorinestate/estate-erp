@@ -331,6 +331,7 @@ test('STAGE 10 — Executive Analytics, BCG Matrix & BI Dashboard Master Suite',
   await t.test('8. Universal Export returns valid PDF (%PDF-1.4) and Excel binary buffers', async () => {
     const masterUser = {
       role: 'MASTER',
+      isPrimaryMaster: true,
       organisationId: orgId,
     };
 

@@ -64,11 +64,42 @@ export function runDeploymentReadinessCheck({ targetEnv = process.env.NODE_ENV |
     const hasDisk = renderContent.includes('disk:') && renderContent.includes('/var/data/zamorin_documents');
     const hasDocStorage = renderContent.includes('DOCUMENT_STORAGE_ROOT');
     const hasGridFs = renderContent.includes('DOCUMENT_STORAGE_PROVIDER') && renderContent.includes('gridfs');
-    if ((hasDisk && hasDocStorage) || hasGridFs) {
-      checks.push({ name: 'Render Blueprint (render.yaml)', status: 'PASS', detail: hasGridFs ? 'Backend service with Mongo GridFS document storage provider configured' : 'Backend service with 10GB persistent disk mount (/var/data/zamorin_documents) configured' });
+    const hasRedis = renderContent.includes('REDIS_URL');
+    const hasAttendanceSigningSecrets =
+      renderContent.includes('QR_SIGNING_SECRET') &&
+      renderContent.includes('ATTENDANCE_QR_SECRET');
+    const hasCoreRuntimeDependencies = hasRedis && hasAttendanceSigningSecrets;
+
+    const hasCanonicalRepository =
+      renderContent.includes('https://github.com/zamorinestate/estate-erp') &&
+      !renderContent.includes('https://github.com/zamorinestate-erp/estate-erp');
+
+    if (((hasDisk && hasDocStorage) || hasGridFs) && hasCoreRuntimeDependencies && hasCanonicalRepository) {
+      checks.push({
+        name: 'Render Blueprint (render.yaml)',
+        status: 'PASS',
+        detail: hasGridFs
+          ? 'Backend service with GridFS, Redis, and attendance signing-secret declarations configured'
+          : 'Backend service with durable disk, Redis, and attendance signing-secret declarations configured',
+      });
     } else {
-      issues.push('render.yaml missing persistent disk configuration or DOCUMENT_STORAGE_ROOT');
-      checks.push({ name: 'Render Blueprint (render.yaml)', status: 'FAIL', detail: 'Missing persistent disk definition' });
+      if (!((hasDisk && hasDocStorage) || hasGridFs)) {
+        issues.push('render.yaml missing a supported durable document storage configuration');
+      }
+      if (!hasRedis) {
+        issues.push('render.yaml missing REDIS_URL declaration required by production distributed state');
+      }
+      if (!hasAttendanceSigningSecrets) {
+        issues.push('render.yaml missing QR_SIGNING_SECRET and/or ATTENDANCE_QR_SECRET declarations');
+      }
+      if (!hasCanonicalRepository) {
+        issues.push('render.yaml must bind to canonical repository https://github.com/zamorinestate/estate-erp and must not reference the retired namespace');
+      }
+      checks.push({
+        name: 'Render Blueprint (render.yaml)',
+        status: 'FAIL',
+        detail: 'Missing one or more mandatory backend runtime dependencies',
+      });
     }
   } else {
     warnings.push('No render.yaml found in workspace root');
@@ -118,8 +149,14 @@ export function runDeploymentReadinessCheck({ targetEnv = process.env.NODE_ENV |
 
   return {
     targetEnvironment: targetEnv,
-    isDeployReady: isReady,
-    summary: isReady ? 'READY FOR DEPLOYMENT' : 'DEPLOYMENT BLOCKED BY PRE-FLIGHT CHECKS',
+    isPreflightReady: isReady,
+    // Backward-compatible field retained only to prevent callers from treating
+    // configuration checks as complete deployment certification.
+    isDeployReady: false,
+    releaseCertificationRequired: true,
+    summary: isReady
+      ? 'PRE-FLIGHT CONFIGURATION PASSED — RELEASE CERTIFICATION STILL REQUIRED'
+      : 'DEPLOYMENT BLOCKED BY PRE-FLIGHT CHECKS',
     checks,
     issues,
     warnings,
@@ -194,16 +231,28 @@ const PRODUCTION_SECRET_SPECS = [
     validate: (val) => typeof val === 'string' && !val.includes('*') && val.includes('https://'),
   },
   {
-    key: 'DOCUMENT_STORAGE_DRIVER',
-    isSecret: false,
-    description: 'Document storage driver',
-    validate: (val) => ['RENDER_PERSISTENT_DISK', 'PRIVATE_OBJECT_STORAGE'].includes(val),
+    key: 'QR_SIGNING_SECRET',
+    isSecret: true,
+    description: 'Attendance QR envelope signing secret',
+    validate: (val) => typeof val === 'string' && val.trim().length >= 32,
   },
   {
-    key: 'DOCUMENT_STORAGE_ROOT',
+    key: 'ATTENDANCE_QR_SECRET',
+    isSecret: true,
+    description: 'Attendance token and scan-grant signing secret',
+    validate: (val) => typeof val === 'string' && val.trim().length >= 32,
+  },
+  {
+    key: 'REDIS_URL',
+    isSecret: true,
+    description: 'Render Key Value / Redis-compatible internal connection URL',
+    validate: (val) => typeof val === 'string' && /^rediss?:\/\//i.test(val.trim()),
+  },
+  {
+    key: 'DOCUMENT_STORAGE_PROVIDER',
     isSecret: false,
-    description: 'Persistent disk mount path',
-    validate: (val) => typeof val === 'string' && val.startsWith('/') && !val.startsWith('/tmp'),
+    description: 'Canonical business-document storage provider',
+    validate: (val) => ['gridfs', 'mongodb', 'mongodb_gridfs', 'render_persistent_disk', 'private_object_storage', 's3', 's3_compatible'].includes(String(val || '').trim().toLowerCase()),
   },
 ];
 
@@ -305,7 +354,7 @@ function runCli() {
 
   if (isJson) {
     console.log(JSON.stringify(result, null, 2));
-    process.exit(result.isDeployReady ? 0 : 1);
+    process.exit(result.isPreflightReady ? 0 : 1);
   }
 
   console.log('================================================================');
@@ -336,7 +385,7 @@ function runCli() {
   });
 
   console.log('\n================================================================');
-  process.exit(result.isDeployReady ? 0 : 1);
+  process.exit(result.isPreflightReady ? 0 : 1);
 }
 
 if (process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]))) {

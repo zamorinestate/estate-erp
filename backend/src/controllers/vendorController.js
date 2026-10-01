@@ -675,8 +675,14 @@ const recordGoodsReceipt = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'INVALID_STATE', `Cannot receive items against ${po.status} purchase order.`);
   }
 
-  const grnId = `GRN-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
   const now = new Date();
+  const grnDate = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const grnId = await SequenceCounter.generateId({
+    organisationId: request.auth.organisationId,
+    sequenceKey: `PROCUREMENT_GRN_${grnDate}`,
+    prefix: `GRN-${grnDate}`,
+    minimumDigits: 5,
+  });
 
   // Validate items and record delivered/accepted counts on PO line items
   const grnItems = [];
@@ -816,8 +822,15 @@ const captureSupplierInvoice = asyncHandler(async (request, response) => {
       );
     }
 
-    const invoiceId = `INV-${Date.now().toString(36).toUpperCase()}`;
     const now = new Date();
+    const invoiceDatePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const invoiceId = await SequenceCounter.generateId({
+      organisationId: request.auth.organisationId,
+      sequenceKey: `SUPPLIER_INVOICE_${invoiceDatePart}`,
+      prefix: `INV-${invoiceDatePart}`,
+      minimumDigits: 5,
+      session,
+    });
 
     const newInvoiceRecord = {
       invoiceId,
@@ -1020,12 +1033,19 @@ const computeThreeWayMatch = asyncHandler(async (request, response) => {
 // ── 7. MASTER Approval & Atomic Exactly-Once Inventory Posting (P1 Absolute) ──
 
 const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, response) => {
-  // P1 Mandatory Guard: Server-authoritative MASTER check
+  // P1 Mandatory Guard: server-authoritative Primary Master check.
   if (request.auth.role !== 'MASTER') {
     throw new ApiError(
       403,
       'MASTER_APPROVAL_REQUIRED',
-      'Only an authenticated MASTER user may approve supplier invoices and authorise automatic inventory posting.'
+      'Only the Primary Master may approve supplier invoices and authorise automatic inventory posting.'
+    );
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to approve supplier invoices and post inventory.'
     );
   }
 
@@ -1079,7 +1099,14 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
     }
 
     const now = new Date();
-    const postingId = `POST-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
+    const postingDate = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const postingId = await SequenceCounter.generateId({
+      organisationId: po.organisationId,
+      sequenceKey: `INVENTORY_POSTING_${postingDate}`,
+      prefix: `POST-${postingDate}`,
+      minimumDigits: 5,
+      session,
+    });
     const stockMovementIds = [];
 
     // Atomic Inventory Posting for GOODS lines (Service lines NEVER post stock)
@@ -1124,7 +1151,13 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
         }
       }
 
-      const movementId = `MOV-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
+      const movementId = await SequenceCounter.generateId({
+        organisationId: po.organisationId,
+        sequenceKey: `STOCK_MOVEMENT_${postingDate}`,
+        prefix: `MOV-${postingDate}`,
+        minimumDigits: 6,
+        session,
+      });
       const movementDoc = {
         organisationId: po.organisationId,
         movementId,
@@ -1163,7 +1196,13 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
     );
 
     if (!existingApInvoice) {
-      const apInvoiceId = `AP-${Date.now().toString(36).toUpperCase()}`;
+      const apInvoiceId = await SequenceCounter.generateId({
+        organisationId: po.organisationId,
+        sequenceKey: `AP_INVOICE_${postingDate}`,
+        prefix: `AP-${postingDate}`,
+        minimumDigits: 5,
+        session,
+      });
       const apDoc = {
         organisationId: po.organisationId,
         invoiceId: apInvoiceId,
@@ -1281,7 +1320,14 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
 
 const retryFailedInventoryPosting = asyncHandler(async (request, response) => {
   if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN', 'Only MASTER role may retry failed stock postings.');
+    throw new ApiError(403, 'FORBIDDEN', 'Only the Primary Master may retry failed stock postings.');
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to retry failed stock postings.'
+    );
   }
 
   const purchaseOrderId = normalizeId(request.params.poId);
@@ -1367,7 +1413,14 @@ const submitBankChangeRequest = asyncHandler(async (request, response) => {
 
 const approveBankChangeRequest = asyncHandler(async (request, response) => {
   if (request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN', 'Only MASTER role may approve high-risk bank detail changes.');
+    throw new ApiError(403, 'FORBIDDEN', 'Only the Primary Master may approve high-risk bank detail changes.');
+  }
+  if (request.auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to approve high-risk bank detail changes.'
+    );
   }
 
   const vendorId = normalizeId(request.params.vendorId);

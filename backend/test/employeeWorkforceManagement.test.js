@@ -108,13 +108,13 @@ test('Screen 008: Employee Directory & Staffing Integration Test Suite', async (
     save: async function () { return this; },
   };
 
-  const normalMasterUser = {
+  const malformedMasterUser = {
     userId: 'MU-NORMAL-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
     assignedCafeIds: ['ZC-0001', 'ZC-0002'],
@@ -123,8 +123,8 @@ test('Screen 008: Employee Directory & Staffing Integration Test Suite', async (
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isNormal = token === 'token_malformed_master';
+    const activeUser = isNormal ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -174,7 +174,7 @@ test('Screen 008: Employee Directory & Staffing Integration Test Suite', async (
   // Global User.findOne handler
   t.mock.method(User, 'findOne', (query) => {
     if (query?.userId === 'MU-NORMAL-01') {
-      return createQueryWrapper({ ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser });
+      return createQueryWrapper({ ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser });
     }
     if (query?.userId === 'MU-PRIMARY-01') {
       return createQueryWrapper({ ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser });
@@ -249,7 +249,7 @@ test('Screen 008: Employee Directory & Staffing Integration Test Suite', async (
     assert.ok(Array.isArray(res.body.data.cafeWorkforce));
   });
 
-  await t.test('2. GET /api/v1/employees lists employees with privacy masking for Normal Master', async () => {
+  await t.test('2. GET /api/v1/employees lists employees with privacy masking for Malformed MASTER', async () => {
     t.mock.method(User, 'countDocuments', async () => 1);
     t.mock.method(User, 'find', () => createQueryWrapper([
       {
@@ -267,7 +267,7 @@ test('Screen 008: Employee Directory & Staffing Integration Test Suite', async (
       port,
       method: 'GET',
       path: '/api/v1/employees',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
     });
 
     assert.equal(res.statusCode, 200);

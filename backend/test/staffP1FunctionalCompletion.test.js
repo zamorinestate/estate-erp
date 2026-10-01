@@ -353,7 +353,13 @@ test('Staff P1 Functional Completion Programme Suite', async (suite) => {
 
   await suite.test('P1-PAY-1: createSelfPayrollQuery creates a query with SUBMITTED status', async () => {
     const req = {
-      auth: { organisationId: 'ZAMORIN', userId: 'ST-PAY-01', name: 'Payroll Staff User' },
+      auth: {
+        organisationId: 'ZAMORIN',
+        userId: 'ST-PAY-01',
+        name: 'Payroll Staff User',
+        primaryCafeId: 'ZC-0001',
+        assignedCafeIds: ['ZC-0001'],
+      },
       body: {
         periodKey: '2026-07',
         category: 'OVERTIME_DISCREPANCY',
@@ -453,7 +459,12 @@ test('Staff P1 Functional Completion Programme Suite', async (suite) => {
     assert.ok(query);
 
     const req = {
-      auth: { organisationId: 'ZAMORIN', userId: 'M-0001', role: 'MASTER' },
+      auth: {
+        organisationId: 'ZAMORIN',
+        userId: 'M-0001',
+        role: 'MASTER',
+        isPrimaryMaster: true,
+      },
       params: { queryId: query.queryId },
       body: { status: 'RESOLVED', resolution: 'Overtime hours confirmed and supplementary payout scheduled.' },
     };
@@ -779,7 +790,7 @@ test('Staff P1 Functional Completion Programme Suite', async (suite) => {
 
   await suite.test('P1-SUP-1: submitSupportTicket creates a SupportCase with OPEN status', async () => {
     const req = {
-      auth: { userId: 'ST-SUP-01', organisationId: 'ZAMORIN', email: 'sup-staff@zamorin.cafe' },
+      auth: { userId: 'ST-SUP-01', organisationId: 'ZAMORIN', role: 'STAFF', email: 'sup-staff@zamorin.cafe' },
       body: {
         category: 'HR_PAYROLL',
         severity: 'NORMAL',

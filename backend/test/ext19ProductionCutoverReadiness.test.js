@@ -349,7 +349,7 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
   // -------------------------------------------------------------------------
   // 27. Personal Ledger Invariant
   // -------------------------------------------------------------------------
-  await t.test('27. Personal Ledger invariant: Primary Master & Owner ALLOW, Normal Master DENY', () => {
+  await t.test('27. Personal Ledger invariant: Primary Master & Owner ALLOW, Malformed MASTER DENY', () => {
     function canAccessPersonalLedger(auth) {
       if (auth.role === 'OWNER') return true;
       if (auth.role === 'MASTER' && auth.isPrimaryMaster === true) return true;
@@ -366,7 +366,7 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
   // -------------------------------------------------------------------------
   // 28. PO Approval Invariant
   // -------------------------------------------------------------------------
-  await t.test('28. PO approval invariant: Primary Master & Normal Master ALLOW, Owner DENY', () => {
+  await t.test('28. PO approval invariant: Primary Master & Malformed MASTER ALLOW, Owner DENY', () => {
     function canApprovePo(auth) {
       if (auth.role === 'MASTER') return true;
       return false;

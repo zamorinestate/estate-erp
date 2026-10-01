@@ -55,7 +55,7 @@ const printJobSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['QUEUED', 'DISPATCHED', 'PRINTED', 'FAILED'],
+      enum: ['QUEUED', 'DISPATCHED', 'PRINTED', 'FAILED', 'CANCELLED'],
       default: 'QUEUED',
       index: true,
     },
@@ -72,6 +72,94 @@ const printJobSchema = new mongoose.Schema(
     requestedAt: {
       type: Date,
       default: Date.now,
+    },
+    dispatchedDeviceId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+      index: true,
+    },
+    acknowledgedByDeviceId: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+    acknowledgedAt: {
+      type: Date,
+      default: null,
+    },
+
+    ackChallenge: {
+      type: String,
+      default: null,
+    },
+    ackChallengeIssuedAt: {
+      type: Date,
+      default: null,
+    },
+    ackChallengeExpiresAt: { type: Date, default: null },
+    ackChallengeConsumedAt: { type: Date, default: null },
+    attestationVersion: {
+      type: String,
+      enum: ['ZAMORIN_DEVICE_ACK_V1', 'ZAMORIN_PRINT_ACK_V2'],
+      default: null,
+    },
+    payloadSha256: { type: String, default: null, lowercase: true, match: /^[a-f0-9]{64}$/ },
+    payloadBytes: { type: Number, default: null, min: 1 },
+    transportMode: {
+      type: String,
+      enum: ['UNBOUND', 'ANDROID_SYSTEM_PRINT', 'LOCAL_RAW_ESC_POS', 'BROWSER_DIALOG'],
+      default: 'UNBOUND',
+    },
+    platformJobId: { type: String, default: null, trim: true },
+    evidenceLevel: {
+      type: String,
+      enum: ['NONE', 'SPOOLER_COMPLETION', 'SPOOLER_TERMINAL_STATE', 'CONTENT_BOUND_TRANSPORT', 'HARDWARE_CONFIRMED'],
+      default: 'NONE',
+    },
+    contentBindingVerified: { type: Boolean, default: false },
+    actualPrinterId: { type: String, default: null, trim: true },
+    printerIdentityVerified: { type: Boolean, default: false },
+    attestationRequired: {
+      type: Boolean,
+      default: false,
+    },
+    attestationKeyThumbprint: {
+      type: String,
+      default: null,
+    },
+    attestationKeyProvider: {
+      type: String,
+      enum: ['ANDROID_KEYSTORE', 'APPLE_SECURE_ENCLAVE', 'APPLE_KEYCHAIN', 'WINDOWS_CNG', 'WEB_CRYPTO', 'UNKNOWN', null],
+      default: null,
+    },
+    attestationKeyHardwareBackedVerified: {
+      type: Boolean,
+      default: false,
+    },
+    attestationKeyHardwareSecurityLevel: {
+      type: String,
+      enum: ['UNKNOWN', 'SOFTWARE', 'TRUSTED_ENVIRONMENT', 'STRONGBOX'],
+      default: 'UNKNOWN',
+    },
+    attestationVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+    ackSignatureHash: {
+      type: String,
+      default: null,
+    },
+    drawerKickRequested: {
+      type: Boolean,
+      default: false,
+    },
+    drawerKickStatus: {
+      type: String,
+      enum: ['NOT_REQUESTED', 'REQUESTED', 'DISPATCHED', 'ACKNOWLEDGED', 'FAILED', 'UNKNOWN'],
+      default: 'NOT_REQUESTED',
     },
     completedAt: {
       type: Date,

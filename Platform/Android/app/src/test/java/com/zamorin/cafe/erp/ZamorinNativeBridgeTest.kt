@@ -38,7 +38,7 @@ class ZamorinNativeBridgeTest {
                     lastRequestedDirectoryPickerId = requestId
                 }
 
-                override fun onOpenSystemPrint(requestId: String, jobName: String) {
+                override fun onOpenSystemPrint(requestId: String, jobName: String, attestationContext: JSONObject?) {
                     lastPrintJobName = jobName
                 }
 

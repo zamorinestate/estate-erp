@@ -523,28 +523,18 @@ test('P1-15: Employee own-only privacy (STAFF viewing other employee calendar ge
   );
 });
 
-test('P1-16: Master org scope (MASTER can view any staff calendar within organization)', async () => {
-  const origFind = Attendance.find;
-  Attendance.find = () => ({
-    sort: () => ({
-      lean: async () => [{ attendanceId: 'AT-001', userId: 'EMP-002', businessDate: '2026-08-01', status: 'CHECKED_OUT', totalWorkedMinutes: 480 }],
-    }),
-  });
-
+test('P1-16: retired/non-primary MASTER cannot view staff Calendar 360', async () => {
   const req = {
     auth: { userId: 'MU-NORMAL-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
     params: { userId: 'EMP-002' },
     query: { year: '2026', month: '8' },
   };
-  const res = createMockResponse(200);
+  const res = createMockResponse(null);
 
-  await getEmployeeMonthlyCalendar(req, res);
-  const data = res.getData();
-
-  assert.equal(data.success, true);
-  assert.equal(data.data.userId, 'EMP-002');
-
-  Attendance.find = origFind;
+  await assert.rejects(
+    async () => getEmployeeMonthlyCalendar(req, res),
+    { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
+  );
 });
 
 test('P1-17: Exception generated from real condition (reconciliation detects missed check-out)', async () => {

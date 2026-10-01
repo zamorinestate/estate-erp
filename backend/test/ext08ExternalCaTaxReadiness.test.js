@@ -380,6 +380,33 @@ describe('EXT-08 — External CA / Tax / Statutory Review Preparation (42-Point 
     'Code collision under same GSTIN throws');
   });
 
+  it('13A. Auto-derived compact café codes remain distinct and preserve POS invoice capacity', () => {
+    _clearStatutoryRegistries();
+
+    const cafeA = resolveCompactCafeCode('CAFE-A-0001', null, TEST_GSTIN_KERALA);
+    const cafeB = resolveCompactCafeCode('CAFE-B-0001', null, TEST_GSTIN_KERALA);
+
+    assert.equal(cafeA, 'A01');
+    assert.equal(cafeB, 'B01');
+    assert.notEqual(cafeA, cafeB);
+    assert.ok(cafeA.length <= 3);
+    assert.ok(cafeB.length <= 3);
+
+    const capA = calculateSeriesCapacity({
+      statutorySeriesCode: 'P',
+      statutoryCafeCode: cafeA,
+      financialYear: '2026-27',
+    });
+    const capB = calculateSeriesCapacity({
+      statutorySeriesCode: 'P',
+      statutoryCafeCode: cafeB,
+      financialYear: '2026-27',
+    });
+
+    assert.equal(capA.capacity >= 99999, true);
+    assert.equal(capB.capacity >= 99999, true);
+  });
+
   // =========================================================================
   // TEST 14 — Financial Year Rollover (31 Mar → 1 Apr)
   // =========================================================================
@@ -914,7 +941,7 @@ describe('EXT-08 — External CA / Tax / Statutory Review Preparation (42-Point 
   // =========================================================================
   // TEST 38 — PO Approval Regression
   // =========================================================================
-  it('38. PO Approval absolute regression: Primary & Normal Master ALLOW; Owner, Admin, Staff DENY', () => {
+  it('38. PO Approval absolute regression: Primary & Malformed MASTER ALLOW; Owner, Admin, Staff DENY', () => {
     // Verify the PO approval regression suite is present
     assert.ok(
       fs.existsSync(path.join(__dirname, 'poApprovalPermissionPolicy.test.js')) ||

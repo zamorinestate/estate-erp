@@ -1,0 +1,291 @@
+#!/usr/bin/env node
+
+/**
+ * PR #16 FINAL MERGE-READINESS CERTIFIER
+ *
+ * This command is intentionally stricter than configuration/deployment
+ * pre-flight. It refuses certification unless:
+ *   - the working tree is exactly the requested candidate SHA and is clean;
+ *   - canonical backend CI contains the final financial, receipt-lineage,
+ *     REC-04E and retired-persona gates;
+ *   - a real-hardware REC-04E acceptance report exists and passes the
+ *     dedicated verifier.
+ *
+ * GitHub workflow conclusions still need to be checked on the same SHA before
+ * changing the PR from draft; this local certifier never merges or deploys.
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { spawnSync } from 'child_process';
+
+function parseArgs(argv) {
+  const args = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const current = argv[i];
+    if (!current.startsWith('--')) continue;
+    const [rawKey, inline] = current.slice(2).split('=', 2);
+    if (inline !== undefined) {
+      args[rawKey] = inline;
+    } else if (argv[i + 1] && !argv[i + 1].startsWith('--')) {
+      args[rawKey] = argv[i + 1];
+      i += 1;
+    } else {
+      args[rawKey] = 'true';
+    }
+  }
+  return args;
+}
+
+function git(args) {
+  const result = spawnSync('git', args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.status !== 0) {
+    const err = new Error(`git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
+    err.code = 'GIT_COMMAND_FAILED';
+    throw err;
+  }
+  return String(result.stdout || '').trim();
+}
+
+function fail(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  throw err;
+}
+
+async function githubJson(url) {
+  if (typeof fetch !== 'function') {
+    fail(
+      'GITHUB_CI_EVIDENCE_UNAVAILABLE',
+      'This Node runtime does not provide fetch(), so exact-head GitHub CI cannot be verified.'
+    );
+  }
+
+  const token = String(process.env.GITHUB_TOKEN || '').trim();
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'zamorin-pr16-merge-readiness',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let response;
+  try {
+    response = await fetch(url, { headers });
+  } catch (err) {
+    fail(
+      'GITHUB_CI_EVIDENCE_UNAVAILABLE',
+      `GitHub Actions evidence could not be fetched: ${err?.message || err}`
+    );
+  }
+  if (!response.ok) {
+    fail(
+      'GITHUB_CI_EVIDENCE_UNAVAILABLE',
+      `GitHub Actions evidence request failed with HTTP ${response.status}.`
+    );
+  }
+  return await response.json();
+}
+
+const args = parseArgs(process.argv.slice(2));
+const expectedSha = String(args['expected-sha'] || '').trim().toLowerCase();
+const hardwareReport = String(args['hardware-report'] || '').trim();
+
+if (!/^[a-f0-9]{40}$/.test(expectedSha)) {
+  fail(
+    'EXPECTED_SHA_REQUIRED',
+    'Usage: npm run check:pr16-merge-readiness -- --expected-sha=<40-char-sha> --hardware-report=<report.json>'
+  );
+}
+if (!hardwareReport) {
+  fail(
+    'REC04E_HARDWARE_REPORT_REQUIRED',
+    'A certified REC-04E real-hardware acceptance report is required.'
+  );
+}
+
+const actualSha = git(['rev-parse', 'HEAD']).toLowerCase();
+if (actualSha !== expectedSha) {
+  fail(
+    'CANDIDATE_SHA_MISMATCH',
+    `Expected candidate ${expectedSha}, but working tree HEAD is ${actualSha}.`
+  );
+}
+
+const porcelain = git(['status', '--porcelain']);
+if (porcelain) {
+  fail(
+    'WORKING_TREE_NOT_CLEAN',
+    'Final certification requires a clean working tree.'
+  );
+}
+
+const backendPkg = JSON.parse(
+  fs.readFileSync(path.resolve('backend/package.json'), 'utf8')
+);
+const canonical = String(backendPkg.scripts?.test || '');
+const requiredSuites = [
+  'test/recoveryPosSavePrintReprintLifecycle.test.js',
+  'test/rec04eContentBoundTransport.test.js',
+  'test/retiredMasterPersonaInvariant.test.js',
+  'test/posFinalReceiptLineageGate.test.js',
+  'test/posFinalFinancialIntegrityGate.test.js',
+];
+for (const suite of requiredSuites) {
+  if (!canonical.includes(suite)) {
+    fail(
+      'CANONICAL_CI_GATE_MISSING',
+      `${suite} is missing from backend canonical CI.`
+    );
+  }
+}
+
+const githubRepository = String(
+  process.env.ZAMORIN_GITHUB_REPOSITORY || 'zamorinestate/estate-erp'
+).trim();
+if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(githubRepository)) {
+  fail(
+    'GITHUB_REPOSITORY_INVALID',
+    'ZAMORIN_GITHUB_REPOSITORY must be in owner/repository form.'
+  );
+}
+
+const prNumber = Number(process.env.ZAMORIN_PR_NUMBER || 16);
+if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+  fail('PR_NUMBER_INVALID', 'ZAMORIN_PR_NUMBER must be a positive integer.');
+}
+
+const pullRequest = await githubJson(
+  `https://api.github.com/repos/${githubRepository}/pulls/${prNumber}`
+);
+const pullHeadSha = String(pullRequest?.head?.sha || '').toLowerCase();
+if (pullHeadSha !== expectedSha) {
+  fail(
+    'PR_CANDIDATE_SHA_MISMATCH',
+    `PR #${prNumber} head is ${pullHeadSha || 'unknown'}, not candidate ${expectedSha}.`
+  );
+}
+if (pullRequest?.state !== 'open') {
+  fail(
+    'PR_NOT_OPEN',
+    `PR #${prNumber} must remain open during certification.`
+  );
+}
+if (pullRequest?.draft !== true) {
+  fail(
+    'PR_NOT_DRAFT',
+    `PR #${prNumber} must remain draft until explicit approval after certification.`
+  );
+}
+if (pullRequest?.merged_at) {
+  fail(
+    'PR_ALREADY_MERGED',
+    `PR #${prNumber} is already merged; certification must occur before merge.`
+  );
+}
+
+const ciEvidence = await githubJson(
+  `https://api.github.com/repos/${githubRepository}/actions/runs?head_sha=${expectedSha}&per_page=100`
+);
+const requiredWorkflows = [
+  'Zamorin Cafe ERP CI',
+  'Deployment Configuration & Invariant Check',
+];
+const exactHeadWorkflowEvidence = {};
+for (const workflowName of requiredWorkflows) {
+  const matching = (Array.isArray(ciEvidence?.workflow_runs) ? ciEvidence.workflow_runs : [])
+    .filter((run) => run?.name === workflowName && String(run?.head_sha || '').toLowerCase() === expectedSha)
+    .sort((a, b) => Number(b?.run_number || 0) - Number(a?.run_number || 0));
+
+  if (!matching.length) {
+    fail(
+      'EXACT_HEAD_CI_EVIDENCE_MISSING',
+      `No GitHub Actions run named "${workflowName}" was found for candidate ${expectedSha}.`
+    );
+  }
+
+  const latest = matching[0];
+  if (latest.status !== 'completed' || latest.conclusion !== 'success') {
+    fail(
+      'EXACT_HEAD_CI_NOT_GREEN',
+      `Latest exact-head workflow "${workflowName}" is ${latest.status || 'unknown'}/${latest.conclusion || 'none'} on run #${latest.run_number || 'unknown'}.`
+    );
+  }
+
+  exactHeadWorkflowEvidence[workflowName] = {
+    runId: latest.id,
+    runNumber: latest.run_number,
+    status: latest.status,
+    conclusion: latest.conclusion,
+    headSha: latest.head_sha,
+  };
+}
+
+for (const scanner of [
+  'scripts/scan_secrets.mjs',
+  'scripts/scan_repository_secrets.mjs',
+]) {
+  const scan = spawnSync(process.execPath, [path.resolve(scanner)], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (scan.status !== 0) {
+    fail(
+      'REPOSITORY_SECRET_SCAN_FAILED',
+      String(scan.stderr || scan.stdout || `${scanner} failed`).trim()
+    );
+  }
+}
+
+const reportPath = path.resolve(hardwareReport);
+if (!fs.existsSync(reportPath)) {
+  fail(
+    'REC04E_HARDWARE_REPORT_NOT_FOUND',
+    `Hardware acceptance report not found: ${reportPath}`
+  );
+}
+
+const verify = spawnSync(
+  process.execPath,
+  [
+    path.resolve('scripts/verify_rec04e_hardware_acceptance.mjs'),
+    reportPath,
+    `--expected-sha=${expectedSha}`,
+  ],
+  {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }
+);
+if (verify.status !== 0) {
+  fail(
+    'REC04E_HARDWARE_ACCEPTANCE_NOT_CERTIFIED',
+    String(verify.stderr || verify.stdout || 'Hardware acceptance verification failed.').trim()
+  );
+}
+
+console.log(JSON.stringify({
+  certified: true,
+  candidateSha: actualSha,
+  workingTreeClean: true,
+  canonicalGatesVerified: requiredSuites,
+  repositorySecretScansVerified: true,
+  hardwareAcceptanceReport: reportPath,
+  hardwareAcceptanceCandidateShaBound: true,
+  hardwareAcceptanceSignatureVerified: true,
+  githubExactHeadCiVerified: true,
+  githubRepository,
+  exactHeadWorkflowEvidence,
+  prNumber,
+  prHeadSha: pullHeadSha,
+  prHeadVerified: true,
+  prOpenVerified: true,
+  prDraftVerified: true,
+  prUnmergedVerified: true,
+  prMustRemainDraftUntilExplicitApproval: true,
+  mergePerformed: false,
+  deploymentPerformed: false,
+}, null, 2));

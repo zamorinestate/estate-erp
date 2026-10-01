@@ -556,11 +556,12 @@ router.delete(
   '/:documentId/permanent',
   authorize('PROCUREMENT_APPROVE', { allowedRoles: ['MASTER'] }),
   asyncHandler(async (req, res) => {
-    const { reason } = req.body || {};
+    const { reason, confirmation } = req.body || {};
     const result = await DocumentAttachmentService.permanentDeleteDocument({
       documentId: req.params.documentId,
       organisationId: req.auth.organisationId,
       reason,
+      confirmation,
       auth: req.auth,
     });
 
@@ -590,8 +591,12 @@ router.post(
 
     return res.status(200).json({
       success: true,
-      message: 'Retention policy updated successfully.',
+      message: doc.$locals?.retentionAuditWarning
+        ? 'Retention policy change applied with an audit-reporting warning.'
+        : 'Retention policy updated successfully.',
       data: doc,
+      auditWarning: doc.$locals?.retentionAuditWarning || null,
+      authorizationAuditEventId: doc.$locals?.retentionAuthorizationAuditEventId || null,
     });
   })
 );

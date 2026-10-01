@@ -227,6 +227,25 @@ test('SCR-017 Payroll Control Centre — Payments & Banking batch generation', a
   t.mock.method(PayrollRun, 'findOne', () => ({
     lean: async () => mockRun,
   }));
+  t.mock.method(Payslip, 'find', () => ({
+    lean: async () => [{
+      payrollRunId: 'PR-202608-0001',
+      employeeUserId: 'MU-0002',
+      employeeNumber: 'MU-0002',
+      netPayPaise: 26400000,
+    }],
+  }));
+  t.mock.method(User, 'find', () => ({
+    lean: async () => [{
+      userId: 'MU-0002',
+      name: 'Payroll Employee',
+      paymentMethod: 'BANK',
+      bankDetails: {
+        accountNumber: '987654321098',
+        ifsc: 'HDFC0001234',
+      },
+    }],
+  }));
 
   const res = await request(server, '/api/v1/payroll/runs/PR-202608-0001/payments/batch', {
     method: 'POST',
@@ -245,18 +264,58 @@ test('SCR-017 Payroll Control Centre — Statutory compliance overview', async (
   const res = await request(server, '/api/v1/payroll/compliance/overview', { token: 'valid-token' });
   assert.equal(res.status, 200);
   assert.equal(res.body.success, true);
-  assert.equal(res.body.data.epf.status, 'COMPLIANT');
-  assert.equal(res.body.data.esi.status, 'COMPLIANT');
+  assert.equal(res.body.data.epf.status, 'NOT_VERIFIED');
+  assert.equal(res.body.data.esi.status, 'NOT_VERIFIED');
+  assert.equal(res.body.data.legalCertification, false);
+  assert.equal(
+    res.body.data.sourceStatus,
+    'PAYROLL_FIELDS_AVAILABLE_LEGAL_VERIFICATION_NOT_IMPLEMENTED'
+  );
 });
 
-test('SCR-017 Payroll Control Centre — 20-point payroll invariant integrity check', async (t) => {
+test('SCR-017 Payroll Control Centre — integrity endpoint reports measured coverage without self-certification', async (t) => {
   const server = await startServer(t);
   mockAuth(t, { role: 'MASTER', isPrimaryMaster: true });
   mockAudit(t);
 
+  const mockRun = {
+    payrollRunId: 'PR-202608-0001',
+    organisationId: 'ORG-TEST',
+    cafeId: 'ZC-0001',
+    periodKey: '2026-08',
+    status: 'APPROVED',
+    employeeCount: 1,
+    totalGrossPaise: 3000000,
+    totalDeductionPaise: 360000,
+    totalNetPayPaise: 2640000,
+  };
+  const mockPayslip = {
+    payslipId: 'PS-202608-0001',
+    payrollRunId: 'PR-202608-0001',
+    organisationId: 'ORG-TEST',
+    cafeId: 'ZC-0001',
+    periodKey: '2026-08',
+    employeeUserId: 'MU-0002',
+    earnings: { grossPayPaise: 3000000 },
+    deductions: { totalDeductionPaise: 360000 },
+    netPayPaise: 2640000,
+    attendanceSummary: { totalCalendarDays: 31, payableDays: 31 },
+  };
+
+  t.mock.method(PayrollRun, 'find', () => findQuery([mockRun]));
+  t.mock.method(Payslip, 'find', () => findQuery([mockPayslip]));
+
   const res = await request(server, '/api/v1/payroll/integrity', { token: 'valid-token' });
   assert.equal(res.status, 200);
   assert.equal(res.body.success, true);
-  assert.equal(res.body.data.status, 'CERTIFIED_INTEGRITY');
-  assert.equal(res.body.data.passedChecks, res.body.data.totalChecks);
+  assert.equal(res.body.data.status, 'PARTIAL_VERIFICATION');
+  assert.equal(res.body.data.integrityScore, 100);
+  assert.equal(res.body.data.coveragePercent, 70);
+  assert.equal(res.body.data.verifiedChecks, 7);
+  assert.equal(res.body.data.passedChecks, 7);
+  assert.equal(res.body.data.allPassed, false);
+  assert.equal(
+    res.body.data.checks.filter((check) => check.status === 'NOT_VERIFIED').length,
+    3
+  );
 });

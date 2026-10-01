@@ -15,8 +15,10 @@ const { MenuItem } = require('../models/MenuItem');
 const { Recipe } = require('../models/Recipe');
 const { FefoService } = require('./fefoService');
 const { StockMovement } = require('../models/StockMovement');
+const { Bill } = require('../models/Bill');
 const mongoose = require('mongoose');
 const { ApiError } = require('../utils/ApiError');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 
 function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -94,64 +96,51 @@ class BomDepletionService {
       throw new ApiError(400, 'MISSING_ORG_OR_CAFE', 'organisationId and cafeId are required for BOM depletion.');
     }
 
-    // REC-04A: Exactly-once guard. If a CONSUMPTION StockMovement with this billId
-    // already exists (idempotent replay / concurrent retry), skip depletion entirely.
-    const normBillId = normalizeId(billId);
-    if (normBillId && (mongoose.connection?.readyState === 1 || StockMovement.findOne?.mock)) {
-      try {
-        const existing = await StockMovement.findOne({
-          referenceId: normBillId,
-          referenceType: 'POS_SALE',
-          movementType: 'CONSUMPTION',
-        }).lean().select('_id movementId').lean();
-        if (existing) {
-          return {
-            success: true,
-            alreadyDepleted: true,
-            processedItemsCount: 0,
-            consumedLots: [],
-            existingMovementId: existing.movementId || null,
-          };
-        }
-      } catch {
-        // DB check failed — proceed with depletion attempt rather than erroring
-      }
-    }
-
     if (!Array.isArray(lineItems) || lineItems.length === 0) {
-      return { success: true, processedItemsCount: 0, consumedLots: [] };
+      return {
+        success: true,
+        processedItemsCount: 0,
+        ingredientsCount: 0,
+        allDeductionsSucceeded: true,
+        deductions: [],
+        consumedLots: [],
+      };
     }
 
     const normOrgId = normalizeId(organisationId);
     const normCafeId = normalizeId(cafeId);
+    const normBillId = normalizeId(billId);
 
-    // Aggregate required quantities by inventoryItemId
+    // Build the canonical requirement set from the menu/recipe source before
+    // entering the write transaction. No inventory mutation occurs here.
     const aggregatedRequirements = new Map();
 
     for (const item of lineItems) {
       const menuItemId = normalizeId(item.menuItemId);
       const quantity = Math.max(1, Number(item.quantity) || 1);
 
-      // Find menu item to inspect linked recipe
       const menuItem = await MenuItem.findOne({
         menuItemId,
         organisationId: normOrgId,
       }).lean();
 
-      if (menuItem && menuItem.primaryRecipeId) {
-        const ingredients = await this.explodeRecipe(menuItem.primaryRecipeId, normOrgId, quantity);
-        for (const ing of ingredients) {
-          const current = aggregatedRequirements.get(ing.inventoryItemId) || {
-            itemId: ing.inventoryItemId,
-            ingredientName: ing.ingredientName,
-            uom: ing.uom,
+      if (menuItem?.primaryRecipeId) {
+        const ingredients = await this.explodeRecipe(
+          menuItem.primaryRecipeId,
+          normOrgId,
+          quantity
+        );
+        for (const ingredient of ingredients) {
+          const current = aggregatedRequirements.get(ingredient.inventoryItemId) || {
+            itemId: ingredient.inventoryItemId,
+            ingredientName: ingredient.ingredientName,
+            uom: ingredient.uom,
             totalQuantityRequired: 0,
           };
-          current.totalQuantityRequired += ing.quantityRequired;
-          aggregatedRequirements.set(ing.inventoryItemId, current);
+          current.totalQuantityRequired += Number(ingredient.quantityRequired || 0);
+          aggregatedRequirements.set(ingredient.inventoryItemId, current);
         }
-      } else if (menuItem && menuItem.linkedInventoryItemId) {
-        // Direct 1:1 inventory item link
+      } else if (menuItem?.linkedInventoryItemId) {
         const directItemId = normalizeId(menuItem.linkedInventoryItemId);
         const current = aggregatedRequirements.get(directItemId) || {
           itemId: directItemId,
@@ -164,20 +153,182 @@ class BomDepletionService {
       }
     }
 
-    // Execute atomic FEFO lot deductions for each aggregated requirement
-    const allConsumedLots = [];
-    const executionDeductions = [];
+    if (aggregatedRequirements.size === 0) {
+      return {
+        success: true,
+        processedItemsCount: lineItems.length,
+        ingredientsCount: 0,
+        allDeductionsSucceeded: true,
+        deductions: [],
+        consumedLots: [],
+        noInventoryRequirements: true,
+      };
+    }
 
-    for (const [itemId, req] of aggregatedRequirements.entries()) {
-      try {
+    const transactionRequired =
+      process.env.NODE_ENV !== 'test' &&
+      mongoose.connection?.readyState === 1;
+
+    return executeTransactionWithRetry(async (session) => {
+      const now = new Date();
+      const staleProcessingCutoff = new Date(now.getTime() - 15 * 60 * 1000);
+      let claimedBill = null;
+
+      const billStateEnforcement = Boolean(
+        normBillId &&
+        (
+          mongoose.connection?.readyState === 1 ||
+          Bill.findOneAndUpdate?.mock ||
+          typeof Bill.findOneAndUpdate?.restore === 'function'
+        )
+      );
+
+      if (billStateEnforcement) {
+        let claimQuery = Bill.findOneAndUpdate(
+          {
+            organisationId: normOrgId,
+            cafeId: normCafeId,
+            billId: normBillId,
+            $or: [
+              { bomDepletionStatus: { $in: ['NOT_ATTEMPTED', 'FAILED'] } },
+              {
+                bomDepletionStatus: 'PROCESSING',
+                bomDepletionStartedAt: { $lte: staleProcessingCutoff },
+              },
+            ],
+          },
+          {
+            $set: {
+              bomDepletionStatus: 'PROCESSING',
+              bomDepletionStartedAt: now,
+              bomDepletionCompletedAt: null,
+              bomDepletionError: null,
+            },
+          },
+          { new: true, ...(session ? { session } : {}) }
+        );
+        claimedBill = await claimQuery;
+
+        if (!claimedBill) {
+          let currentQuery = Bill.findOne({
+            organisationId: normOrgId,
+            cafeId: normCafeId,
+            billId: normBillId,
+          });
+          if (session && typeof currentQuery.session === 'function') {
+            currentQuery = currentQuery.session(session);
+          }
+          const currentBill =
+            currentQuery && typeof currentQuery.lean === 'function'
+              ? await currentQuery.lean()
+              : await currentQuery;
+
+          if (!currentBill) {
+            throw new ApiError(
+              404,
+              'BILL_NOT_FOUND_FOR_DEPLETION',
+              'The committed bill could not be found for inventory depletion.'
+            );
+          }
+
+          if (['DEPLETED', 'ALREADY_DEPLETED'].includes(currentBill.bomDepletionStatus)) {
+            return {
+              success: true,
+              alreadyDepleted: true,
+              processedItemsCount: lineItems.length,
+              ingredientsCount: aggregatedRequirements.size,
+              allDeductionsSucceeded: true,
+              deductions: [],
+              consumedLots: [],
+            };
+          }
+
+          if (
+            currentBill.bomDepletionStatus === 'PROCESSING' &&
+            currentBill.bomDepletionStartedAt &&
+            new Date(currentBill.bomDepletionStartedAt) > staleProcessingCutoff
+          ) {
+            throw new ApiError(
+              409,
+              'BOM_DEPLETION_ALREADY_PROCESSING',
+              'Inventory depletion for this bill is already in progress.'
+            );
+          }
+
+          throw new ApiError(
+            409,
+            'BOM_DEPLETION_STATE_CONFLICT',
+            'Bill depletion state changed before inventory could be claimed.'
+          );
+        }
+      }
+
+      let existingMovements = [];
+      if (
+        normBillId &&
+        (
+          mongoose.connection?.readyState === 1 ||
+          StockMovement.find?.mock ||
+          typeof StockMovement.find?.restore === 'function'
+        )
+      ) {
+        let movementQuery = StockMovement.find({
+          organisationId: normOrgId,
+          cafeId: normCafeId,
+          referenceId: normBillId,
+          referenceType: 'POS_SALE',
+          movementType: 'CONSUMPTION',
+        });
+        if (session && typeof movementQuery.session === 'function') {
+          movementQuery = movementQuery.session(session);
+        }
+        existingMovements =
+          movementQuery && typeof movementQuery.lean === 'function'
+            ? await movementQuery.lean()
+            : await movementQuery;
+        if (!Array.isArray(existingMovements)) existingMovements = [];
+      }
+
+      const alreadyConsumedByItem = new Map();
+      for (const movement of existingMovements) {
+        const itemId = normalizeId(movement.itemId);
+        if (!itemId) continue;
+        const consumed = Math.max(0, -Number(movement.quantityBase || 0));
+        alreadyConsumedByItem.set(
+          itemId,
+          Number(alreadyConsumedByItem.get(itemId) || 0) + consumed
+        );
+      }
+
+      const allConsumedLots = [];
+      const executionDeductions = [];
+
+      for (const [itemId, requirement] of aggregatedRequirements.entries()) {
+        const required = Number(requirement.totalQuantityRequired || 0);
+        const alreadyConsumed = Number(alreadyConsumedByItem.get(itemId) || 0);
+        const remainingRequired = Math.max(0, required - alreadyConsumed);
+
+        if (remainingRequired <= 0.000001) {
+          executionDeductions.push({
+            itemId,
+            ingredientName: requirement.ingredientName,
+            quantityRequired: required,
+            quantityAlreadyConsumed: alreadyConsumed,
+            quantityDeductedNow: 0,
+            status: 'ALREADY_SATISFIED',
+          });
+          continue;
+        }
+
         const fefoResult = await FefoService.executeFefoDeduction({
           organisationId: normOrgId,
           cafeId: normCafeId,
           itemId,
-          requiredQuantity: req.totalQuantityRequired,
+          requiredQuantity: remainingRequired,
+          session,
           businessDate,
-          billId,
-          referenceId: billId,
+          billId: normBillId,
+          referenceId: normBillId,
           referenceType,
           userId,
         });
@@ -185,33 +336,60 @@ class BomDepletionService {
         if (Array.isArray(fefoResult.allocatedLots)) {
           allConsumedLots.push(...fefoResult.allocatedLots);
         }
+
         executionDeductions.push({
           itemId,
-          ingredientName: req.ingredientName,
-          quantityRequired: req.totalQuantityRequired,
+          ingredientName: requirement.ingredientName,
+          quantityRequired: required,
+          quantityAlreadyConsumed: alreadyConsumed,
+          quantityDeductedNow: remainingRequired,
           deductions: fefoResult.deductions,
           status: 'SUCCESS',
         });
-      } catch (fefoErr) {
-        executionDeductions.push({
-          itemId,
-          ingredientName: req.ingredientName,
-          quantityRequired: req.totalQuantityRequired,
-          error: fefoErr.message,
-          code: fefoErr.code || 'FEFO_DEDUCTION_FAILED',
-          status: 'FAILED',
-        });
       }
-    }
 
-    return {
-      success: true,
-      processedItemsCount: lineItems.length,
-      ingredientsCount: aggregatedRequirements.size,
-      allDeductionsSucceeded: executionDeductions.every((d) => d.status === 'SUCCESS'),
-      deductions: executionDeductions,
-      consumedLots: allConsumedLots,
-    };
+      if (billStateEnforcement && claimedBill) {
+        const completedAt = new Date();
+        const finalized = await Bill.findOneAndUpdate(
+          {
+            _id: claimedBill._id,
+            organisationId: normOrgId,
+            cafeId: normCafeId,
+            billId: normBillId,
+            bomDepletionStatus: 'PROCESSING',
+            bomDepletionStartedAt: now,
+          },
+          {
+            $set: {
+              bomDepletionStatus: 'DEPLETED',
+              bomDepletionCompletedAt: completedAt,
+              bomDepletionError: null,
+            },
+          },
+          { new: true, ...(session ? { session } : {}) }
+        );
+
+        if (!finalized) {
+          throw new ApiError(
+            409,
+            'BOM_DEPLETION_FINALIZE_CONFLICT',
+            'Inventory was prepared for depletion, but bill depletion state changed before finalization.'
+          );
+        }
+      }
+
+      return {
+        success: true,
+        alreadyDepleted: false,
+        processedItemsCount: lineItems.length,
+        ingredientsCount: aggregatedRequirements.size,
+        allDeductionsSucceeded: true,
+        deductions: executionDeductions,
+        consumedLots: allConsumedLots,
+      };
+    }, {
+      requireTransactions: transactionRequired,
+    });
   }
 }
 

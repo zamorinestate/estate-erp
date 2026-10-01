@@ -47,6 +47,45 @@ function sendAuthenticationError(
   });
 }
 
+function classifyTokenVerificationError(error) {
+  const name = String(error?.name || '').trim();
+  const code = String(error?.code || '').trim().toUpperCase();
+  const message = String(error?.message || '').trim();
+  const lowerMessage = message.toLowerCase();
+
+  if (name === 'TokenExpiredError') {
+    return {
+      code: 'AUTH_TOKEN_EXPIRED',
+      message: 'Your access token has expired.',
+    };
+  }
+
+  if (name === 'NotBeforeError') {
+    return {
+      code: 'AUTH_TOKEN_NOT_ACTIVE',
+      message: 'The access token is not yet active.',
+    };
+  }
+
+  if (
+    code === 'AUTH_SESSION_REVOKED' ||
+    lowerMessage.includes('session is invalid or expired') ||
+    lowerMessage.includes('session has expired or was revoked') ||
+    lowerMessage.includes('session is not active') ||
+    lowerMessage.includes('revoked')
+  ) {
+    return {
+      code: 'AUTH_SESSION_REVOKED',
+      message: 'Your session has expired or was revoked.',
+    };
+  }
+
+  return {
+    code: 'AUTH_TOKEN_INVALID',
+    message: message || 'The access token is invalid or expired.',
+  };
+}
+
 async function authenticate(
   request,
   response,
@@ -54,6 +93,38 @@ async function authenticate(
 ) {
   try {
     if (request.auth) {
+      if (String(request.auth.role || '').toUpperCase() === 'MASTER' && request.auth.isPrimaryMaster !== true) {
+        return sendAuthenticationError(
+          response,
+          'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+          'Primary Master authority is required for MASTER access.'
+        );
+      }
+
+      const authenticatedUser = request.authenticatedUser;
+      const authenticatedSession = request.authenticatedSession;
+      const authUserId = String(request.auth.userId || '').trim();
+      const authOrganisationId = String(request.auth.organisationId || '').trim();
+
+      const canonicalContextVerified = Boolean(
+        authenticatedUser &&
+        authenticatedSession &&
+        authUserId &&
+        authOrganisationId &&
+        String(authenticatedUser.userId || '').trim() === authUserId &&
+        String(authenticatedUser.organisationId || '').trim() === authOrganisationId &&
+        String(authenticatedSession.userId || '').trim() === authUserId &&
+        String(authenticatedSession.organisationId || '').trim() === authOrganisationId
+      );
+
+      if (!canonicalContextVerified) {
+        return sendAuthenticationError(
+          response,
+          'AUTH_CONTEXT_UNVERIFIED',
+          'The authentication context is not backed by a verified live session.'
+        );
+      }
+
       return next();
     }
 
@@ -61,65 +132,6 @@ async function authenticate(
       extractAccessToken(request);
 
     if (!accessToken) {
-      const explicitDevRole = request.get('x-dev-role') || request.query?.devRole || request.query?.role;
-      if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'staging' && explicitDevRole) {
-        const rawRole = explicitDevRole.trim().toUpperCase();
-
-        const roleEmailMap = {
-          MASTER: 'pradeeshk331@gmail.com',
-          PRIMARY_MASTER: 'pradeeshk331@gmail.com',
-          OWNER: 'owner@example.com',
-          CAFE_ADMIN: 'admin@example.com',
-          ADMIN: 'admin@example.com',
-          STAFF: 'staff@example.com',
-          VENDOR: 'vendor@example.com',
-        };
-        const targetEmail = roleEmailMap[rawRole] || 'pradeeshk331@gmail.com';
-        const devUser = await User.findOne({
-          organisationId: 'ZAMORIN',
-          email: targetEmail,
-          accountStatus: 'ACTIVE',
-        }) || await User.findOne({
-          organisationId: 'ZAMORIN',
-          role: 'MASTER',
-          accountStatus: 'ACTIVE',
-        });
-
-        if (devUser) {
-          const assignedCafeIds = [
-            ...new Set(
-              (devUser.assignedCafeIds || [])
-                .filter(Boolean)
-                .map((cafeId) => cafeId.trim().toUpperCase())
-            ),
-          ];
-
-          request.auth = {
-            userId: devUser.userId,
-            email: devUser.email,
-            name: devUser.name || devUser.email,
-            organisationId: devUser.organisationId || 'ZAMORIN',
-            role: devUser.role,
-            vendorId: devUser.vendorId || null,
-            isPrimaryMaster: Boolean(devUser.isPrimaryMaster),
-            assignedCafeIds,
-            primaryCafeId: devUser.primaryCafeId || 'ZC-0001',
-            sessionId: 'DEV-LOCAL-SESSION',
-            capabilities: Array.isArray(devUser.capabilities)
-              ? devUser.capabilities.map((c) => String(c).trim().toUpperCase()).filter(Boolean)
-              : [],
-            mfaVerified: true,
-            mfaVerifiedAt: new Date(),
-            stepUpVerifiedAt: new Date(),
-            sessionVersion: devUser.sessionVersion || 0,
-            permissionsVersion: devUser.permissionsVersion || 0,
-          };
-          request.user = request.auth;
-          request.authenticatedUser = devUser;
-          return next();
-        }
-      }
-
       return sendAuthenticationError(
         response,
         'AUTHENTICATION_REQUIRED',
@@ -134,10 +146,11 @@ async function authenticate(
       payload = verified.payload;
       session = verified.session;
     } catch (tokenErr) {
+      const classified = classifyTokenVerificationError(tokenErr);
       return sendAuthenticationError(
         response,
-        'AUTH_TOKEN_INVALID',
-        tokenErr.message || 'The access token is invalid or expired.'
+        classified.code,
+        classified.message
       );
     }
 
@@ -153,6 +166,14 @@ async function authenticate(
         response,
         'USER_UNAVAILABLE',
         'The authenticated user is unavailable.'
+      );
+    }
+
+    if (String(user.role || '').toUpperCase() === 'MASTER' && user.isPrimaryMaster !== true) {
+      return sendAuthenticationError(
+        response,
+        'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+        'Primary Master authority is required for MASTER access.'
       );
     }
 
@@ -194,7 +215,7 @@ async function authenticate(
       name: user.name || user.email,
       organisationId: user.organisationId,
       role: user.role,
-      vendorId: user.vendorId || payload.vid || null,
+      vendorId: user.vendorId || null,
       isPrimaryMaster: Boolean(user.isPrimaryMaster),
       assignedCafeIds,
       primaryCafeId:

@@ -14,11 +14,22 @@ const CafeOpsDeviceSchema = new Schema({
   // show "Main Campus Cafe" instead of a raw ObjectId. Set once at
   // enrollment from the enrollment token; update via reassign-cafe.
   cafeDisplayName: { type: String },
-  platform: { type: String, enum: ['android', 'ios', 'web'], default: 'web' },
+  platform: { type: String, enum: ['android', 'ios', 'macos', 'windows', 'web'], default: 'web' },
   appVersion: { type: String },
   osVersion: { type: String },
   lifecycleStatus: { type: String, enum: Object.values(DEVICE_STATUS), default: DEVICE_STATUS.ACTIVE, index: true },
   integrityState: { type: String, enum: ['UNKNOWN', 'READY', 'FAILED'], default: 'UNKNOWN' },
+  signingKeyThumbprint: { type: String, default: null, index: true },
+  signingKeyAlgorithm: { type: String, enum: ['ES256', null], default: null },
+  signingKeyProvider: { type: String, default: null },
+  signingKeyHardwareBackedVerified: { type: Boolean, default: false },
+  signingKeyHardwareSecurityLevel: {
+    type: String,
+    enum: ['UNKNOWN', 'SOFTWARE', 'TRUSTED_ENVIRONMENT', 'STRONGBOX'],
+    default: 'UNKNOWN',
+  },
+  signingKeyHardwareAttestationVerifiedAt: { type: Date, default: null },
+  attestationCapable: { type: Boolean, default: false },
   lastSeenAt: { type: Date },
   lastSyncAt: { type: Date },
   enrolledAt: { type: Date, default: Date.now },

@@ -72,6 +72,14 @@ function normalizeId(value) {
     : '';
 }
 
+function resolveRegisterId(request, explicitValue = '') {
+  return normalizeId(
+    explicitValue ||
+    request.deviceContext?.deviceId ||
+    ''
+  );
+}
+
 function getIstBusinessDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata',
@@ -79,6 +87,21 @@ function getIstBusinessDate(date = new Date()) {
     month: '2-digit',
     day: '2-digit',
   }).format(date);
+}
+
+function resolveIndianFinancialYear(businessDate) {
+  const [yearText, monthText] = String(businessDate || '').split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    throw new ApiError(500, 'INVALID_BUSINESS_DATE', 'Cannot derive financial year from business date.');
+  }
+  const startYear = month >= 4 ? year : year - 1;
+  const endYear = startYear + 1;
+  return {
+    short: `${startYear}-${String(endYear).slice(-2)}`,
+    full: `${startYear}-${endYear}`,
+  };
 }
 
 function parsePositiveInteger(value, fallback, maximum) {
@@ -237,8 +260,22 @@ const getBillsOverview = asyncHandler(async (request, response) => {
       cEntry.taxCollected += b.taxPaisa || 0;
       cEntry.billsCount++;
 
-      const method = b.paymentMethod && cEntry.tenders[b.paymentMethod] !== undefined ? b.paymentMethod : 'UPI';
-      cEntry.tenders[method] = (cEntry.tenders[method] || 0) + b.totalPaisa;
+      const completedTenders = Array.isArray(b.tenders)
+        ? b.tenders.filter((t) => t && t.status !== 'FAILED' && Number(t.amountPaisa) > 0)
+        : [];
+
+      if (completedTenders.length > 0) {
+        for (const tender of completedTenders) {
+          const tenderMethod = normalizeId(tender.paymentMethod);
+          const bucket = cEntry.tenders[tenderMethod] !== undefined ? tenderMethod : 'SPLIT';
+          cEntry.tenders[bucket] = (cEntry.tenders[bucket] || 0) + Number(tender.amountPaisa || 0);
+        }
+      } else {
+        const legacyMethod = b.paymentMethod && cEntry.tenders[b.paymentMethod] !== undefined
+          ? b.paymentMethod
+          : 'SPLIT';
+        cEntry.tenders[legacyMethod] = (cEntry.tenders[legacyMethod] || 0) + b.totalPaisa;
+      }
 
       if (b.refundedTotalPaisa && b.refundedTotalPaisa > 0) {
         refundsPaisa += b.refundedTotalPaisa;
@@ -500,7 +537,10 @@ const createBill = asyncHandler(async (request, response) => {
   const role = request.auth.role;
   let cafeId = normalizeId(rawCafeId);
   if (role === 'CAFE_ADMIN') {
-    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
+    if (!cafeId) {
+      throw new ApiError(400, 'CAFE_ID_REQUIRED', 'No café is assigned to this Café Operations account.');
+    }
   } else {
     const effectiveCafe = resolveEffectiveCafeScope(request);
     if (effectiveCafe) {
@@ -515,6 +555,33 @@ const createBill = asyncHandler(async (request, response) => {
       assertCafeAccess(request, cafeId);
     }
   }
+
+  const cafeQuery = Cafe.findOne({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    status: { $nin: ['CLOSED', 'ARCHIVED'] },
+  });
+  const cafe = cafeQuery && typeof cafeQuery.lean === 'function'
+    ? await cafeQuery.lean()
+    : await cafeQuery;
+
+  if (!cafe) {
+    throw new ApiError(
+      404,
+      'CAFE_NOT_FOUND',
+      'The authoritative café master record was not found or is not operational.'
+    );
+  }
+
+  const cafeGstDetails = cafe.registrations?.gstDetails || {};
+  const cafeGstin = String(
+    cafeGstDetails.gstin ||
+    cafe.registrations?.gstin ||
+    ''
+  ).trim().toUpperCase();
+  const cafeGstRegistered =
+    cafeGstDetails.isRegistered === true ||
+    Boolean(cafeGstin);
 
   // Payment Idempotency Check (§83, §157, §158)
   const effectiveIdempotencyKey = idempotencyKey || request.headers?.['x-idempotency-key'] || null;
@@ -571,7 +638,14 @@ const createBill = asyncHandler(async (request, response) => {
     const modifierPrice = Number(li.modifiers?.modifierPricePaisa) || 0;
     const effectiveUnitPrice = unitPrice + modifierPrice;
     const lineSubtotal = qty * effectiveUnitPrice;
-    const taxRate = mItem.taxRatePercent || 5;
+    const taxRate = Number(mItem.taxRatePercent);
+    if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+      throw new ApiError(
+        409,
+        'MENU_ITEM_TAX_CONFIGURATION_REQUIRED',
+        `Menu item ${mId} does not have a valid authoritative tax rate.`
+      );
+    }
     const halfRate = taxRate / 2;
     const lineCgst = roundToPaisa((lineSubtotal * halfRate) / 100);
     const lineSgst = roundToPaisa((lineSubtotal * halfRate) / 100);
@@ -590,7 +664,9 @@ const createBill = asyncHandler(async (request, response) => {
       modifiers: li.modifiers || { size: 'Regular', milk: 'Standard', temperature: 'Hot', sweetness: 'Regular', addOns: [], modifierPricePaisa: 0 },
       itemNotes: typeof li.itemNotes === 'string' ? li.itemNotes.trim() : '',
       taxRatePercent: taxRate,
-      taxClassification: taxRate === 5 ? 'GST_5' : taxRate === 12 ? 'GST_12' : taxRate === 18 ? 'GST_18' : 'EXEMPT',
+      taxClassification:
+        String(mItem.taxCategoryRef || '').trim().toUpperCase() ||
+        (taxRate === 0 ? 'EXEMPT' : `GST_${taxRate}`),
       discountPaisa: 0,
       lineSubtotalPaisa: lineSubtotal,
       cgstPaisa: lineCgst,
@@ -615,22 +691,28 @@ const createBill = asyncHandler(async (request, response) => {
     minimumDigits: 4,
   });
 
-  let invoiceNumber = null;
-  try {
-    const { allocateInvoiceNumber } = require('../services/gstTaxService');
-    const invoiceAlloc = await allocateInvoiceNumber({
-      organisationId: request.auth.organisationId,
-      cafeId,
-      financialYear: typeof financialYear === 'string' && financialYear.trim() ? financialYear.trim() : '2026-27',
-      statutorySeriesCode: 'P',
-      seriesPrefix: 'P',
-    });
-    invoiceNumber = invoiceAlloc.invoiceNumber;
-  } catch {
-    const compactBranch = cafeId.replace(/[^A-Za-z0-9]/g, '').slice(-4).padStart(2, '0');
-    const seqTail = seqId.split('-').pop();
-    invoiceNumber = `P/${compactBranch}/2627/${seqTail}`.slice(0, 16);
+  if (taxPaisa > 0) {
+    if (!cafeGstRegistered || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(cafeGstin)) {
+      throw new ApiError(
+        409,
+        'CAFE_GST_REGISTRATION_REQUIRED',
+        'Taxable billing is blocked until a valid authoritative café GSTIN is configured.'
+      );
+    }
   }
+
+  const financialYearResolved = resolveIndianFinancialYear(businessDate);
+  const { allocateInvoiceNumber } = require('../services/gstTaxService');
+  const invoiceAlloc = await allocateInvoiceNumber({
+    organisationId: request.auth.organisationId,
+    cafeId,
+    gstin: cafeGstin,
+    financialYear: financialYearResolved.short,
+    statutorySeriesCode: 'P',
+    seriesPrefix: 'P',
+  });
+  const invoiceNumber = invoiceAlloc.invoiceNumber;
+
   const shouldComplete = isImmediateCompletion !== false;
   const payMethod = PAYMENT_METHODS.includes(normalizeId(paymentMethod))
     ? normalizeId(paymentMethod)
@@ -667,6 +749,29 @@ const createBill = asyncHandler(async (request, response) => {
   }
 
   const effectiveServiceMode = serviceMode ? normalizeId(serviceMode) : (orderType ? normalizeId(orderType) : 'QUICK_SALE');
+  const cleanRegisterSessionId = normalizeId(registerSessionId);
+  const cleanRegisterId = resolveRegisterId(request, registerId);
+
+  if (cleanRegisterSessionId && !cleanRegisterId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required whenever registerSessionId is supplied.');
+  }
+
+  if (cleanRegisterSessionId) {
+    const scopedSession = await RegisterSession.findOne({
+      registerSessionId: cleanRegisterSessionId,
+      organisationId: request.auth.organisationId,
+      cafeId,
+      registerId: cleanRegisterId,
+      status: 'OPEN',
+    });
+    if (!scopedSession) {
+      throw new ApiError(
+        409,
+        'REGISTER_SESSION_SCOPE_MISMATCH',
+        'The supplied register session is not open in the authenticated organisation/café/register scope.'
+      );
+    }
+  }
 
   const bill = new Bill({
     billId: seqId,
@@ -677,15 +782,18 @@ const createBill = asyncHandler(async (request, response) => {
     serviceMode: effectiveServiceMode,
     guestCovers: Math.max(1, Number(guestCovers) || 1),
     tableToken: typeof tableToken === 'string' ? tableToken.trim() : '',
-    registerId: typeof registerId === 'string' ? registerId.trim() : 'REG-01',
-    registerSessionId: typeof registerSessionId === 'string' ? registerSessionId.trim() : '',
-    financialYear: typeof financialYear === 'string' ? financialYear.trim() : '2026-2027',
+    registerId: cleanRegisterId,
+    registerSessionId: cleanRegisterSessionId,
+    financialYear:
+      typeof financialYear === 'string' && financialYear.trim()
+        ? financialYear.trim()
+        : financialYearResolved.full,
     tableNumber: typeof tableNumber === 'string' ? tableNumber.trim() : '',
     customerName: typeof customerName === 'string' ? customerName.trim() : '',
     customerPhone: typeof customerPhone === 'string' ? customerPhone.trim() : '',
     b2bCustomerGstin: typeof b2bCustomerGstin === 'string' ? b2bCustomerGstin.trim().toUpperCase() : '',
     b2bCustomerLegalName: typeof b2bCustomerLegalName === 'string' ? b2bCustomerLegalName.trim() : '',
-    gstRegistrationNumber: '29AABCT1332L1ZV',
+    gstRegistrationNumber: cafeGstRegistered ? cafeGstin : '',
     taxConfigVersion: 'GST-V1',
     lineItems: processedLineItems,
     subtotalPaisa,
@@ -714,10 +822,16 @@ const createBill = asyncHandler(async (request, response) => {
 
   await bill.save();
 
-  // If register session exists, update its running metrics
-  if (registerSessionId) {
+  // If register session exists, update only the authenticated scoped register session.
+  if (cleanRegisterSessionId) {
     try {
-      const session = await RegisterSession.findOne({ registerSessionId, status: 'OPEN' });
+      const session = await RegisterSession.findOne({
+        registerSessionId: cleanRegisterSessionId,
+        organisationId: request.auth.organisationId,
+        cafeId,
+        registerId: cleanRegisterId,
+        status: 'OPEN',
+      });
       if (session) {
         session.orderCount += 1;
         session.totalSalesPaisa += totalPaisa;
@@ -883,14 +997,11 @@ const voidBill = asyncHandler(async (request, response) => {
   }
 
   const isPrimary = request.auth.isPrimaryMaster === true;
-  const isMaster = request.auth.role === 'MASTER';
-  const isToday = bill.businessDate === getIstBusinessDate();
-
-  if (!isPrimary && (!isMaster || !isToday)) {
+  if (!isPrimary) {
     throw new ApiError(
       403,
       'VOID_FORBIDDEN',
-      'Normal Master can only void same-day invoices. Historical day voids require Primary Master authority.'
+      'Invoice voiding requires Primary Master authority.'
     );
   }
 
@@ -1243,7 +1354,7 @@ const getPastOrdersSummary = asyncHandler(async (request, response) => {
     thisYear: { orderCount: 0, grossSalesPaisa: 0, netSalesPaisa: 0, refundsPaisa: 0, discountsPaisa: 0, taxPaisa: 0 },
     currentFY: { label: fyLabel, orderCount: 0, grossSalesPaisa: 0, netSalesPaisa: 0, refundsPaisa: 0, discountsPaisa: 0, taxPaisa: 0 },
     byServiceMode: { QUICK_SALE: 0, DINE_IN: 0, TAKEAWAY: 0, DELIVERY: 0 },
-    byPaymentMethod: { UPI: 0, CASH: 0, CARD: 0, SPLIT: 0 },
+    byPaymentMethod: { UPI: 0, CASH: 0, CARD: 0, MIXED: 0, SPLIT: 0 },
   };
 
   for (const b of bills) {
@@ -1455,11 +1566,19 @@ const listOpenTickets = asyncHandler(async (request, response) => {
  * Opens a new register session.
  */
 const openRegisterSession = asyncHandler(async (request, response) => {
-  const { cafeId: rawCafeId, registerId = 'REG-01', openingFloatPaisa = 0 } = request.body;
+  const { cafeId: rawCafeId, registerId: rawRegisterId, openingFloatPaisa = 0 } = request.body;
+  const registerId = resolveRegisterId(request, rawRegisterId);
+  if (!registerId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'A registered terminal/register identity is required.');
+  }
+
   const role = request.auth.role;
   let cafeId = normalizeId(rawCafeId);
   if (role === 'CAFE_ADMIN') {
-    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
+    if (!cafeId) {
+      throw new ApiError(400, 'CAFE_ID_REQUIRED', 'No café is assigned to this Café Operations account.');
+    }
   } else {
     if (!cafeId) {
       throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required.');
@@ -1526,14 +1645,20 @@ const openRegisterSession = asyncHandler(async (request, response) => {
  * Records a cash drawer event (Cash In, Cash Out, Safe Drop, No Sale).
  */
 const recordCashEvent = asyncHandler(async (request, response) => {
-  const { registerSessionId, eventType, amountPaisa = 0, reason = '' } = request.body;
+  const { registerSessionId, registerId: rawRegisterId, eventType, amountPaisa = 0, reason = '' } = request.body;
   if (!registerSessionId) {
     throw new ApiError(400, 'SESSION_ID_REQUIRED', 'registerSessionId is required.');
+  }
+
+  const registerId = resolveRegisterId(request, rawRegisterId);
+  if (!registerId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required for register cash events.');
   }
 
   const session = await RegisterSession.findOne({
     registerSessionId: normalizeId(registerSessionId),
     organisationId: request.auth.organisationId,
+    registerId,
     status: 'OPEN',
   });
 
@@ -1586,14 +1711,20 @@ const recordCashEvent = asyncHandler(async (request, response) => {
  * Closes a register session with blind count and variance calculation.
  */
 const closeRegisterSession = asyncHandler(async (request, response) => {
-  const { registerSessionId, countedCashPaisa = 0, closingDeclarationNote = '' } = request.body;
+  const { registerSessionId, registerId: rawRegisterId, countedCashPaisa = 0, closingDeclarationNote = '' } = request.body;
   if (!registerSessionId) {
     throw new ApiError(400, 'SESSION_ID_REQUIRED', 'registerSessionId is required.');
+  }
+
+  const registerId = resolveRegisterId(request, rawRegisterId);
+  if (!registerId) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required to close a register session.');
   }
 
   const session = await RegisterSession.findOne({
     registerSessionId: normalizeId(registerSessionId),
     organisationId: request.auth.organisationId,
+    registerId,
     status: 'OPEN',
   });
 
@@ -1651,9 +1782,17 @@ const closeRegisterSession = asyncHandler(async (request, response) => {
 const getRegisterSession = asyncHandler(async (request, response) => {
   const orgId = request.auth.organisationId;
   const role = request.auth.role;
-  let cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+  const registerId = resolveRegisterId(request, request.query.registerId);
+  const hasPortfolioAuthority =
+    role === 'OWNER' ||
+    (role === 'MASTER' && request.auth.isPrimaryMaster === true);
+
+  if (!registerId && !hasPortfolioAuthority) {
+    throw new ApiError(400, 'REGISTER_ID_REQUIRED', 'registerId is required to resolve the current terminal register session.');
+  }
+  let cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
   if (role === 'CAFE_ADMIN') {
-    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
+    cafeId = request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || null;
   } else if (role === 'OWNER') {
     const ownerCafes = (Array.isArray(request.auth.assignedCafeIds) ? request.auth.assignedCafeIds : [])
       .map((c) => normalizeId(c))
@@ -1671,13 +1810,23 @@ const getRegisterSession = asyncHandler(async (request, response) => {
     }
   }
 
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required to resolve the current register session.');
+  }
   assertCafeAccess(request, cafeId);
 
-  const session = await RegisterSession.findOne({
+  const sessionQuery = {
     organisationId: orgId,
     cafeId,
     status: 'OPEN',
-  }).sort({ openedAt: -1 }).lean();
+  };
+  if (registerId) {
+    sessionQuery.registerId = registerId;
+  }
+
+  const session = await RegisterSession.findOne(sessionQuery)
+    .sort({ openedAt: -1 })
+    .lean();
 
   return response.status(200).json({
     success: true,
@@ -1793,14 +1942,56 @@ const getBillPdf = asyncHandler(async (request, response) => {
 
   let cafe = null;
   if (bill.cafeId) {
-    cafe = await Cafe.findOne({ organisationId, cafeId: bill.cafeId }).lean();
+    const cafeQuery = Cafe.findOne({
+      organisationId,
+      cafeId: bill.cafeId,
+    });
+    cafe = cafeQuery && typeof cafeQuery.lean === 'function'
+      ? await cafeQuery.lean()
+      : await cafeQuery;
   }
+
+  if (!cafe) {
+    throw new ApiError(
+      409,
+      'BILL_CAFE_IDENTITY_UNAVAILABLE',
+      'Tax-invoice PDF generation is blocked because the authoritative café master is unavailable.'
+    );
+  }
+
+  const gstDetails = cafe.registrations?.gstDetails || {};
+  const cafeAddress = String(gstDetails.principalPlace || '').trim() || [
+    cafe.address?.building,
+    cafe.address?.unit,
+    cafe.address?.floor,
+    cafe.address?.street,
+    cafe.address?.area,
+    cafe.address?.city,
+    cafe.address?.district,
+    cafe.address?.state,
+    cafe.address?.pinCode,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+
+  const legalName = String(
+    gstDetails.legalName ||
+    cafe.legalName ||
+    ''
+  ).trim();
+  const gstin = String(
+    gstDetails.gstin ||
+    cafe.registrations?.gstin ||
+    bill.gstRegistrationNumber ||
+    ''
+  ).trim().toUpperCase();
 
   const { generateTaxInvoicePdf } = require('../utils/exportGenerators');
   const result = generateTaxInvoicePdf(bill, {
-    legalName: cafe?.legalName || cafe?.name || 'Zamorin Café',
-    gstin: cafe?.gstin || bill.sellerGstin || '32AABCT1332L1ZV',
-    address: cafe?.address?.line1 ? `${cafe.address.line1}, ${cafe.address.city || ''} - ${cafe.address.pincode || ''}` : 'Koramangala, Bengaluru, Karnataka — 560095',
+    legalName,
+    gstin,
+    address: cafeAddress,
   });
 
   response.setHeader('Content-Type', 'application/pdf');

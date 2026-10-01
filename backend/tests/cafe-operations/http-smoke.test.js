@@ -268,13 +268,14 @@ test('[Master] a bogus cafeId sent in the sign-in body has no effect — effecti
   assert.equal(body.data.operator.cafeId, 'cafeA');
 });
 
-test('[Master] role is never rewritten to CAFE_ADMIN — the session records the real Master role throughout', async () => {
+test('[Master] malformed non-primary MASTER credentials are rejected and never create a Cafe Operations session', async () => {
   const { deviceToken } = await seedCafeAOperator();
-  const m = seedMaster({ role: 'MASTER_NORMAL' });
+  const m = seedMaster({ role: 'MASTER_MALFORMED' });
   const res = await fetch(`${baseUrl}/operator/master-signin/credentials`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-cafeops-device-token': deviceToken }, body: JSON.stringify({ identifier: m.identifier, password: m.password }) });
+  assert.equal(res.status, 401);
   const body = await readBody(res);
-  assert.equal(body.data.session.actorRole, 'MASTER_NORMAL');
-  assert.notEqual(body.data.session.actorRole, 'CAFE_ADMIN');
+  assert.equal(body.success, false);
+  assert.equal(body.error.code, 'MASTER_ACCESS_UNAVAILABLE');
 });
 
 // =====================================================================

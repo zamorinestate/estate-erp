@@ -3,21 +3,27 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const mongoose = require('mongoose');
+
+const root = path.join(__dirname, '..', '..');
 
 // Bypass Mongoose buffering in offline unit test mode
 mongoose.set('bufferCommands', false);
 mongoose.Model.prototype.save = async function () { return this; };
 
 const attendanceQrService = require('../src/services/attendanceQrService');
-const { defaultStorageService } = require('../src/services/storageAdapterService');
+const { attendanceEvidenceStorageService } = require('../src/services/attendanceEvidenceStorageService');
 const { Attendance } = require('../src/modules/attendance/Attendance');
 const { AttendanceQrChallenge } = require('../src/models/AttendanceQrChallenge');
 const { AttendanceSubmission } = require('../src/models/AttendanceSubmission');
 const { PrivateFile } = require('../src/models/PrivateFile');
 const { AuditEvent } = require('../src/models/AuditEvent');
+const { notificationService } = require('../src/services/NotificationService');
 const { Cafe } = require('../src/models/Cafe');
 const { SequenceCounter } = require('../src/models/SequenceCounter');
+const { getAttendanceTokenSecret } = require('../src/config/attendanceSecurityConfig');
 
 // Sequence counter mock
 SequenceCounter.generateId = async ({ prefix = 'ATT' }) => `${prefix}-${Date.now()}`;
@@ -130,6 +136,12 @@ const {
   getAttendanceEvidenceRecord,
 } = require('../src/modules/attendance/attendanceController');
 
+const VALID_TEST_JPEG_BYTES = Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff]),
+  Buffer.from('ZAMORIN-ATTENDANCE-TEST-JPEG', 'utf8'),
+  Buffer.from([0xff, 0xd9]),
+]);
+
 function createMockRes() {
   return {
     statusCode: 200,
@@ -175,6 +187,14 @@ test('QR-001: getActiveOrNewChallenge generates signed token with purpose ATTEND
   assert.equal(challenge.rotationIntervalSeconds, 45);
   assert.ok(challenge.qrToken);
   assert.equal(challenge.qrToken.split('.').length, 5);
+  assert.ok(challenge.opaqueToken);
+  assert.ok(challenge.attendanceUrl);
+
+  const attendanceUrl = new URL(challenge.attendanceUrl);
+  assert.equal(attendanceUrl.searchParams.get('returnTo'), 'staff-attendance');
+  assert.equal(attendanceUrl.searchParams.get('attendanceQr'), challenge.opaqueToken);
+  assert.equal(attendanceUrl.searchParams.has('cafeId'), false);
+  assert.equal(attendanceUrl.searchParams.has('organisationId'), false);
 });
 
 test('QR-002: consecutive request within 45s returns same challenge token', async () => {
@@ -223,6 +243,32 @@ test('QR-003: validateChallengeToken successfully validates authentic token and 
   assert.equal(verified.challengeId, challenge.challengeId);
 });
 
+test('QR-003A: verifier accepts trusted attendance deep-link and rejects foreign origin', async () => {
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+  });
+
+  const verified = await attendanceQrService.validateChallengeToken(challenge.attendanceUrl, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+  assert.equal(verified.verified, true);
+  assert.equal(verified.cafeId, 'CAFE-KNR-01');
+
+  const foreign = new URL(challenge.attendanceUrl);
+  foreign.host = 'evil.example';
+  await assert.rejects(
+    async () => attendanceQrService.validateChallengeToken(foreign.toString(), {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeAssignedCafes: ['CAFE-KNR-01'],
+      employeeRole: 'STAFF',
+    }),
+    { statusCode: 403, code: 'UNTRUSTED_ATTENDANCE_QR_ORIGIN' }
+  );
+});
+
 test('QR-004: validateChallengeToken rejects malformed or tampered token', async () => {
   await assert.rejects(
     async () => {
@@ -259,7 +305,7 @@ test('QR-005: validateChallengeToken rejects expired challenge token', async () 
   const issuedAt = Math.floor((Date.now() - 100000) / 1000); // 100s ago
   const expiresAt = Math.floor((Date.now() - 55000) / 1000); // expired 55s ago
   const payload = `${challengeId}.${organisationId}.${cafeId}.${issuedAt}.${expiresAt}`;
-  const sig = crypto.createHmac('sha256', process.env.ATTENDANCE_QR_SECRET || 'zamorin-attendance-presence-secret-salt-2026')
+  const sig = crypto.createHmac('sha256', getAttendanceTokenSecret())
     .update(payload)
     .digest('hex');
   const expiredToken = `${challengeId}.${organisationId}.${cafeId}.${expiresAt}.${sig}`;
@@ -309,6 +355,118 @@ test('QR-007: validateChallengeToken permits Primary Master across any cafe in o
   assert.equal(verified.cafeId, 'CAFE-CALICUT-02');
 });
 
+test('QR-008: verified scan grant is user-bound, transition-bound, and punch-valid', async () => {
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+
+  const verification = await attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+
+  const grant = attendanceQrService.issueScanGrant({
+    verification,
+    userId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+    transition: 'CHECK_IN',
+  });
+
+  assert.match(grant.token, /^ZAM_ASG_/);
+  assert.equal(grant.transition, 'CHECK_IN');
+
+  const proof = await attendanceQrService.validatePunchQrProof(grant.token, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeUserId: 'EMP-STAFF-1',
+    expectedTransition: 'CHECK_IN',
+  });
+
+  assert.equal(proof.verified, true);
+  assert.equal(proof.resolvedCafeId, 'CAFE-KNR-01');
+  assert.equal(proof.scanGrantVerified, true);
+
+  await assert.rejects(
+    async () => attendanceQrService.validatePunchQrProof(grant.token, {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeUserId: 'EMP-STAFF-2',
+      expectedTransition: 'CHECK_IN',
+    }),
+    { statusCode: 403, code: 'ATTENDANCE_SCAN_GRANT_SCOPE_MISMATCH' }
+  );
+
+  await assert.rejects(
+    async () => attendanceQrService.validatePunchQrProof(grant.token, {
+      employeeOrgId: 'ORG-ZAMORIN',
+      employeeUserId: 'EMP-STAFF-1',
+      expectedTransition: 'CHECK_OUT',
+    }),
+    { statusCode: 403, code: 'ATTENDANCE_SCAN_GRANT_SCOPE_MISMATCH' }
+  );
+});
+
+test('QR-009: verify endpoint returns verified flag and user-bound scan grant', async () => {
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+
+  const req = {
+    auth: {
+      organisationId: 'ORG-ZAMORIN',
+      userId: 'EMP-STAFF-1',
+      role: 'STAFF',
+      assignedCafeIds: ['CAFE-KNR-01'],
+      primaryCafeId: 'CAFE-KNR-01',
+    },
+    body: { qrToken: challenge.opaqueToken },
+  };
+  const res = createMockRes();
+
+  await verifyScannedQr(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.valid, true);
+  assert.equal(res.body.data.verified, true);
+  assert.equal(res.body.data.transition, 'CHECK_IN');
+  assert.match(res.body.data.scanGrant, /^ZAM_ASG_/);
+});
+
+test('QR-010: attendance QR is withheld when café geofence is not configured', async () => {
+  await assert.rejects(
+    async () => attendanceQrService.getActiveOrNewChallenge({
+      organisationId: 'ORG-ZAMORIN',
+      cafeId: 'CAFE-UNCONFIGURED',
+      requestedByRole: 'CAFE_ADMIN',
+      assignedCafeIds: ['CAFE-UNCONFIGURED'],
+    }),
+    { statusCode: 422, code: 'GEOFENCE_NOT_CONFIGURED' }
+  );
+});
+
+test('QR-011: management attendance QR rejects non-primary MASTER authority', async () => {
+  const req = {
+    auth: {
+      organisationId: 'ORG-ZAMORIN',
+      userId: 'MASTER-LEGACY',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      assignedCafeIds: ['CAFE-KNR-01'],
+      primaryCafeId: 'CAFE-KNR-01',
+    },
+    query: { cafeId: 'CAFE-KNR-01' },
+    headers: {},
+  };
+
+  await assert.rejects(
+    async () => getActiveCafeQr(req, createMockRes()),
+    { statusCode: 403, code: 'PRIMARY_MASTER_AUTHORITY_REQUIRED' }
+  );
+});
+
 // ---------------------------------------------------------------------------
 // 2. GEOFENCE & HAVERSINE DISTANCE VERIFICATION
 // ---------------------------------------------------------------------------
@@ -326,6 +484,7 @@ test('GEO-002: calculateDistance computes accurate distance between two points',
 test('GEO-003: verifyGeofence approves punch within allowed radius', async () => {
   // 20 meters away
   const result = await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
     cafeId: 'CAFE-KNR-01',
     latitude: 11.8746,
     longitude: 75.3705,
@@ -342,6 +501,7 @@ test('GEO-004: verifyGeofence throws 403 when location is outside radius', async
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'CAFE-KNR-01',
         latitude: 11.9200,
         longitude: 75.4000,
@@ -356,12 +516,58 @@ test('GEO-005: verifyGeofence throws 422 GEOFENCE_NOT_CONFIGURED if Cafe has no 
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'CAFE-UNCONFIGURED',
         latitude: 11.8745,
         longitude: 75.3704,
+        accuracyMeters: 10,
       });
     },
     { statusCode: 422, code: 'GEOFENCE_NOT_CONFIGURED' }
+  );
+});
+
+test('GEO-006A: verifyGeofence rejects NaN, infinity, and impossible coordinates', async () => {
+  const invalidCoordinates = [
+    { latitude: Number.NaN, longitude: 75.3704 },
+    { latitude: 11.8745, longitude: Number.POSITIVE_INFINITY },
+    { latitude: 91, longitude: 75.3704 },
+    { latitude: 11.8745, longitude: 181 },
+  ];
+
+  for (const coords of invalidCoordinates) {
+    await assert.rejects(
+      async () => attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
+        cafeId: 'CAFE-KNR-01',
+        ...coords,
+        accuracyMeters: 10,
+      }),
+      { statusCode: 400, code: 'COORDINATES_REQUIRED' }
+    );
+  }
+
+  await assert.rejects(
+    async () => attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
+      cafeId: 'CAFE-KNR-01',
+      latitude: 11.8745,
+      longitude: 75.3704,
+      accuracyMeters: Number.NaN,
+    }),
+    { statusCode: 400, code: 'GPS_ACCURACY_INVALID' }
+  );
+});
+
+test('GEO-006B: verifyGeofence rejects missing GPS accuracy', async () => {
+  await assert.rejects(
+    async () => attendanceQrService.verifyGeofence({
+      organisationId: 'ORG-ZAMORIN',
+      cafeId: 'CAFE-KNR-01',
+      latitude: 11.8745,
+      longitude: 75.3704,
+    }),
+    { statusCode: 400, code: 'GPS_ACCURACY_REQUIRED' }
   );
 });
 
@@ -369,6 +575,7 @@ test('GEO-006: verifyGeofence rejects low accuracy GPS readings (> 100m)', async
   await assert.rejects(
     async () => {
       await attendanceQrService.verifyGeofence({
+        organisationId: 'ORG-ZAMORIN',
         cafeId: 'CAFE-KNR-01',
         latitude: 11.8745,
         longitude: 75.3704,
@@ -383,22 +590,27 @@ test('GEO-006: verifyGeofence rejects low accuracy GPS readings (> 100m)', async
 // 3. EVIDENCE UPLOAD & STORAGE ADAPTER SERVICE
 // ---------------------------------------------------------------------------
 
-test('STORE-001: defaultStorageService stores object buffer and retrieves it cleanly', async () => {
+test('STORE-001: attendanceEvidenceStorageService stores object buffer and retrieves it cleanly', async () => {
   const testBuffer = Buffer.from('TEST-IMAGE-BYTES-PRESENCE-VERIFICATION-2026', 'utf8');
-  const uploadResult = await defaultStorageService.uploadObject({
+  const uploadResult = await attendanceEvidenceStorageService.storeSelfie({
     organisationId: 'ORG-ZAMORIN',
-    fileType: 'ATTENDANCE_SELFIE',
-    fileName: 'presence_test.jpg',
+    cafeId: 'CAFE-KNR-01',
+    fileId: 'FILE-9001',
+    punchType: 'CHECK_IN',
     mimeType: 'image/jpeg',
     buffer: testBuffer,
   });
 
   assert.ok(uploadResult.fileKey);
   assert.equal(uploadResult.sizeBytes, testBuffer.length);
+  assert.equal(uploadResult.sha256, crypto.createHash('sha256').update(testBuffer).digest('hex'));
 
-  const retrieved = await defaultStorageService.readObjectBuffer({ fileKey: uploadResult.fileKey });
+  const retrieved = await attendanceEvidenceStorageService.readObjectBuffer({ fileKey: uploadResult.fileKey });
   assert.ok(retrieved);
   assert.equal(retrieved.toString('utf8'), 'TEST-IMAGE-BYTES-PRESENCE-VERIFICATION-2026');
+
+  const deleted = await attendanceEvidenceStorageService.deleteObject({ fileKey: uploadResult.fileKey });
+  assert.equal(deleted, true);
 });
 
 test('UPLOAD-001: uploadPunchSelfie rejects non-image MIME types', async () => {
@@ -441,6 +653,193 @@ test('UPLOAD-002: uploadPunchSelfie rejects files larger than 5MB', async () => 
     },
     { statusCode: 400, code: 'SELFIE_FILE_TOO_LARGE' }
   );
+});
+
+test('UPLOAD-002A: selfie upload rejects spoofed image MIME with non-image bytes', async () => {
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 16,
+      buffer: Buffer.from('NOT-A-REAL-IMAGE'),
+      originalname: 'fake.jpg',
+    },
+    body: { punchType: 'CHECK_IN', scanGrant: 'unused-because-signature-fails-first' },
+  };
+
+  await assert.rejects(
+    async () => uploadPunchSelfie(req, createMockRes()),
+    { statusCode: 400, code: 'INVALID_SELFIE_IMAGE_SIGNATURE' }
+  );
+});
+
+test('UPLOAD-002B: selfie upload rejects declared MIME that disagrees with image signature', async () => {
+  const png = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d,
+  ]);
+
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: png.length,
+      buffer: png,
+      originalname: 'mismatch.jpg',
+    },
+    body: { punchType: 'CHECK_IN', scanGrant: 'unused-because-signature-fails-first' },
+  };
+
+  await assert.rejects(
+    async () => uploadPunchSelfie(req, createMockRes()),
+    { statusCode: 400, code: 'SELFIE_MIME_SIGNATURE_MISMATCH' }
+  );
+});
+
+test('UPLOAD-003: selfie upload is bound to the verified employee scan grant', async () => {
+  const originalCreate = PrivateFile.create;
+  let createdPrivateFile = null;
+  PrivateFile.create = async (doc) => {
+    createdPrivateFile = doc;
+    return doc;
+  };
+
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+  const verification = await attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+  const grant = attendanceQrService.issueScanGrant({
+    verification,
+    userId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+    transition: 'CHECK_IN',
+  });
+
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 12,
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+      originalname: 'selfie.jpg',
+    },
+    body: {
+      punchType: 'CHECK_IN',
+      scanGrant: grant.token,
+      qrChallengeId: verification.challengeId,
+    },
+  };
+  const res = createMockRes();
+
+  try {
+    await uploadPunchSelfie(req, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.data.fileId);
+    assert.equal(res.body.data.mediaId, res.body.data.fileId);
+    assert.ok(createdPrivateFile);
+    assert.equal(createdPrivateFile.attendanceContext.challengeId, verification.challengeId);
+    assert.equal(createdPrivateFile.attendanceContext.cafeId, 'CAFE-KNR-01');
+    assert.equal(createdPrivateFile.attendanceContext.punchType, 'CHECK_IN');
+    assert.match(createdPrivateFile.sha256, /^[a-f0-9]{64}$/);
+  } finally {
+    PrivateFile.create = originalCreate;
+  }
+});
+
+test('UPLOAD-004: valid selfie bytes are rejected without a verified scan grant', async () => {
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 12,
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+      originalname: 'selfie.jpg',
+    },
+    body: { punchType: 'CHECK_IN' },
+  };
+
+  await assert.rejects(
+    async () => uploadPunchSelfie(req, createMockRes()),
+    { statusCode: 400, code: 'ATTENDANCE_SCAN_GRANT_REQUIRED' }
+  );
+});
+
+test('UPLOAD-005: metadata persistence failure compensates by deleting uploaded selfie bytes', async () => {
+  const originalCreate = PrivateFile.create;
+  const originalStore = attendanceEvidenceStorageService.storeSelfie;
+  const originalDelete = attendanceEvidenceStorageService.deleteObject;
+  let deletedFileKey = null;
+
+  const challenge = await attendanceQrService.getActiveOrNewChallenge({
+    organisationId: 'ORG-ZAMORIN',
+    cafeId: 'CAFE-KNR-01',
+    deviceId: 'KIOSK-01',
+  });
+  const verification = await attendanceQrService.validateChallengeToken(challenge.opaqueToken, {
+    employeeOrgId: 'ORG-ZAMORIN',
+    employeeAssignedCafes: ['CAFE-KNR-01'],
+    employeeRole: 'STAFF',
+  });
+  const grant = attendanceQrService.issueScanGrant({
+    verification,
+    userId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+    transition: 'CHECK_IN',
+  });
+
+  attendanceEvidenceStorageService.storeSelfie = async () => ({
+    fileKey: 'ORG-ZAMORIN/CAFE-KNR-01/attendance_evidence/FILE-9999.jpg',
+    sizeBytes: 12,
+    sha256: crypto.createHash('sha256')
+      .update(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]))
+      .digest('hex'),
+  });
+  attendanceEvidenceStorageService.deleteObject = async ({ fileKey }) => {
+    deletedFileKey = fileKey;
+    return true;
+  };
+  PrivateFile.create = async () => {
+    const err = new Error('simulated metadata write failure');
+    err.code = 'SIMULATED_METADATA_FAILURE';
+    throw err;
+  };
+
+  const req = {
+    auth: { userId: 'EMP-STAFF-1', organisationId: 'ORG-ZAMORIN' },
+    file: {
+      mimetype: 'image/jpeg',
+      size: 12,
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+      originalname: 'selfie.jpg',
+    },
+    body: {
+      punchType: 'CHECK_IN',
+      scanGrant: grant.token,
+      qrChallengeId: verification.challengeId,
+    },
+  };
+
+  try {
+    await assert.rejects(
+      async () => uploadPunchSelfie(req, createMockRes()),
+      { code: 'SIMULATED_METADATA_FAILURE' }
+    );
+    assert.equal(
+      deletedFileKey,
+      'ORG-ZAMORIN/CAFE-KNR-01/attendance_evidence/FILE-9999.jpg'
+    );
+  } finally {
+    PrivateFile.create = originalCreate;
+    attendanceEvidenceStorageService.storeSelfie = originalStore;
+    attendanceEvidenceStorageService.deleteObject = originalDelete;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -543,6 +942,63 @@ test('PUNCH-002: staffCheckIn records authoritative punch and sets attendanceEvi
     Attendance.findOne = origFindOneAttendance;
     PrivateFile.findOne = origFindOnePrivateFile;
     AttendanceSubmission.create = origCreateSubmission;
+  }
+});
+
+test('PUNCH-003A: staffCheckOut requires QR, live GPS, and fresh selfie evidence', async () => {
+  const origFindOneAttendance = Attendance.findOne;
+
+  Attendance.findOne = () => ({
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    checkInAt: new Date(Date.now() - 3600000),
+    checkOutAt: null,
+    status: 'CHECKED_IN',
+    attendanceEvidence: {
+      checkIn: { photoFileId: 'FILE-SELFIE-CHECKIN-01' },
+    },
+    save: async function () { return this; },
+  });
+
+  const baseReq = {
+    auth: {
+      userId: 'EMP-STAFF-1',
+      role: 'STAFF',
+      organisationId: 'ORG-ZAMORIN',
+      assignedCafeIds: ['CAFE-KNR-01'],
+      primaryCafeId: 'CAFE-KNR-01',
+    },
+    body: {},
+  };
+
+  try {
+    await assert.rejects(
+      async () => staffCheckOut(baseReq, createMockRes()),
+      { statusCode: 400, code: 'QR_TOKEN_REQUIRED' }
+    );
+
+    await assert.rejects(
+      async () => staffCheckOut({
+        ...baseReq,
+        body: { qrToken: 'TOKEN' },
+      }, createMockRes()),
+      { statusCode: 400, code: 'GEOLOCATION_REQUIRED' }
+    );
+
+    await assert.rejects(
+      async () => staffCheckOut({
+        ...baseReq,
+        body: {
+          qrToken: 'TOKEN',
+          latitude: 11.8745,
+          longitude: 75.3704,
+          accuracyMeters: 8,
+        },
+      }, createMockRes()),
+      { statusCode: 400, code: 'SELFIE_EVIDENCE_REQUIRED' }
+    );
+  } finally {
+    Attendance.findOne = origFindOneAttendance;
   }
 });
 
@@ -679,14 +1135,14 @@ test('PUNCH-004: staffCheckOut records authoritative exit with distinct selfie',
 test('RBAC-001: Staff can stream own attendance evidence photograph', async () => {
   const origFindOnePrivateFile = PrivateFile.findOne;
   const origFindOneAttendance = Attendance.findOne;
-  const origReadBuffer = defaultStorageService.readObjectBuffer;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
   const origCreateAudit = AuditEvent.create;
 
   PrivateFile.findOne = () => ({
     fileId: 'FILE-PHOTO-01',
     fileKey: 'org/selfie_01.jpg',
     mimeType: 'image/jpeg',
-    sizeBytes: 15,
+    sizeBytes: VALID_TEST_JPEG_BYTES.length,
     isPurged: false,
     uploadedByUserId: 'EMP-STAFF-1',
     organisationId: 'ORG-ZAMORIN',
@@ -700,7 +1156,7 @@ test('RBAC-001: Staff can stream own attendance evidence photograph', async () =
     },
   });
 
-  defaultStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => VALID_TEST_JPEG_BYTES;
   AuditEvent.create = async () => ({});
 
   const req = {
@@ -721,7 +1177,7 @@ test('RBAC-001: Staff can stream own attendance evidence photograph', async () =
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
-    defaultStorageService.readObjectBuffer = origReadBuffer;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
     AuditEvent.create = origCreateAudit;
   }
 });
@@ -818,7 +1274,7 @@ test('RBAC-003: Cafe Admin CANNOT stream evidence of employee in another cafe (4
 test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for other cafes', async () => {
   const origFindOnePrivateFile = PrivateFile.findOne;
   const origFindOneAttendance = Attendance.findOne;
-  const origReadBuffer = defaultStorageService.readObjectBuffer;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
   const origCreateAudit = AuditEvent.create;
 
   PrivateFile.findOne = () => ({
@@ -838,7 +1294,7 @@ test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for othe
     },
   });
 
-  defaultStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => VALID_TEST_JPEG_BYTES;
   AuditEvent.create = async () => ({});
 
   // Bound to Kannur -> Allowed
@@ -874,7 +1330,7 @@ test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for othe
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
-    defaultStorageService.readObjectBuffer = origReadBuffer;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
     AuditEvent.create = origCreateAudit;
   }
 });
@@ -882,7 +1338,7 @@ test('RBAC-004: Cafe Ops CAN stream evidence for bound cafe but blocked for othe
 test('RBAC-005: Primary Master can stream evidence across cafes in organisation', async () => {
   const origFindOnePrivateFile = PrivateFile.findOne;
   const origFindOneAttendance = Attendance.findOne;
-  const origReadBuffer = defaultStorageService.readObjectBuffer;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
   const origCreateAudit = AuditEvent.create;
 
   PrivateFile.findOne = () => ({
@@ -902,7 +1358,7 @@ test('RBAC-005: Primary Master can stream evidence across cafes in organisation'
     },
   });
 
-  defaultStorageService.readObjectBuffer = async () => Buffer.from('JPEG-RAW-IMAGE-DATA');
+  attendanceEvidenceStorageService.readObjectBuffer = async () => VALID_TEST_JPEG_BYTES;
   let auditPayload = null;
   AuditEvent.create = async (payload) => { auditPayload = payload; };
 
@@ -929,8 +1385,215 @@ test('RBAC-005: Primary Master can stream evidence across cafes in organisation'
   } finally {
     PrivateFile.findOne = origFindOnePrivateFile;
     Attendance.findOne = origFindOneAttendance;
-    defaultStorageService.readObjectBuffer = origReadBuffer;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
     AuditEvent.create = origCreateAudit;
+  }
+});
+
+test('RBAC-006: evidence endpoint fails closed when stored selfie bytes are missing', async () => {
+  const origFindOnePrivateFile = PrivateFile.findOne;
+  const origFindOneAttendance = Attendance.findOne;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
+
+  PrivateFile.findOne = () => ({
+    fileId: 'FILE-PHOTO-MISSING',
+    fileKey: 'org/missing_selfie.jpg',
+    mimeType: 'image/jpeg',
+    uploadedByUserId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+  });
+
+  Attendance.findOne = () => ({
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    attendanceEvidence: {
+      checkIn: { photoFileId: 'FILE-PHOTO-MISSING' },
+    },
+  });
+
+  attendanceEvidenceStorageService.readObjectBuffer = async () => null;
+
+  try {
+    await assert.rejects(
+      async () => getEvidenceMedia({
+        auth: {
+          userId: 'EMP-STAFF-1',
+          role: 'STAFF',
+          organisationId: 'ORG-ZAMORIN',
+        },
+        params: { mediaId: 'FILE-PHOTO-MISSING' },
+      }, createMockRes()),
+      { statusCode: 404, code: 'ATTENDANCE_EVIDENCE_BYTES_NOT_FOUND' }
+    );
+  } finally {
+    PrivateFile.findOne = origFindOnePrivateFile;
+    Attendance.findOne = origFindOneAttendance;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
+  }
+});
+
+test('RBAC-007: evidence endpoint rejects bytes that fail the stored SHA-256 checksum', async () => {
+  const origFindOnePrivateFile = PrivateFile.findOne;
+  const origFindOneAttendance = Attendance.findOne;
+  const origReadBuffer = attendanceEvidenceStorageService.readObjectBuffer;
+
+  const expectedBytes = Buffer.from('EXPECTED-SELFIE-BYTES');
+  const tamperedBytes = Buffer.from('TAMPERED-SELFIE-BYTES');
+
+  PrivateFile.findOne = () => ({
+    fileId: 'FILE-PHOTO-TAMPERED',
+    fileKey: 'org/selfie_tampered.jpg',
+    storagePath: 'org/selfie_tampered.jpg',
+    mimeType: 'image/jpeg',
+    sha256: crypto.createHash('sha256').update(expectedBytes).digest('hex'),
+    uploadedByUserId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+  });
+
+  Attendance.findOne = () => ({
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    attendanceEvidence: {
+      checkIn: { photoFileId: 'FILE-PHOTO-TAMPERED' },
+    },
+  });
+
+  attendanceEvidenceStorageService.readObjectBuffer = async () => tamperedBytes;
+
+  try {
+    await assert.rejects(
+      async () => getEvidenceMedia({
+        auth: {
+          userId: 'EMP-STAFF-1',
+          role: 'STAFF',
+          organisationId: 'ORG-ZAMORIN',
+        },
+        params: { mediaId: 'FILE-PHOTO-TAMPERED' },
+      }, createMockRes()),
+      { statusCode: 409, code: 'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE' }
+    );
+  } finally {
+    PrivateFile.findOne = origFindOnePrivateFile;
+    Attendance.findOne = origFindOneAttendance;
+    attendanceEvidenceStorageService.readObjectBuffer = origReadBuffer;
+  }
+});
+
+
+test('RBAC-008: view-time SHA failure auto-quarantines evidence and alerts Primary Master', async () => {
+  const originals = {
+    privateFindOne: PrivateFile.findOne,
+    attendanceFindOne: Attendance.findOne,
+    attendanceUpdateOne: Attendance.updateOne,
+    readBuffer: attendanceEvidenceStorageService.readObjectBuffer,
+    auditCreate: AuditEvent.create,
+    publishNotification: notificationService.publishNotification,
+  };
+
+  const expectedBytes = VALID_TEST_JPEG_BYTES;
+  const tamperedBytes = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff]),
+    Buffer.from('TAMPERED-ATTENDANCE-EVIDENCE', 'utf8'),
+    Buffer.from([0xff, 0xd9]),
+  ]);
+
+  const attendance = {
+    _id: 'ATT-DOC-AUTO-QUARANTINE',
+    attendanceId: 'AT-20260930-AUTO-1',
+    organisationId: 'ORG-ZAMORIN',
+    userId: 'EMP-STAFF-1',
+    cafeId: 'CAFE-KNR-01',
+    attendanceEvidence: {
+      checkIn: {
+        photoFileId: 'FILE-PHOTO-AUTO-QUARANTINE',
+        selfieMediaId: 'FILE-PHOTO-AUTO-QUARANTINE',
+        verificationStatus: 'VERIFIED',
+        integrityState: 'UNVERIFIED',
+      },
+    },
+    selfieFileId: 'FILE-PHOTO-AUTO-QUARANTINE',
+  };
+
+  PrivateFile.findOne = () => ({
+    fileId: 'FILE-PHOTO-AUTO-QUARANTINE',
+    fileKey: 'org/selfie_auto_quarantine.jpg',
+    storagePath: 'org/selfie_auto_quarantine.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: tamperedBytes.length,
+    sha256: crypto.createHash('sha256').update(expectedBytes).digest('hex'),
+    uploadedByUserId: 'EMP-STAFF-1',
+    organisationId: 'ORG-ZAMORIN',
+  });
+
+  Attendance.findOne = () => ({
+    ...attendance,
+    lean: async () => attendance,
+  });
+
+  const updates = [];
+  Attendance.updateOne = async (filter, update) => {
+    updates.push({ filter, update });
+    return { matchedCount: 1, modifiedCount: 1 };
+  };
+
+  attendanceEvidenceStorageService.readObjectBuffer = async () => tamperedBytes;
+
+  const audits = [];
+  AuditEvent.create = async (payload) => {
+    audits.push(payload);
+    return { ...payload, auditEventId: 'AUD-AUTO-QUARANTINE-1' };
+  };
+
+  const alerts = [];
+  notificationService.publishNotification = async (payload) => {
+    alerts.push(payload);
+    return {
+      success: true,
+      recipientCount: 1,
+      outboxQueued: 1,
+      inAppDelivered: 1,
+    };
+  };
+
+  try {
+    await assert.rejects(
+      async () => getEvidenceMedia({
+        auth: {
+          userId: 'EMP-STAFF-1',
+          role: 'STAFF',
+          organisationId: 'ORG-ZAMORIN',
+        },
+        params: { mediaId: 'FILE-PHOTO-AUTO-QUARANTINE' },
+        correlationId: 'CORR-AUTO-QUARANTINE-1',
+        method: 'GET',
+        originalUrl: '/api/v1/attendance/evidence/media/FILE-PHOTO-AUTO-QUARANTINE',
+        get: () => null,
+      }, createMockRes()),
+      { statusCode: 409, code: 'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE' }
+    );
+
+    assert.ok(
+      updates.some(
+        (entry) =>
+          entry.update?.$set?.['attendanceEvidence.checkIn.integrityState'] === 'QUARANTINED' &&
+          entry.update?.$set?.['attendanceEvidence.checkIn.verificationStatus'] === 'FLAGGED'
+      ),
+      'view-time integrity failure must quarantine the exact evidence slot'
+    );
+
+    assert.ok(
+      audits.some((payload) => payload.action === 'ATTENDANCE_EVIDENCE_INTEGRITY_FAILURE_QUARANTINED')
+    );
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].includePrimaryMaster, true);
+    assert.equal(alerts[0].severity, 'CRITICAL');
+  } finally {
+    PrivateFile.findOne = originals.privateFindOne;
+    Attendance.findOne = originals.attendanceFindOne;
+    Attendance.updateOne = originals.attendanceUpdateOne;
+    attendanceEvidenceStorageService.readObjectBuffer = originals.readBuffer;
+    AuditEvent.create = originals.auditCreate;
+    notificationService.publishNotification = originals.publishNotification;
   }
 });
 
@@ -948,4 +1611,55 @@ test('FROZEN-001: Rotating Attendance QR does NOT mutate CafeAccess collection',
   assert.equal(challenge.purpose, 'ATTENDANCE_PUNCH');
   assert.equal(challenge.pin, undefined);
   assert.equal(challenge.hashedPin, undefined);
+});
+
+
+test('ATTENDANCE-FLOW-001: QR deep-link, Cafe Operations kiosk, and calendars use canonical secure-presence wiring', () => {
+  const mainSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'main.js'), 'utf8');
+  const staffSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'modules', 'attendance', 'staffAttendance.js'), 'utf8');
+  const managementSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'modules', 'attendance', 'attendanceShifts.js'), 'utf8');
+  const qrPageSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'attendanceQrScannerPage.js'), 'utf8');
+  const displaySource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'cafeAttendanceDisplay.js'), 'utf8');
+  const cafeOpsKioskSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'screens', 'attendanceKiosk.js'), 'utf8');
+  const cafeOpsApiSource = fs.readFileSync(path.join(root, 'frontend', 'cafe-operations', 'js', 'api', 'cafeOpsApi.js'), 'utf8');
+  const controllerSource = fs.readFileSync(path.join(root, 'backend', 'src', 'modules', 'attendance', 'attendanceController.js'), 'utf8');
+  const cafeCreateSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'cafeCreateModal.js'), 'utf8');
+  const administrationSource = fs.readFileSync(path.join(root, 'frontend', 'src', 'js', 'pages', 'administration.js'), 'utf8');
+  const cafeServiceSource = fs.readFileSync(path.join(root, 'backend', 'src', 'services', 'cafeService.js'), 'utf8');
+
+  assert.match(qrPageSource, /res\.data\.attendanceUrl \|\| res\.data\.opaqueToken/);
+  assert.match(displaySource, /res\.data\.attendanceUrl \|\| res\.data\.qrToken/);
+  assert.match(cafeOpsApiSource, /attendanceQr: \(\) => apiRequest\('\/devices\/attendance\/qr'/);
+  assert.match(cafeOpsKioskSource, /CafeOpsApi\?\.attendanceQr/);
+  assert.match(cafeOpsKioskSource, /body\.attendanceUrl/);
+
+  assert.match(mainSource, /zamorin\.pendingAttendanceQr/);
+  assert.match(mainSource, /sessionStorage\.setItem/);
+  assert.match(mainSource, /searchParams\.delete\("attendanceQr"\)/);
+  assert.match(staffSource, /preScannedQrToken/);
+  assert.match(staffSource, /uploadRes\?\.data\?\.fileId \|\| uploadRes\?\.data\?\.mediaId/);
+  assert.ok((controllerSource.match(/uploadedByUserId: userId/g) || []).length >= 2);
+  assert.match(staffSource, /runGeofenceVerification/);
+  assert.match(staffSource, /startSelfieCapture/);
+
+  assert.doesNotMatch(staffSource, /const dateKey = `2026-08-/);
+  assert.match(staffSource, /attendanceEvidence\?\.checkIn/);
+  assert.match(staffSource, /attendanceEvidence\?\.checkOut/);
+
+  assert.doesNotMatch(managementSource, /06:42 – 15:10/);
+  assert.doesNotMatch(managementSource, /option value="2026-08"/);
+  assert.doesNotMatch(managementSource, /function openDayAttendanceDetailsModal/);
+  assert.match(managementSource, /calendar-360\/\$\{encodeURIComponent\(selectedUserId\)\}/);
+  assert.match(managementSource, /openAttendanceEvidenceViewer\(\{ attendanceId \}\)/);
+
+  assert.match(cafeCreateSource, /wiz-use-current-location-btn/);
+  assert.match(cafeCreateSource, /wiz-f-latitude/);
+  assert.match(cafeCreateSource, /wiz-f-longitude/);
+  assert.match(cafeCreateSource, /wiz-f-geofence-radius/);
+  assert.match(cafeCreateSource, /geofenceRadiusMetres: formData\.geofenceRadiusMetres/);
+  assert.match(administrationSource, /edit-cafe-geofence-radius/);
+  assert.match(administrationSource, /edit-cafe-use-location/);
+  assert.match(cafeServiceSource, /'geofenceRadiusMetres'/);
+  assert.match(cafeServiceSource, /Attendance geofence radius must be between 10 and 1000 metres/);
+  assert.match(controllerSource, /PRIMARY_MASTER_AUTHORITY_REQUIRED/);
 });

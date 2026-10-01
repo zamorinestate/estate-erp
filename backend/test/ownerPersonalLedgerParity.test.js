@@ -7,7 +7,7 @@
  * 1. Primary Master ↔ Owner 100% functional parity across all ledger workflows.
  * 2. Strict principal data isolation & cross-owner IDOR denial.
  * 3. Immutable audit logs, reversals, and financial calculations.
- * 4. Absolute denial for Normal Master, CAFE_ADMIN, and STAFF.
+ * 4. Absolute denial for Malformed MASTER, CAFE_ADMIN, and STAFF.
  */
 
 const assert = require('node:assert/strict');
@@ -306,8 +306,11 @@ test('OWN-SCR-005: Owner Personal Ledger Parity & Security Suite', async (t) => 
       assert.equal(res.status, 200);
       assert.equal(body.data.accountingTreatment, 'BUSINESS_EXPENSE');
       assert.equal(body.data.workflowStatus, 'POSTED');
-      assert.equal(body.data.financePostingStatus, 'POSTED');
-      assert.match(body.data.financeJournalRef, /^JRN-2026-\d{4}$/);
+      assert.equal(body.data.workflowStatus, 'POSTING_PENDING');
+      assert.equal(body.data.financePostingStatus, 'NOT_POSTED');
+      assert.equal(body.data.financeJournalRef, null);
+      assert.equal(body.data.glPosting.status, 'NOT_POSTED');
+      assert.equal(body.data.glPosting.actuality, 'UNAVAILABLE');
     } finally {
       mock.restore();
     }
@@ -335,7 +338,7 @@ test('OWN-SCR-005: Owner Personal Ledger Parity & Security Suite', async (t) => 
       assert.equal(res.status, 200);
       assert.equal(body.data.settledAmountPaisa, 1250000);
       assert.equal(body.data.settledAmountInr, 12500);
-      assert.match(body.data.settlementBatchRef, /^SETTLE-2026-\d{4}$/);
+      assert.match(body.data.settlementBatchRef, /^SETTLE-\d{8}-\d{4,}$/);
     } finally {
       mock.restore();
     }
@@ -436,9 +439,10 @@ test('OWN-SCR-005: Owner Personal Ledger Parity & Security Suite', async (t) => 
       const recBody = await recRes.json();
       assert.equal(recRes.status, 200);
       assert.equal(recBody.data.subLedgerBalancePaisa, 7500000);
-      assert.equal(recBody.data.financeGLControlBalancePaisa, 7500000);
-      assert.equal(recBody.data.differencePaisa, 0);
-      assert.equal(recBody.data.reconciliationStatus, 'BALANCED');
+      assert.equal(recBody.data.financeGLControlBalancePaisa, null);
+      assert.equal(recBody.data.differencePaisa, null);
+      assert.equal(recBody.data.reconciliationStatus, 'GL_SOURCE_NOT_CONFIGURED');
+      assert.equal(recBody.data.reconciliationVerified, false);
     } finally {
       mock.restore();
     }
@@ -576,11 +580,11 @@ test('OWN-SCR-005: Owner Personal Ledger Parity & Security Suite', async (t) => 
     }
   });
 
-  await t.test('11. Role Boundaries: CAFE_ADMIN, STAFF, and Normal Master are strictly DENIED', async () => {
+  await t.test('11. Role Boundaries: CAFE_ADMIN, STAFF, and Malformed MASTER are strictly DENIED', async () => {
     for (const testCase of [
       { role: 'CAFE_ADMIN', isPrimaryMaster: false, userId: 'ADMIN-0001' },
       { role: 'STAFF', isPrimaryMaster: false, userId: 'STAFF-0001' },
-      { role: 'MASTER', isPrimaryMaster: false, userId: 'MASTER-NORMAL-0001' },
+      { role: 'MASTER', isPrimaryMaster: false, userId: 'MASTER-MALFORMED-0001' },
     ]) {
       const mock = setupMockEnvironment(testCase.role, testCase.isPrimaryMaster, testCase.userId);
 

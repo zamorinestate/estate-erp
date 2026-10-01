@@ -272,15 +272,15 @@ test(
       }
     );
 
-    // Normal Master (strictly denied)
+    // Malformed MASTER (strictly denied)
     await t.test(
-      'NORMAL MASTER (MASTER + isPrimaryMaster: false) is strictly DENIED with 403',
+      'MALFORMED MASTER (MASTER + isPrimaryMaster: false) is strictly DENIED with 403',
       async () => {
         const denied = { role: 'MASTER', userId: 'MU-0002', isPrimaryMaster: false };
         const { observed, restore } = setupMocks(denied);
 
         try {
-          const response = await getBalance('valid-normal-master-token');
+          const response = await getBalance('valid-malformed-master-token');
           const body = await response.json();
 
           assert.equal(response.status, 403);

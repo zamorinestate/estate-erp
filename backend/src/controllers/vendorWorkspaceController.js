@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+
 /**
  * VENDOR WORKSPACE CONTROLLER (VEN-SCR-001 VENDOR DASHBOARD)
  *
@@ -29,6 +31,7 @@ const { BusinessDocument } = require('../models/BusinessDocument');
 const { GlobalInventoryItem } = require('../models/GlobalInventoryItem');
 const { Notification } = require('../models/Notification');
 const { logSecurityEvent } = require('../services/securityLogger');
+const { documentStorageAdapter } = require('../services/documentStorageAdapter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 
@@ -2613,7 +2616,7 @@ const downloadVendorPaymentReceiptPdf = asyncHandler(async (req, res) => {
   streamOps += `BT\n/F1 8 Tf\n0.3 0.3 0.3 rg\n1 0 0 1 40 692 Tm\n(Bank: Payment Account on File [Verified Commercial Payee]) Tj\nET\n`;
 
   streamOps += 'BT\n/F2 10 Tf\n0.1 0.2 0.1 rg\n1 0 0 1 310 735 Tm\n(ISSUED BY (PAYING ENTITY):) Tj\nET\n';
-  streamOps += `BT\n/F1 9 Tf\n0.2 0.2 0.2 rg\n1 0 0 1 310 720 Tm\n(${escapePdf(cafeName)} (${escapePdf(cafeCode || linkedCafeId || 'ZC-0001')})) Tj\nET\n`;
+  streamOps += `BT\n/F1 9 Tf\n0.2 0.2 0.2 rg\n1 0 0 1 310 720 Tm\n(${escapePdf(cafeName)} (${escapePdf(cafeCode || linkedCafeId || 'UNASSIGNED')})) Tj\nET\n`;
   streamOps += `BT\n/F1 8 Tf\n0.3 0.3 0.3 rg\n1 0 0 1 310 706 Tm\n(Zamorin Hospitality Private Limited) Tj\nET\n`;
   streamOps += `BT\n/F1 8 Tf\n0.3 0.3 0.3 rg\n1 0 0 1 310 692 Tm\n(Method: ${escapePdf(matchedPayment.paymentMethod || 'BANK_TRANSFER')} | Ref/UTR: ${escapePdf(matchedPayment.reference || 'N/A')}) Tj\nET\n`;
 
@@ -5341,13 +5344,22 @@ async function fetchAllVendorDocuments({ organisationId, vendorId, approvedCafeI
       .lean(),
     BusinessDocument.find({
       organisationId,
-      $or: [
-        { entityId: vendorId },
-        { relatedRecordId: vendorId },
+      $and: [
+        {
+          $or: [
+            { entityId: vendorId },
+            { relatedRecordId: vendorId },
+          ],
+        },
         ...(scopedCafeId
           ? [{ cafeId: scopedCafeId }]
           : approvedCafeIds.length > 0
-          ? [{ cafeId: { $in: approvedCafeIds } }]
+          ? [{
+              $or: [
+                { cafeId: { $in: approvedCafeIds } },
+                { cafeId: { $in: [null, '', 'GLOBAL'] } },
+              ],
+            }]
           : []),
       ],
       isArchived: { $ne: true },
@@ -5783,50 +5795,165 @@ const downloadVendorDocumentUniversal = asyncHandler(async (req, res, next) => {
 const downloadVendorDocumentFile = asyncHandler(async (req, res) => {
   const { vendorId, organisationId } = req.auth;
   const approvedCafeIds = (req.auth.approvedCafeIds || []).map((id) => String(id).trim().toUpperCase());
-  const targetDocId = req.params.documentId || req.params.docId;
+  const targetDocId = String(req.params.documentId || req.params.docId || '').trim();
+
+  if (!targetDocId) {
+    throw new ApiError(400, 'DOCUMENT_ID_REQUIRED', 'A document identifier is required.');
+  }
+
+  const idSelectors = [{ documentId: targetDocId.toUpperCase() }];
+  if (/^[0-9a-fA-F]{24}$/.test(targetDocId)) {
+    idSelectors.push({ _id: targetDocId });
+  }
+
+  const scopeSelectors = [
+    { entityId: vendorId },
+    { relatedRecordId: vendorId },
+  ];
 
   const doc = await BusinessDocument.findOne({
     organisationId,
-    $or: [{ documentId: targetDocId }, { _id: targetDocId.match(/^[0-9a-fA-F]{24}$/) ? targetDocId : null }],
-    $or: [
-      { entityId: vendorId },
-      { relatedRecordId: vendorId },
-      { cafeId: { $in: approvedCafeIds } },
+    $and: [
+      { $or: idSelectors },
+      { $or: scopeSelectors },
+      ...(approvedCafeIds.length > 0
+        ? [{
+            $or: [
+              { cafeId: { $in: approvedCafeIds } },
+              { cafeId: { $in: [null, '', 'GLOBAL'] } },
+            ],
+          }]
+        : []),
     ],
+    isArchived: { $ne: true },
+    documentStatus: { $ne: 'DISPOSED' },
   }).lean();
 
   if (!doc) {
     throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'The requested document record was not found or is not accessible.');
   }
 
-  logSecurityEvent({
-    correlationId: req.correlationId,
-    organisationId,
-    cafeId: doc.cafeId || null,
-    actorId: req.auth.userId,
-    action: 'VENDOR_BUSINESS_DOCUMENT_DOWNLOADED',
-    targetType: 'BUSINESS_DOCUMENT',
-    targetId: doc.documentId,
-    outcome: 'SUCCESS',
-    severity: 'INFO',
-    metadata: { vendorId, documentType: doc.documentType },
-  });
+  const versions = Array.isArray(doc.versions) ? [...doc.versions] : [];
+  const targetVersion =
+    versions.find((version) => Number(version?.version) === Number(doc.currentVersion)) ||
+    versions.sort((a, b) => Number(b?.version || 0) - Number(a?.version || 0))[0] ||
+    null;
 
-  const mime = doc.versions?.[0]?.mimeType || 'application/pdf';
-  const fname = doc.versions?.[0]?.originalFilename || `${doc.documentId}.pdf`;
+  const mime = String(
+    targetVersion?.mimeType ||
+    doc.mimeType ||
+    'application/octet-stream'
+  ).trim();
+  const fname = String(
+    targetVersion?.originalFilename ||
+    doc.safeDisplayFileName ||
+    doc.originalFilename ||
+    `${doc.documentId}.bin`
+  ).trim();
 
-  res.setHeader('Content-Type', mime);
-  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  const inlineBase64 = targetVersion?.fileData || doc.fileData || null;
+  const storageKey =
+    targetVersion?.storageObjectKey ||
+    targetVersion?.storageKey ||
+    doc.storageObjectKey ||
+    doc.storageKey ||
+    null;
+  const fileId = targetVersion?.gridFsFileId || doc.gridFsFileId || null;
+  const storagePath = targetVersion?.storagePath || doc.storagePath || null;
 
-  if (doc.versions?.[0]?.fileData) {
-    const buf = Buffer.from(doc.versions[0].fileData, 'base64');
-    res.setHeader('Content-Length', buf.length);
+  const setDownloadHeaders = (sizeBytes = null) => {
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (Number.isFinite(Number(sizeBytes)) && Number(sizeBytes) >= 0) {
+      res.setHeader('Content-Length', Number(sizeBytes));
+    }
+  };
+
+  const recordSuccess = () => {
+    logSecurityEvent({
+      correlationId: req.correlationId,
+      organisationId,
+      cafeId: doc.cafeId || null,
+      actorId: req.auth.userId,
+      action: 'VENDOR_BUSINESS_DOCUMENT_DOWNLOADED',
+      targetType: 'BUSINESS_DOCUMENT',
+      targetId: doc.documentId,
+      outcome: 'SUCCESS',
+      severity: 'INFO',
+      metadata: { vendorId, documentType: doc.documentType },
+    });
+  };
+
+  if (inlineBase64) {
+    const buf = Buffer.from(inlineBase64, 'base64');
+    if (buf.length === 0) {
+      throw new ApiError(404, 'DOCUMENT_BINARY_NOT_FOUND', 'The document metadata exists but its file bytes are unavailable.');
+    }
+    setDownloadHeaders(buf.length);
+    recordSuccess();
     return res.status(200).send(buf);
   }
 
-  const placeholderBuf = Buffer.from(`%PDF-1.4\n% Zamorin Business Document: ${doc.documentId}\n% Type: ${doc.documentType}\n`, 'utf8');
-  res.setHeader('Content-Length', placeholderBuf.length);
-  return res.status(200).send(placeholderBuf);
+  if (storageKey || fileId) {
+    const exists = await documentStorageAdapter.exists({ storageKey, fileId });
+    if (!exists) {
+      throw new ApiError(404, 'DOCUMENT_BINARY_NOT_FOUND', 'The document metadata exists but its stored file object is unavailable.');
+    }
+
+    const stream = await documentStorageAdapter.getStream({ storageKey, fileId });
+    setDownloadHeaders(targetVersion?.sizeBytes || doc.sizeBytes || null);
+    stream.once('end', recordSuccess);
+    stream.once('error', (error) => {
+      logSecurityEvent({
+        correlationId: req.correlationId,
+        organisationId,
+        cafeId: doc.cafeId || null,
+        actorId: req.auth.userId,
+        action: 'VENDOR_BUSINESS_DOCUMENT_DOWNLOAD_FAILED',
+        targetType: 'BUSINESS_DOCUMENT',
+        targetId: doc.documentId,
+        outcome: 'FAILURE',
+        severity: 'WARN',
+        metadata: { vendorId, error: String(error?.message || 'STREAM_ERROR').slice(0, 300) },
+      });
+      if (!res.headersSent) {
+        res.status(503).json({
+          success: false,
+          code: 'DOCUMENT_STREAM_FAILED',
+          message: 'The document could not be streamed from storage.',
+        });
+      } else {
+        res.destroy(error);
+      }
+    });
+    return stream.pipe(res);
+  }
+
+  if (storagePath) {
+    let stat = null;
+    try {
+      stat = await fs.promises.stat(storagePath);
+    } catch (_) {
+      stat = null;
+    }
+    if (!stat?.isFile()) {
+      throw new ApiError(404, 'DOCUMENT_BINARY_NOT_FOUND', 'The document metadata exists but its stored file path is unavailable.');
+    }
+    setDownloadHeaders(stat.size);
+    const stream = fs.createReadStream(storagePath);
+    stream.once('end', recordSuccess);
+    stream.once('error', (error) => {
+      if (res.headersSent) res.destroy(error);
+    });
+    return stream.pipe(res);
+  }
+
+  throw new ApiError(
+    404,
+    'DOCUMENT_BINARY_NOT_FOUND',
+    'The document metadata exists, but no retrievable file bytes are attached to it.'
+  );
 });
 
 function resolveNotificationTargetScreen(entityType, deepLink) {
@@ -7031,34 +7158,64 @@ const downloadVendorGrnAttachment = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'DOCUMENT_NOT_FOUND', 'The requested document attachment was not found.');
   }
 
-  logSecurityEvent({
-    correlationId: req.correlationId,
-    organisationId,
-    cafeId: po.cafeId,
-    actorId: req.auth.userId,
-    action: 'VENDOR_GRN_DOCUMENT_DOWNLOADED',
-    targetType: 'RECEIPT_ATTACHMENT',
-    targetId: attachmentId,
-    outcome: 'SUCCESS',
-    severity: 'INFO',
-    metadata: { vendorId },
-  });
+  const mime = foundAttachment.mimeType || 'application/octet-stream';
+  const fname = foundAttachment.filename || `Attachment-${attachmentId}.bin`;
 
-  const mime = foundAttachment.mimeType || 'application/pdf';
-  const fname = foundAttachment.filename || `Attachment-${attachmentId}.pdf`;
-
-  res.setHeader('Content-Type', mime);
-  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  const recordAttachmentSuccess = () => {
+    logSecurityEvent({
+      correlationId: req.correlationId,
+      organisationId,
+      cafeId: po.cafeId,
+      actorId: req.auth.userId,
+      action: 'VENDOR_GRN_DOCUMENT_DOWNLOADED',
+      targetType: 'RECEIPT_ATTACHMENT',
+      targetId: attachmentId,
+      outcome: 'SUCCESS',
+      severity: 'INFO',
+      metadata: { vendorId },
+    });
+  };
 
   if (foundAttachment.dataBase64) {
     const buf = Buffer.from(foundAttachment.dataBase64, 'base64');
+    if (buf.length === 0) {
+      throw new ApiError(404, 'DOCUMENT_BINARY_NOT_FOUND', 'The attachment record exists but its file bytes are unavailable.');
+    }
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Length', buf.length);
+    recordAttachmentSuccess();
     return res.status(200).send(buf);
   }
 
-  const placeholderBuf = Buffer.from(`%PDF-1.4\n% Receipt Document ${attachmentId}\n`, 'utf8');
-  res.setHeader('Content-Length', placeholderBuf.length);
-  return res.status(200).send(placeholderBuf);
+  if (foundAttachment.storagePath) {
+    let stat = null;
+    try {
+      stat = await fs.promises.stat(foundAttachment.storagePath);
+    } catch (_) {
+      stat = null;
+    }
+
+    if (stat?.isFile()) {
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Length', stat.size);
+      const stream = fs.createReadStream(foundAttachment.storagePath);
+      stream.once('end', recordAttachmentSuccess);
+      stream.once('error', (error) => {
+        if (res.headersSent) res.destroy(error);
+      });
+      return stream.pipe(res);
+    }
+  }
+
+  throw new ApiError(
+    404,
+    'DOCUMENT_BINARY_NOT_FOUND',
+    'The attachment metadata exists, but its file bytes are no longer available.'
+  );
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

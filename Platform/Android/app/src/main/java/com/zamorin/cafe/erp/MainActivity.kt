@@ -431,12 +431,26 @@ class MainActivity : AppCompatActivity(), ZamorinNativeBridge.BridgeCallbacks {
         directoryPickerLauncher.launch(null)
     }
 
-    override fun onOpenSystemPrint(requestId: String, jobName: String) {
+    override fun onOpenSystemPrint(requestId: String, jobName: String, attestationContext: JSONObject?) {
         val result = ZamorinPrintManager.printWebView(this, webView, jobName)
+        if (result.success && result.platformJobId != null && attestationContext != null) {
+            ZamorinPrintAttestationStore.bind(
+                this,
+                result.platformJobId,
+                attestationContext
+            )
+        }
         val response = JSONObject().apply {
             put("requestId", requestId)
             put("success", result.success)
             put("jobName", result.jobName)
+            put("printed", false)
+            put("printDispatched", result.success)
+            put("status", result.status)
+            put("spoolerCompletionVerified", false)
+            put("physicalCompletionVerified", false)
+            put("completed", result.completed)
+            if (result.platformJobId != null) put("platformJobId", result.platformJobId)
             if (result.error != null) put("error", result.error)
         }
         dispatchJsEvent(response.toString())

@@ -125,8 +125,23 @@ public class MainWindowController: NSWindowController, WKNavigationDelegate, Zam
         printOperation.jobTitle = jobName
         printOperation.showsPrintPanel = true
 
-        printOperation.runModal(for: window!, delegate: nil, didRun: nil, contextInfo: nil)
-        bridge.respond(requestId: requestId, success: true, result: ["jobName": jobName])
+        let systemCompleted = printOperation.run()
+        bridge.respond(
+            requestId: requestId,
+            success: systemCompleted,
+            result: [
+                "jobName": jobName,
+                "status": systemCompleted ? "SYSTEM_COMPLETED" : "CANCELLED_OR_FAILED",
+                "systemPrintCompleted": systemCompleted,
+                "spoolerCompletionVerified": false,
+                "contentBindingVerified": false,
+                "printerIdentityVerified": false,
+                "physicalCompletionVerified": false,
+                "printEvidencePolicy": "SYSTEM_PRINT_UNVERIFIED"
+            ],
+            errorCode: systemCompleted ? nil : "PRINT_CANCELLED_OR_FAILED",
+            errorMessage: systemCompleted ? nil : "The macOS print operation did not complete successfully."
+        )
     }
 
     public func onShareDocument(requestId: String, filename: String, data: Data) {

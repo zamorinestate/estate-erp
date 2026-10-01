@@ -28,6 +28,7 @@ const { DuplicateDetectionService } = require('../src/services/duplicateDetectio
 const { ExpiryRenewalService } = require('../src/services/expiryRenewalService');
 const { MandatoryReasonService } = require('../src/services/mandatoryReasonService');
 const { Bill } = require('../src/models/Bill');
+const { PrintJob } = require('../src/models/PrintJob');
 const { Cafe } = require('../src/models/Cafe');
 const { PurchaseOrder } = require('../src/models/PurchaseOrder');
 const { BusinessDocument } = require('../src/models/BusinessDocument');
@@ -51,6 +52,7 @@ const { Asset } = require('../src/models/Asset');
 const { GlobalInventoryItem } = require('../src/models/GlobalInventoryItem');
 const { PersonalLedger } = require('../src/models/PersonalLedger');
 const auditService = require('../src/services/auditService');
+const { documentStorageAdapter } = require('../src/services/documentStorageAdapter');
 
 function mockAuth(role = 'MASTER', cafeId = 'ZC-0001', userId = 'USR-TEST-01') {
   return {
@@ -58,6 +60,7 @@ function mockAuth(role = 'MASTER', cafeId = 'ZC-0001', userId = 'USR-TEST-01') {
     name: 'Test User',
     email: 'test@zamorin.local',
     role,
+    isPrimaryMaster: role === 'MASTER',
     organisationId: 'ORG-ZAMORIN',
     assignedCafeIds: [cafeId],
     primaryCafeId: cafeId,
@@ -69,7 +72,37 @@ test('SHARED INFRASTRUCTURE — Implementation Verification Suite', async (t) =>
   // Mock global auditService
   t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
   t.mock.method(auditService, 'recordAuditEvent', async () => ({}));
-  t.mock.method(Cafe, 'findOne', async () => null);
+  t.mock.method(Cafe, 'findOne', async () => ({
+    cafeId: 'ZC-0001',
+    organisationId: 'ORG-ZAMORIN',
+    name: 'Zamorin Test Café',
+    displayName: 'Zamorin Test Café',
+    legalName: 'Zamorin Hospitality Private Limited',
+    status: 'ACTIVE',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '29AABCT1332L1ZV',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin Test Café',
+        principalPlace: 'Indiranagar, Bengaluru, Karnataka 560038',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '11223344556677',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin Test Café',
+      street: '100 Feet Road',
+      area: 'Indiranagar',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pinCode: '560038',
+    },
+    toObject() { return this; },
+  }));
 
   // ===========================================================================
   // 1. POS ACTION SURFACE: PREVIEW, REPRINT & MANDATORY REASON
@@ -117,6 +150,7 @@ test('SHARED INFRASTRUCTURE — Implementation Verification Suite', async (t) =>
 
       t.mock.method(Bill, 'findOne', async () => testBill);
       t.mock.method(testBill, 'save', async () => testBill);
+      t.mock.method(PrintJob.prototype, 'save', async function save() { return this; });
 
       // Reprint #1
       const res1 = await PosOrderService.reprintBill('BILL-REPRINT-TEST-01', auth, 'Customer request receipt lost');
@@ -1565,19 +1599,37 @@ test('SHARED INFRASTRUCTURE — Implementation Verification Suite', async (t) =>
       t.mock.method(eligibleDoc, 'save', async () => eligibleDoc);
       t.mock.method(BusinessDocument, 'findOne', async () => eligibleDoc);
 
-      const result = await DocumentAttachmentService.permanentDeleteDocument({
-        documentId: eligibleDoc.documentId,
-        organisationId: 'ORG-ZAMORIN',
-        reason: 'Statutory 8-year retention expired without legal dispute',
-        auth: masterAuth,
+      const originalFindOneAndUpdate = BusinessDocument.findOneAndUpdate;
+      const originalAudit = auditService.recordAuditEvent;
+      BusinessDocument.findOneAndUpdate = async (_filter, update) => {
+        if (update?.$set) eligibleDoc.set(update.$set);
+        return eligibleDoc;
+      };
+      let auditCounter = 0;
+      auditService.recordAuditEvent = async (evt) => ({
+        ...evt,
+        auditEventId: `AUD-RET04-${++auditCounter}`,
       });
 
-      assert.strictEqual(result.success, true);
-      assert.strictEqual(eligibleDoc.status, 'DISPOSED');
-      assert.strictEqual(eligibleDoc.isDeleted, true);
-      assert.strictEqual(eligibleDoc.fileBuffer, null);
-      assert.strictEqual(eligibleDoc.fileData, null);
-      assert.ok(eligibleDoc.disposedAt instanceof Date);
+      try {
+        const result = await DocumentAttachmentService.permanentDeleteDocument({
+          documentId: eligibleDoc.documentId,
+          organisationId: 'ORG-ZAMORIN',
+          reason: 'Statutory 8-year retention expired without legal dispute',
+          confirmation: 'PERMANENTLY_DISPOSE_DOCUMENT',
+          auth: masterAuth,
+        });
+
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(eligibleDoc.status, 'DISPOSED');
+        assert.strictEqual(eligibleDoc.isDeleted, true);
+        assert.strictEqual(eligibleDoc.fileBuffer, null);
+        assert.strictEqual(eligibleDoc.fileData, null);
+        assert.ok(eligibleDoc.disposedAt instanceof Date);
+      } finally {
+        BusinessDocument.findOneAndUpdate = originalFindOneAndUpdate;
+        auditService.recordAuditEvent = originalAudit;
+      }
     });
 
     // RETENTION-05: Ordinary Owner/Staff cannot bypass retention through direct API request
@@ -1681,28 +1733,46 @@ test('SHARED INFRASTRUCTURE — Implementation Verification Suite', async (t) =>
       });
 
       let recordedAudit = null;
-      t.mock.method(auditService, 'recordAuditEvent', async (evt) => {
-        recordedAudit = evt;
-        return evt;
-      });
       t.mock.method(tombstoneDoc, 'save', async () => tombstoneDoc);
       t.mock.method(BusinessDocument, 'findOne', async () => tombstoneDoc);
 
-      await DocumentAttachmentService.permanentDeleteDocument({
-        documentId: tombstoneDoc.documentId,
-        organisationId: 'ORG-ZAMORIN',
-        reason: 'Expired retention clean tombstone creation',
-        auth: masterAuth,
-      });
+      const originalFindOneAndUpdate = BusinessDocument.findOneAndUpdate;
+      const originalAudit = auditService.recordAuditEvent;
+      BusinessDocument.findOneAndUpdate = async (_filter, update) => {
+        if (update?.$set) tombstoneDoc.set(update.$set);
+        return tombstoneDoc;
+      };
+      let auditCounter = 0;
+      auditService.recordAuditEvent = async (evt) => {
+        auditCounter += 1;
+        if (evt.action === 'DOCUMENT_PERMANENTLY_DISPOSED') recordedAudit = evt;
+        return {
+          ...evt,
+          auditEventId: `AUD-RET07-${auditCounter}`,
+        };
+      };
 
-      assert.ok(recordedAudit);
-      assert.strictEqual(recordedAudit.action, 'DOCUMENT_PERMANENTLY_DISPOSED');
-      assert.strictEqual(recordedAudit.entityId, tombstoneDoc.documentId);
-      assert.strictEqual(recordedAudit.metadata.checksum, tombstoneDoc.checksum);
-      assert.strictEqual(recordedAudit.metadata.classification, 'PROCUREMENT');
-      // Prohibited secret content (fileData/fileBuffer) is NOT present in audit metadata
-      assert.strictEqual(recordedAudit.metadata.fileData, undefined);
-      assert.strictEqual(recordedAudit.metadata.fileBuffer, undefined);
+      try {
+        await DocumentAttachmentService.permanentDeleteDocument({
+          documentId: tombstoneDoc.documentId,
+          organisationId: 'ORG-ZAMORIN',
+          reason: 'Expired retention clean tombstone creation',
+          confirmation: 'PERMANENTLY_DISPOSE_DOCUMENT',
+          auth: masterAuth,
+        });
+
+        assert.ok(recordedAudit);
+        assert.strictEqual(recordedAudit.action, 'DOCUMENT_PERMANENTLY_DISPOSED');
+        assert.strictEqual(recordedAudit.entityId, tombstoneDoc.documentId);
+        assert.strictEqual(recordedAudit.metadata.checksum, tombstoneDoc.checksum);
+        assert.strictEqual(recordedAudit.metadata.classification, 'PROCUREMENT');
+        // Prohibited secret content (fileData/fileBuffer) is NOT present in audit metadata
+        assert.strictEqual(recordedAudit.metadata.fileData, undefined);
+        assert.strictEqual(recordedAudit.metadata.fileBuffer, undefined);
+      } finally {
+        BusinessDocument.findOneAndUpdate = originalFindOneAndUpdate;
+        auditService.recordAuditEvent = originalAudit;
+      }
     });
   });
 
@@ -2044,18 +2114,47 @@ test('SHARED INFRASTRUCTURE — Implementation Verification Suite', async (t) =>
       t.mock.method(expiredDoc, 'save', async () => expiredDoc);
       t.mock.method(BusinessDocument, 'findOne', async () => expiredDoc);
 
-      const result = await DocumentAttachmentService.permanentDeleteDocument({
-        documentId: 'DOC-EXPIRED-01',
-        organisationId: 'ORG-ZAMORIN',
-        reason: 'Statutory 72 months from GSTR-9 due date and all holds elapsed; lawful disposition',
-        auth: masterAuth,
+      const originalFindOneAndUpdate = BusinessDocument.findOneAndUpdate;
+      const originalExists = documentStorageAdapter.exists;
+      const originalDelete = documentStorageAdapter.delete;
+      const originalAudit = auditService.recordAuditEvent;
+
+      BusinessDocument.findOneAndUpdate = async (_filter, update) => {
+        if (update?.$set) expiredDoc.set(update.$set);
+        return expiredDoc;
+      };
+      let storageExists = true;
+      documentStorageAdapter.exists = async () => storageExists;
+      documentStorageAdapter.delete = async () => {
+        storageExists = false;
+        return true;
+      };
+      let auditCounter = 0;
+      auditService.recordAuditEvent = async (evt) => ({
+        ...evt,
+        auditEventId: `AUD-GST-RET08-${++auditCounter}`,
       });
 
-      assert.strictEqual(result.success, true);
-      assert.strictEqual(expiredDoc.status, 'DISPOSED');
-      assert.strictEqual(expiredDoc.isDeleted, true);
-      assert.strictEqual(expiredDoc.fileBuffer, null);
-      assert.strictEqual(expiredDoc.fileData, null);
+      try {
+        const result = await DocumentAttachmentService.permanentDeleteDocument({
+          documentId: 'DOC-EXPIRED-01',
+          organisationId: 'ORG-ZAMORIN',
+          reason: 'Statutory 72 months from GSTR-9 due date and all holds elapsed; lawful disposition',
+          confirmation: 'PERMANENTLY_DISPOSE_DOCUMENT',
+          auth: masterAuth,
+        });
+
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(expiredDoc.status, 'DISPOSED');
+        assert.strictEqual(expiredDoc.isDeleted, true);
+        assert.strictEqual(expiredDoc.fileBuffer, null);
+        assert.strictEqual(expiredDoc.fileData, null);
+      } finally {
+        BusinessDocument.findOneAndUpdate = originalFindOneAndUpdate;
+        documentStorageAdapter.exists = originalExists;
+        documentStorageAdapter.delete = originalDelete;
+        auditService.recordAuditEvent = originalAudit;
+      }
     });
   });
 

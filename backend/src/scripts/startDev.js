@@ -101,11 +101,11 @@ async function main() {
     process.env.INITIAL_ORGANISATION_ID || 'ZAMORIN';
   const masterName =
     process.env.INITIAL_MASTER_NAME || 'Zamorin Primary Master';
-  const masterEmail =
-    process.env.INITIAL_MASTER_EMAIL || 'pradeeshk331@gmail.com';
-  const masterPassword =
-    process.env.INITIAL_MASTER_PASSWORD ||
-    'PRADEESHK@94309';
+  const masterEmail = String(process.env.INITIAL_MASTER_EMAIL || '').trim();
+  const masterPassword = String(process.env.INITIAL_MASTER_PASSWORD || '').trim();
+  if (!masterEmail || !masterPassword) {
+    throw new Error('INITIAL_MASTER_EMAIL and INITIAL_MASTER_PASSWORD are required for development seeding; no built-in credentials are permitted.');
+  }
 
   console.log('[dev] Seeding MASTER account and canonical role users...');
 
@@ -126,14 +126,17 @@ async function main() {
     masterEmail,
   });
 
-  const masterId = masterUser?.userId || 'MU-0001';
+  const masterId = String(masterUser?.userId || '').trim();
+  if (!masterId) {
+    throw new Error('Seeded Primary Master did not return a canonical userId; refusing authority fallback.');
+  }
   console.log('[dev] Seeding cafes, operational inventory, and active suppliers with masterId:', masterId);
   await seedCafeOperationsData(organisationId, masterId);
   await seedInventoryData({ organisationId, masterUserId: masterId });
   await seedVendorsData({ organisationId, masterUserId: masterId });
 
   console.log(
-    `[dev] Seed complete — login: ${masterEmail} / ${masterPassword}`
+    `[dev] Seed complete — Primary Master account provisioned for ${masterEmail}; password intentionally not logged.`
   );
 
   await disconnectDatabase();

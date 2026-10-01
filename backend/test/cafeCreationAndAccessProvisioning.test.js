@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const bcrypt = require('bcrypt');
 
 const { Cafe } = require('../src/models/Cafe');
@@ -18,13 +18,12 @@ const cafeService = require('../src/services/cafeService');
 test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) => {
   let mongoServer;
   let masterUser;
-  let normalMasterUser;
   let ownerUser;
   let adminUser;
   let staffUser;
 
   t.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri());
 
     // Ensure crypto secret keys
@@ -42,18 +41,6 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
       primaryMasterDesignatedAt: new Date(),
       primaryMasterDesignatedBy: 'SYSTEM',
       primaryMasterDesignationReason: 'Initial bootstrap',
-      createdBy: 'SYSTEM',
-      accountStatus: 'ACTIVE',
-      passwordHash,
-    });
-
-    normalMasterUser = await User.create({
-      userId: 'MU-0002',
-      organisationId: 'ZAMORIN',
-      name: 'Normal Master User',
-      email: 'nm@zamorin.cafe',
-      role: 'MASTER',
-      isPrimaryMaster: false,
       createdBy: 'SYSTEM',
       accountStatus: 'ACTIVE',
       passwordHash,
@@ -98,7 +85,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
     if (mongoServer) await mongoServer.stop();
   });
 
-  await t.test('1. Role Authorization: Primary Master and Normal Master can create cafes; Owner is denied (403)', async () => {
+  await t.test('1. Role Authorization: only Primary Master can create cafés; Owner is denied (403)', async () => {
     // 1.1 Primary Master
     const res1 = await cafeService.createCafeWithAccess({
       cafeData: {
@@ -115,7 +102,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
     assert.ok(res1.access.qrToken);
     assert.ok(res1.access.linkToken);
 
-    // 1.2 Normal Master
+    // 1.2 Additional café created by the same sole Primary Master
     const res2 = await cafeService.createCafeWithAccess({
       cafeData: {
         name: 'Beach Road Cafe',
@@ -123,12 +110,12 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
         cafeType: 'STANDARD_CAFE',
         city: 'Kozhikode',
       },
-      auth: normalMasterUser,
+      auth: masterUser,
     });
     assert.equal(res2.cafe.cafeId, 'ZC-0002');
     assert.equal(res2.access.provisioningStatus, 'READY');
 
-    // 1.3 Owner denied creation under REC-02 Master-only authority
+    // 1.3 Owner denied creation under Primary-Master-only authority
     await assert.rejects(
       async () => {
         await cafeService.createCafeWithAccess({
@@ -143,7 +130,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
       },
       (err) => {
         assert.equal(err.statusCode, 403);
-        assert.equal(err.code, 'CAFE_CREATION_DENIED');
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
         return true;
       }
     );
@@ -172,7 +159,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
       },
       (err) => {
         assert.equal(err.statusCode, 403);
-        assert.equal(err.code, 'CAFE_CREATION_DENIED');
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
         return true;
       }
     );
@@ -186,7 +173,7 @@ test('Authoritative Cafe Creation & Cafe Access Provisioning Suite', async (t) =
       },
       (err) => {
         assert.equal(err.statusCode, 403);
-        assert.equal(err.code, 'CAFE_CREATION_DENIED');
+        assert.equal(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
         return true;
       }
     );

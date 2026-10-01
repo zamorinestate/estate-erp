@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 const { PosOrderService } = require('../src/services/posOrderService');
 const { Bill } = require('../src/models/Bill');
@@ -72,6 +73,7 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
   const mockBills = [];
   const mockIdempotencyRecords = [];
   const mockPrintJobs = [];
+  const lineagePrintJobIds = new Set();
   let seqCounter = 9000;
 
   t.mock.method(auditService, 'recordRequestAudit', async () => ({}));
@@ -81,7 +83,9 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
   // The import is now destructured (matching posOrderService.js fix), so Node’s
   // module cache ensures this mock intercepts the actual call site.
   t.mock.method(BomDepletionService, 'depleteOrderBOM', async () => ({
+    success: true,
     depleted: true,
+    allDeductionsSucceeded: true,
     depletionCount: 1,
     source: 'MOCK',
   }));
@@ -94,11 +98,30 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
   t.mock.method(Cafe, 'findOne', async () => ({
     cafeId: 'ZC-REC04',
     name: 'Zamorin REC-04 Test Outlet',
+    displayName: 'Zamorin REC-04 Test Outlet',
     legalName: 'Zamorin Hospitality Private Limited',
-    gstin: '32AABCT1332L1ZV',
-    fssaiLicenseNumber: '22334455667788',
-    address: { line1: 'Test Street', city: 'Kozhikode', pincode: '673001' },
-    contactPhone: '+91 495 000 0000',
+    registrations: {
+      gstDetails: {
+        isRegistered: true,
+        gstin: '32AABCT1332L1ZV',
+        legalName: 'Zamorin Hospitality Private Limited',
+        tradeName: 'Zamorin REC-04 Test Outlet',
+        principalPlace: 'Test Street, Kozhikode, Kerala 673001',
+      },
+      fssai: {
+        isApplicable: true,
+        number: '22334455667788',
+        status: 'ACTIVE',
+      },
+    },
+    address: {
+      building: 'Zamorin REC-04 Test Outlet',
+      street: 'Test Street',
+      city: 'Kozhikode',
+      state: 'Kerala',
+      pinCode: '673001',
+    },
+    contacts: { primaryPhone: '+91 495 000 0000' },
     toObject() { return this; },
   }));
 
@@ -309,6 +332,29 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
     assert.ok(result.bill.invoiceNumber.length <= 16,
       `Invoice exceeds 16-char limit: ${result.bill.invoiceNumber}`);
     assert.ok(typeof result.printed === 'boolean');
+    assert.equal(result.printDispatchAuthorized, true);
+    assert.ok(result.printJobId);
+    assert.match(result.payloadSha256, /^[a-f0-9]{64}$/);
+    assert.ok(Number.isSafeInteger(result.payloadBytes) && result.payloadBytes > 0);
+
+    const bytes = Buffer.from(result.printBuffer, 'base64');
+    assert.equal(bytes.length, result.payloadBytes);
+    assert.equal(
+      crypto.createHash('sha256').update(bytes).digest('hex'),
+      result.payloadSha256,
+      'SAVE_AND_PRINT response hash must bind the exact returned ESC/POS bytes'
+    );
+
+    const printJob = mockPrintJobs.find((entry) => entry.printJobId === result.printJobId);
+    assert.ok(printJob, 'SAVE_AND_PRINT must persist the canonical PrintJob');
+    assert.equal(printJob.billId, result.bill.billId);
+    assert.equal(printJob.invoiceNumber, result.bill.invoiceNumber);
+    assert.equal(printJob.status, 'DISPATCHED');
+    assert.equal(printJob.payloadSha256, result.payloadSha256);
+    assert.equal(printJob.payloadBytes, result.payloadBytes);
+    assert.equal(printJob.printBufferBase64, result.printBuffer);
+    lineagePrintJobIds.add(result.printJobId);
+
     sapBill = result.bill;
   });
 
@@ -335,10 +381,27 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
   await t.test('TC-04: PRINT fetches committed bill, no new DB record', async () => {
     assert.ok(sapBill?.billId, 'Prerequisite: TC-02 must have run');
     const before = mockBills.length;
+    const beforePrintJobs = mockPrintJobs.length;
     const result = await PosOrderService.printCommittedBill(sapBill.billId, makeAuth());
     assert.equal(result.success, true);
     assert.equal(result.action, 'PRINT');
     assert.equal(mockBills.length, before, 'PRINT must not create new bill records');
+    assert.equal(mockPrintJobs.length, beforePrintJobs + 1);
+    assert.ok(result.printJobId);
+    assert.equal(lineagePrintJobIds.has(result.printJobId), false, 'PRINT must allocate a distinct PrintJob');
+    lineagePrintJobIds.add(result.printJobId);
+
+    const bytes = Buffer.from(result.printBuffer, 'base64');
+    assert.equal(bytes.length, result.payloadBytes);
+    assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), result.payloadSha256);
+
+    const printJob = mockPrintJobs.find((entry) => entry.printJobId === result.printJobId);
+    assert.ok(printJob);
+    assert.equal(printJob.billId, sapBill.billId);
+    assert.equal(printJob.jobType, 'RECEIPT');
+    assert.equal(printJob.payloadSha256, result.payloadSha256);
+    assert.equal(printJob.drawerKickRequested, false);
+    assert.equal(printJob.drawerKickStatus, 'NOT_REQUESTED');
   });
 
   // TC-05
@@ -353,6 +416,22 @@ test('REC-04 - POS Save / Print / Reprint Lifecycle Certification', async (t) =>
     assert.equal(result.action, 'REPRINT');
     assert.equal(result.isReprint, true);
     assert.ok(result.reprintCount >= 1, `reprintCount must be >= 1, got ${result.reprintCount}`);
+    assert.ok(result.printJobId);
+    assert.equal(lineagePrintJobIds.has(result.printJobId), false, 'REPRINT must allocate its own PrintJob');
+    lineagePrintJobIds.add(result.printJobId);
+
+    const bytes = Buffer.from(result.printBuffer, 'base64');
+    assert.equal(bytes.length, result.payloadBytes);
+    assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), result.payloadSha256);
+    assert.match(bytes.toString('latin1'), /REPRINT/i);
+
+    const printJob = mockPrintJobs.find((entry) => entry.printJobId === result.printJobId);
+    assert.ok(printJob);
+    assert.equal(printJob.billId, savedBill.billId);
+    assert.equal(printJob.jobType, 'REPRINT');
+    assert.equal(printJob.payloadSha256, result.payloadSha256);
+    assert.equal(printJob.drawerKickRequested, false);
+    assert.equal(printJob.drawerKickStatus, 'NOT_REQUESTED');
   });
 
   // TC-06: Sequential idempotency — same key, multiple calls, exactly 1 bill

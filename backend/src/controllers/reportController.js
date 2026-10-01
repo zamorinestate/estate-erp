@@ -19,7 +19,7 @@ const { PayrollRun } = require('../models/PayrollRun');
 const { Payslip } = require('../models/Payslip');
 const { RegisterSession } = require('../models/RegisterSession');
 const { MetricsService, METRICS_DICTIONARY } = require('../services/metricsService');
-const { ZurfService, COMPANY_CONFIG, getCompanyConfig } = require('../services/zurfService');
+const { ZurfService, getCompanyConfig } = require('../services/zurfService');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
@@ -764,27 +764,8 @@ const getWorkforceAnalytics = asyncHandler(async (request, response) => {
     userRole: request.auth?.role || request.user?.role || null,
   });
 
-  // For unseeded/offline test environments without active users, provide baseline fixture values
-  let workforceMetrics = result.workforceMetrics;
-  let exceptions = result.exceptions;
-
-  if (workforceMetrics.activeHeadcount === 0 && mongoose.connection?.readyState !== 1) {
-    workforceMetrics = {
-      scheduledHours: 1240,
-      actualHoursWorked: 1218,
-      overtimeHours: 24,
-      labourCostTotal: 68570,
-      labourCostPctOfSales: 20.0,
-      salesPerLabourHour: 281.48,
-      attendanceExceptionsCount: 4,
-    };
-    exceptions = [
-      { employeeName: 'Staff Member #104', cafe: 'CAFE-01', type: 'Late Arrival', minutes: 22, status: 'RESOLVED' },
-      { employeeName: 'Staff Member #108', cafe: 'CAFE-01', type: 'Overtime +2.5h', minutes: 150, status: 'APPROVED' },
-      { employeeName: 'Staff Member #202', cafe: 'CAFE-02', type: 'Missing Punch Out', minutes: 0, status: 'PENDING_ADMIN' },
-      { employeeName: 'Staff Member #205', cafe: 'CAFE-02', type: 'Late Arrival', minutes: 15, status: 'RESOLVED' },
-    ];
-  }
+  const workforceMetrics = result.workforceMetrics;
+  const exceptions = result.exceptions || [];
 
   return response.status(200).json({
     success: true,
@@ -820,31 +801,8 @@ const getCustomerAnalytics = asyncHandler(async (request, response) => {
     filters: request.query || {},
   });
 
-  let customerSummary = result.customerSummary;
-  let rfmSegments = result.rfmSegments || result.segmentation?.rfmSegments || [];
-
-  // For unseeded/offline test environments without active data, provide baseline fixture values for SCR-022
-  if (customerSummary.totalIdentifiableCustomers === 0 && mongoose.connection?.readyState !== 1 && result.dataQuality?.status !== 'UNAVAILABLE') {
-    customerSummary = {
-      ...customerSummary,
-      totalIdentifiableCustomers: 2840,
-      newCustomersThisPeriod: 342,
-      repeatCustomersThisPeriod: 814,
-      repeatPurchaseRatePct: 70.4,
-      loyaltyPointsEarned: 142000,
-      loyaltyPointsRedeemed: 48500,
-      redemptionRatePct: 34.1,
-      averageLifetimeSpend: 4250,
-    };
-    rfmSegments = [
-      { segment: 'Champions & Daily Ritualists', count: 480, spendPct: 42.0 },
-      { segment: 'Loyal Regulars', count: 720, spendPct: 28.5 },
-      { segment: 'Potential Loyalists', count: 640, spendPct: 16.2 },
-      { segment: 'New Guests', count: 342, spendPct: 6.8 },
-      { segment: 'At Risk & Lapsing', count: 418, spendPct: 4.5 },
-      { segment: 'Dormant Accounts', count: 240, spendPct: 2.0 },
-    ];
-  }
+  const customerSummary = result.customerSummary;
+  const rfmSegments = result.rfmSegments || result.segmentation?.rfmSegments || [];
 
   return response.status(200).json({
     success: true,
@@ -963,16 +921,7 @@ const getMenuAnalytics = asyncHandler(async (request, response) => {
     },
   });
 
-  let menuPerformance = result.menuPerformance;
-
-  if (menuPerformance.length === 0 && mongoose.connection?.readyState !== 1) {
-    menuPerformance = [
-      { item: 'Zamorin House Pour (Cold Brew)', category: 'Cold Coffee', quantity: 620, revenue: 148800, cogs: 37200, theoreticalCost: 37200, marginPct: 75.0, estimatedContributionPercent: 75.0, quadrant: 'STAR', class: 'Star (High Vol / High Est. Contribution)' },
-      { item: 'Madras Filter Cappuccino', category: 'Hot Coffee', quantity: 510, revenue: 107100, cogs: 29988, theoreticalCost: 29988, marginPct: 72.0, estimatedContributionPercent: 72.0, quadrant: 'STAR', class: 'Star (High Vol / High Est. Contribution)' },
-      { item: 'Single Estate Pour-Over (Ratnagiri)', category: 'Specialty Brews', quantity: 180, revenue: 48600, cogs: 14580, theoreticalCost: 14580, marginPct: 70.0, estimatedContributionPercent: 70.0, quadrant: 'PUZZLE', class: 'Opportunity (Low Vol / High Est. Contribution)' },
-      { item: 'Butter Croissant (Artisan Bakery)', category: 'Bakery', quantity: 340, revenue: 64600, cogs: 27132, theoreticalCost: 27132, marginPct: 58.0, estimatedContributionPercent: 58.0, quadrant: 'PLOWHORSE', class: 'Workhorse (High Vol / Mid Est. Contribution)' },
-    ];
-  }
+  const menuPerformance = result.menuPerformance || [];
 
   return response.status(200).json({
     success: true,
@@ -1013,23 +962,8 @@ const getQualityAnalytics = asyncHandler(async (request, response) => {
     dateTo: dateFilters.dateTo,
   });
 
-  let qualityMetrics = result.qualityMetrics;
-  let recentIncidents = result.recentIncidents;
-
-  if (qualityMetrics.totalChecklistsSubmitted === 0 && mongoose.connection?.readyState !== 1) {
-    qualityMetrics = {
-      checklistCompletionRatePct: 98.6,
-      totalChecklistsSubmitted: 214,
-      temperatureExcursionsCount: 2,
-      activeQualityHoldsCount: 0,
-      openNcrsCount: 1,
-      overdueCapasCount: 1,
-    };
-    recentIncidents = [
-      { ref: 'QA-CAPA-142', cafe: 'CAFE-01', title: 'Chiller probe temperature drift', status: 'IN_PROGRESS', severity: 'WARNING' },
-      { ref: 'NCR-2026-003', cafe: 'CAFE-02', title: 'Packaging seal test failure', status: 'CONTAINED', severity: 'RESOLVED' },
-    ];
-  }
+  const qualityMetrics = result.qualityMetrics;
+  const recentIncidents = result.recentIncidents || [];
 
   return response.status(200).json({
     success: true,
@@ -1056,18 +990,7 @@ const getAssetAnalytics = asyncHandler(async (request, response) => {
     dateTo: dateFilters.dateTo,
   });
 
-  let assetMetrics = result.assetMetrics;
-
-  if (assetMetrics.totalTrackedAssets === 0 && mongoose.connection?.readyState !== 1) {
-    assetMetrics = {
-      totalTrackedAssets: 38,
-      activeOperationalAssets: 38,
-      availabilityRatePct: 99.4,
-      totalDowntimeMinutes: 120,
-      monthlyMaintenanceExpenditure: 6200,
-      preventativeServiceCompliancePct: 100.0,
-    };
-  }
+  const assetMetrics = result.assetMetrics;
 
   return response.status(200).json({
     success: true,
@@ -1112,50 +1035,13 @@ const getPortfolioAnalytics = asyncHandler(async (request, response) => {
     direction: request.query?.direction || 'HIGH_TO_LOW',
   });
 
-  let portfolio = result.portfolioOverview || [];
-  let overallLikeForLikeGrowthPct = result.sameStoreAnalysis?.overallLikeForLikeGrowthPct ?? null;
+  const portfolio = result.portfolioOverview || [];
+  const overallLikeForLikeGrowthPct =
+    result.sameStoreAnalysis?.overallLikeForLikeGrowthPct ?? null;
 
-  if (portfolio.length === 0 && mongoose.connection?.readyState !== 1 && Cafe.find === mongoose.Model.find) {
-    portfolio = [
-      {
-        cafeId: 'CAFE-01',
-        name: 'Primary Hub',
-        category: 'MATURE',
-        openedAt: '2024-06-01',
-        operatingDays: 30,
-        netSales: 215420,
-        priorYearNetSales: 198000,
-        likeForLikeGrowthPct: 8.8,
-        labourCostPct: 19.5,
-        marginPct: 71.2,
-      },
-      {
-        cafeId: 'CAFE-02',
-        name: 'Secondary Hub',
-        category: 'MATURE',
-        openedAt: '2024-11-15',
-        operatingDays: 30,
-        netSales: 127430,
-        priorYearNetSales: 114000,
-        likeForLikeGrowthPct: 11.7,
-        labourCostPct: 20.8,
-        marginPct: 69.4,
-      },
-      {
-        cafeId: 'CAFE-03',
-        name: 'Roastery Reserve',
-        category: 'RAMPING',
-        openedAt: '2026-05-10',
-        operatingDays: 30,
-        netSales: 68500,
-        priorYearNetSales: 0,
-        likeForLikeGrowthPct: null,
-        labourCostPct: 26.4,
-        marginPct: 67.8,
-      },
-    ];
-    overallLikeForLikeGrowthPct = 9.89;
-  }
+  // Never manufacture portfolio cafés or KPI values when the authoritative
+  // source is unavailable. Empty/unavailable is materially different from zero
+  // performance and must remain visible to the caller.
 
   return response.status(200).json({
     success: true,
@@ -1185,17 +1071,19 @@ const getPortfolioAnalytics = asyncHandler(async (request, response) => {
 const getGoalsAndScorecards = asyncHandler(async (request, response) => {
   buildBaseFilter(request, validateAndParseDateFilters(request));
 
-  const scorecards = [
-    { goalId: 'G-2026-01', metric: 'Gross Margin %', target: '>= 68.0%', actual: 'Unavailable', status: 'UNASSESSED', owner: 'Finance & Accounts' },
-    { goalId: 'G-2026-02', metric: 'Labour Cost % of Sales', target: '<= 22.0%', actual: '20.0%', status: 'ACHIEVED', owner: 'People & Workforce' },
-    { goalId: 'G-2026-03', metric: 'Like-for-Like Sales Growth %', target: '>= 8.0%', actual: '9.89%', status: 'ACHIEVED', owner: 'Executive Management' },
-    { goalId: 'G-2026-04', metric: 'Wastage & Spoilage Valuation', target: '<= 1.5% of Sales', actual: '1.2%', status: 'ON_TRACK', owner: 'Supply Chain' },
-  ];
-
+  // The repository currently has DashboardTarget for café sales/order/AOV/
+  // expense ceilings, but no governed cross-domain Goal/Scorecard definition
+  // model with metric formula, owner, approval, effective dates and status
+  // evaluation. Returning pre-labelled ACHIEVED/ON_TRACK rows would therefore
+  // fabricate operational performance.
   return response.status(200).json({
     success: true,
     data: {
-      scorecards,
+      scorecards: [],
+      capabilityStatus: 'NOT_CONFIGURED',
+      sourceStatus: 'GOAL_SCORECARD_DEFINITION_SOURCE_MISSING',
+      message:
+        'Cross-domain goals and scorecards are unavailable until a governed goal-definition and metric-evaluation source is configured. Café sales targets remain available through the existing DashboardTarget workflow.',
     },
     correlationId: request.correlationId || null,
   });
@@ -1206,22 +1094,18 @@ const getGoalsAndScorecards = asyncHandler(async (request, response) => {
 const getScheduledReportsAndAlerts = asyncHandler(async (request, response) => {
   buildBaseFilter(request, validateAndParseDateFilters(request));
 
-  const subscriptions = [
-    { subId: 'SUB-01', report: 'Daily Operations Digest', frequency: 'Daily (23:00 IST)', recipients: 'Store Managers', status: 'ACTIVE', nextRun: 'Today 23:00' },
-    { subId: 'SUB-02', report: 'Weekly Executive Brief', frequency: 'Mondays (08:00 IST)', recipients: 'Primary Master & Owner', status: 'ACTIVE', nextRun: 'Mon 08:00' },
-    { subId: 'SUB-03', report: 'Monthly Statutory P&L Pack', frequency: '1st of Month (09:00 IST)', recipients: 'Finance Controller', status: 'ACTIVE', nextRun: '01 Sep 09:00' },
-  ];
-
-  const alerts = [
-    { alertId: 'ALT-01', name: 'Cash Register Variance > ₹100', condition: 'Blind count diff > 100', triggerCount: 1, lastTriggered: 'Yesterday 22:45', status: 'ACTIVE' },
-    { alertId: 'ALT-02', name: 'Cold-Chain Chiller Temp > 4°C', condition: 'Chiller probe > 4.0°C for > 30m', triggerCount: 0, lastTriggered: 'None', status: 'ACTIVE' },
-  ];
-
+  // No durable report-subscription scheduler or governed alert-rule model is
+  // present in the current repository. Do not present fictional ACTIVE jobs,
+  // trigger counts or next-run timestamps as live system state.
   return response.status(200).json({
     success: true,
     data: {
-      subscriptions,
-      alerts,
+      subscriptions: [],
+      alerts: [],
+      subscriptionCapabilityStatus: 'NOT_IMPLEMENTED_SOURCE_MISSING',
+      alertCapabilityStatus: 'NOT_IMPLEMENTED_SOURCE_MISSING',
+      message:
+        'Scheduled report delivery and governed alert rules are not configured in the current runtime.',
     },
     correlationId: request.correlationId || null,
   });
@@ -1759,7 +1643,7 @@ const runForecast = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
+  // Primary Master authority constraint
   if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
     const err = new Error('Enterprise portfolio forecasting requires Primary Master authority or an assigned café scope.');
     err.statusCode = 403;
@@ -1786,41 +1670,76 @@ const runForecast = asyncHandler(async (request, response) => {
       auth: request.auth,
     });
 
-    // 2. Fetch recipes and inventory stock
-    const recipes = await Recipe.find({
-      organisationId: baseFilter.organisationId,
-      status: { $in: ['APPROVED', 'EFFECTIVE'] },
-    }).lean();
+    // Ingredient requirement calculation requires a dimensioned per-menu-item
+    // forecast. Aggregate horizon points cannot be assigned to recipes without
+    // inventing item identity.
+    const itemForecasts = Array.isArray(menuResult.itemForecasts)
+      ? menuResult.itemForecasts
+      : [];
 
-    const stockLots = await InventoryLot.find({
-      organisationId: baseFilter.organisationId,
-      ...(baseFilter.cafeId ? { cafeId: baseFilter.cafeId } : {}),
-      status: { $nin: ['QUARANTINED', 'EXPIRED', 'DISPOSED'] },
-    }).lean();
+    if (menuResult.status !== 'READY' || itemForecasts.length === 0) {
+      result = {
+        forecastId: menuResult.forecastId || null,
+        targetMetricId: 'THEORETICAL_INGREDIENT_REQUIREMENT',
+        displayName: 'Theoretical BOM Ingredient Requirement Forecast',
+        scope: menuResult.scope,
+        status: 'SOURCE_UNAVAILABLE',
+        dataQuality: 'SOURCE_UNAVAILABLE',
+        actuality: 'UNAVAILABLE',
+        ingredientRequirements: [],
+        totalIngredientsTracked: 0,
+        shortfallCount: 0,
+        projectedStockGapCount: 0,
+        wasteBufferPercentApplied: parseFloat(request.query?.wasteBufferPercent) || 0,
+        supplyLimitations: 'PER_MENU_ITEM_DIMENSIONED_FORECAST_REQUIRED',
+        message:
+          'Ingredient requirement forecasting is unavailable because the current menu-demand forecast source does not provide authoritative per-item forecast rows. Aggregate forecast points are not assigned to synthetic menu items.',
+        provenance: {
+          upstreamForecastStatus: menuResult.status || 'SOURCE_UNAVAILABLE',
+          upstreamTargetMetricId: menuResult.targetMetricId || 'MENU_ITEM_QUANTITY',
+          itemForecastRowsAvailable: itemForecasts.length,
+          generatedAt: new Date().toISOString(),
+        },
+      };
+    } else {
+      const recipes = await Recipe.find({
+        organisationId: baseFilter.organisationId,
+        status: { $in: ['APPROVED', 'EFFECTIVE'] },
+      }).lean();
 
-    const forecastItems = (menuResult.pointForecasts || []).map((qty, i) => ({
-      itemName: 'Sample Dish',
-      forecastQuantity: qty,
-    }));
+      const stockLots = await InventoryLot.find({
+        organisationId: baseFilter.organisationId,
+        ...(baseFilter.cafeId ? { cafeId: baseFilter.cafeId } : {}),
+        status: { $nin: ['QUARANTINED', 'EXPIRED', 'DISPOSED'] },
+      }).lean();
 
-    const bomResult = calculateTheoreticalIngredientRequirement(
-      forecastItems,
-      recipes,
-      stockLots,
-      parseFloat(request.query?.wasteBufferPercent) || 0
-    );
+      const forecastItems = itemForecasts
+        .filter((row) => row && (row.itemName || row.recipeId || row.menuItemId))
+        .map((row) => ({
+          itemName: row.itemName || null,
+          recipeId: row.recipeId || row.menuItemId || null,
+          forecastQuantity: Number(row.forecastQuantity ?? row.pointForecast ?? 0),
+        }));
 
-    result = {
-      ...menuResult,
-      targetMetricId: 'THEORETICAL_INGREDIENT_REQUIREMENT',
-      displayName: 'Theoretical BOM Ingredient Requirement Forecast',
-      ingredientRequirements: bomResult.ingredientRequirements,
-      totalIngredientsTracked: bomResult.totalIngredientsTracked,
-      shortfallCount: bomResult.shortfallCount,
-      projectedStockGapCount: bomResult.projectedStockGapCount,
-      wasteBufferPercentApplied: bomResult.wasteBufferPercentApplied,
-      supplyLimitations: bomResult.supplyLimitations,
-    };
+      const bomResult = calculateTheoreticalIngredientRequirement(
+        forecastItems,
+        recipes,
+        stockLots,
+        parseFloat(request.query?.wasteBufferPercent) || 0
+      );
+
+      result = {
+        ...menuResult,
+        targetMetricId: 'THEORETICAL_INGREDIENT_REQUIREMENT',
+        displayName: 'Theoretical BOM Ingredient Requirement Forecast',
+        ingredientRequirements: bomResult.ingredientRequirements,
+        totalIngredientsTracked: bomResult.totalIngredientsTracked,
+        shortfallCount: bomResult.shortfallCount,
+        projectedStockGapCount: bomResult.projectedStockGapCount,
+        wasteBufferPercentApplied: bomResult.wasteBufferPercentApplied,
+        supplyLimitations: bomResult.supplyLimitations,
+      };
+    }
   } else {
     result = await executeGovernedForecast({
       targetMetricId: target,
@@ -1851,7 +1770,7 @@ const runScenarioSimulation = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
+  // Primary Master authority constraint
   if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
     const err = new Error('Enterprise What-If Scenario Studio requires Primary Master authority or an assigned café scope.');
     err.statusCode = 403;
@@ -1897,7 +1816,7 @@ const runSensitivityAnalysis = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
+  // Primary Master authority constraint
   if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
     const err = new Error('Enterprise What-If Scenario Studio requires Primary Master authority or an assigned café scope.');
     err.statusCode = 403;
@@ -3610,6 +3529,8 @@ const generateZurfExport = asyncHandler(async (request, response) => {
 
     const [html, branding, binaryPdf] = await Promise.all([
       ZurfService.renderZurfHtml({
+        organisationId: baseFilter.organisationId,
+        cafeId: baseFilter.cafeId || null,
         reportTitle,
         scope: resolvedScope,
         period: period || 'August 2026',
@@ -3620,8 +3541,13 @@ const generateZurfExport = asyncHandler(async (request, response) => {
         rows,
         notes: exportNotes,
       }),
-      getCompanyConfig(),
+      getCompanyConfig({
+        organisationId: baseFilter.organisationId,
+        cafeId: baseFilter.cafeId || null,
+      }),
       ZurfService.renderBinaryPdf({
+        organisationId: baseFilter.organisationId,
+        cafeId: baseFilter.cafeId || null,
         reportTitle,
         reportCode: reportId ? `ZURF-${reportId.toUpperCase()}` : 'ZURF-STD-01',
         scope: resolvedScope,
@@ -3671,6 +3597,8 @@ const generateZurfExport = asyncHandler(async (request, response) => {
 
   if (canonicalFormat === 'XLSX') {
     const xlsxResult = await ZurfService.renderXlsx({
+      organisationId: baseFilter.organisationId,
+      cafeId: baseFilter.cafeId || null,
       sheetName: 'Operations Summary',
       reportTitle,
       columns,
@@ -3760,35 +3688,68 @@ const downloadExportArtifact = asyncHandler(async (request, response) => {
 // ─── 20. GET /api/v1/reports/integrity ────────────────────────────────────────
 
 const getAnalyticsIntegrity = asyncHandler(async (request, response) => {
-  buildBaseFilter(request, validateAndParseDateFilters(request));
+  const dateFilters = validateAndParseDateFilters(request);
+  const baseFilter = buildBaseFilter(request, dateFilters);
 
-  const checks = [
-    { checkId: 'CHK-01', name: 'Governed Metric Formulas Consistency', result: 'PASS' },
-    { checkId: 'CHK-02', name: 'ZURF Multi-Page Watermark Engine Compliance', result: 'PASS' },
-    { checkId: 'CHK-03', name: 'Top-Centred Logo, Legal Name & GSTIN Invariant', result: 'PASS' },
-    { checkId: 'CHK-04', name: 'Run ID & Classification Immutability', result: 'PASS' },
-    { checkId: 'CHK-05', name: 'Cross-Café Scoping & Privacy Firewalls', result: 'PASS' },
-    { checkId: 'CHK-06', name: 'POS Sales vs Finance GL Posting Reconciliation', result: 'PASS' },
-    { checkId: 'CHK-07', name: 'Inbound GRN vs Inventory Movement Match', result: 'PASS' },
-    { checkId: 'CHK-08', name: 'Supplier Invoice vs AP Payable Match', result: 'PASS' },
-    { checkId: 'CHK-09', name: 'Payroll Run vs Payslips Mathematical Match', result: 'PASS' },
-    { checkId: 'CHK-10', name: 'Like-for-Like Mature Café Cohort Integrity', result: 'PASS' },
-    { checkId: 'CHK-11', name: 'OpenXML Excel & PDF Packaging Semantics', result: 'PASS' },
-    { checkId: 'CHK-12', name: 'STAFF 403 Forbidden Access Enforcement', result: 'PASS' },
-    { checkId: 'CHK-13', name: 'Timezone Asia/Kolkata Business Date Alignment', result: 'PASS' },
-    { checkId: 'CHK-14', name: 'Integer Paise Currency Accuracy & Subtotals', result: 'PASS' },
-    { checkId: 'CHK-15', name: 'Spreadsheet Formula Injection Sanitization', result: 'PASS' },
-    { checkId: 'CHK-16', name: 'Zero Transactional Truth Replacement', result: 'PASS' },
-  ];
+  const audit = await runComprehensiveReconciliationAudit({
+    organisationId: baseFilter.organisationId,
+    cafeScope: baseFilter.cafeId || null,
+    dateFrom: dateFilters.dateFrom,
+    dateTo: dateFilters.dateTo,
+    auth: request.auth,
+  });
+
+  const reconciliationChecks = (audit.reconciliations || []).map((check, index) => ({
+    checkId: check.checkId || check.reconciliationId || `REC-${String(index + 1).padStart(2, '0')}`,
+    name: check.name || check.title || check.reconciliationType || 'Cross-module reconciliation',
+    result:
+      ['MATCHED', 'EXACT_MATCH'].includes(check.status)
+        ? 'PASS'
+        : (check.status === 'UNAVAILABLE' ? 'NOT_VERIFIED' : 'FAIL'),
+    sourceStatus: check.status || 'UNKNOWN',
+    reason: check.reason || check.message || null,
+  }));
+
+  const unavailableChecks = (audit.knownUnavailableSubsystems || []).map((entry, index) => ({
+    checkId: `UNAVAILABLE-${String(index + 1).padStart(2, '0')}`,
+    name: entry.subsystem,
+    result: 'NOT_VERIFIED',
+    sourceStatus: entry.status || 'UNAVAILABLE',
+    reason: entry.reason || null,
+  }));
+
+  const checks = [...reconciliationChecks, ...unavailableChecks];
+  const verifiedChecks = checks.filter((check) => ['PASS', 'FAIL'].includes(check.result));
+  const passedChecks = verifiedChecks.filter((check) => check.result === 'PASS');
+  const failedChecks = verifiedChecks.filter((check) => check.result === 'FAIL');
+
+  const integrityScore = verifiedChecks.length > 0
+    ? Number(((passedChecks.length / verifiedChecks.length) * 100).toFixed(1))
+    : null;
+  const coveragePercent = checks.length > 0
+    ? Number(((verifiedChecks.length / checks.length) * 100).toFixed(1))
+    : 0;
 
   return response.status(200).json({
     success: true,
     data: {
-      integrityScore: 100,
-      totalChecks: 16,
-      allPassed: true,
+      integrityScore,
+      coveragePercent,
+      totalChecks: checks.length,
+      verifiedChecks: verifiedChecks.length,
+      passedChecks: passedChecks.length,
+      failedChecks: failedChecks.length,
+      notVerifiedChecks: checks.length - verifiedChecks.length,
+      allPassed:
+        checks.length > 0 &&
+        verifiedChecks.length === checks.length &&
+        failedChecks.length === 0,
       checks,
-      auditedAt: new Date().toISOString(),
+      auditedAt: audit.auditTimestamp || new Date().toISOString(),
+      sourceStatus: audit.errorOccurred
+        ? 'ERROR'
+        : (coveragePercent === 100 ? 'FULL_COVERAGE' : 'PARTIAL_COVERAGE'),
+      dataQuality: audit.dataQuality || null,
     },
     correlationId: request.correlationId || null,
   });

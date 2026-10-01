@@ -6,6 +6,17 @@
  */
 
 const express = require('express');
+const multer = require('multer');
+
+const ATTENDANCE_SELFIE_MAX_BYTES = 5 * 1024 * 1024;
+const attendanceSelfieUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: ATTENDANCE_SELFIE_MAX_BYTES,
+    files: 1,
+    fields: 4,
+  },
+});
 
 const {
   authenticate,
@@ -19,6 +30,7 @@ const {
   getRoster,
   saveRoster,
   publishRoster,
+  listShiftsForRoster,
   decideOvertime,
   getOvertimeList,
   getExceptionList,
@@ -26,6 +38,11 @@ const {
   closePeriod,
   reopenPeriod,
   purgeSelfieEvidence,
+  getAttendanceEvidenceRetentionReadinessStatus,
+  manageAttendanceEvidenceHold,
+  reconcileOrphanSelfieEvidence,
+  auditAttendanceEvidence,
+  releaseAttendanceEvidenceQuarantine,
   getServerTime,
   getStaffPolicy,
   getStaffToday,
@@ -37,6 +54,7 @@ const {
   previewRecalculation,
   getStaffHistory,
   requestStaffCorrection,
+  getStaffCorrections,
   getPendingCorrections,
   reviewStaffCorrection,
   recordStaffAttestation,
@@ -65,6 +83,7 @@ router.post('/check-out', staffCheckOut);
 router.post('/break/start', staffStartBreak);
 router.post('/break/end', staffEndBreak);
 router.post('/corrections', requestStaffCorrection);
+router.get('/corrections/mine', getStaffCorrections);
 router.get('/corrections/pending', getPendingCorrections);
 router.post('/corrections/:requestId/review', reviewStaffCorrection);
 router.post('/attestation', recordStaffAttestation);
@@ -73,7 +92,11 @@ router.post('/attestation', recordStaffAttestation);
 router.get('/qr/active', getActiveCafeQr);
 router.post('/qr/verify', verifyScannedQr);
 router.post('/geofence/verify', verifyPunchGeofence);
-router.post('/evidence/upload', uploadPunchSelfie);
+router.post(
+  '/evidence/upload',
+  attendanceSelfieUpload.single('selfie'),
+  uploadPunchSelfie
+);
 router.get('/evidence/media/:mediaId', getEvidenceMedia);
 router.get('/evidence/record/:attendanceId', getAttendanceEvidenceRecord);
 
@@ -93,6 +116,7 @@ router.post('/preview-recalculation', previewRecalculation);
 router.get('/calendar-360/:userId', getEmployeeMonthlyCalendar);
 
 // Shift Roster
+router.get('/roster/shifts', listShiftsForRoster);
 router.get('/roster', getRoster);
 router.post('/roster', saveRoster);
 router.post('/roster/:rosterId/publish', publishRoster);
@@ -107,7 +131,12 @@ router.post('/exceptions/:exceptionId/resolve', resolveException);
 router.post('/periods/:periodId/close', closePeriod);
 router.post('/periods/:periodId/reopen', reopenPeriod);
 
-// Privacy & Selfie Evidence Purge (Primary Master)
+// Privacy, Selfie Evidence Governance & Forensic Integrity (Primary Master)
+router.post('/evidence/integrity/audit', auditAttendanceEvidence);
+router.post('/evidence/integrity/release', releaseAttendanceEvidenceQuarantine);
+router.get('/evidence/retention/readiness', getAttendanceEvidenceRetentionReadinessStatus);
+router.post('/evidence/retention/hold', manageAttendanceEvidenceHold);
+router.post('/evidence/orphans/reconcile', reconcileOrphanSelfieEvidence);
 router.post('/evidence/purge', purgeSelfieEvidence);
 
 module.exports = router;

@@ -13,6 +13,7 @@
 
 const { InventoryLot } = require('../models/InventoryLot');
 const { StockMovement } = require('../models/StockMovement');
+const crypto = require('node:crypto');
 const { ApiError } = require('../utils/ApiError');
 
 function getIstDateStr(date = new Date()) {
@@ -28,7 +29,14 @@ class FefoService {
   /**
    * Plans stock deduction according to First Expired, First Out (FEFO).
    */
-  static async planFefoDeduction({ organisationId, cafeId, itemId, requiredQuantity, businessDate = null }) {
+  static async planFefoDeduction({
+    organisationId,
+    cafeId,
+    itemId,
+    requiredQuantity,
+    businessDate = null,
+    session = null,
+  }) {
     if (!organisationId || !cafeId || !itemId || requiredQuantity <= 0) {
       throw new ApiError(400, 'INVALID_FEFO_PARAMS', 'Valid organisationId, cafeId, itemId, and positive requiredQuantity are required.');
     }
@@ -36,15 +44,17 @@ class FefoService {
     const todayStr = businessDate || getIstDateStr();
 
     // Query active available lots
-    const lots = await InventoryLot.find({
+    let lotsQuery = InventoryLot.find({
       organisationId,
       cafeId,
       itemId,
       status: 'AVAILABLE',
       quantityBase: { $gt: 0 },
-    })
-      .sort({ expiryDate: 1, createdAt: 1 })
-      .lean();
+    }).sort({ expiryDate: 1, createdAt: 1 });
+    if (session && typeof lotsQuery.session === 'function') {
+      lotsQuery = lotsQuery.session(session);
+    }
+    const lots = await lotsQuery.lean();
 
     if (!lots || lots.length === 0) {
       throw new ApiError(400, 'NO_AVAILABLE_LOTS', `No available lots found for item ${itemId} at café ${cafeId}.`);
@@ -66,8 +76,9 @@ class FefoService {
     if (expiredLots.length > 0) {
       await InventoryLot.updateMany(
         { _id: { $in: expiredLots.map((l) => l._id) } },
-        { $set: { status: 'EXPIRED' } }
-      ).catch(() => {});
+        { $set: { status: 'EXPIRED' } },
+        session ? { session } : {}
+      );
     }
 
     let remainingNeeded = Number(requiredQuantity);
@@ -126,6 +137,7 @@ class FefoService {
       itemId,
       requiredQuantity,
       businessDate,
+      session,
     });
 
     const deductions = [];
@@ -143,41 +155,55 @@ class FefoService {
       if (session) opts.session = session;
 
       const updated = await InventoryLot.findOneAndUpdate(
-        { organisationId, cafeId, lotId: alloc.lotId },
+        {
+          organisationId,
+          cafeId,
+          lotId: alloc.lotId,
+          status: 'AVAILABLE',
+          quantityBase: { $gte: alloc.deductQuantity },
+          remainingQuantity: { $gte: alloc.deductQuantity },
+        },
         updateQuery,
         opts
       );
 
-      const movementId = `SM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      try {
-        await StockMovement.create(
-          [
-            {
-              organisationId,
-              movementId,
-              cafeId,
-              itemId,
-              movementType: 'CONSUMPTION',
-              quantityBase: -alloc.deductQuantity,
-              balanceBeforeBase: (updated ? updated.quantityBase : 0) + alloc.deductQuantity,
-              balanceAfterBase: updated ? updated.quantityBase : 0,
-              lotId: alloc.lotId,
-              supplierBatchNumber: alloc.supplierLot || '',
-              referenceId: sourceTx,
-              referenceType: referenceType || 'BILL',
-              performedByUserId: userId || 'SYSTEM',
-              reason: `FEFO consumption allocation for ${sourceTx || itemId}`,
-            },
-          ],
-          session ? { session } : {}
+      if (!updated) {
+        throw new ApiError(
+          409,
+          'FEFO_LOT_STATE_CONFLICT',
+          `Inventory lot ${alloc.lotId} changed while FEFO deduction was being committed.`
         );
-      } catch (_) {}
+      }
+
+      const movementId = `SM-${crypto.randomUUID().toUpperCase()}`;
+
+      await StockMovement.create(
+        [
+          {
+            organisationId,
+            movementId,
+            cafeId,
+            itemId,
+            movementType: 'CONSUMPTION',
+            quantityBase: -alloc.deductQuantity,
+            balanceBeforeBase: updated.quantityBase + alloc.deductQuantity,
+            balanceAfterBase: updated.quantityBase,
+            lotId: alloc.lotId,
+            supplierBatchNumber: alloc.supplierLot || '',
+            referenceId: sourceTx,
+            referenceType: referenceType || 'BILL',
+            performedByUserId: userId || 'SYSTEM',
+            reason: `FEFO consumption allocation for ${sourceTx || itemId}`,
+          },
+        ],
+        session ? { session } : {}
+      );
 
       deductions.push({
         lotId: alloc.lotId,
         deductedQuantity: alloc.deductQuantity,
-        newBalance: updated ? updated.quantityBase : 0,
-        status: updated ? updated.status : 'UNKNOWN',
+        newBalance: updated.quantityBase,
+        status: updated.status,
         movementId,
         sourceTransaction: sourceTx,
       });
@@ -200,18 +226,30 @@ class FefoService {
   /**
    * Finds expiring stock within N days or already expired stock with positive quantity.
    */
-  static async getExpiryAlerts({ organisationId, cafeId, thresholdDays = 7, businessDate = null }) {
+  static async getExpiryAlerts({
+    organisationId,
+    cafeId = null,
+    cafeIds = [],
+    thresholdDays = 7,
+    businessDate = null,
+  }) {
     const today = businessDate ? new Date(businessDate) : new Date();
     const futureDate = new Date(today);
     futureDate.setDate(futureDate.getDate() + Number(thresholdDays));
 
     const todayStr = getIstDateStr(today);
     const thresholdStr = getIstDateStr(futureDate);
+    const scope = { organisationId };
+
+    if (cafeId) {
+      scope.cafeId = String(cafeId).trim().toUpperCase();
+    } else if (Array.isArray(cafeIds) && cafeIds.length > 0) {
+      scope.cafeId = { $in: cafeIds.map((id) => String(id).trim().toUpperCase()) };
+    }
 
     const [nearExpiryLots, expiredAvailableLots] = await Promise.all([
       InventoryLot.find({
-        organisationId,
-        cafeId,
+        ...scope,
         status: 'AVAILABLE',
         quantityBase: { $gt: 0 },
         expiryDate: { $gte: todayStr, $lte: thresholdStr },
@@ -220,8 +258,7 @@ class FefoService {
         .lean(),
 
       InventoryLot.find({
-        organisationId,
-        cafeId,
+        ...scope,
         quantityBase: { $gt: 0 },
         expiryDate: { $lt: todayStr },
       })
@@ -233,6 +270,9 @@ class FefoService {
       today: todayStr,
       thresholdDays: Number(thresholdDays),
       thresholdDate: thresholdStr,
+      scope: cafeId
+        ? { cafeId: String(cafeId).trim().toUpperCase() }
+        : { cafeIds: Array.isArray(cafeIds) ? cafeIds : [] },
       nearExpiryCount: nearExpiryLots.length,
       nearExpiryLots,
       expiredCount: expiredAvailableLots.length,

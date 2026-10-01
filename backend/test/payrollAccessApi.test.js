@@ -66,7 +66,7 @@ function mockAuth(t, overrides = {}) {
     organisationId: 'ORG-TEST',
     role,
     // Primary Master by default for all MASTER users in tests.
-    // Set isPrimaryMaster: false in overrides to test Normal Master denial.
+    // Set isPrimaryMaster: false in overrides to test Malformed MASTER denial.
     isPrimaryMaster: role === 'MASTER' ? true : false,
     assignedCafeIds: [],
     primaryCafeId: null,

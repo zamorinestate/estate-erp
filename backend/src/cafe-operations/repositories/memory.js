@@ -24,12 +24,41 @@ function create() {
       async findByCafe(cafeId) { return [...devices.values()].filter(d => String(d.cafeId) === String(cafeId)); },
       async listAll() { return [...devices.values()]; },
       async update(id, patch) { const rec = devices.get(String(id)); if (!rec) return null; Object.assign(rec, patch); return rec; },
+      async delete(id) { return devices.delete(String(id)); },
       async touchLastSeen(id, when) { const rec = devices.get(String(id)); if (rec) rec.lastSeenAt = when; return rec; },
     },
     enrollmentTokens: {
       async create(data) { const id = nextId('enr'); const rec = { id, ...data }; enrollmentTokens.set(id, rec); return rec; },
       async findByHash(hash) { return [...enrollmentTokens.values()].find(t => t.tokenHash === hash) || null; },
       async update(id, patch) { const rec = enrollmentTokens.get(String(id)); if (!rec) return null; Object.assign(rec, patch); return rec; },
+      async issueHardwareAttestationChallenge(id, patch) {
+        const rec = enrollmentTokens.get(String(id));
+        if (!rec || rec.status !== 'PENDING' || new Date() > new Date(rec.expiresAt)) return null;
+
+        const now = new Date();
+        const hasActiveChallenge =
+          Boolean(rec.hardwareAttestationChallengeId) &&
+          !rec.hardwareAttestationChallengeConsumedAt &&
+          rec.hardwareAttestationChallengeExpiresAt &&
+          new Date(rec.hardwareAttestationChallengeExpiresAt) > now;
+
+        if (hasActiveChallenge) return null;
+
+        Object.assign(rec, patch);
+        return rec;
+      },
+      async consumeIfPending(id, patch) {
+        const rec = enrollmentTokens.get(String(id));
+        if (!rec || rec.status !== 'PENDING' || new Date() > new Date(rec.expiresAt)) return null;
+        Object.assign(rec, patch, { status: 'USED' });
+        return rec;
+      },
+      async restoreIfUsedByDevice(id, deviceId, patch = {}) {
+        const rec = enrollmentTokens.get(String(id));
+        if (!rec || rec.status !== 'USED' || String(rec.usedByDeviceId) !== String(deviceId)) return null;
+        Object.assign(rec, { status: 'PENDING', usedAt: null, usedByDeviceId: null }, patch);
+        return rec;
+      },
     },
     operatorCredentials: {
       async upsertForEmployee(employeeId, data) {

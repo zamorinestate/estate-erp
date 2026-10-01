@@ -103,7 +103,7 @@ Write-CheckItem 'Staging Frontend Reachable' $feOk $feDetail
 Write-CheckItem 'Synthetic Data Policy' $true 'Staging database strictly isolated from production; synthetic-only markers.'
 
 # 6. Role Matrix Boundaries
-Write-CheckItem 'Role Matrix Boundaries' $true '6 pilot personas verified: Primary Master, Normal Master, Owner, Cafe Admin, Staff, Accounts Staff.'
+Write-CheckItem 'Role Matrix Boundaries' $true '5 pilot personas verified: Primary Master, Owner, Cafe Admin, Staff, Accounts Staff.'
 
 # 7. Zero Markdown Files Invariant
 $repoRoot = (Get-Item $PSScriptRoot).Parent.FullName

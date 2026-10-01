@@ -659,6 +659,38 @@ const businessDocumentSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    dispositionState: {
+      type: String,
+      enum: ['NONE', 'STORAGE_DELETING', 'STORAGE_DELETED_PENDING_METADATA', 'COMPLETED', 'FAILED'],
+      default: 'NONE',
+      index: true,
+    },
+    dispositionAuthorizationAuditEventId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    dispositionStartedAt: {
+      type: Date,
+      default: null,
+    },
+    dispositionStartedByUserId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    dispositionLastAttemptAt: {
+      type: Date,
+      default: null,
+    },
+    dispositionLastError: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: '',
+    },
     disposedAt: {
       type: Date,
       default: null,

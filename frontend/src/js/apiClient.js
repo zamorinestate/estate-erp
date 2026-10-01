@@ -794,6 +794,7 @@ export async function performRequest(
   }
 
   const token = getAccessToken();
+  const operatorSessionId = getSessionId();
   const cafeOpsDeviceToken = getCafeOpsDeviceToken();
   const cafeOpsSessionToken = getCafeOpsSessionToken();
   const requestHeaders = {
@@ -803,6 +804,9 @@ export async function performRequest(
 
   if (token && typeof token === "string" && token.trim() && token !== "undefined" && token !== "null") {
     requestHeaders["Authorization"] = `Bearer ${token.trim()}`;
+  }
+  if (operatorSessionId && typeof operatorSessionId === "string" && operatorSessionId.trim()) {
+    requestHeaders["x-operator-session-id"] = operatorSessionId.trim();
   }
   if (cafeOpsDeviceToken && typeof cafeOpsDeviceToken === "string" && cafeOpsDeviceToken.trim()) {
     requestHeaders["x-cafeops-device-token"] = cafeOpsDeviceToken.trim();
@@ -817,12 +821,6 @@ export async function performRequest(
     : (state?.currentCafeId || null);
   if (activeCafeScope && typeof activeCafeScope === "string" && activeCafeScope.trim()) {
     requestHeaders["x-cafe-id"] = activeCafeScope.trim();
-  }
-
-  // Active persona propagation for local development
-  const devRole = state?.role || (typeof localStorage !== "undefined" ? localStorage.getItem("zamorin-dev-role") : null);
-  if (devRole && typeof devRole === "string") {
-    requestHeaders["x-dev-role"] = devRole.trim().toUpperCase();
   }
 
   if (headers) {

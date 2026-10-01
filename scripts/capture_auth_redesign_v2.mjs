@@ -1,15 +1,20 @@
 import puppeteer from 'puppeteer-core';
 import path from 'path';
+import fs from 'fs';
 
-const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const ARTIFACTS_DIR = path.resolve('C:/Users/chris/.gemini/antigravity-ide/brain/8c2920d5-b21a-4786-8c0a-ce2bcaeb3bce');
+const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const ARTIFACTS_DIR = process.env.E2E_ARTIFACTS_DIR || path.join(process.cwd(), 'artifacts', 'e2e');
+const CHROME_PROFILE_DIR = process.env.E2E_CHROME_PROFILE_DIR || path.join(ARTIFACTS_DIR, 'chrome_temp_profile');
+fs.mkdirSync(CHROME_PROFILE_DIR, { recursive: true });
+const PRIMARY_MASTER_EMAIL = String(process.env.E2E_PRIMARY_MASTER_EMAIL || '').trim();
+if (!PRIMARY_MASTER_EMAIL) throw new Error('E2E_PRIMARY_MASTER_EMAIL is required for password-recovery capture.');
 
 async function run() {
   console.log("Launching Chrome for complete screenshot verification...");
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--user-data-dir=C:/Users/chris/.gemini/antigravity-ide/brain/8c2920d5-b21a-4786-8c0a-ce2bcaeb3bce/chrome_temp_profile']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', `--user-data-dir=${CHROME_PROFILE_DIR}`]
   });
 
   const page = await browser.newPage();
@@ -39,7 +44,7 @@ async function run() {
     await page.screenshot({ path: path.join(ARTIFACTS_DIR, "forgot_password_theme.png") });
 
     // 4. Submit email to enter PIN verification screen
-    await page.type("#l2-reset-email", "pradeeshk331@gmail.com");
+    await page.type("#l2-reset-email", PRIMARY_MASTER_EMAIL);
     await page.click("#l2-reset-req-submit");
     await page.waitForSelector(".l2-pin-box", { timeout: 6000 });
     await new Promise(r => setTimeout(r, 400));

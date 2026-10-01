@@ -26,7 +26,7 @@ test('PM-04 PARITY: Primary Master Functional Superset Invariant (PRIMARY_MASTER
     organisationId: 'ORG-ZAMORIN',
   };
 
-  const normalMasterActor = {
+  const malformedMasterActor = {
     userId: 'MU-0002',
     role: 'MASTER',
     isPrimaryMaster: false,
@@ -61,9 +61,9 @@ test('PM-04 PARITY: Primary Master Functional Superset Invariant (PRIMARY_MASTER
     assertPrimaryMasterAuthority(primaryMasterActor, 'execute Master governance');
   });
 
-  // 2. Normal Master cannot execute Primary Master sole invariants (e.g. Master account provisioning)
+  // 2. Malformed MASTER cannot execute Primary Master sole invariants (e.g. Master account provisioning)
   assert.throws(() => {
-    assertPrimaryMasterAuthority(normalMasterActor, 'execute Master governance');
+    assertPrimaryMasterAuthority(malformedMasterActor, 'execute Master governance');
   }, /Only the Primary Master/);
 
   // 3. Other roles cannot execute Primary Master invariants
@@ -100,7 +100,7 @@ test('PM-04 PARITY: Multi-Café Scoping & Role Boundaries (PORTAL_SPECIFIC_PERMI
   assert.equal(cafeAdmin.assignedCafeIds.includes('ZC-0001'), true);
   assert.equal(cafeAdmin.assignedCafeIds.includes('ZC-0002'), false);
 
-  // Primary Master and Normal Master have global multi-café visibility
+  // Primary Master and Malformed MASTER have global multi-café visibility
   const master = {
     role: 'MASTER',
     isPrimaryMaster: true,
@@ -150,12 +150,12 @@ test('PM-04 PARITY: Portal projections and route allowance invariants across 5 v
     assert.equal(true, true, `Primary Master must have access to ${route}`);
   }
 
-  // 2. Normal Master: Restricted from Primary-Master-only routes
+  // 2. Malformed MASTER: Restricted from Primary-Master-only routes
   for (const route of PRIMARY_MASTER_ONLY_ROUTES) {
     assert.equal(
       PRIMARY_MASTER_ONLY_ROUTES.has(route),
       true,
-      `Normal Master must be blocked from Primary-Master-only route: ${route}`
+      `Malformed MASTER must be blocked from Primary-Master-only route: ${route}`
     );
   }
 
@@ -245,7 +245,7 @@ test('PM-04 PARITY: Data-driven exhaustive 31-capability cross-portal parity mat
   for (const row of PARITY_MATRIX) {
     // Check all roles have valid status
     assert.ok(validStatuses.has(row.pm), `Invalid PM status for ${row.capability}`);
-    assert.ok(validStatuses.has(row.nm), `Invalid Normal Master status for ${row.capability}`);
+    assert.ok(validStatuses.has(row.nm), `Invalid Malformed MASTER status for ${row.capability}`);
     assert.ok(validStatuses.has(row.owner), `Invalid Owner status for ${row.capability}`);
     assert.ok(validStatuses.has(row.cafeAdmin), `Invalid Cafe Admin status for ${row.capability}`);
     assert.ok(validStatuses.has(row.staff), `Invalid Staff status for ${row.capability}`);
@@ -259,12 +259,12 @@ test('PM-04 PARITY: Data-driven exhaustive 31-capability cross-portal parity mat
       assert.equal(row.staff, 'NOT_AUTHORIZED', `Staff must be NOT_AUTHORIZED for ${row.capability}`);
     }
 
-    // Invariant: Normal Master must NOT have Primary Master-only mutations
+    // Invariant: Malformed MASTER must NOT have Primary Master-only mutations
     if (['Trash / Archive'].includes(row.capability)) {
-      assert.equal(row.nm, 'NOT_AUTHORIZED', `Normal Master must be NOT_AUTHORIZED for ${row.capability}`);
+      assert.equal(row.nm, 'NOT_AUTHORIZED', `Malformed MASTER must be NOT_AUTHORIZED for ${row.capability}`);
     }
     if (['Security Policy', 'Organisation Identity'].includes(row.capability)) {
-      assert.equal(row.nm, 'READ_ONLY', `Normal Master must be READ_ONLY for ${row.capability}`);
+      assert.equal(row.nm, 'READ_ONLY', `Malformed MASTER must be READ_ONLY for ${row.capability}`);
     }
   }
 });

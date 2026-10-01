@@ -108,13 +108,13 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
     save: async function () { return this; },
   };
 
-  const normalMaster = {
-    userId: 'USR-NORMAL-MASTER',
+  const malformedMaster = {
+    userId: 'USR-MALFORMED-MASTER',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
     isPrimaryMaster: false,
-    email: 'normal.master@zamorin.com',
-    fullName: 'Normal Master',
+    email: 'malformed.master@zamorin.com',
+    fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
     assignedCafeIds: ['ZC-0001', 'ZC-0002'],
@@ -161,7 +161,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
     let activeUser = primaryMaster;
-    if (token === 'token_normal_master') activeUser = normalMaster;
+    if (token === 'token_malformed_master') activeUser = malformedMaster;
     if (token === 'token_kora_admin') activeUser = cafeAdminKora;
     return {
       payload: {
@@ -186,7 +186,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'USR-PRIMARY-MASTER') return primaryMaster;
-    if (query?.userId === 'USR-NORMAL-MASTER') return normalMaster;
+    if (query?.userId === 'USR-MALFORMED-MASTER') return malformedMaster;
     if (query?.userId === 'USR-ADMIN-KORA') return cafeAdminKora;
     return null;
   });
@@ -391,7 +391,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
       port,
       method: 'POST',
       path: '/api/v1/mailops/compose',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         to: 'vendor@beans.com',
         subject: 'Weekly Coffee Bean PO Inquiry',
@@ -412,7 +412,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
       port,
       method: 'POST',
       path: `/api/v1/mailops/outbox/${outboxId}/retry`,
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {},
     });
 
@@ -445,12 +445,12 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
     assert.equal(resumeRes.body.outboundPaused, false);
   });
 
-  await t.test('8. Normal Master is denied Primary-only pause queue with 403', async () => {
+  await t.test('8. Malformed MASTER is denied Primary-only pause queue with 403', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/mailops/outbox/pause',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {},
     });
 
@@ -462,7 +462,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
       port,
       method: 'POST',
       path: '/api/v1/mailops/drafts',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         to: 'roaster@zamorin.com',
         subject: 'Draft Coffee Bean Order',
@@ -480,7 +480,7 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
       port,
       method: 'POST',
       path: '/api/v1/mailops/cases',
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {
         title: 'Supplier Invoice Discrepancy Case',
         entityType: 'PURCHASE_ORDER',
@@ -573,12 +573,12 @@ test('SCR-012: MailOps Command Centre & Communications Integration Suite', async
     assert.equal(res.body.messageDoc.queueStatus, 'REQUIRES_ACTION');
   });
 
-  await t.test('15. Normal Master is denied quarantine release with 403', async () => {
+  await t.test('15. Malformed MASTER is denied quarantine release with 403', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: `/api/v1/mailops/inbound/${becMessageId}/release-quarantine`,
-      headers: { Authorization: 'Bearer token_normal_master' },
+      headers: { Authorization: 'Bearer token_malformed_master' },
       body: {},
     });
 

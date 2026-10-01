@@ -33,7 +33,15 @@ function assertCafeAccess(request, cafeId) {
       'Cross-café access is denied. You are not authorized for the requested café.'
     );
   }
-  if (request.auth.role === 'MASTER' || request.auth.role === 'OWNER') return;
+  if (request.auth.role === 'MASTER') {
+    if (request.auth.isPrimaryMaster === true) return;
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER POS access.'
+    );
+  }
+  if (request.auth.role === 'OWNER') return;
   if (!request.auth.assignedCafeIds || !request.auth.assignedCafeIds.map(normalizeId).includes(normCafeId)) {
     throw new ApiError(
       403,
@@ -110,6 +118,38 @@ const reprintOrder = asyncHandler(async (request, response) => {
 });
 
 /**
+ * POST /api/v1/pos/print-jobs/:printJobId/ack
+ * REC-04C: Device-bound physical print acknowledgement.
+ */
+const acknowledgePrintJob = asyncHandler(async (request, response) => {
+  const { printJobId } = request.params;
+  const {
+    status,
+    failureCode = null,
+    failureReason = null,
+    drawerKickStatus = null,
+    attestation = null,
+  } = request.body || {};
+
+  const result = await PosOrderService.acknowledgePrintJob(
+    printJobId,
+    request.auth,
+    {
+      status,
+      failureCode,
+      failureReason,
+      drawerKickStatus,
+      attestation,
+    }
+  );
+
+  return response.status(200).json({
+    success: true,
+    data: result,
+  });
+});
+
+/**
  * GET /api/v1/pos/orders/active/:cafeId
  * Retrieves active/open bills/tickets for a café.
  */
@@ -171,14 +211,31 @@ const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
     throw new ApiError(400, 'TRANSACTION_ID_REQUIRED', 'transactionId (idempotencyKey or saleAttemptId) is required.');
   }
 
-  const orgId = request.auth?.organisationId || 'ORG-ZAMORIN';
-  const cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : null;
+  const orgId = normalizeId(request.auth?.organisationId || '');
+  if (!orgId) {
+    throw new ApiError(
+      401,
+      'ORGANISATION_CONTEXT_REQUIRED',
+      'Authenticated organisation context is required for transaction recovery.'
+    );
+  }
+
+  const cafeId = normalizeId(request.query?.cafeId || '');
+  if (!cafeId) {
+    throw new ApiError(
+      400,
+      'CAFE_ID_REQUIRED',
+      'cafeId is required for exact transaction recovery.'
+    );
+  }
+
+  assertCafeAccess(request, cafeId);
 
   const billQuery = {
     organisationId: orgId,
+    cafeId,
     $or: [{ correlationId: transactionId }, { saleAttemptId: transactionId }],
   };
-  if (cafeId) billQuery.cafeId = cafeId;
 
   const bill = await Bill.findOne(billQuery);
   if (bill) {
@@ -198,9 +255,9 @@ const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
 
   const recordQuery = {
     organisationId: orgId,
+    cafeId,
     $or: [{ idempotencyKey: transactionId }, { saleAttemptId: transactionId }],
   };
-  if (cafeId) recordQuery.cafeId = cafeId;
 
   const record = await IdempotencyRecord.findOne(recordQuery);
   if (record) {
@@ -253,14 +310,43 @@ const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
  */
 const getPendingReconciliations = asyncHandler(async (request, response) => {
   const role = (request.auth?.role || '').toUpperCase();
-  if (role === 'STAFF') {
-    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view reconciliation queues.');
+
+  if (!['CAFE_ADMIN', 'MASTER', 'OWNER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'This role is not authorized to view POS reconciliation queues.'
+    );
   }
-  const { cafeId, status } = request.query;
+
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER reconciliation access.'
+    );
+  }
+
+  const cafeId = normalizeId(request.query?.cafeId || '');
+  const status = request.query?.status || null;
+
+  if (role !== 'MASTER' && !cafeId) {
+    throw new ApiError(
+      400,
+      'CAFE_ID_REQUIRED',
+      'cafeId is required for Café Admin or Owner reconciliation views.'
+    );
+  }
+
+  if (cafeId) {
+    assertCafeAccess(request, cafeId);
+  }
+
   const result = await PosReconciliationService.getPendingReconciliations({
     organisationId: request.auth.organisationId,
-    cafeId,
+    cafeId: cafeId || null,
     status,
+    authContext: request.auth,
   });
   return response.status(200).json(result);
 });
@@ -271,10 +357,28 @@ const getPendingReconciliations = asyncHandler(async (request, response) => {
  */
 const retryReconciliation = asyncHandler(async (request, response) => {
   const role = (request.auth?.role || '').toUpperCase();
-  if (role === 'STAFF') {
-    throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to retry reconciliation jobs.');
+
+  if (role === 'OWNER' || role === 'STAFF' || !['CAFE_ADMIN', 'MASTER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'Only an assigned Café Admin or the Primary Master may retry POS reconciliation jobs.'
+    );
   }
-  const jobId = normalizeId(request.params.jobId);
+
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required to retry POS reconciliation jobs.'
+    );
+  }
+
+  const jobId = normalizeId(request.params?.jobId || '');
+  if (!jobId) {
+    throw new ApiError(400, 'RECONCILIATION_JOB_ID_REQUIRED', 'jobId is required to retry reconciliation.');
+  }
+
   const result = await PosReconciliationService.retryJob(jobId, request.auth);
   return response.status(200).json(result);
 });
@@ -285,8 +389,31 @@ const retryReconciliation = asyncHandler(async (request, response) => {
  */
 const syncOfflineOrders = asyncHandler(async (request, response) => {
   const { organisationId, userId } = request.auth;
+  const role = normalizeId(request.auth?.role || '');
   const cafeId = normalizeId(request.body?.cafeId || request.query?.cafeId || request.auth?.primaryCafeId || '');
   const { transactions, deviceId, operatorSessionId } = request.body || {};
+
+  if (role === 'OWNER' || !['STAFF', 'CAFE_ADMIN', 'MASTER'].includes(role)) {
+    throw new ApiError(
+      403,
+      'AUTHORIZATION_DENIED',
+      'This role is not authorized to replay operational offline POS queues.'
+    );
+  }
+
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for MASTER offline POS synchronization.'
+    );
+  }
+
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required for offline POS synchronization.');
+  }
+
+  assertCafeAccess(request, cafeId);
 
   if (!Array.isArray(transactions) || transactions.length === 0) {
     throw new ApiError(400, 'VALIDATION_FAILED', 'Transactions array is required for offline sync.');
@@ -313,7 +440,7 @@ const syncOfflineOrders = asyncHandler(async (request, response) => {
 /**
  * GET /api/v1/pos/offline-reviews/pending
  * REC-13A / REC-13B: Lists pending offline review items scoped by cafe and authorization.
- * Role-enforced: Only Assigned CAFE_ADMIN and MASTER are permitted.
+ * Role-enforced: Only Assigned CAFE_ADMIN and the Primary Master are permitted.
  * OWNER and STAFF are strictly barred (Segregation of Duties).
  */
 const getPendingOfflineReviews = asyncHandler(async (request, response) => {
@@ -339,6 +466,13 @@ const getPendingOfflineReviews = asyncHandler(async (request, response) => {
       `Role ${role} is not authorized for offline queue review.`
     );
   }
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for offline POS review.'
+    );
+  }
 
   const { organisationId } = request.auth;
   const cafeId = normalizeId(request.query?.cafeId || request.params?.cafeId || '');
@@ -360,7 +494,7 @@ const getPendingOfflineReviews = asyncHandler(async (request, response) => {
 /**
  * POST /api/v1/pos/offline-reviews/:reviewId/review
  * REC-13A / REC-13B: Executes authorized review decision (APPROVE_AND_FINALIZE, REJECT, ESCALATE).
- * Role-enforced: Only Assigned CAFE_ADMIN and MASTER are permitted.
+ * Role-enforced: Only Assigned CAFE_ADMIN and the Primary Master are permitted.
  * OWNER and STAFF are strictly barred (Segregation of Duties).
  */
 const reviewOfflineOrder = asyncHandler(async (request, response) => {
@@ -386,6 +520,13 @@ const reviewOfflineOrder = asyncHandler(async (request, response) => {
       `Role ${role} is not authorized for offline queue review.`
     );
   }
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Primary Master authority is required for offline POS review execution.'
+    );
+  }
 
   const { reviewId } = request.params;
   const { action, reason } = request.body || {};
@@ -409,6 +550,7 @@ module.exports = {
   previewOrder,
   printOrder,
   reprintOrder,
+  acknowledgePrintJob,
   getActiveOrders,
   getLastCommittedBill,
   getOrderStatusByIdempotency,

@@ -78,13 +78,13 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
-    userId: 'MU-NORMAL-01',
+  const malformedMasterUser = {
+    userId: 'MU-MALFORMED-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'malformed MASTER claim',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
@@ -92,8 +92,8 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
   let currentUser = primaryMasterUser;
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isMalformed = token === 'token_malformed_master';
+    const activeUser = isMalformed ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -116,12 +116,12 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
   });
 
   t.mock.method(User, 'findOne', async (query) => {
-    if (query?.userId === 'MU-NORMAL-01') {
+    if (query?.userId === 'MU-MALFORMED-01') {
       return {
-        ...normalMasterUser,
+        ...malformedMasterUser,
         isPrimaryMaster: false,
         save: async () => {},
-        toObject: () => normalMasterUser,
+        toObject: () => malformedMasterUser,
       };
     }
     return {
@@ -135,7 +135,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
   t.mock.method(User, 'find', () => ({
     lean: async () => [
       primaryMasterUser,
-      normalMasterUser,
+      malformedMasterUser,
       { userId: 'AD-0001', role: 'CAFE_ADMIN', isPrimaryMaster: false, accountStatus: 'ACTIVE', assignedCafeIds: ['ZC-0001'] },
       { userId: 'ST-0001', role: 'STAFF', isPrimaryMaster: false, accountStatus: 'ACTIVE', assignedCafeIds: ['ZC-0001'] },
     ],
@@ -164,7 +164,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
             title: 'New Regional Ops Master',
             reason: 'Needed for North region expansion',
             status: 'SUBMITTED',
-            requestedByUserId: 'MU-NORMAL-01',
+            requestedByUserId: 'MU-MALFORMED-01',
             submittedAt: new Date(),
           },
         ],
@@ -234,13 +234,13 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     assert.ok(Array.isArray(res.data.data.queue));
   });
 
-  // 3. POST /admin/requests (Normal Master submits request)
-  await t.test('Normal Master can submit an Administrative Request to Primary Master', async () => {
+  // 3. POST /admin/requests (malformed MASTER claim submits request)
+  await t.test('malformed MASTER claim can submit an Administrative Request to Primary Master', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/admin/requests',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         requestType: 'CREATE_MASTER_USER',
         title: 'New Regional Ops Master',
@@ -253,13 +253,13 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     assert.equal(res.data.data.request.status, 'SUBMITTED');
   });
 
-  // 4. PATCH /admin/requests/:id/decision (Normal Master blocked from deciding)
-  await t.test('Normal Master is forbidden from deciding Administrative Requests', async () => {
+  // 4. PATCH /admin/requests/:id/decision (malformed MASTER claim blocked from deciding)
+  await t.test('malformed MASTER claim is forbidden from deciding Administrative Requests', async () => {
     const res = await makeRequest({
       port,
       method: 'PATCH',
       path: '/api/v1/admin/requests/REQ-0001/decision',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         decision: 'APPROVED',
         comment: 'Self approval attempt',
@@ -306,8 +306,8 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
     }
   });
 
-  // 7. POST /cafes (Both Primary and Normal Master can create cafes)
-  await t.test('Normal Master can create a new Café location', async () => {
+  // 7. POST /cafes (Both Primary and malformed MASTER claim can create cafes)
+  await t.test('malformed MASTER claim can create a new Café location', async () => {
     t.mock.method(cafeService, 'createCafeWithAccess', async ({ cafeData }) => ({
       cafe: {
         ...cafeData,
@@ -324,7 +324,7 @@ test('Administration & Governance — Screen 002 Integration Test Suite', async 
       port,
       method: 'POST',
       path: '/api/v1/cafes',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_malformed_master` },
       body: {
         name: 'Dawn Roast — HSR Layout',
         displayName: 'HSR Layout Branch',

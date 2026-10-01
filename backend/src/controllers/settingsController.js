@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 /**
  * settingsController.js â€” SCR-023
  *
@@ -23,15 +25,21 @@ const { Session } = require('../models/Session');
 const { PasskeyCredential } = require('../models/PasskeyCredential');
 const { UserPreference, SUPPORTED_LOCALES, THEMES, FONT_SIZES, DENSITIES, NOTIFICATION_CATEGORIES, NOTIFICATION_CHANNELS, POLICY_REQUIRED_NOTIFICATIONS } = require('../models/UserPreference');
 const { ProfileChangeRequest } = require('../models/ProfileChangeRequest');
-const { AccessRequest } = require('../models/AccessRequest');
+const { AccessRequest, ACCESS_REQUEST_TYPES } = require('../models/AccessRequest');
+const { TemporaryAccessGrant } = require('../models/TemporaryAccessGrant');
 const { PrivacyRequest } = require('../models/PrivacyRequest');
 const { RolePermission } = require('../models/RolePermission');
 const { Delegation } = require('../models/Delegation');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { Approval } = require('../models/Approval');
 const { Notification } = require('../models/Notification');
+const { NotificationOutbox } = require('../models/NotificationOutbox');
 const auditService = require('../services/auditService');
+const { executeTransactionWithRetry } = require('../utils/transactionHelper');
+const { getEffectiveAuthSecurityPolicy } = require('../services/authService');
 const ApiError = require('../utils/ApiError');
+const { redisClientFactory } = require('../services/redisClientFactory');
+const { documentStorageAdapter } = require('../services/documentStorageAdapter');
 
 // â”€â”€ 23 top-level language definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LANGUAGE_CATALOGUE = [
@@ -93,7 +101,7 @@ async function getSettingsOverview(req, res) {
     const { userId, organisationId, role } = req.user;
 
     const [user, pref] = await Promise.all([
-      User.findOne({ userId }).lean(),
+      User.findOne({ organisationId, userId }).lean(),
       UserPreference.findOrCreateForUser(userId, organisationId),
     ]);
 
@@ -106,7 +114,7 @@ async function getSettingsOverview(req, res) {
     if (!user.workEmail) attentionItems.push({ id: 'no_work_email', label: 'Work email not set â€” add a contact email for notifications.' });
 
     // Session count
-    const sessionCount = await Session.countDocuments({ userId, status: 'ACTIVE' });
+    const sessionCount = await Session.countDocuments({ organisationId, userId, status: 'ACTIVE' });
 
     res.json({
       success: true,
@@ -153,7 +161,7 @@ async function getSettingsOverview(req, res) {
  */
 async function getMyProfile(req, res) {
   const { userId, organisationId } = req.user;
-  const user = await User.findOne({ userId }).lean();
+  const user = await User.findOne({ organisationId, userId }).lean();
   if (!user) throw new ApiError(404, 'USER_NOT_FOUND', 'Account not found.');
 
   // Field governance map â€” backend determines editability, never client
@@ -176,6 +184,7 @@ async function getMyProfile(req, res) {
   };
 
   const pendingRequests = await ProfileChangeRequest.find({
+    organisationId,
     userId,
     status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
   }).lean();
@@ -238,7 +247,7 @@ async function updateMyProfile(req, res) {
   }
 
   const user = await User.findOneAndUpdate(
-    { userId },
+    { organisationId, userId },
     { $set: updates },
     { new: true, runValidators: true }
   );
@@ -278,46 +287,41 @@ async function submitProfileChangeRequest(req, res) {
 
   const now = new Date();
   const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
-  let seqDigits = 10001;
+  let pcr = null;
+
+  const session = await mongoose.startSession();
   try {
-    const rawSeq = await SequenceCounter.generateId({ prefix: 'PCR', sequenceKey: `profile_change_request_${yearMonth}`, organisationId, minimumDigits: 5 });
-    const numPart = parseInt(rawSeq.replace(/\D/g, ''), 10) || 10001;
-    seqDigits = String(numPart).slice(-5).padStart(5, '0');
-  } catch {
-    seqDigits = String(Math.floor(10000 + Math.random() * 90000));
-  }
-  const requestId = `PCR-${yearMonth}-${seqDigits}`;
+    await session.withTransaction(async () => {
+      const requestId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `PROFILE_CHANGE_REQUEST_${yearMonth}`,
+        prefix: `PCR-${yearMonth}`,
+        minimumDigits: 5,
+        session,
+      });
 
-  const pcr = await ProfileChangeRequest.create({
-    requestId,
-    organisationId,
-    userId,
-    requestType,
-    title: safeStr(title).slice(0, 200),
-    reason: safeStr(reason).slice(0, 1000),
-    oldValues: oldValues || {},
-    newValues: newValues || {},
-    status: 'SUBMITTED',
-  });
+      pcr = new ProfileChangeRequest({
+        requestId,
+        organisationId,
+        userId,
+        requestType,
+        title: safeStr(title).slice(0, 200),
+        reason: safeStr(reason).slice(0, 1000),
+        oldValues: oldValues || {},
+        proposedValues: newValues || {},
+        status: 'SUBMITTED',
+      });
+      await pcr.save({ session });
 
-  await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: req.user.role, module: 'SETTINGS', action: 'PROFILE_CHANGE_REQUEST_SUBMITTED', entityType: 'PROFILE_CHANGE_REQUEST', entityId: pcr.requestId, metadata: { requestType, title } });
+      const approvalId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: 'APPROVAL',
+        prefix: 'APP',
+        minimumDigits: 5,
+        session,
+      });
 
-  try {
-    let approval = await Approval.findOne({
-      organisationId,
-      entityType: 'PROFILE_CHANGE',
-      entityId: pcr.requestId,
-    });
-
-    if (!approval) {
-      let approvalId;
-      try {
-        approvalId = await SequenceCounter.generateId({ organisationId, sequenceKey: 'APPROVAL', prefix: 'APP', minimumDigits: 5 });
-      } catch {
-        const approvalCount = await Approval.countDocuments({ organisationId });
-        approvalId = `APP-${Date.now().toString().slice(-6)}-${String(approvalCount + 1).padStart(3, '0')}`;
-      }
-      approval = await Approval.create({
+      const approval = new Approval({
         approvalId,
         organisationId,
         cafeId: null,
@@ -328,35 +332,69 @@ async function submitProfileChangeRequest(req, res) {
         amountPaisa: 0,
         status: 'PENDING',
       });
-    }
+      await approval.save({ session });
+    }, {
+      readPreference: 'primary',
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+      maxCommitTimeMS: 10000,
+    });
+  } finally {
+    await session.endSession();
+  }
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+  await auditService.recordAuditEvent({
+    organisationId,
+    actorUserId: userId,
+    actorRole: req.user.role,
+    module: 'SETTINGS',
+    action: 'PROFILE_CHANGE_REQUEST_SUBMITTED',
+    entityType: 'PROFILE_CHANGE_REQUEST',
+    entityId: pcr.requestId,
+    metadata: { requestType, title },
+  });
+
+  try {
+    const masterUsers = await User.find({
+      organisationId,
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      accountStatus: 'ACTIVE',
+    }).select('userId email').lean();
+
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    for (const m of masterUsers) {
-      const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    for (const master of masterUsers) {
+      const notifId = await SequenceCounter.generateId({
+        organisationId,
+        sequenceKey: `NOTIFICATION_${dateStr}`,
+        prefix: `NT-${dateStr}`,
+        minimumDigits: 4,
+      });
       await Notification.create({
         notificationId: notifId,
         organisationId,
         eventType: 'PROFILE_CHANGE_REQUESTED',
         category: 'OPERATIONS',
-        recipientUserId: m.userId,
+        recipientUserId: master.userId,
         recipientRole: 'MASTER',
-        recipientEmail: m.email || 'master@zamorincafe.com',
+        recipientEmail: master.email,
         title: `👤 Profile Change Request: ${userId}`,
         message: `${userId} requested a profile update (${requestType}). Reason: ${reason}`,
         priority: 'NORMAL',
         channels: ['IN_APP'],
-        deepLink: `#approvals`,
+        deepLink: '#approvals',
         sourceModule: 'EMPLOYEES',
         sourceEntityType: 'PROFILE_CHANGE',
         sourceEntityId: pcr.requestId,
-        deduplicationKey: `PCR_${pcr.requestId}_${m.userId}`,
-        correlationId: req.correlationId || notifId,
+        deduplicationKey: `PCR_${pcr.requestId}_${master.userId}`,
+        correlationId: req.correlationId || `CORR-PCR-${pcr.requestId}`,
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
         createdBy: userId,
       });
     }
   } catch (err) {
-    console.warn(`[SETTINGS_PROFILE_CHANGE_APPROVAL_HOOK_WARN] ${err.message}`);
+    console.warn(`[SETTINGS_PROFILE_CHANGE_NOTIFICATION_WARN] ${err.message}`);
   }
 
   res.status(201).json({
@@ -370,8 +408,8 @@ async function submitProfileChangeRequest(req, res) {
  * GET /api/v1/settings/profile/change-requests
  */
 async function listMyProfileChangeRequests(req, res) {
-  const { userId } = req.user;
-  const requests = await ProfileChangeRequest.find({ userId })
+  const { userId, organisationId } = req.user;
+  const requests = await ProfileChangeRequest.find({ organisationId, userId })
     .sort({ createdAt: -1 })
     .limit(50)
     .lean();
@@ -415,11 +453,24 @@ async function getMyAccess(req, res) {
       scope: r.scope,
     }));
 
-  // Fetch pending access requests
-  const pendingAccessRequests = await AccessRequest.find({
-    requestedByUserId: userId,
-    status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
-  }).lean();
+  // Fetch pending access requests and currently effective temporary grants.
+  const now = new Date();
+  const [pendingAccessRequests, temporaryGrants] = await Promise.all([
+    AccessRequest.find({
+      organisationId,
+      requestedByUserId: userId,
+      status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
+    }).lean(),
+    TemporaryAccessGrant.find({
+      organisationId,
+      userId,
+      status: 'ACTIVE',
+      effectiveFrom: { $lte: now },
+      effectiveTo: { $gt: now },
+    })
+      .sort({ effectiveTo: 1 })
+      .lean(),
+  ]);
 
   res.json({
     success: true,
@@ -431,7 +482,17 @@ async function getMyAccess(req, res) {
         state: 'ACTIVE',
       })),
       moduleAccess,
-      temporaryAccess: [], // P2 â€” placeholder for TemporaryAccessGrant model
+      temporaryAccess: temporaryGrants.map((grant) => ({
+        grantId: grant.grantId,
+        permissionCode: grant.permissionCode,
+        moduleCode: grant.moduleCode || null,
+        cafeId: grant.cafeId || null,
+        reportDomain: grant.reportDomain || null,
+        effectiveFrom: grant.effectiveFrom,
+        effectiveTo: grant.effectiveTo,
+        sourceRequestId: grant.sourceRequestId,
+        state: 'ACTIVE',
+      })),
       pendingRequests: pendingAccessRequests.map((r) => ({
         requestId: r.requestId,
         requestType: r.requestType,
@@ -456,9 +517,62 @@ async function submitAccessRequest(req, res) {
     throw new ApiError(400, 'MISSING_FIELDS', 'requestType, reason and requestedScope are required.');
   }
 
-  // Idempotency guard â€” prevent double-click duplicate
+  const normalizedRequestType = safeStr(requestType).toUpperCase();
+  if (!ACCESS_REQUEST_TYPES.includes(normalizedRequestType)) {
+    throw new ApiError(400, 'INVALID_ACCESS_REQUEST_TYPE', 'The requested access-request type is invalid.');
+  }
+
+  const normalizedDurationType = safeStr(durationType || 'PERMANENT').toUpperCase();
+  if (!['PERMANENT', 'TEMPORARY'].includes(normalizedDurationType)) {
+    throw new ApiError(400, 'INVALID_ACCESS_DURATION', 'durationType must be PERMANENT or TEMPORARY.');
+  }
+
+  const normalizedScope = {
+    cafeId: safeStr(requestedScope?.cafeId).toUpperCase() || null,
+    moduleCode: safeStr(requestedScope?.moduleCode).toUpperCase() || null,
+    permissionCode: safeStr(requestedScope?.permissionCode).toUpperCase() || null,
+    reportDomain: safeStr(requestedScope?.reportDomain).toUpperCase() || null,
+    description: safeStr(requestedScope?.description).slice(0, 500),
+  };
+
+  if (
+    normalizedScope.permissionCode &&
+    !/^[A-Z0-9_:.]+$/.test(normalizedScope.permissionCode)
+  ) {
+    throw new ApiError(400, 'INVALID_PERMISSION_CODE', 'requestedScope.permissionCode has an invalid format.');
+  }
+
+  let normalizedTemporaryEndAt = null;
+  if (normalizedDurationType === 'TEMPORARY') {
+    if (!normalizedScope.permissionCode) {
+      throw new ApiError(
+        400,
+        'TEMPORARY_PERMISSION_CODE_REQUIRED',
+        'Temporary access requires an exact requestedScope.permissionCode.'
+      );
+    }
+
+    normalizedTemporaryEndAt = new Date(temporaryAccessEndAt);
+    if (
+      !temporaryAccessEndAt ||
+      Number.isNaN(normalizedTemporaryEndAt.getTime()) ||
+      normalizedTemporaryEndAt <= new Date()
+    ) {
+      throw new ApiError(
+        400,
+        'TEMPORARY_ACCESS_EXPIRY_REQUIRED',
+        'Temporary access requires a valid future temporaryAccessEndAt.'
+      );
+    }
+  }
+
+  // Idempotency guard â€” scoped to the authenticated organisation and requester.
   if (idempotencyKey) {
-    const existing = await AccessRequest.findOne({ idempotencyKey });
+    const existing = await AccessRequest.findOne({
+      organisationId,
+      requestedByUserId: userId,
+      idempotencyKey,
+    });
     if (existing) {
       return res.json({
         success: true,
@@ -468,17 +582,24 @@ async function submitAccessRequest(req, res) {
     }
   }
 
-  const requestId = await SequenceCounter.generateId({ prefix: 'AREQ', sequenceKey: 'access_request', organisationId });
+  const yearMonth = new Date().toISOString().slice(0, 7).replace('-', '');
+  const requestId = await SequenceCounter.generateId({
+    prefix: `AREQ-${yearMonth}`,
+    sequenceKey: `ACCESS_REQUEST_${yearMonth}`,
+    organisationId,
+    minimumDigits: 5,
+  });
 
   const ar = await AccessRequest.create({
     requestId,
     organisationId,
     requestedByUserId: userId,
-    requestType,
+    requestType: normalizedRequestType,
     status: 'SUBMITTED',
-    requestedScope,
-    durationType: durationType || 'PERMANENT',
-    temporaryAccessEndAt: temporaryAccessEndAt || null,
+    requestedScope: normalizedScope,
+    durationType: normalizedDurationType,
+    temporaryAccessStartAt: normalizedDurationType === 'TEMPORARY' ? new Date() : null,
+    temporaryAccessEndAt: normalizedTemporaryEndAt,
     reason: safeStr(reason).slice(0, 1000),
     businessJustification: safeStr(businessJustification || '').slice(0, 2000),
     idempotencyKey: idempotencyKey || null,
@@ -490,7 +611,11 @@ async function submitAccessRequest(req, res) {
     }],
   });
 
-  await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: role, module: 'SETTINGS', action: 'ACCESS_REQUEST_SUBMITTED', entityType: 'ACCESS_REQUEST', entityId: ar.requestId, metadata: { requestType } });
+  await auditService.recordAuditEvent({ organisationId, actorUserId: userId, actorRole: role, module: 'SETTINGS', action: 'ACCESS_REQUEST_SUBMITTED', entityType: 'ACCESS_REQUEST', entityId: ar.requestId, metadata: {
+    requestType: normalizedRequestType,
+    durationType: normalizedDurationType,
+    requestedScope: normalizedScope,
+  } });
 
   res.status(201).json({
     success: true,
@@ -503,8 +628,8 @@ async function submitAccessRequest(req, res) {
  * GET /api/v1/settings/access/requests
  */
 async function listMyAccessRequests(req, res) {
-  const { userId } = req.user;
-  const requests = await AccessRequest.find({ requestedByUserId: userId })
+  const { userId, organisationId } = req.user;
+  const requests = await AccessRequest.find({ organisationId, requestedByUserId: userId })
     .sort({ createdAt: -1 })
     .limit(50)
     .lean();
@@ -520,6 +645,295 @@ async function listMyAccessRequests(req, res) {
         submittedAt: r.createdAt,
         reviewedAt: r.reviewedAt || null,
       })),
+    },
+  });
+}
+
+
+function assertPrimaryMasterAccessReviewer(req) {
+  if (req.user?.role !== 'MASTER' || req.user?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'PRIMARY_MASTER_AUTHORITY_REQUIRED',
+      'Temporary access review requires Primary Master authority.'
+    );
+  }
+}
+
+async function listAccessRequestsForReview(req, res) {
+  assertPrimaryMasterAccessReviewer(req);
+
+  const { organisationId } = req.user;
+  const status = safeStr(req.query?.status || 'SUBMITTED').toUpperCase();
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query?.limit, 10) || 50));
+
+  const filter = { organisationId };
+  if (status !== 'ALL') {
+    filter.status = status;
+  }
+
+  const requests = await AccessRequest.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+
+  res.json({
+    success: true,
+    data: { requests },
+  });
+}
+
+async function reviewAccessRequest(req, res) {
+  assertPrimaryMasterAccessReviewer(req);
+
+  const { organisationId, userId } = req.user;
+  const requestId = safeStr(req.params?.requestId).toUpperCase();
+  const decision = safeStr(req.body?.decision).toUpperCase();
+  const reviewNote = safeStr(req.body?.reviewNote);
+
+  if (!['APPROVE_TEMPORARY', 'DENY'].includes(decision)) {
+    throw new ApiError(
+      400,
+      'INVALID_ACCESS_REVIEW_DECISION',
+      'decision must be APPROVE_TEMPORARY or DENY.'
+    );
+  }
+  if (reviewNote.length < 10) {
+    throw new ApiError(
+      400,
+      'ACCESS_REVIEW_NOTE_REQUIRED',
+      'A specific review note of at least 10 characters is required.'
+    );
+  }
+
+  let reviewedRequest = null;
+  let grant = null;
+
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      reviewedRequest = await AccessRequest.findOne(
+        {
+          organisationId,
+          requestId,
+          status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
+        },
+        null,
+        { session }
+      );
+
+      if (!reviewedRequest) {
+        throw new ApiError(
+          404,
+          'ACCESS_REQUEST_NOT_REVIEWABLE',
+          'The access request was not found or is no longer reviewable.'
+        );
+      }
+
+      if (String(reviewedRequest.requestedByUserId).toUpperCase() === String(userId).toUpperCase()) {
+        throw new ApiError(
+          409,
+          'ACCESS_REQUEST_MAKER_CHECKER_REQUIRED',
+          'The requester cannot approve or deny their own access request.'
+        );
+      }
+
+      const now = new Date();
+
+      if (decision === 'APPROVE_TEMPORARY') {
+        if (reviewedRequest.durationType !== 'TEMPORARY') {
+          throw new ApiError(
+            409,
+            'PERMANENT_ACCESS_GRANT_NOT_AUTO_APPLIED',
+            'Permanent access requests require a separate governed RolePermission workflow and are not auto-applied here.'
+          );
+        }
+
+        const permissionCode = safeStr(reviewedRequest.requestedScope?.permissionCode).toUpperCase();
+        const effectiveTo = reviewedRequest.temporaryAccessEndAt
+          ? new Date(reviewedRequest.temporaryAccessEndAt)
+          : null;
+
+        if (
+          !permissionCode ||
+          !effectiveTo ||
+          Number.isNaN(effectiveTo.getTime()) ||
+          effectiveTo <= now
+        ) {
+          throw new ApiError(
+            409,
+            'TEMPORARY_ACCESS_SCOPE_INVALID',
+            'The temporary request lacks an exact permission code or valid future expiry.'
+          );
+        }
+
+        const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
+        const grantId = await SequenceCounter.generateId({
+          organisationId,
+          sequenceKey: `TEMP_ACCESS_GRANT_${yearMonth}`,
+          prefix: `TAG-${yearMonth}`,
+          minimumDigits: 5,
+          session,
+        });
+
+        grant = new TemporaryAccessGrant({
+          grantId,
+          organisationId,
+          userId: reviewedRequest.requestedByUserId,
+          sourceRequestId: reviewedRequest.requestId,
+          permissionCode,
+          moduleCode: reviewedRequest.requestedScope?.moduleCode || null,
+          cafeId: reviewedRequest.requestedScope?.cafeId || null,
+          reportDomain: reviewedRequest.requestedScope?.reportDomain || null,
+          description: reviewedRequest.requestedScope?.description || '',
+          effectiveFrom: now,
+          effectiveTo,
+          status: 'ACTIVE',
+          approvedByUserId: userId,
+          approvedAt: now,
+          approvalReason: reviewNote,
+        });
+        await grant.save({ session });
+
+        reviewedRequest.status = 'APPROVED';
+      } else {
+        reviewedRequest.status = 'DENIED';
+      }
+
+      reviewedRequest.reviewedByUserId = userId;
+      reviewedRequest.reviewedAt = now;
+      reviewedRequest.reviewNote = reviewNote;
+      reviewedRequest.auditHistory.push({
+        action: decision,
+        performedByUserId: userId,
+        note: reviewNote,
+        timestamp: now,
+      });
+      await reviewedRequest.save({ session });
+
+      await auditService.recordAuditEvent({
+        organisationId,
+        actorUserId: userId,
+        actorRole: req.user.role,
+        module: 'SETTINGS',
+        action: decision === 'APPROVE_TEMPORARY'
+          ? 'TEMPORARY_ACCESS_GRANTED'
+          : 'ACCESS_REQUEST_DENIED',
+        entityType: decision === 'APPROVE_TEMPORARY'
+          ? 'TEMPORARY_ACCESS_GRANT'
+          : 'ACCESS_REQUEST',
+        entityId: grant?.grantId || reviewedRequest.requestId,
+        reason: reviewNote,
+        riskClassification: 'HIGH',
+        metadata: {
+          requestId: reviewedRequest.requestId,
+          requestedByUserId: reviewedRequest.requestedByUserId,
+          permissionCode: reviewedRequest.requestedScope?.permissionCode || null,
+          cafeId: reviewedRequest.requestedScope?.cafeId || null,
+          effectiveTo: grant?.effectiveTo || null,
+        },
+        session,
+      });
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  res.json({
+    success: true,
+    message: decision === 'APPROVE_TEMPORARY'
+      ? 'Temporary access grant approved and activated.'
+      : 'Access request denied.',
+    data: {
+      requestId: reviewedRequest.requestId,
+      requestStatus: reviewedRequest.status,
+      grant: grant
+        ? {
+            grantId: grant.grantId,
+            permissionCode: grant.permissionCode,
+            cafeId: grant.cafeId || null,
+            effectiveFrom: grant.effectiveFrom,
+            effectiveTo: grant.effectiveTo,
+            status: grant.status,
+          }
+        : null,
+    },
+  });
+}
+
+async function revokeTemporaryAccessGrant(req, res) {
+  assertPrimaryMasterAccessReviewer(req);
+
+  const { organisationId, userId } = req.user;
+  const grantId = safeStr(req.params?.grantId).toUpperCase();
+  const reason = safeStr(req.body?.reason);
+
+  if (reason.length < 10) {
+    throw new ApiError(
+      400,
+      'TEMPORARY_ACCESS_REVOCATION_REASON_REQUIRED',
+      'A specific revocation reason of at least 10 characters is required.'
+    );
+  }
+
+  let grant = null;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      grant = await TemporaryAccessGrant.findOne(
+        {
+          organisationId,
+          grantId,
+          status: 'ACTIVE',
+        },
+        null,
+        { session }
+      );
+
+      if (!grant) {
+        throw new ApiError(
+          404,
+          'TEMPORARY_ACCESS_GRANT_NOT_ACTIVE',
+          'The temporary grant was not found or is no longer active.'
+        );
+      }
+
+      const now = new Date();
+      grant.status = 'REVOKED';
+      grant.revokedByUserId = userId;
+      grant.revokedAt = now;
+      grant.revocationReason = reason;
+      await grant.save({ session });
+
+      await auditService.recordAuditEvent({
+        organisationId,
+        actorUserId: userId,
+        actorRole: req.user.role,
+        module: 'SETTINGS',
+        action: 'TEMPORARY_ACCESS_REVOKED',
+        entityType: 'TEMPORARY_ACCESS_GRANT',
+        entityId: grant.grantId,
+        reason,
+        riskClassification: 'HIGH',
+        metadata: {
+          userId: grant.userId,
+          permissionCode: grant.permissionCode,
+          cafeId: grant.cafeId || null,
+        },
+        session,
+      });
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  res.json({
+    success: true,
+    message: 'Temporary access grant revoked.',
+    data: {
+      grantId: grant.grantId,
+      status: grant.status,
+      revokedAt: grant.revokedAt,
     },
   });
 }
@@ -833,49 +1247,57 @@ async function getLanguageCatalogue(req, res) {
  */
 async function getSecurityOverview(req, res) {
   const auth = req.user || req.auth || {};
-  const { userId, role } = auth;
+  const { userId, organisationId, role } = auth;
 
-  const user = await User.findOne({ userId }).lean();
+  const [user, sessionCount, passkeyCount] = await Promise.all([
+    User.findOne({ organisationId, userId }).lean(),
+    Session.countDocuments({ organisationId, userId, status: 'ACTIVE' }),
+    PasskeyCredential.countDocuments({ organisationId, userId, status: 'ACTIVE' }),
+  ]);
+
   if (!user) throw new ApiError(404, 'USER_NOT_FOUND', 'Account not found.');
 
-  const sessionCount = await Session.countDocuments({ userId, status: 'ACTIVE' });
+  const enforcedPolicy = getEffectiveAuthSecurityPolicy();
+  const roleRequiresMfa = enforcedPolicy.mfa.requiredRoles.includes(role);
 
   res.json({
     success: true,
     data: {
-      // Password state â€” truthful states, never expose hash
       password: {
         state: user.passwordHash ? 'CONFIGURED' : 'NOT_CONFIGURED',
         label: user.passwordHash ? 'Password is configured' : 'No password set',
         canChange: Boolean(user.passwordHash),
       },
-      // MFA state
       mfa: {
         state: user.mfaEnabled ? 'CONFIGURED' : 'NOT_CONFIGURED',
         label: user.mfaEnabled ? 'Two-factor authentication enabled' : 'Two-factor authentication not enabled',
+        requiredForRole: roleRequiresMfa,
       },
-      // Passkeys — WebAuthn FIDO2 Infrastructure
       passkeys: {
-        state: (await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' })) > 0 ? 'CONFIGURED' : 'SUPPORTED',
-        label: (await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' })) > 0
-          ? `${await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' })} passkey(s) registered`
+        state: passkeyCount > 0 ? 'CONFIGURED' : 'SUPPORTED',
+        label: passkeyCount > 0
+          ? `${passkeyCount} passkey(s) registered`
           : 'Passkeys supported — register device in settings.',
-        count: await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' }),
+        count: passkeyCount,
       },
-      // Sessions
       sessions: {
         activeCount: sessionCount,
       },
-      // Recovery
       recovery: {
         state: user.mfaEnabled && user.mfaSecret ? 'CONFIGURED' : 'NOT_CONFIGURED',
-        label: user.mfaEnabled ? 'Recovery codes configured' : 'Recovery not fully configured',
+        label: user.mfaEnabled ? 'Recovery factors configured' : 'Recovery not fully configured',
       },
-      // Read-only policy summary — never expose policy internals
       securityPolicy: {
-        mfaRequired: false,
-        sessionPolicy: 'Standard enterprise session management',
-        passwordPolicy: 'Minimum 15 characters (passphrase length-first, zero forced composition rules, blocklist protected)',
+        source: enforcedPolicy.source,
+        runtimeMutable: enforcedPolicy.runtimeMutable,
+        password: enforcedPolicy.password,
+        mfa: enforcedPolicy.mfa,
+        session: enforcedPolicy.session,
+        mfaRequired: roleRequiresMfa,
+        passwordPolicy:
+          `Minimum ${roleRequiresMfa ? enforcedPolicy.password.minimumLengthWithMfa : enforcedPolicy.password.minimumLengthWithoutMfa} characters for this role; maximum ${enforcedPolicy.password.maximumLength}; blocklist enabled; no forced composition rules.`,
+        sessionPolicy:
+          `Access token ${enforcedPolicy.session.accessTokenTtlMinutes} min; refresh token up to ${enforcedPolicy.session.refreshTokenTtlDays} day(s); absolute session ${enforcedPolicy.session.absoluteSessionTtlDays} day(s).`,
       },
     },
   });
@@ -895,9 +1317,9 @@ async function getSecurityOverview(req, res) {
  * If request succeeds with 0 results â†’ LOADED_EMPTY (never AUTH_ERROR).
  */
 async function getMySessions(req, res) {
-  const { userId, sessionId: currentSessionId } = req.user;
+  const { userId, organisationId, sessionId: currentSessionId } = req.user;
 
-  const sessions = await Session.find({ userId, status: 'ACTIVE' })
+  const sessions = await Session.find({ organisationId, userId, status: 'ACTIVE' })
     .sort({ lastActivityAt: -1 })
     .lean();
 
@@ -940,7 +1362,7 @@ async function revokeMySession(req, res) {
   if (!sessionId) throw new ApiError(400, 'MISSING_SESSION_ID', 'Session ID is required.');
 
   // SECURITY: Verify this session belongs to the authenticated user
-  const session = await Session.findOne({ sessionId, userId });
+  const session = await Session.findOne({ organisationId, sessionId, userId });
   if (!session) {
     // Return 404, not 403, to avoid session enumeration
     throw new ApiError(404, 'SESSION_NOT_FOUND', 'Session not found or already revoked.');
@@ -952,7 +1374,7 @@ async function revokeMySession(req, res) {
   }
 
   await Session.findOneAndUpdate(
-    { sessionId, userId },
+    { organisationId, sessionId, userId },
     { status: 'REVOKED', revokedAt: new Date(), revokedReason: 'USER_SELF_REVOKE' }
   );
 
@@ -974,7 +1396,7 @@ async function revokeOtherSessions(req, res) {
   const { userId, role, organisationId, sessionId: currentSessionId } = req.user;
 
   const result = await Session.updateMany(
-    { userId, sessionId: { $ne: currentSessionId }, status: 'ACTIVE' },
+    { organisationId, userId, sessionId: { $ne: currentSessionId }, status: 'ACTIVE' },
     { status: 'REVOKED', revokedAt: new Date(), revokedReason: 'REVOKE_OTHERS' }
   );
 
@@ -1000,7 +1422,7 @@ async function revokeAllSessions(req, res) {
   }
 
   const result = await Session.updateMany(
-    { userId, status: 'ACTIVE' },
+    { organisationId, userId, status: 'ACTIVE' },
     { status: 'REVOKED', revokedAt: new Date(), revokedReason: 'REVOKE_ALL' }
   );
 
@@ -1133,6 +1555,28 @@ async function getPrivacyNotice(req, res) {
 async function getDiagnostics(req, res) {
   const { userId, role, organisationId } = req.user;
 
+  const databaseReady = mongoose.connection.readyState === 1;
+  const redisHealth = await redisClientFactory.getHealthStatus();
+  const storageHealth = await documentStorageAdapter.healthCheck();
+
+  const services = {
+    database: {
+      status: databaseReady ? 'READY' : 'DEGRADED',
+    },
+    redis: {
+      status: redisHealth?.isConnected ? 'READY' : 'DEGRADED',
+    },
+    documentStorage: {
+      status: ['OK', 'READY', 'HEALTHY'].includes(storageHealth?.status)
+        ? 'READY'
+        : 'DEGRADED',
+    },
+  };
+
+  const serviceHealth = Object.values(services).every((service) => service.status === 'READY')
+    ? 'READY'
+    : 'DEGRADED';
+
   res.json({
     success: true,
     data: {
@@ -1143,8 +1587,9 @@ async function getDiagnostics(req, res) {
       userId,
       role,
       organisationId,
-      // Never expose: tokens, session secrets, DB connection strings, JWT secrets
-      serviceHealth: 'CONNECTED',
+      // Never expose tokens, connection strings, credentials, or raw dependency errors.
+      serviceHealth,
+      services,
     },
   });
 }
@@ -1155,52 +1600,155 @@ async function getDiagnostics(req, res) {
  */
 async function submitSupportTicket(req, res) {
   const user = req.user || req.auth || {};
-  const { userId, organisationId, primaryCafeId, email } = user;
-  const { category = 'GENERAL_INQUIRY', severity = 'NORMAL', summary, description } = req.body || {};
+  const { userId, organisationId, primaryCafeId } = user;
+  const {
+    category = 'GENERAL_INQUIRY',
+    severity = 'NORMAL',
+    summary,
+    description,
+  } = req.body || {};
 
-  if (!summary || !String(summary).trim()) {
-    throw new ApiError(400, 'SUMMARY_REQUIRED', 'A brief summary of the issue is required.');
+  const summaryText = String(summary || '').trim();
+  const descriptionText = String(description || '').trim();
+
+  if (!summaryText) {
+    throw new ApiError(
+      400,
+      'SUMMARY_REQUIRED',
+      'A brief summary of the issue is required.'
+    );
   }
 
-  if (!description || !String(description).trim()) {
-    throw new ApiError(400, 'DESCRIPTION_REQUIRED', 'A detailed description of the issue is required.');
+  if (!descriptionText) {
+    throw new ApiError(
+      400,
+      'DESCRIPTION_REQUIRED',
+      'A detailed description of the issue is required.'
+    );
   }
 
-  const { SupportCase, SUPPORT_CATEGORIES, SUPPORT_SEVERITIES } = require('../models/SupportCase');
+  if (!userId || !organisationId) {
+    throw new ApiError(
+      401,
+      'AUTHENTICATED_IDENTITY_REQUIRED',
+      'Authenticated user and organisation identity are required.'
+    );
+  }
 
-  const validCategory = SUPPORT_CATEGORIES.includes(category) ? category : 'GENERAL_INQUIRY';
-  const validSeverity = SUPPORT_SEVERITIES.includes(severity) ? severity : 'NORMAL';
+  const {
+    SupportCase,
+    SUPPORT_CATEGORIES,
+    SUPPORT_SEVERITIES,
+  } = require('../models/SupportCase');
 
-  const year = new Date().getFullYear();
-  const randSeq = Math.floor(1000 + Math.random() * 9000);
-  const caseId = `CASE-${year}-${randSeq}`;
+  const validCategory = SUPPORT_CATEGORIES.includes(category)
+    ? category
+    : 'GENERAL_INQUIRY';
+  const validSeverity = SUPPORT_SEVERITIES.includes(severity)
+    ? severity
+    : 'NORMAL';
 
-  const senderEmail = email || `${String(userId).toLowerCase()}@zamorincafe.com`;
+  let authoritativeUser = null;
+  let senderEmail = String(user.email || '').trim().toLowerCase();
+  let actorRole = safeStr(user.role).toUpperCase();
 
-  const supportCase = await SupportCase.create({
-    caseId,
+  if (!senderEmail || !actorRole) {
+    const profileQuery = User.findOne({
+      organisationId,
+      userId,
+    }).select('email role primaryCafeId assignedCafeIds');
+
+    authoritativeUser =
+      profileQuery && typeof profileQuery.lean === 'function'
+        ? await profileQuery.lean()
+        : await profileQuery;
+
+    if (!senderEmail) {
+      senderEmail = String(authoritativeUser?.email || '').trim().toLowerCase();
+    }
+    if (!actorRole) {
+      actorRole = safeStr(authoritativeUser?.role).toUpperCase();
+    }
+  }
+
+  if (!senderEmail) {
+    throw new ApiError(
+      409,
+      'SUPPORT_EMAIL_REQUIRED',
+      'A verified account email is required before an in-app support ticket can be submitted.'
+    );
+  }
+
+  if (!actorRole) {
+    throw new ApiError(
+      409,
+      'SUPPORT_ACTOR_ROLE_REQUIRED',
+      'The authenticated role could not be verified for this support request.'
+    );
+  }
+
+  const effectiveCafeId = safeStr(
+    primaryCafeId ||
+    authoritativeUser?.primaryCafeId ||
+    (authoritativeUser?.assignedCafeIds || [])[0] ||
+    ''
+  ).toUpperCase() || null;
+
+  const year = new Date().getUTCFullYear();
+  const caseId = await SequenceCounter.generateId({
     organisationId,
-    cafeId: primaryCafeId || null,
-    category: validCategory,
-    severity: validSeverity,
-    status: 'OPEN',
-    source: 'IN_APP',
-    reportedByUserId: userId,
-    senderEmail,
-    summary: String(summary).trim().slice(0, 300),
-    description: String(description).trim().slice(0, 5000),
+    sequenceKey: `SUPPORT_CASE_${year}`,
+    prefix: `CASE-${year}`,
+    minimumDigits: 5,
   });
 
-  try {
-    await auditService.log({
+  const createOperation = async (session) => {
+    const supportCase = new SupportCase({
+      caseId,
       organisationId,
-      action: 'SETTINGS_SUPPORT_TICKET_SUBMITTED',
-      performedByUserId: userId,
-      metadata: { caseId, category: validCategory, severity: validSeverity },
+      cafeId: effectiveCafeId,
+      category: validCategory,
+      severity: validSeverity,
+      status: 'OPEN',
+      source: 'IN_APP',
+      reportedByUserId: userId,
+      senderEmail,
+      correlationId: req.correlationId || null,
+      summary: summaryText.slice(0, 300),
+      description: descriptionText.slice(0, 5000),
+      appVersion: process.env.APP_VERSION || null,
+      deviceClass: user.deviceContext?.deviceClass || null,
     });
-  } catch (e) {}
 
-  res.status(201).json({
+    await supportCase.save(session ? { session } : undefined);
+
+    await auditService.recordAuditEvent({
+      organisationId,
+      cafeId: effectiveCafeId,
+      actorUserId: userId,
+      actorRole,
+      module: 'SETTINGS',
+      action: 'SETTINGS_SUPPORT_TICKET_SUBMITTED',
+      entityType: 'SUPPORT_CASE',
+      entityId: caseId,
+      reason: summaryText,
+      result: 'SUCCESS',
+      riskClassification: validSeverity === 'CRITICAL' ? 'HIGH' : 'LOW',
+      correlationId: req.correlationId || null,
+      metadata: {
+        category: validCategory,
+        severity: validSeverity,
+        source: 'IN_APP',
+      },
+      session,
+    });
+
+    return supportCase;
+  };
+
+  const supportCase = await executeTransactionWithRetry(createOperation);
+
+  return res.status(201).json({
     success: true,
     message: 'Support ticket submitted successfully.',
     data: { ticket: supportCase },
@@ -1235,6 +1783,176 @@ async function listMySupportTickets(req, res) {
     success: true,
     data: { tickets },
   });
+}
+
+function assertSupportCaseManagementScope(user, ticket) {
+  const {
+    role,
+    assignedCafeIds = [],
+    primaryCafeId,
+  } = user || {};
+
+  if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
+    throw new ApiError(
+      403,
+      'PERMISSION_DENIED',
+      'Only management roles can access this support case.'
+    );
+  }
+
+  if (role === 'CAFE_ADMIN') {
+    const validCafes = [
+      ...new Set(
+        [
+          ...(assignedCafeIds || []),
+          primaryCafeId,
+        ]
+          .filter(Boolean)
+          .map((value) => String(value).trim().toUpperCase())
+      ),
+    ];
+    if (!validCafes.includes(String(ticket?.cafeId || '').trim().toUpperCase())) {
+      throw new ApiError(
+        403,
+        'CAFE_ACCESS_DENIED',
+        'Access denied to support case outside your assigned café.'
+      );
+    }
+  }
+
+  if (role === 'OWNER') {
+    const validCafes = [
+      ...new Set(
+        (assignedCafeIds || [])
+          .filter(Boolean)
+          .map((value) => String(value).trim().toUpperCase())
+      ),
+    ];
+    if (
+      validCafes.length === 0 ||
+      !validCafes.includes(String(ticket?.cafeId || '').trim().toUpperCase())
+    ) {
+      throw new ApiError(
+        403,
+        'CROSS_CAFE_RESOURCE_DENIED',
+        'Access denied to support case outside your assigned café.'
+      );
+    }
+  }
+}
+
+async function generateSupportSequenceId({
+  organisationId,
+  sequenceKey,
+  prefix,
+  minimumDigits = 4,
+  session = null,
+}) {
+  return SequenceCounter.generateId({
+    organisationId,
+    sequenceKey,
+    prefix,
+    minimumDigits,
+    session,
+  });
+}
+
+async function enqueueSupportRecipientNotifications({
+  organisationId,
+  ticket,
+  recipientProfile,
+  eventType,
+  title,
+  message,
+  templateId,
+  actorUserId,
+  correlationId,
+  deduplicationKey,
+  session = null,
+}) {
+  if (!recipientProfile?.userId || !recipientProfile?.role) {
+    return {
+      inAppQueued: false,
+      emailQueued: false,
+      reason: 'RECIPIENT_PROFILE_UNAVAILABLE',
+    };
+  }
+
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const notificationId = await generateSupportSequenceId({
+    organisationId,
+    sequenceKey: `NOTIFICATION_${datePart}`,
+    prefix: `NT-${datePart}`,
+    minimumDigits: 4,
+    session,
+  });
+
+  const notification = new Notification({
+    notificationId,
+    organisationId,
+    cafeId: ticket.cafeId || null,
+    eventType,
+    category: 'OPERATIONS',
+    recipientUserId: recipientProfile.userId,
+    recipientRole: recipientProfile.role,
+    title,
+    message,
+    priority: 'NORMAL',
+    channels: ['IN_APP'],
+    deepLink: `#staff-settings?section=help&ticketId=${ticket.caseId}`,
+    sourceModule: 'SETTINGS',
+    sourceEntityType: 'SUPPORT_CASE',
+    sourceEntityId: ticket.caseId,
+    deduplicationKey,
+    correlationId: correlationId || `SUPPORT-${ticket.caseId}`,
+    status: 'PENDING',
+    createdBy: actorUserId || 'SYSTEM',
+  });
+  await notification.save(session ? { session } : undefined);
+
+  let emailQueued = false;
+  const recipientEmail = String(recipientProfile.email || '').trim().toLowerCase();
+  if (recipientEmail) {
+    const outboxId = await generateSupportSequenceId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_OUTBOX_${datePart}`,
+      prefix: `OUT-${datePart}`,
+      minimumDigits: 4,
+      session,
+    });
+
+    const outbox = new NotificationOutbox({
+      outboxId,
+      organisationId,
+      cafeId: ticket.cafeId || null,
+      correlationId: correlationId || `SUPPORT-${ticket.caseId}`,
+      idempotencyKey: deduplicationKey,
+      eventType,
+      recipientUserId: recipientProfile.userId,
+      recipientEmail,
+      recipientName: recipientProfile.name || '',
+      recipientRole: recipientProfile.role,
+      templateId,
+      subject: title,
+      renderedSubject: title,
+      renderedBody: message,
+      renderedBodyPlain: message,
+      severity: 'INFO',
+      priority: 'NORMAL',
+      channels: ['EMAIL'],
+      status: 'QUEUED',
+      nextAttemptAt: now,
+    });
+    await outbox.save(session ? { session } : undefined);
+    emailQueued = true;
+  }
+
+  return {
+    inAppQueued: true,
+    emailQueued,
+    notificationId,
+  };
 }
 
 /**
@@ -1361,141 +2079,211 @@ async function getManageSupportTicket(req, res) {
  */
 async function updateManageSupportTicket(req, res) {
   const user = req.user || req.auth || {};
-  const { userId, organisationId, role, assignedCafeIds = [], primaryCafeId } = user;
+  const {
+    userId,
+    organisationId,
+    role,
+  } = user;
 
   if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
-    throw new ApiError(403, 'PERMISSION_DENIED', 'Only management roles can update support cases.');
+    throw new ApiError(
+      403,
+      'PERMISSION_DENIED',
+      'Only management roles can update support cases.'
+    );
   }
 
-  const caseId = req.params.caseId?.trim().toUpperCase();
+  const caseId = safeStr(req.params?.caseId).toUpperCase();
+  const {
+    status,
+    assignedToUserId,
+    resolutionSummary,
+  } = req.body || {};
+
   const { SupportCase } = require('../models/SupportCase');
-  const { Notification } = require('../models/Notification');
-  const { NotificationOutbox } = require('../models/NotificationOutbox');
 
-  const ticket = await SupportCase.findOne({ organisationId, caseId });
-  if (!ticket) {
-    throw new ApiError(404, 'NOT_FOUND', `Support case ${caseId} not found.`);
-  }
+  const operation = async (session) => {
+    const ticketQuery = SupportCase.findOne({
+      organisationId,
+      caseId,
+    });
+    const ticket = session && typeof ticketQuery.session === 'function'
+      ? await ticketQuery.session(session)
+      : await ticketQuery;
 
-  if (role === 'CAFE_ADMIN') {
-    const validCafes = [...(assignedCafeIds || [])];
-    if (primaryCafeId && !validCafes.includes(primaryCafeId)) {
-      validCafes.push(primaryCafeId);
+    if (!ticket) {
+      throw new ApiError(
+        404,
+        'NOT_FOUND',
+        `Support case ${caseId} not found.`
+      );
     }
-    if (!validCafes.includes(ticket.cafeId)) {
-      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'Access denied to support case outside your assigned cafe.');
-    }
-  } else if (role === 'OWNER') {
-    const validCafes = (assignedCafeIds || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean);
-    if (!validCafes.length || !validCafes.includes(ticket.cafeId)) {
-      throw new ApiError(403, 'CROSS_CAFE_RESOURCE_DENIED', 'Access denied to support case outside your assigned cafe.');
-    }
-  }
 
-  const { status, assignedToUserId, resolutionSummary } = req.body || {};
+    assertSupportCaseManagementScope(user, ticket);
 
-  // Lifecycle state transition validation
-  if (status && status !== ticket.status) {
-    const ALLOWED_TRANSITIONS = {
-      OPEN: ['IN_PROGRESS', 'CLOSED'],
-      ACKNOWLEDGED: ['IN_PROGRESS', 'CLOSED'],
-      IN_PROGRESS: ['WAITING_FOR_EMPLOYEE', 'WAITING_INTERNAL', 'WAITING_EXTERNAL', 'RESOLVED', 'CLOSED'],
-      WAITING_FOR_EMPLOYEE: ['IN_PROGRESS', 'RESOLVED', 'CLOSED'],
-      WAITING_INTERNAL: ['IN_PROGRESS', 'RESOLVED', 'CLOSED'],
-      WAITING_EXTERNAL: ['IN_PROGRESS', 'RESOLVED', 'CLOSED'],
-      RESOLVED: ['CLOSED', 'IN_PROGRESS'],
-      CLOSED: ['IN_PROGRESS'],
+    const previousStatus = ticket.status;
+    const previousAssignee = ticket.assignedToUserId || null;
+    const requestedStatus = status ? safeStr(status).toUpperCase() : null;
+
+    if (requestedStatus && requestedStatus !== ticket.status) {
+      const allowedTransitions = {
+        OPEN: ['IN_PROGRESS', 'CLOSED'],
+        ACKNOWLEDGED: ['IN_PROGRESS', 'CLOSED'],
+        IN_PROGRESS: [
+          'WAITING_FOR_EMPLOYEE',
+          'WAITING_INTERNAL',
+          'WAITING_EXTERNAL',
+          'RESOLVED',
+          'CLOSED',
+        ],
+        WAITING_FOR_EMPLOYEE: ['IN_PROGRESS', 'RESOLVED', 'CLOSED'],
+        WAITING_INTERNAL: ['IN_PROGRESS', 'RESOLVED', 'CLOSED'],
+        WAITING_EXTERNAL: ['IN_PROGRESS', 'RESOLVED', 'CLOSED'],
+        RESOLVED: ['CLOSED', 'IN_PROGRESS'],
+        CLOSED: ['IN_PROGRESS'],
+      };
+
+      const allowed = allowedTransitions[ticket.status] || [];
+      if (!allowed.includes(requestedStatus)) {
+        throw new ApiError(
+          400,
+          'INVALID_STATUS_TRANSITION',
+          `Cannot transition support case from ${ticket.status} to ${requestedStatus}. Allowed: ${allowed.join(', ')}`
+        );
+      }
+
+      ticket.status = requestedStatus;
+      const now = new Date();
+
+      if (requestedStatus === 'IN_PROGRESS' && !ticket.acknowledgedAt) {
+        ticket.acknowledgedAt = now;
+      }
+      if (requestedStatus === 'RESOLVED') {
+        ticket.resolvedAt = now;
+        ticket.closedAt = null;
+      }
+      if (requestedStatus === 'CLOSED') {
+        ticket.closedAt = now;
+      }
+      if (requestedStatus === 'IN_PROGRESS') {
+        ticket.closedAt = null;
+      }
+    }
+
+    if (assignedToUserId !== undefined) {
+      const normalizedAssignee = safeStr(assignedToUserId).toUpperCase() || null;
+      if (normalizedAssignee) {
+        const assigneeQuery = User.findOne({
+          organisationId,
+          userId: normalizedAssignee,
+          accountStatus: 'ACTIVE',
+        }).select('userId role assignedCafeIds primaryCafeId');
+        const assignee = session && typeof assigneeQuery.session === 'function'
+          ? await assigneeQuery.session(session)
+          : await assigneeQuery;
+
+        if (!assignee) {
+          throw new ApiError(
+            400,
+            'SUPPORT_ASSIGNEE_NOT_FOUND',
+            'The selected support-case assignee is not an active organisation user.'
+          );
+        }
+      }
+      ticket.assignedToUserId = normalizedAssignee;
+    }
+
+    if (resolutionSummary !== undefined) {
+      ticket.resolutionSummary = safeStr(resolutionSummary).slice(0, 2000);
+    }
+
+    await ticket.save(session ? { session } : undefined);
+
+    let notificationStatus = {
+      inAppQueued: false,
+      emailQueued: false,
+      reason: 'NO_STATUS_CHANGE',
     };
 
-    const allowed = ALLOWED_TRANSITIONS[ticket.status] || [];
-    if (!allowed.includes(status)) {
-      throw new ApiError(400, 'INVALID_STATUS_TRANSITION', `Cannot transition support case from ${ticket.status} to ${status}. Allowed: ${allowed.join(', ')}`);
+    if (
+      requestedStatus &&
+      requestedStatus !== previousStatus &&
+      ticket.reportedByUserId
+    ) {
+      const recipientQuery = User.findOne({
+        organisationId,
+        userId: ticket.reportedByUserId,
+        accountStatus: 'ACTIVE',
+      }).select('userId email name role');
+      const recipient = session && typeof recipientQuery.session === 'function'
+        ? await recipientQuery.session(session)
+        : await recipientQuery;
+
+      if (recipient) {
+        const message =
+          `Your support ticket "${ticket.summary}" has been updated to ${ticket.status}.` +
+          (ticket.resolutionSummary
+            ? ` Resolution: ${ticket.resolutionSummary}`
+            : '');
+
+        notificationStatus = await enqueueSupportRecipientNotifications({
+          organisationId,
+          ticket,
+          recipientProfile: recipient,
+          eventType: 'SUPPORT_CASE_UPDATE',
+          title: `Support Case ${ticket.caseId} updated: ${ticket.status}`,
+          message,
+          templateId: 'SUPPORT_CASE_STATUS',
+          actorUserId: userId,
+          correlationId: req.correlationId || null,
+          deduplicationKey: `${ticket.caseId}:STATUS:${ticket.status}`,
+          session,
+        });
+      } else {
+        notificationStatus = {
+          inAppQueued: false,
+          emailQueued: false,
+          reason: 'RECIPIENT_PROFILE_UNAVAILABLE',
+        };
+      }
     }
 
-    ticket.status = status;
-
-    if (status === 'IN_PROGRESS' && !ticket.acknowledgedAt) {
-      ticket.acknowledgedAt = new Date();
-    }
-    if (status === 'RESOLVED') {
-      ticket.resolvedAt = new Date();
-      if (resolutionSummary) ticket.resolutionSummary = String(resolutionSummary).trim().slice(0, 2000);
-    }
-    if (status === 'CLOSED') {
-      ticket.closedAt = new Date();
-    }
-
-    // Emit Employee Notification for status change
-    if (ticket.reportedByUserId) {
-      try {
-        const emp = await User.findOne({ organisationId, userId: ticket.reportedByUserId }).select('email name').lean();
-        if (emp) {
-          const outboxId = `OUT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-          await NotificationOutbox.create({
-            outboxId,
-            organisationId,
-            eventType: 'SUPPORT_CASE_UPDATE',
-            recipientUserId: ticket.reportedByUserId,
-            recipientEmail: emp.email,
-            recipientName: emp.name,
-            recipientRole: 'STAFF',
-            templateId: 'SUPPORT_CASE_STATUS',
-            subject: `Support Case ${ticket.caseId} updated: ${status}`,
-            renderedSubject: `Support Case ${ticket.caseId} updated: ${status}`,
-            renderedBody: `Your support ticket "${ticket.summary}" has been updated to ${status}.${resolutionSummary ? ' Resolution: ' + resolutionSummary : ''}`,
-            status: 'SENT',
-            sentAt: new Date(),
-          });
-
-          const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-          const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
-          await Notification.create({
-            notificationId: notifId,
-            organisationId,
-            eventType: 'SUPPORT_CASE_UPDATE',
-            category: 'OPERATIONS',
-            recipientUserId: ticket.reportedByUserId,
-            recipientRole: 'STAFF',
-            recipientEmail: emp.email,
-            title: `Support Ticket ${ticket.caseId} ${status}`,
-            message: `Status updated to ${status}.${resolutionSummary ? ' ' + resolutionSummary : ''}`,
-            priority: 'NORMAL',
-            channels: ['IN_APP'],
-            deepLink: `#staff-settings?section=help&ticketId=${ticket.caseId}`,
-            sourceModule: 'SETTINGS',
-            sourceEntityType: 'SUPPORT_CASE',
-            sourceEntityId: ticket.caseId,
-            deduplicationKey: `${ticket.caseId}:${status}:${Date.now()}`,
-            correlationId: req.correlationId || outboxId,
-            createdBy: userId || 'SYSTEM',
-          });
-        }
-      } catch (notifErr) {}
-    }
-  }
-
-  if (assignedToUserId !== undefined) {
-    ticket.assignedToUserId = assignedToUserId ? String(assignedToUserId).trim().toUpperCase() : null;
-  }
-  if (resolutionSummary && !ticket.resolvedAt) {
-    ticket.resolutionSummary = String(resolutionSummary).trim().slice(0, 2000);
-  }
-
-  await ticket.save();
-
-  try {
-    await auditService.log({
+    await auditService.recordAuditEvent({
       organisationId,
-      action: 'SUPPORT_CASE_STATUS_CHANGED',
-      performedByUserId: userId,
-      metadata: { caseId: ticket.caseId, status: ticket.status, assignedToUserId: ticket.assignedToUserId },
+      cafeId: ticket.cafeId || null,
+      actorUserId: userId,
+      actorRole: role,
+      module: 'SETTINGS',
+      action: 'SUPPORT_CASE_UPDATED',
+      entityType: 'SUPPORT_CASE',
+      entityId: ticket.caseId,
+      reason: ticket.resolutionSummary || 'Support case governance update',
+      result: 'SUCCESS',
+      riskClassification: 'LOW',
+      correlationId: req.correlationId || null,
+      before: {
+        status: previousStatus,
+        assignedToUserId: previousAssignee,
+      },
+      after: {
+        status: ticket.status,
+        assignedToUserId: ticket.assignedToUserId || null,
+      },
+      metadata: {
+        notificationStatus,
+      },
+      session,
     });
-  } catch (e) {}
 
-  res.status(200).json({
+    return { ticket, notificationStatus };
+  };
+
+  const result = await executeTransactionWithRetry(operation);
+
+  return res.status(200).json({
     success: true,
     message: `Support case ${caseId} updated successfully.`,
-    data: { ticket },
+    data: result,
   });
 }
 
@@ -1505,122 +2293,163 @@ async function updateManageSupportTicket(req, res) {
  */
 async function addSupportTicketReply(req, res) {
   const user = req.user || req.auth || {};
-  const { userId, organisationId, role, assignedCafeIds = [], primaryCafeId } = user;
+  const {
+    userId,
+    organisationId,
+    role,
+  } = user;
 
   if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
-    throw new ApiError(403, 'PERMISSION_DENIED', 'Only management roles can reply to support cases.');
+    throw new ApiError(
+      403,
+      'PERMISSION_DENIED',
+      'Only management roles can reply to support cases.'
+    );
   }
 
-  const caseId = req.params.caseId?.trim().toUpperCase();
-  const { message, visibility = 'PUBLIC', setStatusWaiting = true } = req.body || {};
+  const caseId = safeStr(req.params?.caseId).toUpperCase();
+  const {
+    message,
+    visibility = 'PUBLIC',
+    setStatusWaiting = true,
+  } = req.body || {};
+  const messageText = safeStr(message);
 
-  if (!message || !String(message).trim()) {
+  if (!messageText) {
     throw new ApiError(400, 'MESSAGE_REQUIRED', 'Reply message is required.');
   }
 
+  const validVisibility =
+    safeStr(visibility).toUpperCase() === 'INTERNAL'
+      ? 'INTERNAL'
+      : 'PUBLIC';
+
   const { SupportCase } = require('../models/SupportCase');
-  const { Notification } = require('../models/Notification');
-  const { NotificationOutbox } = require('../models/NotificationOutbox');
 
-  const ticket = await SupportCase.findOne({ organisationId, caseId });
-  if (!ticket) {
-    throw new ApiError(404, 'NOT_FOUND', `Support case ${caseId} not found.`);
-  }
-
-  if (role === 'CAFE_ADMIN') {
-    const validCafes = [...(assignedCafeIds || [])];
-    if (primaryCafeId && !validCafes.includes(primaryCafeId)) {
-      validCafes.push(primaryCafeId);
-    }
-    if (!validCafes.includes(ticket.cafeId)) {
-      throw new ApiError(403, 'CAFE_ACCESS_DENIED', 'Access denied to support case outside your assigned cafe.');
-    }
-  } else if (role === 'OWNER') {
-    const validCafes = (assignedCafeIds || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean);
-    if (!validCafes.length || !validCafes.includes(ticket.cafeId)) {
-      throw new ApiError(403, 'CROSS_CAFE_RESOURCE_DENIED', 'Access denied to support case outside your assigned cafe.');
-    }
-  }
-
-  const responseId = `RSP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-  const validVis = visibility === 'INTERNAL' ? 'INTERNAL' : 'PUBLIC';
-
-  ticket.responses = ticket.responses || [];
-  ticket.responses.push({
-    responseId,
-    authorUserId: userId,
-    authorRole: role,
-    message: String(message).trim().slice(0, 5000),
-    visibility: validVis,
-    createdAt: new Date(),
-  });
-
-  if (validVis === 'PUBLIC' && setStatusWaiting) {
-    ticket.status = 'WAITING_FOR_EMPLOYEE';
-  }
-
-  await ticket.save();
-
-  if (validVis === 'PUBLIC' && ticket.reportedByUserId) {
-    try {
-      const emp = await User.findOne({ organisationId, userId: ticket.reportedByUserId }).select('email name').lean();
-      if (emp) {
-        const outboxId = `OUT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-        await NotificationOutbox.create({
-          outboxId,
-          organisationId,
-          eventType: 'SUPPORT_CASE_REPLY',
-          recipientUserId: ticket.reportedByUserId,
-          recipientEmail: emp.email,
-          recipientName: emp.name,
-          recipientRole: 'STAFF',
-          templateId: 'SUPPORT_CASE_MESSAGE',
-          subject: `New message on Support Case ${ticket.caseId}`,
-          renderedSubject: `New message on Support Case ${ticket.caseId}`,
-          renderedBody: `Support team replied to your case "${ticket.summary}":\n\n${message.trim()}`,
-          status: 'SENT',
-          sentAt: new Date(),
-        });
-
-        const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const notifId = `NT-${todayStr}-${Math.floor(1000 + Math.random() * 9000)}`;
-        await Notification.create({
-          notificationId: notifId,
-          organisationId,
-          eventType: 'SUPPORT_CASE_REPLY',
-          category: 'OPERATIONS',
-          recipientUserId: ticket.reportedByUserId,
-          recipientRole: 'STAFF',
-          recipientEmail: emp.email,
-          title: `New message on Support Case ${ticket.caseId}`,
-          message: `${String(message).trim().slice(0, 120)}...`,
-          priority: 'NORMAL',
-          channels: ['IN_APP'],
-          deepLink: `#staff-settings?section=help&ticketId=${ticket.caseId}`,
-          sourceModule: 'SETTINGS',
-          sourceEntityType: 'SUPPORT_CASE',
-          sourceEntityId: ticket.caseId,
-          deduplicationKey: `${ticket.caseId}:REPLY:${Date.now()}`,
-          correlationId: req.correlationId || outboxId,
-          createdBy: userId || 'SYSTEM',
-        });
-      }
-    } catch (notifErr) {}
-  }
-
-  try {
-    await auditService.log({
+  const operation = async (session) => {
+    const ticketQuery = SupportCase.findOne({
       organisationId,
-      action: 'SUPPORT_CASE_RESPONSE',
-      performedByUserId: userId,
-      metadata: { caseId: ticket.caseId, responseId, visibility: validVis },
+      caseId,
     });
-  } catch (e) {}
+    const ticket = session && typeof ticketQuery.session === 'function'
+      ? await ticketQuery.session(session)
+      : await ticketQuery;
 
-  res.status(201).json({
+    if (!ticket) {
+      throw new ApiError(
+        404,
+        'NOT_FOUND',
+        `Support case ${caseId} not found.`
+      );
+    }
+
+    assertSupportCaseManagementScope(user, ticket);
+
+    if (ticket.status === 'CLOSED') {
+      throw new ApiError(
+        409,
+        'SUPPORT_CASE_CLOSED',
+        'Reopen the support case before adding a new management reply.'
+      );
+    }
+
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const responseId = await generateSupportSequenceId({
+      organisationId,
+      sequenceKey: `SUPPORT_RESPONSE_${datePart}`,
+      prefix: `RSP-${datePart}`,
+      minimumDigits: 4,
+      session,
+    });
+
+    ticket.responses = ticket.responses || [];
+    ticket.responses.push({
+      responseId,
+      authorUserId: userId,
+      authorRole: role,
+      message: messageText.slice(0, 5000),
+      visibility: validVisibility,
+      createdAt: now,
+    });
+
+    if (validVisibility === 'PUBLIC' && setStatusWaiting) {
+      ticket.status = 'WAITING_FOR_EMPLOYEE';
+    }
+
+    await ticket.save(session ? { session } : undefined);
+
+    let notificationStatus = {
+      inAppQueued: false,
+      emailQueued: false,
+      reason: 'INTERNAL_REPLY',
+    };
+
+    if (validVisibility === 'PUBLIC' && ticket.reportedByUserId) {
+      const recipientQuery = User.findOne({
+        organisationId,
+        userId: ticket.reportedByUserId,
+        accountStatus: 'ACTIVE',
+      }).select('userId email name role');
+      const recipient = session && typeof recipientQuery.session === 'function'
+        ? await recipientQuery.session(session)
+        : await recipientQuery;
+
+      if (recipient) {
+        notificationStatus = await enqueueSupportRecipientNotifications({
+          organisationId,
+          ticket,
+          recipientProfile: recipient,
+          eventType: 'SUPPORT_CASE_REPLY',
+          title: `New message on Support Case ${ticket.caseId}`,
+          message: `Support team replied to your case "${ticket.summary}":\n\n${messageText}`,
+          templateId: 'SUPPORT_CASE_MESSAGE',
+          actorUserId: userId,
+          correlationId: req.correlationId || null,
+          deduplicationKey: `${ticket.caseId}:REPLY:${responseId}`,
+          session,
+        });
+      } else {
+        notificationStatus = {
+          inAppQueued: false,
+          emailQueued: false,
+          reason: 'RECIPIENT_PROFILE_UNAVAILABLE',
+        };
+      }
+    }
+
+    await auditService.recordAuditEvent({
+      organisationId,
+      cafeId: ticket.cafeId || null,
+      actorUserId: userId,
+      actorRole: role,
+      module: 'SETTINGS',
+      action: 'SUPPORT_CASE_RESPONSE',
+      entityType: 'SUPPORT_CASE',
+      entityId: ticket.caseId,
+      reason: validVisibility === 'INTERNAL'
+        ? 'Internal management support note'
+        : 'Management response to support case',
+      result: 'SUCCESS',
+      riskClassification: 'LOW',
+      correlationId: req.correlationId || null,
+      metadata: {
+        responseId,
+        visibility: validVisibility,
+        notificationStatus,
+      },
+      session,
+    });
+
+    return { ticket, responseId, notificationStatus };
+  };
+
+  const result = await executeTransactionWithRetry(operation);
+
+  return res.status(201).json({
     success: true,
     message: 'Reply added successfully.',
-    data: { ticket },
+    data: result,
   });
 }
 
@@ -1630,62 +2459,122 @@ async function addSupportTicketReply(req, res) {
  */
 async function addEmployeeSupportTicketReply(req, res) {
   const user = req.user || req.auth || {};
-  const { userId, organisationId } = user;
+  const {
+    userId,
+    organisationId,
+  } = user;
 
-  const caseId = req.params.caseId?.trim().toUpperCase();
-  const { message } = req.body || {};
+  const caseId = safeStr(req.params?.caseId).toUpperCase();
+  const messageText = safeStr(req.body?.message);
 
-  if (!message || !String(message).trim()) {
+  if (!messageText) {
     throw new ApiError(400, 'MESSAGE_REQUIRED', 'Reply message is required.');
   }
 
   const { SupportCase } = require('../models/SupportCase');
 
-  const ticket = await SupportCase.findOne({
-    organisationId,
-    caseId,
-    reportedByUserId: userId,
-  });
-
-  if (!ticket) {
-    throw new ApiError(404, 'NOT_FOUND', `Support ticket ${caseId} not found.`);
-  }
-
-  if (ticket.status === 'CLOSED') {
-    throw new ApiError(400, 'TICKET_CLOSED', 'Cannot reply to a closed support ticket.');
-  }
-
-  const responseId = `RSP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-  ticket.responses = ticket.responses || [];
-  ticket.responses.push({
-    responseId,
-    authorUserId: userId,
-    authorRole: 'STAFF',
-    message: String(message).trim().slice(0, 5000),
-    visibility: 'PUBLIC',
-    createdAt: new Date(),
-  });
-
-  if (ticket.status === 'WAITING_FOR_EMPLOYEE' || ticket.status === 'WAITING_EXTERNAL') {
-    ticket.status = 'IN_PROGRESS';
-  }
-
-  await ticket.save();
-
-  try {
-    await auditService.log({
+  let actorRole = safeStr(user.role).toUpperCase();
+  if (!actorRole) {
+    const profileQuery = User.findOne({
       organisationId,
-      action: 'SUPPORT_CASE_EMPLOYEE_REPLY',
-      performedByUserId: userId,
-      metadata: { caseId: ticket.caseId, responseId },
-    });
-  } catch (e) {}
+      userId,
+    }).select('role');
+    const profile =
+      profileQuery && typeof profileQuery.lean === 'function'
+        ? await profileQuery.lean()
+        : await profileQuery;
+    actorRole = safeStr(profile?.role).toUpperCase();
+  }
 
-  res.status(201).json({
+  if (!actorRole) {
+    throw new ApiError(
+      409,
+      'SUPPORT_ACTOR_ROLE_REQUIRED',
+      'The authenticated role could not be verified for this support reply.'
+    );
+  }
+
+  const operation = async (session) => {
+    const ticketQuery = SupportCase.findOne({
+      organisationId,
+      caseId,
+      reportedByUserId: userId,
+    });
+    const ticket = session && typeof ticketQuery.session === 'function'
+      ? await ticketQuery.session(session)
+      : await ticketQuery;
+
+    if (!ticket) {
+      throw new ApiError(
+        404,
+        'NOT_FOUND',
+        `Support ticket ${caseId} not found.`
+      );
+    }
+
+    if (ticket.status === 'CLOSED') {
+      throw new ApiError(
+        400,
+        'TICKET_CLOSED',
+        'Cannot reply to a closed support ticket.'
+      );
+    }
+
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const responseId = await generateSupportSequenceId({
+      organisationId,
+      sequenceKey: `SUPPORT_RESPONSE_${datePart}`,
+      prefix: `RSP-${datePart}`,
+      minimumDigits: 4,
+      session,
+    });
+
+    ticket.responses = ticket.responses || [];
+    ticket.responses.push({
+      responseId,
+      authorUserId: userId,
+      authorRole: actorRole,
+      message: messageText.slice(0, 5000),
+      visibility: 'PUBLIC',
+      createdAt: now,
+    });
+
+    if (
+      ticket.status === 'WAITING_FOR_EMPLOYEE' ||
+      ticket.status === 'WAITING_EXTERNAL'
+    ) {
+      ticket.status = 'IN_PROGRESS';
+    }
+
+    await ticket.save(session ? { session } : undefined);
+
+    await auditService.recordAuditEvent({
+      organisationId,
+      cafeId: ticket.cafeId || null,
+      actorUserId: userId,
+      actorRole,
+      module: 'SETTINGS',
+      action: 'SUPPORT_CASE_EMPLOYEE_REPLY',
+      entityType: 'SUPPORT_CASE',
+      entityId: ticket.caseId,
+      reason: 'Employee response to own support case',
+      result: 'SUCCESS',
+      riskClassification: 'LOW',
+      correlationId: req.correlationId || null,
+      metadata: { responseId },
+      session,
+    });
+
+    return { ticket, responseId };
+  };
+
+  const result = await executeTransactionWithRetry(operation);
+
+  return res.status(201).json({
     success: true,
     message: 'Your reply has been submitted.',
-    data: { ticket },
+    data: result,
   });
 }
 
@@ -1841,45 +2730,30 @@ async function updateSecurityPolicy(req, res) {
     throw new ApiError(
       403,
       'PRIMARY_MASTER_AUTHORITY_REQUIRED',
-      'Only the Primary Master may modify organisation security policies.'
+      'Only the Primary Master may administer organisation security policy.'
     );
   }
 
-  const { passwordPolicy, sessionPolicy } = req.body || {};
-  const effectivePasswordPolicy = passwordPolicy || 'Minimum 15 characters (passphrase length-first, zero forced composition rules, blocklist protected)';
-  const effectiveSessionPolicy = sessionPolicy || 'Standard enterprise session management';
+  const enforcedPolicy = getEffectiveAuthSecurityPolicy();
 
-  try {
-    const { recordAuditEvent } = require('../services/auditService');
-    await recordAuditEvent({
-      organisationId: auth.organisationId || 'ORG-ZAMORIN',
-      actorUserId: auth.userId || 'MU-0001',
-      actorRole: auth.role,
-      module: 'SECURITY_POLICY',
-      action: 'SECURITY_POLICY_UPDATED',
-      entityType: 'SECURITY_POLICY',
-      entityId: 'GLOBAL_POLICY',
-      result: 'SUCCESS',
-      riskClassification: 'HIGH',
-      details: {
-        passwordPolicy: effectivePasswordPolicy,
-        sessionPolicy: effectiveSessionPolicy,
-        mfaRequired: false,
-      },
-    });
-  } catch (_) {}
-
-  return res.status(200).json({
-    success: true,
-    message: 'Security policy updated successfully.',
-    data: {
+  // The authentication stack currently enforces password/session policy from
+  // deployment/runtime configuration. Until every auth path consumes a durable
+  // organisation policy atomically, accepting arbitrary strings here would
+  // create a false claim that security changed when enforcement did not.
+  throw new ApiError(
+    409,
+    'SECURITY_POLICY_RUNTIME_MUTATION_UNSUPPORTED',
+    'Runtime security-policy mutation is disabled because password and session enforcement are deployment-controlled. Change the authenticated runtime configuration and redeploy through the governed release process.',
+    {
       securityPolicy: {
-        mfaRequired: false,
-        sessionPolicy: effectiveSessionPolicy,
-        passwordPolicy: effectivePasswordPolicy,
+        source: enforcedPolicy.source,
+        runtimeMutable: false,
+        password: enforcedPolicy.password,
+        mfa: enforcedPolicy.mfa,
+        session: enforcedPolicy.session,
       },
-    },
-  });
+    }
+  );
 }
 
 module.exports = {
@@ -1891,6 +2765,9 @@ module.exports = {
   getMyAccess,
   submitAccessRequest,
   listMyAccessRequests,
+  listAccessRequestsForReview,
+  reviewAccessRequest,
+  revokeTemporaryAccessGrant,
   getMyPreferences,
   updateAppearancePreferences,
   updateLanguagePreference,

@@ -27,6 +27,28 @@ const loanAdvanceController = require('../src/controllers/loanAdvanceController'
 const shiftChangeController = require('../src/controllers/shiftChangeController');
 const { authorize } = require('../src/middleware/authorize');
 
+async function ensureRosterStaffFixture({ orgId, staffId, cafeId }) {
+  await User.updateOne(
+    { organisationId: orgId, userId: staffId },
+    {
+      $set: {
+        name: `Roster Staff ${staffId}`,
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        employmentStatus: 'ACTIVE',
+        primaryCafeId: cafeId,
+        assignedCafeIds: [cafeId],
+      },
+      $setOnInsert: {
+        email: `${String(staffId).toLowerCase()}@roster-test.zamorin.local`,
+        passwordHash: 'test_password_hash',
+        createdBy: 'SYSTEM',
+      },
+    },
+    { upsert: true }
+  );
+}
+
 function createMockRes() {
   return {
     statusCode: 200,
@@ -419,6 +441,8 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
     const staffId = 'ST-0001';
     const rosterId = 'ROSTER-20260907-001';
 
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-01' });
+
     await ShiftRoster.create({
       rosterId,
       employeeId: staffId,
@@ -445,6 +469,7 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
       auth: {
         userId: managerId,
         role: 'MASTER',
+        isPrimaryMaster: true,
         organisationId: orgId,
       },
       headers: {},
@@ -474,6 +499,8 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
     const staffId = 'ST-0002';
     const rosterId = 'ROSTER-20260914-002';
 
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-02' });
+
     await ShiftRoster.create({
       rosterId,
       employeeId: staffId,
@@ -500,6 +527,7 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
       auth: {
         userId: managerId,
         role: 'MASTER',
+        isPrimaryMaster: true,
         organisationId: orgId,
       },
       headers: {},
@@ -527,6 +555,8 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
     const managerId = 'MU-0001';
     const staffId = 'ST-0003';
     const rosterId = 'ROSTER-20260921-003';
+
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-03' });
 
     await ShiftRoster.create({
       rosterId,
@@ -562,6 +592,7 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
       auth: {
         userId: managerId,
         role: 'MASTER',
+        isPrimaryMaster: true,
         organisationId: orgId,
       },
       headers: {},
@@ -579,6 +610,48 @@ test('Staff P2 Product Completion & Hardening Suite', async (suite) => {
 
     assert.ok(notif);
     assert.ok(notif.message.includes('2026-09-21'));
+  });
+
+  await suite.test('P2-RST-4: publishRoster rejects employee moved outside roster café', async () => {
+    const orgId = 'ZAMORIN';
+    const managerId = 'MU-0001';
+    const staffId = 'ST-0044';
+    const rosterId = 'ROSTER-20260928-CROSS-CAFE';
+
+    await ensureRosterStaffFixture({ orgId, staffId, cafeId: 'CAFE-01' });
+    await ShiftRoster.create({
+      rosterId,
+      organisationId: orgId,
+      cafeId: 'CAFE-02',
+      weekStartDate: '2026-09-28',
+      status: 'DRAFT',
+      createdByUserId: managerId,
+      assignments: [
+        {
+          userId: staffId,
+          date: '2026-09-29',
+          startTime: '08:00',
+          endTime: '16:00',
+        },
+      ],
+    });
+
+    const req = {
+      params: { rosterId },
+      auth: {
+        userId: managerId,
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        organisationId: orgId,
+      },
+      headers: {},
+      ip: '127.0.0.1',
+    };
+
+    await assert.rejects(
+      async () => attendanceController.publishRoster(req, createMockRes()),
+      { statusCode: 422, code: 'ROSTER_EMPLOYEE_SCOPE_INVALID' }
+    );
   });
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -297,7 +297,7 @@ export async function clearPublicAppCaches() {
     cacheNames.filter(
       (name) =>
         name.startsWith(
-          'zamorin-public-shell-'
+          'zamorin-pwa-'
         )
     );
 

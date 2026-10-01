@@ -68,14 +68,7 @@ async function main() {
     assert.equal(isRouteAllowed(ROLES.MASTER, "#payroll/runs", true), true, "Primary Master authorized for #payroll/runs");
     pass("Primary Master lands on #dashboard with full governance authority");
 
-    // 2. Normal Master Canonical Landing
-    const normalMasterLanding = getLandingRoute(ROLES.MASTER);
-    assert.equal(normalMasterLanding, "#dashboard", "Normal Master must land on #dashboard");
-    assert.equal(isRouteAllowed(ROLES.MASTER, "#inventory", false), true, "Normal Master authorized for #inventory");
-    assert.equal(isRouteAllowed(ROLES.MASTER, "#payroll/runs", false), false, "Normal Master blocked from Primary-only #payroll/runs");
-    pass("Normal Master lands on #dashboard with canonical management authority");
-
-    // 3. Owner Canonical Landing
+    // 2. Owner Canonical Landing
     const ownerLanding = getLandingRoute(ROLES.OWNER);
     assert.equal(ownerLanding, "#dashboard", "Owner must land on #dashboard");
     assert.equal(isRouteAllowed(ROLES.OWNER, "#dashboard"), true, "Owner authorized for #dashboard");
@@ -83,7 +76,7 @@ async function main() {
     assert.equal(isRouteAllowed(ROLES.OWNER, "#ledger"), true, "Owner authorized for #ledger");
     pass("Owner lands on #dashboard with executive financial authority");
 
-    // 4. Cafe Operations Canonical Landing
+    // 3. Cafe Operations Canonical Landing
     const cafeLanding = getLandingRoute(ROLES.CAFE_ADMIN);
     assert(cafeLanding === "#dashboard" || cafeLanding === "#pos", "Cafe Admin must land on #dashboard or #pos");
     assert.equal(isRouteAllowed(ROLES.CAFE_ADMIN, "#pos"), true, "Cafe Admin authorized for #pos");

@@ -12,6 +12,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const trashController = require('../src/controllers/trashController.js');
 const { TrashEntry } = require('../src/models/TrashEntry.js');
 const { DispositionCertificate } = require('../src/models/DispositionCertificate.js');
+const { RetentionPolicy } = require('../src/models/RetentionPolicy.js');
 const { User } = require('../src/models/User.js');
 const { AuditEvent } = require('../src/models/AuditEvent.js');
 const roleGovernanceController = require('../src/controllers/roleGovernanceController.js');
@@ -110,22 +111,22 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
       json(p) { holdResData = p; return this; },
     };
 
-    // Normal Master attempting placePreservationHold -> 403
-    const normalMasterHoldReq = {
-      auth: { userId: 'MU-0002', name: 'Normal Master', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
+    // Malformed MASTER attempting placePreservationHold -> 403
+    const malformedMasterHoldReq = {
+      auth: { userId: 'MU-0002', name: 'Malformed MASTER', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       params: { trashId: 'TRASH-202609-00001' },
       body: { reason: 'Unauthorized hold' },
     };
     await assert.rejects(
       async () => {
-        await trashController.placePreservationHold(normalMasterHoldReq, holdRes);
+        await trashController.placePreservationHold(malformedMasterHoldReq, holdRes);
       },
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.match(err.message, /Primary Master/i);
         return true;
       },
-      'Normal Master must be denied from placing preservation holds'
+      'Malformed MASTER must be denied from placing preservation holds'
     );
 
     await trashController.placePreservationHold(holdReq, holdRes);
@@ -166,7 +167,20 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     assert.equal(releasedItem.lifecycleStatus, 'RECOVERABLE');
   });
 
-  await t.test('PM-04 DOMAIN C: Permanent disposition purge emits Proof Certificate and erases payload atomically', async () => {
+  await t.test('PM-04 DOMAIN C: Permanent disposition requires verified policy and transactional execution', async () => {
+    await RetentionPolicy.create({
+      policyId: 'RET-000001-00011',
+      organisationId: 'ORG-ZAMORIN',
+      name: 'Inventory Permanent Disposition Test Policy',
+      entityType: 'INVENTORY_ITEM',
+      dataClassification: 'OPERATIONAL_DATA',
+      retentionDurationDays: 30,
+      dispositionReviewRequired: true,
+      makerCheckerRequired: false,
+      permanentDispositionAllowed: true,
+      version: 1,
+    });
+
     const item = new TrashEntry({
       trashId: 'TRASH-202609-00002',
       organisationId: 'ORG-ZAMORIN',
@@ -179,64 +193,69 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
       deletedByUserId: 'MU-0001',
       deletedAt: new Date(Date.now() - 40 * 86400000),
       expiresAt: new Date(Date.now() - 10 * 86400000),
+      retentionPolicyId: 'RET-000001-00011',
+      retentionPolicyVersion: 1,
       lifecycleStatus: 'DISPOSITION_APPROVED',
       holdState: 'NONE',
+      dispositionRequestId: 'DISP-REQ-TEST01',
+      dispositionRequestedByUserId: 'MU-0001',
+      dispositionRequestedAt: new Date(Date.now() - 2 * 86400000),
+      dispositionJustification: 'Test disposition request after retention completion.',
+      dispositionApprovedByUserId: 'MU-0001',
+      dispositionApprovedAt: new Date(Date.now() - 86400000),
+      dispositionApprovalReason: 'Test approval for transaction safety verification.',
       payload: { sensitiveData: 'Original item snapshot' },
-      attachments: [{ filename: 'damage_report.pdf', storageKey: 'att-123' }],
+      attachments: [],
     });
     await item.save();
 
-    // Normal Master attempting executeDispositionPurge -> 403
-    const normalMasterPurgeReq = {
+    const malformedMasterPurgeReq = {
       auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       params: { trashId: 'TRASH-202609-00002' },
+      body: {
+        reason: 'Permanent disposition test execution reason.',
+        confirmation: 'PERMANENTLY_DISPOSE_TRASH_RECORD',
+      },
     };
     const dummyPurgeRes = { status() { return this; }, json() { return this; } };
     await assert.rejects(
-      async () => {
-        await trashController.executeDispositionPurge(normalMasterPurgeReq, dummyPurgeRes);
-      },
+      async () => trashController.executeDispositionPurge(malformedMasterPurgeReq, dummyPurgeRes),
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.match(err.message, /Primary Master/i);
         return true;
-      },
-      'Normal Master must be denied from executing disposition purge'
+      }
     );
 
     const purgeReq = {
       auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { trashId: 'TRASH-202609-00002' },
+      body: {
+        reason: 'Permanent disposition test execution reason.',
+        confirmation: 'PERMANENTLY_DISPOSE_TRASH_RECORD',
+      },
+      method: 'POST',
+      originalUrl: '/api/v1/trash/TRASH-202609-00002/purge',
+      get: () => null,
     };
-    let purgeResData = null;
-    const purgeRes = {
-      status(code) { assert.equal(code, 200); return this; },
-      json(p) { purgeResData = p; return this; },
-    };
 
-    await trashController.executeDispositionPurge(purgeReq, purgeRes);
-    assert.equal(purgeResData.success, true);
-    assert.equal(purgeResData.data.status, 'DISPOSED');
-    assert.ok(purgeResData.data.certificateId, 'DispositionCertificate ID must be generated');
+    await assert.rejects(
+      async () => trashController.executeDispositionPurge(purgeReq, dummyPurgeRes),
+      (err) => {
+        assert.equal(err.statusCode, 503);
+        assert.equal(err.code, 'TRANSACTION_SUPPORT_REQUIRED');
+        return true;
+      },
+      'Standalone MongoDB must never execute irreversible disposition without transactions'
+    );
 
-    const purgedItem = await TrashEntry.findOne({ trashId: 'TRASH-202609-00002' });
-    assert.equal(purgedItem.lifecycleStatus, 'DISPOSED');
-    assert.equal(purgedItem.payload, null, 'Payload snapshot must be permanently erased');
-    assert.equal(purgedItem.attachments.length, 0, 'Attachments must be purged');
-    assert.equal(purgedItem.dispositionCertificateId, purgeResData.data.certificateId);
+    const retainedItem = await TrashEntry.findOne({ trashId: 'TRASH-202609-00002' });
+    assert.equal(retainedItem.lifecycleStatus, 'DISPOSITION_APPROVED');
+    assert.notEqual(retainedItem.payload, null, 'Payload must remain intact when transaction support is unavailable');
+    assert.equal(retainedItem.dispositionCertificateId, null);
 
-    // Certificate check
-    const cert = await DispositionCertificate.findOne({ certificateId: purgeResData.data.certificateId });
-    assert.ok(cert, 'Proof of Disposition Certificate must exist');
-    assert.equal(cert.recordReference, 'SKU-PURGE-01');
-    assert.equal(cert.entityType, 'INVENTORY_ITEM');
-
-    // AuditEvent check
-    const audit = await AuditEvent.findOne({
-      action: 'EXECUTE_PERMANENT_DISPOSITION',
-      'metadata.certificateId': purgeResData.data.certificateId,
-    });
-    assert.ok(audit, 'AuditEvent must be atomically recorded for permanent purge');
+    const cert = await DispositionCertificate.findOne({ trashId: 'TRASH-202609-00002' });
+    assert.equal(cert, null, 'No proof certificate may be issued when disposition did not execute');
   });
 
   await t.test('PM-04 DOMAIN A & E: Primary Master protection invariant blocks role change and archiving', async () => {
@@ -312,23 +331,23 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     if (prevEnv) process.env.REQUIRE_MFA = prevEnv;
   });
 
-  await t.test('PM-04 DOMAIN B: Cafe creation and mutation strictly requires Primary Master; Normal Master, OWNER and STAFF are denied', async () => {
+  await t.test('PM-04 DOMAIN B: Cafe creation and mutation strictly requires Primary Master; Malformed MASTER, OWNER and STAFF are denied', async () => {
     const dummyRes = {
       status() { return this; },
       json() { return this; },
     };
 
-    // 0. Normal Master can create cafe (proven by earlier frozen policy adminGovernance.test.js:309)
-    const normalMasterCreateReq = {
+    // 0. Malformed MASTER can create cafe (proven by earlier frozen policy adminGovernance.test.js:309)
+    const malformedMasterCreateReq = {
       auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
-      body: { name: 'Dawn Roast — Normal Master Branch', cafeType: 'STANDARD_CAFE' },
+      body: { name: 'Dawn Roast — Malformed MASTER Branch', cafeType: 'STANDARD_CAFE' },
     };
     let normalResData = null;
     const normalRes = {
       status(c) { assert.equal(c, 201); return this; },
       json(d) { normalResData = d; return this; },
     };
-    await cafeController.createCafe(normalMasterCreateReq, normalRes);
+    await cafeController.createCafe(malformedMasterCreateReq, normalRes);
     assert.equal(normalResData.success, true);
 
     // 1. OWNER attempting createCafe -> 403
@@ -513,9 +532,9 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     assert.ok(updatedUser.permissionsVersion > 1, 'permissionsVersion must be incremented to invalidate permissions cache');
   });
 
-  await t.test('PM-04 DOMAIN D: Security policy mutation strictly requires Primary Master; Normal Master is denied', async () => {
-    // 1. Normal Master attempting updateSecurityPolicy -> 403 PRIMARY_MASTER_AUTHORITY_REQUIRED
-    const normalMasterReq = {
+  await t.test('PM-04 DOMAIN D: Security policy mutation strictly requires Primary Master; Malformed MASTER is denied', async () => {
+    // 1. Malformed MASTER attempting updateSecurityPolicy -> 403 PRIMARY_MASTER_AUTHORITY_REQUIRED
+    const malformedMasterReq = {
       auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       body: { passwordPolicy: 'Weak policy attempted' },
     };
@@ -523,14 +542,14 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
 
     await assert.rejects(
       async () => {
-        await settingsController.updateSecurityPolicy(normalMasterReq, dummyRes);
+        await settingsController.updateSecurityPolicy(malformedMasterReq, dummyRes);
       },
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.match(err.message, /Primary Master/i);
         return true;
       },
-      'Normal Master must be denied from mutating security policy'
+      'Malformed MASTER must be denied from mutating security policy'
     );
 
     // 2. Primary Master updates policy successfully

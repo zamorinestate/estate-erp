@@ -16,6 +16,9 @@ test('SCR-023: Settings Controller exposes all mandatory endpoints', () => {
   assert.equal(typeof settingsController.getMyAccess, 'function');
   assert.equal(typeof settingsController.submitAccessRequest, 'function');
   assert.equal(typeof settingsController.listMyAccessRequests, 'function');
+  assert.equal(typeof settingsController.listAccessRequestsForReview, 'function');
+  assert.equal(typeof settingsController.reviewAccessRequest, 'function');
+  assert.equal(typeof settingsController.revokeTemporaryAccessGrant, 'function');
   assert.equal(typeof settingsController.getMySessions, 'function');
   assert.equal(typeof settingsController.revokeMySession, 'function');
   assert.equal(typeof settingsController.revokeOtherSessions, 'function');

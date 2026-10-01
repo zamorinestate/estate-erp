@@ -331,7 +331,7 @@ describe('EXT-06 -- Zero-Cost Staging, OWASP DAST & Security Probes Suite', () =
   test('18: PO Approval authorization matrix permits MASTER only', () => {
     const allowedRolesForPoApprove = ['MASTER'];
 
-    assert.equal(allowedRolesForPoApprove.includes('MASTER'), true, 'Primary & Normal Master ALLOW');
+    assert.equal(allowedRolesForPoApprove.includes('MASTER'), true, 'Primary & Malformed MASTER ALLOW');
     assert.equal(allowedRolesForPoApprove.includes('OWNER'), false, 'OWNER DENY');
     assert.equal(allowedRolesForPoApprove.includes('CAFE_ADMIN'), false, 'CAFE ADMIN DENY');
     assert.equal(allowedRolesForPoApprove.includes('STAFF'), false, 'STAFF DENY');

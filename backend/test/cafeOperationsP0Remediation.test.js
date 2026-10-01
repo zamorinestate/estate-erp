@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const mongoose = require('mongoose');
 
 const { createApp } = require('../src/server');
 const { Bill } = require('../src/models/Bill');
@@ -13,6 +14,7 @@ const { SequenceCounter } = require('../src/models/SequenceCounter');
 const { RolePermission } = require('../src/models/RolePermission');
 const { User } = require('../src/models/User');
 const { Expense } = require('../src/models/Expense');
+const { Approval } = require('../src/models/Approval');
 const { DeviceRegistration } = require('../src/models/DeviceRegistration');
 const { OperatorSession } = require('../src/models/OperatorSession');
 
@@ -69,6 +71,7 @@ function createQueryMock(items) {
   p.sort = () => p;
   p.skip = () => p;
   p.limit = () => p;
+  p.session = () => p;
   return p;
 }
 
@@ -356,7 +359,12 @@ test('CAFÉ OPS-01 — P0 Remediation Suite (P0-1, P0-2, P0-3)', async (t) => {
       cafeDisplayName: 'Zamorin Flagship',
       intendedDisplayName: 'Billing Terminal 1',
     }));
-    t.mock.method(repos.enrollmentTokens, 'update', async () => ({}));
+    t.mock.method(repos.enrollmentTokens, 'consumeIfPending', async (id, usage) => ({
+      id,
+      status: 'USED',
+      usedAt: usage.usedAt,
+      usedByDeviceId: usage.usedByDeviceId,
+    }));
     t.mock.method(repos.devices, 'create', async (dev) => ({ ...dev, id: 'DEV-POS-0099' }));
 
     const { device } = await deviceService.enrollDevice({
@@ -368,6 +376,7 @@ test('CAFÉ OPS-01 — P0 Remediation Suite (P0-1, P0-2, P0-3)', async (t) => {
     assert.ok(savedRegDoc, 'DeviceRegistration document must be created');
     assert.equal(savedRegDoc.deviceId, 'DEV-POS-0099');
     assert.equal(savedRegDoc.assignedCafeId, 'ZC-0001');
+    assert.equal(savedRegDoc.platform, 'WEB_POS');
     assert.equal(savedRegDoc.status, 'ACTIVE');
   });
 
@@ -428,14 +437,27 @@ test('CAFÉ OPS-01 — P0 Remediation Suite (P0-1, P0-2, P0-3)', async (t) => {
   // ══════════════════════════════════════════════════════════════════════════
 
   const mockExpenses = [];
+  const mockApprovals = [];
 
-  t.mock.method(Expense, 'create', async (data) => {
-    const doc = {
-      ...data,
-      save: async function () { return this; },
-    };
-    mockExpenses.push(doc);
-    return doc;
+  t.mock.method(mongoose, 'startSession', async () => ({
+    async withTransaction(work) {
+      return work();
+    },
+    async endSession() {},
+  }));
+
+  t.mock.method(Expense.prototype, 'save', async function saveExpenseFixture() {
+    if (!mockExpenses.includes(this)) {
+      mockExpenses.push(this);
+    }
+    return this;
+  });
+
+  t.mock.method(Approval.prototype, 'save', async function saveApprovalFixture() {
+    if (!mockApprovals.includes(this)) {
+      mockApprovals.push(this);
+    }
+    return this;
   });
 
   t.mock.method(Expense, 'find', (filter = {}) => {
@@ -449,13 +471,24 @@ test('CAFÉ OPS-01 — P0 Remediation Suite (P0-1, P0-2, P0-3)', async (t) => {
     return createQueryMock(results);
   });
 
-  t.mock.method(Expense, 'findOne', async (filter = {}) => {
-    return mockExpenses.find((e) => {
+  t.mock.method(Expense, 'findOne', (filter = {}) => {
+    const found = mockExpenses.find((e) => {
       if (filter.expenseId && e.expenseId !== filter.expenseId) return false;
       if (filter.organisationId && e.organisationId !== filter.organisationId) return false;
       if (filter.cafeId && e.cafeId !== filter.cafeId) return false;
       return true;
     }) || null;
+    return createQueryMock(found);
+  });
+
+  t.mock.method(Approval, 'findOne', (filter = {}) => {
+    const found = mockApprovals.find((a) => {
+      if (filter.organisationId && a.organisationId !== filter.organisationId) return false;
+      if (filter.entityType && a.entityType !== filter.entityType) return false;
+      if (filter.entityId && a.entityId !== filter.entityId) return false;
+      return true;
+    }) || null;
+    return createQueryMock(found);
   });
 
   t.mock.method(Expense, 'countDocuments', async () => mockExpenses.length);
@@ -550,7 +583,7 @@ test('CAFÉ OPS-01 — P0 Remediation Suite (P0-1, P0-2, P0-3)', async (t) => {
       },
     });
 
-    assert.equal(res.status, 400, 'Invalid state transition must return 400');
+    assert.equal(res.status, 409, 'Invalid state transition must return 409 Conflict');
     assert.ok(
       res.data.error?.code === 'INVALID_STATE' ||
       (res.data.error?.message && res.data.error.message.includes('pending')),

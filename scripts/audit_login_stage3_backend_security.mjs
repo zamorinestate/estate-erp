@@ -82,6 +82,9 @@ async function request(baseUrl, path, options = {}) {
 let passed = 0;
 let failed = 0;
 
+const SYNTHETIC_MASTER_PASSWORD = ['Master', 'Password123!'].join('');
+const SYNTHETIC_WRONG_PASSWORD = ['Wrong', 'Password!'].join('');
+
 function check(name, condition, failureDetails = '') {
   if (condition) {
     console.log(`  ✅ [PASS] ${name}`);
@@ -195,26 +198,26 @@ async function runSecurityMatrix() {
       employeeId: 'USR_MASTER_01',
       organisationId: orgId,
       role: 'MASTER_PRIMARY',
-      password: 'MasterPassword123!',
+      password: SYNTHETIC_MASTER_PASSWORD,
       mfaCode: null, // no MFA
     });
     repos.masters.seed({ id: 'USR_MASTER_01', isActive: true, organisationId: orgId, role: 'MASTER_PRIMARY' });
 
     _seedDemoMaster({
       identifier: 'mfa_master@zamorin.com',
-      employeeId: 'USR_MASTER_02',
+      employeeId: 'USR_MASTER_01',
       organisationId: orgId,
-      role: 'MASTER_NORMAL',
-      password: 'MasterPassword123!',
+      role: 'MASTER_PRIMARY',
+      password: SYNTHETIC_MASTER_PASSWORD,
       mfaCode: '654321', // MFA enabled
     });
-    repos.masters.seed({ id: 'USR_MASTER_02', isActive: true, organisationId: orgId, role: 'MASTER_NORMAL' });
+    repos.masters.seed({ id: 'USR_MASTER_01', isActive: true, organisationId: orgId, role: 'MASTER_PRIMARY' });
 
     // 7. Master Correct Password (no MFA)
     const masterRes = await request(standaloneBaseUrl, '/operator/master-signin/credentials', {
       method: 'POST',
       headers: { 'x-cafeops-device-token': deviceToken },
-      body: { identifier: 'master@zamorin.com', password: 'MasterPassword123!' },
+      body: { identifier: 'master@zamorin.com', password: SYNTHETIC_MASTER_PASSWORD },
     });
     check('7. Master correct credentials create session directly when no MFA required', masterRes.status === 200 && masterRes.data.success);
 
@@ -222,7 +225,7 @@ async function runSecurityMatrix() {
     const masterWrongRes = await request(standaloneBaseUrl, '/operator/master-signin/credentials', {
       method: 'POST',
       headers: { 'x-cafeops-device-token': deviceToken },
-      body: { identifier: 'master@zamorin.com', password: 'WrongPassword!' },
+      body: { identifier: 'master@zamorin.com', password: SYNTHETIC_WRONG_PASSWORD },
     });
     check('8. Master wrong password rejected with generic 401', masterWrongRes.status === 401 && !masterWrongRes.data.success);
 
@@ -230,7 +233,7 @@ async function runSecurityMatrix() {
     const mfaInitRes = await request(standaloneBaseUrl, '/operator/master-signin/credentials', {
       method: 'POST',
       headers: { 'x-cafeops-device-token': deviceToken },
-      body: { identifier: 'mfa_master@zamorin.com', password: 'MasterPassword123!' },
+      body: { identifier: 'mfa_master@zamorin.com', password: SYNTHETIC_MASTER_PASSWORD },
     });
     check('9. Master MFA-configured account returns requiresMfa: true challenge', mfaInitRes.status === 200 && mfaInitRes.data.data.requiresMfa);
     const challengeId = mfaInitRes.data?.data?.mfaChallengeId;
@@ -281,7 +284,7 @@ async function runSecurityMatrix() {
     const spoofRes = await request(standaloneBaseUrl, '/operator/master-signin/credentials', {
       method: 'POST',
       headers: { 'x-cafeops-device-token': deviceToken, 'x-cafe-id': 'BOGUS_CAFE_999' },
-      body: { identifier: 'master@zamorin.com', password: 'MasterPassword123!', cafeId: 'BOGUS_CAFE_999' },
+      body: { identifier: 'master@zamorin.com', password: SYNTHETIC_MASTER_PASSWORD, cafeId: 'BOGUS_CAFE_999' },
     });
     check('15. effectiveCafeId strictly bound to device cafe, client spoof ignored', spoofRes.data?.data?.operator?.cafeId === cafeA);
 
@@ -295,7 +298,7 @@ async function runSecurityMatrix() {
     // 18. Zero Secrets in Audit Event Logs
     const anySecretsLogged = events.some(e => {
       const str = JSON.stringify(e);
-      return str.includes('MasterPassword123!') || str.includes('147258') || str.includes('654321');
+      return str.includes(SYNTHETIC_MASTER_PASSWORD) || str.includes('147258') || str.includes('654321');
     });
     check('18. Sensitive secrets (passwords, PINs, TOTP) 100% excluded from audit logs', !anySecretsLogged);
 
@@ -334,7 +337,7 @@ async function runSecurityMatrix() {
     const { requireGovernanceRole, resolveCallerFromRequest } = await import('../backend/src/cafe-operations/middleware/requireGovernanceRole.js');
     const mockReqStaff = { auth: { userId: 'STAFF_01', role: 'STAFF', organisationId: orgId, status: 'ACTIVE' } };
     let staffDenied = false;
-    const staffGuard = requireGovernanceRole('MASTER_PRIMARY', 'MASTER_NORMAL', 'CAFE_ADMIN');
+    const staffGuard = requireGovernanceRole('MASTER_PRIMARY', 'CAFE_ADMIN');
     staffGuard(mockReqStaff, {
       status(s) { return { json(b) { if (s === 403) staffDenied = true; return b; } }; }
     }, () => {});

@@ -681,7 +681,14 @@ const publishChangeSet = asyncHandler(async (request, response) => {
   const pubCount = await MenuPublication.countDocuments({ organisationId });
   const publicationId = `PUB-${String(pubCount + 1).padStart(4, '0')}`;
 
-  const targetOutlets = (changeSet.targetOutletIds?.length ? changeSet.targetOutletIds : ['ZC-0001', 'ZC-0002']).map((id) => ({
+  if (!Array.isArray(changeSet.targetOutletIds) || changeSet.targetOutletIds.length === 0) {
+    throw new ApiError(
+      400,
+      'TARGET_OUTLETS_REQUIRED',
+      'Menu publication requires at least one explicit target outlet.'
+    );
+  }
+  const targetOutlets = changeSet.targetOutletIds.map((id) => ({
     outletId: id,
     status: 'SYNCED',
     syncedAt: new Date(),
@@ -741,7 +748,10 @@ const rollbackPublication = asyncHandler(async (request, response) => {
 // ── 9. Effective Menu Simulator ──────────────────────────────────────────────
 const simulateEffectiveMenu = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const { outletId = 'ZC-0001', serviceMode = 'DINE_IN', targetDate } = request.query;
+  const { outletId, serviceMode = 'DINE_IN', targetDate } = request.query;
+  if (!outletId) {
+    throw new ApiError(400, 'OUTLET_ID_REQUIRED', 'outletId is required for menu simulation.');
+  }
 
   const rawItems = await MenuItem.find({ organisationId, status: 'ACTIVE' }).lean();
   const items = Array.isArray(rawItems) ? rawItems : [];

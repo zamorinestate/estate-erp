@@ -189,7 +189,7 @@ test('BCP-01 — Zero-Cost Governance, Network Hardening & Continuity Suite (24-
   // -------------------------------------------------------------------------
   // 19. Personal Ledger Invariant
   // -------------------------------------------------------------------------
-  await t.test('19. Personal Ledger: Primary Master & Owner ALLOW, Normal Master DENY', () => {
+  await t.test('19. Personal Ledger: Primary Master & Owner ALLOW, Malformed MASTER DENY', () => {
     function canAccessPersonalLedger(auth) {
       if (auth.role === 'OWNER') return true;
       if (auth.role === 'MASTER' && auth.isPrimaryMaster === true) return true;
@@ -206,7 +206,7 @@ test('BCP-01 — Zero-Cost Governance, Network Hardening & Continuity Suite (24-
   // -------------------------------------------------------------------------
   // 20. PO Approval Invariant
   // -------------------------------------------------------------------------
-  await t.test('20. PO Approval: Primary Master & Normal Master ALLOW, Owner DENY', () => {
+  await t.test('20. PO Approval: Primary Master & Malformed MASTER ALLOW, Owner DENY', () => {
     function canApprovePo(auth) {
       if (auth.role === 'MASTER') return true;
       return false;

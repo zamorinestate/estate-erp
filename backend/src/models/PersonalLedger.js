@@ -6,7 +6,7 @@
  * AUTHORIZATION:
  *   - PRIMARY MASTER (role = MASTER && isPrimaryMaster === true): Full authority.
  *   - OWNER (role = OWNER): Authorized according to authorized Owner-account scope.
- *   - NORMAL MASTER, CAFE_ADMIN, STAFF: Strictly DENIED.
+ *   - CAFE_ADMIN and STAFF: Strictly denied; MASTER access requires Primary Master authority.
  *
  * Immutability:
  *   - Financial entries are NEVER deleted. Corrections are made via reversing entries

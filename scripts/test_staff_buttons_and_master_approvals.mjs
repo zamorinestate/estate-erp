@@ -1,5 +1,16 @@
 
-const BASE_URL = 'http://localhost:3000/api/v1';
+const BASE_URL = process.env.E2E_API_BASE_URL || 'http://localhost:3000/api/v1';
+
+function requiredEnv(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) throw new Error(`${name} is required; runtime test credentials must be supplied through the environment.`);
+  return value;
+}
+
+const PRIMARY_MASTER_EMAIL = requiredEnv('E2E_PRIMARY_MASTER_EMAIL');
+const PRIMARY_MASTER_PASSWORD = requiredEnv('E2E_PRIMARY_MASTER_PASSWORD');
+const STAFF_EMAIL = requiredEnv('E2E_STAFF_EMAIL');
+const STAFF_PASSWORD = requiredEnv('E2E_STAFF_PASSWORD');
 
 async function run() {
   console.log('================================================================');
@@ -7,13 +18,13 @@ async function run() {
   console.log('================================================================\n');
 
   // 1. Log in as Primary Master
-  console.log('[1] Logging in as Primary Master (pradeeshk331@gmail.com)...');
+  console.log('[1] Logging in as Primary Master with environment-supplied credentials...');
   const masterLoginRes = await fetch(`${BASE_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email: 'pradeeshk331@gmail.com',
-      password: 'PRADEESHK@94309',
+      email: PRIMARY_MASTER_EMAIL,
+      password: PRIMARY_MASTER_PASSWORD,
       device: {
         deviceId: 'TEST-DEV-MASTER-001',
         deviceName: 'Test Master Terminal',
@@ -36,8 +47,8 @@ async function run() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email: 'zamorinestatepvtltd.erp@gmail.com',
-      password: 'Password@123',
+      email: STAFF_EMAIL,
+      password: STAFF_PASSWORD,
       device: {
         deviceId: 'TEST-DEV-STAFF-001',
         deviceName: 'Test Staff Terminal',
@@ -49,9 +60,9 @@ async function run() {
 
   if (staffLoginRes.ok && staffLoginData.success) {
     staffToken = staffLoginData.data?.accessToken;
-    console.log('✓ Staff logged in with Password@123.');
+    console.log('✓ Staff login successful.');
   } else {
-    console.log('Staff login failed, updating credentials for ST-0003 via Master...');
+    console.log('Staff login failed; updating the designated test account with the environment-supplied test password...');
     const credsRes = await fetch(`${BASE_URL}/employees/ST-0003/credentials`, {
       method: 'POST',
       headers: {
@@ -59,7 +70,7 @@ async function run() {
         Authorization: `Bearer ${masterToken}`,
       },
       body: JSON.stringify({
-        password: 'Password@123',
+        password: STAFF_PASSWORD,
       }),
     });
     const credsData = await credsRes.json();
@@ -69,8 +80,8 @@ async function run() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: 'zamorinestatepvtltd.erp@gmail.com',
-        password: 'Password@123',
+        email: STAFF_EMAIL,
+        password: STAFF_PASSWORD,
         device: {
           deviceId: 'TEST-DEV-STAFF-001',
           deviceName: 'Test Staff Terminal',

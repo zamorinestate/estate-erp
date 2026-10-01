@@ -34,6 +34,7 @@ import { icon } from "../icons.js";
 import { apiGet, getOrCreateDeviceId } from "../apiClient.js";
 import { state } from "../state.js";
 import { navigate } from "../router.js";
+import { hardwareBridge } from "../services/hardwareBridgeClient.js";
 
 // Register navigate globally so onclick="window.__navigate('route')" in rendered HTML works
 if (typeof window !== "undefined") {
@@ -580,15 +581,15 @@ export function renderAdminDashboard() {
           <div id="admin-dash-device-health-content" style="font-size:12.5px;">
             <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-size:12px;">
               <span style="color:var(--muted);">POS Till Printer:</span>
-              <span style="color:var(--color-accent-mint-bright, #34d399); font-weight:600;">âœ“ Connected</span>
+              <span style="color:var(--muted); font-weight:600;">Not checked</span>
             </div>
             <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-size:12px;">
               <span style="color:var(--muted);">Barcode Scanner:</span>
-              <span style="color:var(--color-accent-mint-bright, #34d399); font-weight:600;">âœ“ Ready</span>
+              <span style="color:var(--muted); font-weight:600;">Not checked</span>
             </div>
             <div style="display:flex; justify-content:space-between; font-size:12px;">
-              <span style="color:var(--muted);">Network Latency:</span>
-              <span style="color:var(--color-accent-mint-bright, #34d399); font-weight:600;">14ms (Optimal)</span>
+              <span style="color:var(--muted);">Network:</span>
+              <span style="color:var(--muted); font-weight:600;">Checking…</span>
             </div>
           </div>
         </div>
@@ -1067,6 +1068,37 @@ export async function hydrateAdminDashboard(root) {
     const devHealthContent = root.querySelector("#admin-dash-device-health-content");
     if (devHealthContent) {
       const genAt = payload.dataFreshness?.generatedAt;
+      hardwareBridge.initBarcodeScannerListener();
+
+      let hardwareCapabilities = null;
+      try {
+        hardwareCapabilities = await hardwareBridge.getCapabilities();
+      } catch (_) {
+        hardwareCapabilities = null;
+      }
+
+      const printerConnected = Boolean(
+        hardwareCapabilities?.webUsbDeviceConnected ||
+        hardwareCapabilities?.localBridgeStatus === 'ONLINE'
+      );
+      const printerLabel = printerConnected
+        ? 'Connected'
+        : (hardwareCapabilities?.browserPrintSupported ? 'Browser print fallback' : 'Not detected');
+      const printerColor = printerConnected
+        ? 'var(--color-accent-mint-bright, #34d399)'
+        : 'var(--muted)';
+
+      const scannerStatus = hardwareCapabilities?.barcodeScannerStatus || 'NOT_INITIALIZED';
+      const scannerLabel = scannerStatus === 'DETECTED'
+        ? 'Detected'
+        : (scannerStatus === 'LISTENING' ? 'Listening · not yet detected' : 'Not initialized');
+      const scannerColor = scannerStatus === 'DETECTED'
+        ? 'var(--color-accent-mint-bright, #34d399)'
+        : 'var(--muted)';
+
+      const cameraScannerLabel = hardwareCapabilities?.cameraScannerSupported
+        ? 'Supported · not yet verified'
+        : 'Unavailable';
       devHealthContent.innerHTML = `
         <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:12px;">
           <span style="color:var(--muted);">Terminal Device:</span>
@@ -1078,11 +1110,15 @@ export async function hydrateAdminDashboard(root) {
         </div>
         <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:12px;">
           <span style="color:var(--muted);">Thermal Printer:</span>
-          <span style="font-weight:600; color:var(--color-accent-mint-bright, #34d399);">Online (ESC/POS)</span>
+          <span style="font-weight:600; color:${printerColor};">${printerLabel}</span>
         </div>
         <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:12px;">
-          <span style="color:var(--muted);">QR/Face Scanner:</span>
-          <span style="font-weight:600; color:var(--color-accent-mint-bright, #34d399);">Ready</span>
+          <span style="color:var(--muted);">Barcode Scanner:</span>
+          <span style="font-weight:600; color:${scannerColor};">${scannerLabel}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:12px;">
+          <span style="color:var(--muted);">Camera QR Scanner:</span>
+          <span style="font-weight:600; color:var(--muted);">${cameraScannerLabel}</span>
         </div>
         <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.06);">
           <span>Data Freshness:</span>

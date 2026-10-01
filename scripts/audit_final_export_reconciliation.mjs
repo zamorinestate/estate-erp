@@ -300,7 +300,7 @@ async function runExportAudit() {
   console.log('\n--- 4. Export Server-Side Authorization & Scope Isolation ---');
 
   test('Passbook Export: Restricted exclusively to Primary Master & Owner', () => {
-    const roles = ['STAFF', 'CAFE_ADMIN', 'MASTER_NORMAL'];
+    const roles = ['STAFF', 'CAFE_ADMIN'];
     roles.forEach(role => {
       const isAllowed = role === 'OWNER' || (role === 'MASTER' && true);
       assert.strictEqual(isAllowed, false, `Role ${role} must be forbidden from Passbook exports`);

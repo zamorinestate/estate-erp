@@ -3,7 +3,9 @@
     "generatedAt": "2026-09-17T00:32:01.498Z",
     "auditVersion": "2.1.0",
     "totalContracts": 1595,
-    "arithmeticMatch": true
+    "arithmeticMatch": true,
+    "evidenceType": "DECLARED_CLASSIFICATION_BASELINE",
+    "source": "scripts/audit_final_control_arithmetic.mjs"
   },
   "counts": {
     "WORKING": 1468,
@@ -20,12 +22,6 @@
     "PRIMARY_MASTER": {
       "visibleWorking": 1468,
       "policyHidden": 0,
-      "blocked": 2,
-      "total": 1470
-    },
-    "NORMAL_MASTER": {
-      "visibleWorking": 1410,
-      "policyHidden": 58,
       "blocked": 2,
       "total": 1470
     },

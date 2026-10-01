@@ -43,6 +43,13 @@ const payrollQuerySchema = new mongoose.Schema(
       uppercase: true,
       index: true,
     },
+    cafeId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+      index: true,
+    },
     employeeName: {
       type: String,
       trim: true,
@@ -110,6 +117,7 @@ const payrollQuerySchema = new mongoose.Schema(
 );
 
 payrollQuerySchema.index({ organisationId: 1, employeeUserId: 1, createdAt: -1 });
+payrollQuerySchema.index({ organisationId: 1, cafeId: 1, status: 1, createdAt: -1 });
 payrollQuerySchema.index({ organisationId: 1, status: 1 });
 
 const PayrollQuery =

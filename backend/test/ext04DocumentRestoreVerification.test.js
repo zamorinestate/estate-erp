@@ -622,7 +622,7 @@ describe('EXT-04 — GridFS Document Restore, Historical Revision Recovery & Int
     assert.throws(
       () =>
         DocumentAttachmentService.assertDocumentAuthorization({
-          auth: { role: 'MASTER', organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'M1' },
+          auth: { role: 'MASTER', isPrimaryMaster: true, organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'MU-0001' },
           doc,
           action: 'DOWNLOAD',
         }),
@@ -643,7 +643,7 @@ describe('EXT-04 — GridFS Document Restore, Historical Revision Recovery & Int
     assert.throws(
       () =>
         DocumentAttachmentService.assertDocumentAuthorization({
-          auth: { role: 'MASTER', organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'M1' },
+          auth: { role: 'MASTER', isPrimaryMaster: true, organisationId: ORG_ID, cafeId: CAFE_ID, userId: 'MU-0001' },
           doc,
           action: 'PREVIEW',
         }),
@@ -956,22 +956,57 @@ describe('EXT-04 — GridFS Document Restore, Historical Revision Recovery & Int
   });
 
   // 44. Personal Ledger
-  test('44. Personal Ledger Invariant: Primary Master and Owner ALLOW; others DENY', () => {
-    const canAccess = (role) => role === 'PRIMARY_MASTER' || role === 'MASTER' || role === 'OWNER';
-    assert.equal(canAccess('PRIMARY_MASTER'), true);
-    assert.equal(canAccess('OWNER'), true);
-    assert.equal(canAccess('CAFE_ADMIN'), false);
-    assert.equal(canAccess('STAFF'), false);
+  test('44. Personal Ledger Invariant: Primary Master and Owner ALLOW; malformed MASTER and other roles DENY', () => {
+    const canAccess = (actor) =>
+      actor.role === 'OWNER' ||
+      actor.role === 'PRIMARY_MASTER' ||
+      (actor.role === 'MASTER' && actor.isPrimaryMaster === true);
+
+    assert.equal(canAccess({ role: 'PRIMARY_MASTER' }), true);
+    assert.equal(canAccess({ role: 'MASTER', isPrimaryMaster: true }), true);
+    assert.equal(canAccess({ role: 'MASTER', isPrimaryMaster: false }), false);
+    assert.equal(canAccess({ role: 'OWNER' }), true);
+    assert.equal(canAccess({ role: 'CAFE_ADMIN' }), false);
+    assert.equal(canAccess({ role: 'STAFF' }), false);
   });
 
-  // 45. PO Approval
-  test('45. PO Approval Invariant: Primary Master and Normal Master ALLOW; Owner, Cafe Admin, Staff DENY', () => {
-    const canApprove = (role) => role === 'PRIMARY_MASTER' || role === 'MASTER';
-    assert.equal(canApprove('PRIMARY_MASTER'), true);
-    assert.equal(canApprove('MASTER'), true);
-    assert.equal(canApprove('OWNER'), false);
-    assert.equal(canApprove('CAFE_ADMIN'), false);
-    assert.equal(canApprove('STAFF'), false);
+  // 45. Primary Master singleton authority and document-restore fail-closed guard
+  test('45. Primary Master authority: malformed non-primary MASTER is denied document restore and PO governance', () => {
+    const canApprove = (actor) =>
+      actor.role === 'PRIMARY_MASTER' ||
+      (actor.role === 'MASTER' && actor.isPrimaryMaster === true);
+
+    assert.equal(canApprove({ role: 'PRIMARY_MASTER' }), true);
+    assert.equal(canApprove({ role: 'MASTER', isPrimaryMaster: true }), true);
+    assert.equal(canApprove({ role: 'MASTER', isPrimaryMaster: false }), false);
+    assert.equal(canApprove({ role: 'OWNER' }), false);
+    assert.equal(canApprove({ role: 'CAFE_ADMIN' }), false);
+    assert.equal(canApprove({ role: 'STAFF' }), false);
+
+    assert.equal(
+      DocumentRestoreService.validateAuthority({
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        userId: 'MU-0001',
+      }),
+      true
+    );
+    assert.equal(
+      DocumentRestoreService.validateAuthority({
+        role: 'PRIMARY_MASTER',
+        userId: 'RECOVERY_PRIMARY_MASTER',
+      }),
+      true
+    );
+    assert.throws(
+      () =>
+        DocumentRestoreService.validateAuthority({
+          role: 'MASTER',
+          isPrimaryMaster: false,
+          userId: 'MU-MALFORMED-RESTORE',
+        }),
+      (err) => err.code === 'RESTORE_UNAUTHORIZED' && err.statusCode === 403
+    );
   });
 
   // 46. zero KDS

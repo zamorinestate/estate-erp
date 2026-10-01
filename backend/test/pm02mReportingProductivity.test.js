@@ -1446,9 +1446,12 @@ describe('PM-02M-R2: 33. STAFF Reports Boundary & Fail-Closed Behavior (Blocker 
     );
   });
 
-  it('PRIMARY_MASTER and NORMAL_MASTER can create SHARED_ORGANISATION', () => {
+  it('PRIMARY_MASTER alone can create SHARED_ORGANISATION among MASTER authorities', () => {
     assert.ok(ROLE_VISIBILITY_CREATE_PERMISSIONS.PRIMARY_MASTER.includes('SHARED_ORGANISATION'));
-    assert.ok(ROLE_VISIBILITY_CREATE_PERMISSIONS.NORMAL_MASTER.includes('SHARED_ORGANISATION'));
+    assert.deepStrictEqual(
+      Object.keys(ROLE_VISIBILITY_CREATE_PERMISSIONS).sort(),
+      ['CAFE_ADMIN', 'OWNER', 'PRIMARY_MASTER', 'STAFF'].sort()
+    );
   });
 });
 

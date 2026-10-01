@@ -95,21 +95,21 @@ test('Institutional & Department Orders — Screen 007 Integration Test Suite', 
     assignedCafeIds: ['ZC-0001', 'ZC-0002'],
   };
 
-  const normalMasterUser = {
+  const malformedMasterUser = {
     userId: 'MU-NORMAL-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
     email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    fullName: 'Malformed MASTER',
     sessionVersion: 1,
     permissionsVersion: 1,
     assignedCafeIds: ['ZC-0001', 'ZC-0002'],
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isNormal = token === 'token_malformed_master';
+    const activeUser = isNormal ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -133,7 +133,7 @@ test('Institutional & Department Orders — Screen 007 Integration Test Suite', 
 
   t.mock.method(User, 'findOne', async (query) => {
     if (query?.userId === 'MU-NORMAL-01') {
-      return { ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser };
+      return { ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser };
     }
     return { ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser };
   });
@@ -394,6 +394,7 @@ test('Institutional & Department Orders — Screen 007 Integration Test Suite', 
       path: '/api/v1/department-orders/quotes',
       headers: { Authorization: 'Bearer token_primary_master' },
       body: {
+        cafeId: 'ZC-0001',
         institutionName: 'Farook College',
         departmentName: 'Commerce',
         contactName: 'Dr. Basheer',

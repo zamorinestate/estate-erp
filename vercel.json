@@ -36,7 +36,7 @@
       "src": "/(src/styles|src/js|cafe-operations|dist)/(.*)",
       "dest": "/frontend/$1/$2",
       "headers": {
-        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"
+        "Cache-Control": "public, max-age=0, must-revalidate"
       }
     },
     {

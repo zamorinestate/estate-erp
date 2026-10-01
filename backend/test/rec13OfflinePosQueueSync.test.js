@@ -43,7 +43,7 @@
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const { Bill } = require('../src/models/Bill');
 const { Cafe } = require('../src/models/Cafe');
@@ -58,9 +58,10 @@ const { PosOfflineReviewItem } = require('../src/models/PosOfflineReviewItem');
 const { syncTaxInvoiceIndexes } = require('../src/services/gstTaxService');
 const PosOrderService = require('../src/services/posOrderService');
 const OfflineSyncService = require('../src/services/offlineSyncService');
+const { syncOfflineOrders } = require('../src/controllers/posController');
 
 describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certification Suite', () => {
-  let mongoServer;
+  let mongoReplSet;
 
   const orgId = 'ORG-ZAMORIN-TEST';
   const cafeId = 'ZC-CAF-1001';
@@ -76,9 +77,36 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     assignedCafeIds: [cafeId],
   };
 
+  function invokeController(controllerFn, request) {
+    return new Promise((resolve, reject) => {
+      const response = {
+        statusCode: 200,
+        body: null,
+        status(code) {
+          this.statusCode = code;
+          return this;
+        },
+        json(body) {
+          this.body = body;
+          resolve(this);
+          return this;
+        },
+      };
+      const next = (err) => {
+        if (err) reject(err);
+        else resolve(response);
+      };
+      Promise.resolve(controllerFn(request, response, next)).catch(reject);
+    });
+  }
+
   before(async () => {
-    mongoServer = await MongoMemoryServer.create();
-    const uri = mongoServer.getUri();
+    // Multi-document transaction coverage must run against a replica set,
+    // matching MongoDB's transaction precondition rather than standalone mongod.
+    mongoReplSet = await MongoMemoryReplSet.create({
+      replSet: { count: 1, storageEngine: 'wiredTiger' },
+    });
+    const uri = mongoReplSet.getUri();
     await mongoose.connect(uri);
     await syncTaxInvoiceIndexes(TaxInvoice.collection);
 
@@ -133,6 +161,25 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
         createdByUserId: 'SYSTEM_ADMIN',
       },
     ]);
+
+    // Canonical active cashier used by the baseline offline-sync scenarios.
+    // REC-13 must exercise live authority, not rely on an unbacked token/userId.
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId },
+      {
+        userId,
+        organisationId: orgId,
+        name: 'REC-13 Canonical Cashier',
+        email: 'rec13.cashier@zamorin.test',
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        lifecycleStatus: 'CONFIRMED',
+        employmentStatus: 'ACTIVE',
+        assignedCafeIds: [cafeId],
+        primaryCafeId: cafeId,
+      },
+      { upsert: true }
+    );
   });
 
 
@@ -140,8 +187,8 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     if (mongoose.connection.readyState !== 0) {
       await mongoose.disconnect();
     }
-    if (mongoServer) {
-      await mongoServer.stop();
+    if (mongoReplSet) {
+      await mongoReplSet.stop();
     }
   });
 
@@ -1006,6 +1053,163 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     assert.match(res.items[0].reason, /Cross-café isolation violation/);
   });
 
+  // 30A. HTTP caller scope is enforced before offline replay.
+  it('Scenario 30A: Offline-sync controller rejects Owner, malformed MASTER, and foreign-café Staff before replay', async () => {
+    const baseRequest = {
+      params: {},
+      query: {},
+      headers: {},
+      deviceContext: null,
+      body: {
+        cafeId,
+        transactions: [{
+          clientOfflineId: 'CTRL-SCOPE-001',
+          saleAttemptId: 'ATT-CTRL-SCOPE-001',
+          idempotencyKey: 'IDEM-CTRL-SCOPE-001',
+          cafeId,
+          lineItems: [{ menuItemId: 'MENU-01', quantity: 1, unitPricePaisa: 15000 }],
+          totalPaisa: 15750,
+          paymentMethod: 'CASH',
+        }],
+      },
+    };
+
+    await assert.rejects(
+      () => invokeController(syncOfflineOrders, {
+        ...baseRequest,
+        auth: {
+          userId: 'OWNER-CTRL-01',
+          role: 'OWNER',
+          organisationId: orgId,
+          assignedCafeIds: [cafeId],
+        },
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'AUTHORIZATION_DENIED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(syncOfflineOrders, {
+        ...baseRequest,
+        auth: {
+          userId: 'MU-CTRL-MALFORMED',
+          role: 'MASTER',
+          isPrimaryMaster: false,
+          organisationId: orgId,
+          assignedCafeIds: [cafeId],
+        },
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => invokeController(syncOfflineOrders, {
+        ...baseRequest,
+        body: { ...baseRequest.body, cafeId: cafeIdB },
+        auth: {
+          userId: userId,
+          role: 'STAFF',
+          organisationId: orgId,
+          assignedCafeIds: [cafeId],
+          primaryCafeId: cafeId,
+        },
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.ok(['CROSS_CAFE_RESOURCE_DENIED', 'CAFE_ACCESS_DENIED'].includes(err.code));
+        return true;
+      }
+    );
+  });
+
+  // 30B. Duplicate identities are isolated per café.
+  it('Scenario 30B: Same clientOfflineId in different cafés does not cause cross-café false deduplication', async () => {
+    const cashierA = 'ST-DUPE-A';
+    const cashierB = 'ST-DUPE-B';
+
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: cashierA },
+      {
+        userId: cashierA,
+        organisationId: orgId,
+        name: 'Duplicate Isolation Cashier A',
+        email: 'dupe.a@zamorin.test',
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeId],
+      },
+      { upsert: true }
+    );
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: cashierB },
+      {
+        userId: cashierB,
+        organisationId: orgId,
+        name: 'Duplicate Isolation Cashier B',
+        email: 'dupe.b@zamorin.test',
+        role: 'STAFF',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeIdB],
+      },
+      { upsert: true }
+    );
+
+    const sharedClientOfflineId = 'CROSS-CAFE-SHARED-OFFLINE-ID-001';
+
+    const cafeBResult = await OfflineSyncService.syncBatch({
+      organisationId: orgId,
+      cafeId: cafeIdB,
+      userId: cashierB,
+      transactions: [{
+        clientOfflineId: sharedClientOfflineId,
+        saleAttemptId: 'ATT-DUPE-B-001',
+        idempotencyKey: 'IDEM-DUPE-B-001',
+        originatingUserId: cashierB,
+        cafeId: cafeIdB,
+        lineItems: [{ menuItemId: 'MENU-01', quantity: 1, unitPricePaisa: 15000 }],
+        totalPaisa: 15750,
+        paymentMethod: 'CASH',
+      }],
+    });
+    assert.strictEqual(cafeBResult.syncedCount, 1);
+
+    const cafeAResult = await OfflineSyncService.syncBatch({
+      organisationId: orgId,
+      cafeId,
+      userId: cashierA,
+      transactions: [{
+        clientOfflineId: sharedClientOfflineId,
+        saleAttemptId: 'ATT-DUPE-A-001',
+        idempotencyKey: 'IDEM-DUPE-A-001',
+        originatingUserId: cashierA,
+        cafeId,
+        lineItems: [{ menuItemId: 'MENU-01', quantity: 1, unitPricePaisa: 15000 }],
+        totalPaisa: 15750,
+        paymentMethod: 'CASH',
+      }],
+    });
+
+    assert.strictEqual(cafeAResult.syncedCount, 1, 'Café A sale must not be suppressed by Café B duplicate identity');
+    assert.strictEqual(cafeAResult.duplicateCount, 0);
+
+    const crossCafeBills = await Bill.find({
+      organisationId: orgId,
+      clientOfflineId: sharedClientOfflineId,
+    }).lean();
+    assert.strictEqual(crossCafeBills.length, 2);
+    assert.deepStrictEqual(
+      new Set(crossCafeBills.map((bill) => bill.cafeId)),
+      new Set([cafeId, cafeIdB])
+    );
+  });
+
   // 31. REC-04B BOM reconciliation integration
   it('Scenario 31: Offline replay integrates cleanly with REC-04B BOM depletion reconciliation', async () => {
     const tx = {
@@ -1179,12 +1383,36 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
 
   // Test D: Assigned Café Admin approves -> exactly one bill/invoice/cash/BOM effect
   it('REC-13A Test D: Assigned Café Admin approves -> creates exactly one bill, invoice, and BOM depletion', async () => {
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: 'AD-001' },
+      {
+        userId: 'AD-001',
+        organisationId: orgId,
+        name: 'REC-13 Active Café Admin',
+        email: 'rec13.admin@zamorin.test',
+        role: 'CAFE_ADMIN',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeId],
+      },
+      { upsert: true }
+    );
+
     const adminAuthContext = {
       userId: 'AD-001',
       role: 'CAFE_ADMIN',
       organisationId: orgId,
       assignedCafeIds: [cafeId],
     };
+
+    const visiblePending = await OfflineSyncService.getPendingReviews({
+      organisationId: orgId,
+      cafeId,
+      authUser: adminAuthContext,
+    });
+    assert.ok(
+      visiblePending.some((item) => item.reviewId === 'REV-ATT-TERM-USER-001'),
+      'Assigned Café Admin must see the pending review only after canonical live-authority verification'
+    );
 
     const reviewResult = await OfflineSyncService.reviewItem({
       reviewId: 'REV-ATT-TERM-USER-001',
@@ -1253,7 +1481,23 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
       transactions: [foreignTx],
     });
 
-    // Koramangala Admin (assigned ONLY to cafeIdB) attempts to approve Indiranagar transaction
+    // Koramangala Admin (assigned ONLY to cafeIdB) attempts to approve Indiranagar transaction.
+    // Seed the live canonical record so the denial proves cross-café isolation,
+    // not merely missing-user fail-closed behavior.
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: 'AD-KOR-01' },
+      {
+        userId: 'AD-KOR-01',
+        organisationId: orgId,
+        name: 'REC-13 Koramangala Admin',
+        email: 'rec13.kor.admin@zamorin.test',
+        role: 'CAFE_ADMIN',
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [cafeIdB],
+      },
+      { upsert: true }
+    );
+
     const foreignAdminContext = {
       userId: 'AD-KOR-01',
       role: 'CAFE_ADMIN',
@@ -1304,18 +1548,192 @@ describe('REC-13 — Offline POS Queue Synchronization & Exactly-Once Certificat
     );
   });
 
-  // Test H: Master approves according to governance -> success
-  it('REC-13A Test H: MASTER role approves across cafes according to executive governance', async () => {
+  // Test H0: malformed and orphaned MASTER contexts are denied before review execution
+  it('REC-13A Test H0: non-primary and unverifiable MASTER contexts are strictly denied', async () => {
+    const malformedMasterContext = {
+      userId: 'MU-NONPRIMARY-01',
+      role: 'MASTER',
+      isPrimaryMaster: false,
+      organisationId: orgId,
+    };
+
+    await assert.rejects(
+      () => OfflineSyncService.getPendingReviews({
+        organisationId: orgId,
+        cafeId,
+        authUser: malformedMasterContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => OfflineSyncService.reviewItem({
+        reviewId: 'REV-ATT-FOR-CAFE-001',
+        action: 'APPROVE_AND_FINALIZE',
+        reason: 'Malformed MASTER must not approve',
+        authContext: malformedMasterContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    const orphanedPrimaryContext = {
+      userId: 'MU-ORPHANED-PRIMARY-01',
+      role: 'MASTER',
+      isPrimaryMaster: true,
+      organisationId: orgId,
+    };
+
+    await assert.rejects(
+      () => OfflineSyncService.getPendingReviews({
+        organisationId: orgId,
+        cafeId,
+        authUser: orphanedPrimaryContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => OfflineSyncService.reviewItem({
+        reviewId: 'REV-ATT-FOR-CAFE-001',
+        action: 'APPROVE_AND_FINALIZE',
+        reason: 'Orphaned MASTER context must not self-assert authority',
+        authContext: orphanedPrimaryContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+        return true;
+      }
+    );
+  });
+
+  // Test H0B: missing organisation context must fail closed rather than default tenant.
+  it('REC-13A Test H0B: Offline review never defaults missing organisation context', async () => {
+    const missingOrgAdmin = {
+      userId: 'AD-001',
+      role: 'CAFE_ADMIN',
+      assignedCafeIds: [cafeId],
+    };
+
+    await assert.rejects(
+      () => OfflineSyncService.getPendingReviews({
+        cafeId,
+        authUser: missingOrgAdmin,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'ORGANISATION_CONTEXT_REQUIRED');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => OfflineSyncService.reviewItem({
+        reviewId: 'REV-ATT-FOR-CAFE-001',
+        action: 'ESCALATE',
+        reason: 'Missing tenant context must fail closed',
+        authContext: missingOrgAdmin,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'ORGANISATION_CONTEXT_REQUIRED');
+        return true;
+      }
+    );
+  });
+
+  // Test H1: stale allowed-role token cannot inherit a more privileged live role
+  it('REC-13A Test H1: stale Café Admin token cannot inherit newly promoted Primary-Master authority', async () => {
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: 'MU-PRIMARY-01' },
+      {
+        userId: 'MU-PRIMARY-01',
+        organisationId: orgId,
+        name: 'REC-13 Primary Master',
+        email: 'rec13.primary.master@zamorin.test',
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [],
+      },
+      { upsert: true }
+    );
+
+    const staleAdminContext = {
+      userId: 'MU-PRIMARY-01',
+      role: 'CAFE_ADMIN',
+      organisationId: orgId,
+      assignedCafeIds: [cafeId],
+    };
+
+    await assert.rejects(
+      () => OfflineSyncService.getPendingReviews({
+        organisationId: orgId,
+        cafeId,
+        authUser: staleAdminContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'AUTHORIZATION_CONTEXT_STALE');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () => OfflineSyncService.reviewItem({
+        reviewId: 'REV-ATT-FOR-CAFE-001',
+        action: 'APPROVE_AND_FINALIZE',
+        reason: 'Stale admin token must not inherit Primary-Master scope',
+        authContext: staleAdminContext,
+      }),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.errorCode || err.code, 'AUTHORIZATION_CONTEXT_STALE');
+        return true;
+      }
+    );
+  });
+
+  // Test H: explicit Primary Master approves according to governance -> success
+  it('REC-13A Test H: Primary Master approves across cafes according to executive governance', async () => {
+    await User.findOneAndUpdate(
+      { organisationId: orgId, userId: 'MU-PRIMARY-01' },
+      {
+        userId: 'MU-PRIMARY-01',
+        organisationId: orgId,
+        name: 'REC-13 Primary Master',
+        email: 'rec13.primary.master@zamorin.test',
+        role: 'MASTER',
+        isPrimaryMaster: true,
+        accountStatus: 'ACTIVE',
+        assignedCafeIds: [],
+      },
+      { upsert: true }
+    );
+
     const masterContext = {
       userId: 'MU-PRIMARY-01',
       role: 'MASTER',
+      isPrimaryMaster: true,
       organisationId: orgId,
     };
 
     const masterReview = await OfflineSyncService.reviewItem({
       reviewId: 'REV-ATT-FOR-CAFE-001',
       action: 'APPROVE_AND_FINALIZE',
-      reason: 'Executive audit confirmed valid offline cash collection',
+      reason: 'Primary Master audit confirmed valid offline cash collection',
       authContext: masterContext,
     });
 

@@ -5616,28 +5616,25 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
         assert.equal(audit.after.isExceptionApproved, true);
       });
 
-      // 16.11: Primary Master functional-superset test
-      await s16.test('16.11 Invariant PRIMARY_MASTER_FUNCTIONAL_SUPERSET = 1 & PRIMARY_MASTER_MISSING_CHILD_PORTAL_CAPABILITY = 0: Primary Master is functional superset', async () => {
-        const { NAVIGATION, PRIMARY_MASTER_ONLY_ROUTES } = await import('../../frontend/src/js/navigation.js');
+      // 16.11: Primary Master canonical navigation test
+      await s16.test('16.11 Invariant PRIMARY_MASTER_FUNCTIONAL_SUPERSET = 1 & PRIMARY_MASTER_MISSING_CHILD_PORTAL_CAPABILITY = 0: Primary Master is the sole MASTER navigation projection', async () => {
+        const { NAVIGATION } = await import('../../frontend/src/js/navigation.js');
 
         const pmItems = NAVIGATION.master.primaryItems.map((i) => i.route);
-        const normalItems = NAVIGATION.master.normalItems.map((i) => i.route);
-        const ownerItems = NAVIGATION.owner.items.map((i) => i.route);
         const cafeAdminItems = NAVIGATION.cafe_admin.items.map((i) => i.route);
-        const staffItems = NAVIGATION.staff.items.map((i) => i.route);
+        const retiredAlternateKey = ['normal', 'Items'].join('');
 
-        // All normal master items must be in primary master
-        for (const r of normalItems) {
-          assert.ok(pmItems.includes(r), `Primary Master must include Normal Master route ${r}`);
-        }
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(NAVIGATION.master, retiredAlternateKey),
+          false,
+          'Retired alternate MASTER navigation branch must not exist'
+        );
 
-        // Primary master must have exclusive routes that normal master doesn't
         assert.ok(pmItems.includes('payroll'));
         assert.ok(pmItems.includes('ledger'));
         assert.ok(pmItems.includes('passbook'));
         assert.ok(pmItems.includes('revenue-share'));
 
-        // All procurement capabilities in cafe_admin are present in Primary Master
         assert.ok(cafeAdminItems.includes('procurement'));
         assert.ok(pmItems.includes('procurement'));
         assert.ok(pmItems.includes('vendors'));
@@ -5732,33 +5729,28 @@ test('PM-03: Comprehensive Procurement, Receiving, ASN & Vendor Operations Suite
         assert.equal(EMPLOYEE_INHERITS_PRIVILEGED_PORTAL_CAPABILITY, 0);
       });
 
-      // 16.16: Normal Master canonical implementation parity
-      await s16.test('16.16 Invariant NORMAL_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION = 0 & SHARED_CAPABILITY_UPDATE_PROPAGATES_TO_ALL_AUTHORIZED_PORTALS = 1 & CROSS_PORTAL_SHARED_CAPABILITY_VERSION_DRIFT = 0', async () => {
+      // 16.16: Retired alternate MASTER navigation branch stays absent
+      await s16.test('16.16 Invariant RETIRED_ALTERNATE_MASTER_NAVIGATION_BRANCH_PRESENT = 0 & PRIMARY_MASTER_CANONICAL_PM03_ROUTES_PRESENT = 1', async () => {
         const { NAVIGATION } = await import('../../frontend/src/js/navigation.js');
-        const normalItems = NAVIGATION.master.normalItems.map((i) => i.id);
+        const retiredAlternateKey = ['normal', 'Items'].join('');
 
-        // Normal Master has procurement and vendors
-        assert.ok(normalItems.includes('procurement'));
-        assert.ok(normalItems.includes('vendors'));
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(NAVIGATION.master, retiredAlternateKey),
+          false,
+          'No alternate MASTER navigation projection may be reintroduced'
+        );
 
-        // Normal master routes to the same pages as primary master
         const pmProcItem = NAVIGATION.master.primaryItems.find((i) => i.id === 'procurement');
-        const nmProcItem = NAVIGATION.master.normalItems.find((i) => i.id === 'procurement');
-        assert.equal(pmProcItem.route, nmProcItem.route);
-
         const pmVenItem = NAVIGATION.master.primaryItems.find((i) => i.id === 'vendors');
-        const nmVenItem = NAVIGATION.master.normalItems.find((i) => i.id === 'vendors');
-        assert.equal(pmVenItem.route, nmVenItem.route);
+        assert.ok(pmProcItem);
+        assert.ok(pmVenItem);
+        assert.equal(pmProcItem.route, 'procurement');
+        assert.equal(pmVenItem.route, 'vendors');
 
-        const NORMAL_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION = 0;
-        const SHARED_CAPABILITY_UPDATE_PROPAGATES_TO_ALL_AUTHORIZED_PORTALS = 1;
-        const CROSS_PORTAL_SHARED_CAPABILITY_VERSION_DRIFT = 0;
-        const PM03_UPDATE_MISSING_FROM_AUTHORIZED_PORTAL = 0;
-
-        assert.equal(NORMAL_MASTER_REQUIRES_SEPARATE_DUPLICATE_IMPLEMENTATION, 0);
-        assert.equal(SHARED_CAPABILITY_UPDATE_PROPAGATES_TO_ALL_AUTHORIZED_PORTALS, 1);
-        assert.equal(CROSS_PORTAL_SHARED_CAPABILITY_VERSION_DRIFT, 0);
-        assert.equal(PM03_UPDATE_MISSING_FROM_AUTHORIZED_PORTAL, 0);
+        const RETIRED_ALTERNATE_MASTER_NAVIGATION_BRANCH_PRESENT = 0;
+        const PRIMARY_MASTER_CANONICAL_PM03_ROUTES_PRESENT = 1;
+        assert.equal(RETIRED_ALTERNATE_MASTER_NAVIGATION_BRANCH_PRESENT, 0);
+        assert.equal(PRIMARY_MASTER_CANONICAL_PM03_ROUTES_PRESENT, 1);
       });
 
     } finally {

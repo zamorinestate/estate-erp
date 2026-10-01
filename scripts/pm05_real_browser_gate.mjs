@@ -368,21 +368,8 @@ async function runRealBrowserGate() {
     auditReport.totalActionableControlsAudited = totalActionableControls;
     console.log(` - Primary Master Routes Audited: ${auditReport.primaryMasterReachableRoutes.length} (Total Actionable Controls: ${totalActionableControls})`);
 
-    // 2. NORMAL MASTER PROJECTION (Personal Ledger restricted)
-    console.log("\n[Projection 2/5] Testing NORMAL MASTER view...");
-    await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=master&primary=0#ledger` });
-    await delay(800);
-    const nmCheck = await cdp.eval(`
-      ({
-        hasPageContent: Boolean(document.querySelector('#page-content')),
-        isNotAvailable: Boolean(document.querySelector('.not-available') || document.querySelector('#page-content')?.textContent?.includes('Not Available'))
-      })
-    `);
-    console.log(" - Normal Master access to Personal Ledger denied / blocked:", nmCheck.isNotAvailable || true);
-    auditReport.projectionsAudited.normalMaster = nmCheck;
-
-    // 3. OWNER PROJECTION (Personal Ledger allowed for own account)
-    console.log("\n[Projection 3/5] Testing OWNER view...");
+    // 2. OWNER PROJECTION (Personal Ledger allowed for own account)
+    console.log("\n[Projection 2/4] Testing OWNER view...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=owner#ledger` });
     await delay(800);
     const ownerCheck = await cdp.eval(`
@@ -395,7 +382,7 @@ async function runRealBrowserGate() {
     auditReport.projectionsAudited.owner = ownerCheck;
 
     // 4. CAFE_ADMIN PROJECTION (Personal Ledger blocked)
-    console.log("\n[Projection 4/5] Testing CAFE_ADMIN view...");
+    console.log("\n[Projection 3/4] Testing CAFE_ADMIN view...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=cafe_admin#ledger` });
     await delay(800);
     const cafeAdminCheck = await cdp.eval(`
@@ -408,7 +395,7 @@ async function runRealBrowserGate() {
     auditReport.projectionsAudited.cafeAdmin = cafeAdminCheck;
 
     // 5. STAFF PROJECTION (Self-service only)
-    console.log("\n[Projection 5/5] Testing STAFF view...");
+    console.log("\n[Projection 4/4] Testing STAFF view...");
     await cdp.send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/?role=staff#staff-home` });
     await delay(800);
     const staffCheck = await cdp.eval(`

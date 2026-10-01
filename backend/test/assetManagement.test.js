@@ -78,20 +78,20 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
     permissionsVersion: 1,
   };
 
-  const normalMasterUser = {
-    userId: 'MU-NORMAL-01',
+  const malformedMasterUser = {
+    userId: 'MU-MALFORMED-01',
     role: 'MASTER',
     isPrimaryMaster: false,
     organisationId: 'ORG-ZAMORIN',
-    email: 'normal@zamorincafe.com',
-    fullName: 'Normal Master',
+    email: 'malformed.master@zamorincafe.com',
+    fullName: 'malformed MASTER claim',
     sessionVersion: 1,
     permissionsVersion: 1,
   };
 
   t.mock.method(authService, 'verifyAccessToken', async (token) => {
-    const isNormal = token === 'token_normal_master';
-    const activeUser = isNormal ? normalMasterUser : primaryMasterUser;
+    const isMalformed = token === 'token_malformed_master';
+    const activeUser = isMalformed ? malformedMasterUser : primaryMasterUser;
     return {
       payload: {
         sub: activeUser.userId,
@@ -114,8 +114,8 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   });
 
   t.mock.method(User, 'findOne', async (query) => {
-    if (query?.userId === 'MU-NORMAL-01') {
-      return { ...normalMasterUser, isPrimaryMaster: false, toObject: () => normalMasterUser };
+    if (query?.userId === 'MU-MALFORMED-01') {
+      return { ...malformedMasterUser, isPrimaryMaster: false, toObject: () => malformedMasterUser };
     }
     return { ...primaryMasterUser, isPrimaryMaster: true, toObject: () => primaryMasterUser };
   });
@@ -243,12 +243,12 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   }));
 
   // 1. GET /api/v1/assets/overview
-  await t.test('Master receives complete Asset Overview and health KPIs', async () => {
+  await t.test('Primary Master receives complete Asset Overview and health KPIs', async () => {
     const res = await makeRequest({
       port,
       method: 'GET',
       path: '/api/v1/assets/overview',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_primary_master` },
     });
 
     assert.equal(res.status, 200);
@@ -257,13 +257,25 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
     assert.equal(res.data.data.kpis.inService, 1);
   });
 
-  // 2. POST /api/v1/assets (Normal Master registers new asset)
-  await t.test('Normal Master can register a new equipment asset', async () => {
+  await t.test('Malformed non-primary MASTER is rejected before Asset workspace access', async () => {
+    const res = await makeRequest({
+      port,
+      method: 'GET',
+      path: '/api/v1/assets/overview',
+      headers: { Authorization: 'Bearer token_malformed_master' },
+    });
+
+    assert.equal(res.status, 401);
+    assert.equal(res.data?.error?.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
+  });
+
+  // 2. POST /api/v1/assets (malformed MASTER claim registers new asset)
+  await t.test('Primary Master can register a new equipment asset', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/assets',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_primary_master` },
       body: {
         name: 'Mahlkönig EK43 Commercial Grinder',
         category: 'GRINDERS_MILLS',
@@ -288,7 +300,7 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
       port,
       method: 'POST',
       path: '/api/v1/assets',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_primary_master` },
       body: {
         name: 'Duplicate Espresso Machine',
         cafeId: 'ZC-0001',
@@ -301,12 +313,12 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   });
 
   // 4. POST /api/v1/assets/:assetId/commission
-  await t.test('Master can commission and place setup asset into active service', async () => {
+  await t.test('Primary Master can commission and place setup asset into active service', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/assets/AST-0001/commission',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_primary_master` },
     });
 
     assert.equal(res.status, 200);
@@ -315,12 +327,12 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   });
 
   // 5. POST /api/v1/assets/:assetId/transfer
-  await t.test('Master can transfer equipment between cafes with location history tracking', async () => {
+  await t.test('Primary Master can transfer equipment between cafes with location history tracking', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/assets/AST-0001/transfer',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_primary_master` },
       body: {
         toCafeId: 'ZC-0002',
         reason: 'Equipment capacity balancing',
@@ -333,12 +345,12 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   });
 
   // 6. POST /api/v1/assets/:assetId/safety-hold
-  await t.test('Master can place asset on Safety Hold (OUT OF SERVICE — DO NOT USE)', async () => {
+  await t.test('Primary Master can place asset on Safety Hold (OUT OF SERVICE — DO NOT USE)', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/assets/AST-0001/safety-hold',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_primary_master` },
       body: {
         isHoldActive: true,
         reason: 'Boiler pressure valve leak detected',
@@ -351,12 +363,12 @@ test('Equipment & Asset Management — Screen 003 Integration Test Suite', async
   });
 
   // 7. POST /api/v1/assets/work-orders
-  await t.test('Master can create a maintenance work order with priority and failure analysis', async () => {
+  await t.test('Primary Master can create a maintenance work order with priority and failure analysis', async () => {
     const res = await makeRequest({
       port,
       method: 'POST',
       path: '/api/v1/assets/work-orders',
-      headers: { Authorization: `Bearer token_normal_master` },
+      headers: { Authorization: `Bearer token_primary_master` },
       body: {
         assetId: 'AST-0001',
         title: 'Group Head Gasket Replacement',

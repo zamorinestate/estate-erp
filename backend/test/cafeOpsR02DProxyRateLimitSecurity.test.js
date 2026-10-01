@@ -195,7 +195,11 @@ test('CAFÉ OPS-R02D: Trusted Proxy, Client-IP Integrity & Dual-Bucket Rate Limi
     const testAccountLimiter = createLoginAccountRateLimiter({ limit: 3, windowMs: 60000 });
 
     testApp.post('/login', testIpLimiter, testAccountLimiter, (req, res) => {
-      res.status(200).json({ success: true, message: 'Authenticated' });
+      if (req.body?.password === 'CorrectPassword!') {
+        req.authCredentialVerified = true;
+        return res.status(200).json({ success: true, message: 'Authenticated' });
+      }
+      return res.status(401).json({ success: false, error: { code: 'INVALID_LOGIN' } });
     });
 
     const server = http.createServer(testApp);
@@ -219,7 +223,7 @@ test('CAFÉ OPS-R02D: Trusted Proxy, Client-IP Integrity & Dual-Bucket Rate Limi
             password: 'Password123!',
           }),
         });
-        assert.equal(res.status, 200, `Request ${i} under IP limit should pass`);
+        assert.equal(res.status, 401, `Failed request ${i} under IP limit should reach authentication`);
       }
 
       // 6th request from the SAME IP targeting yet another new account must be BLOCKED by the IP limiter
@@ -255,7 +259,7 @@ test('CAFÉ OPS-R02D: Trusted Proxy, Client-IP Integrity & Dual-Bucket Rate Limi
             password: 'Password123!',
           }),
         });
-        assert.equal(res.status, 200, `Distributed attempt ${i} under account limit should pass`);
+        assert.equal(res.status, 401, `Failed distributed attempt ${i} under account limit should reach authentication`);
       }
 
       // 4th request from a BRAND NEW IP (203.0.113.14) targeting the SAME account must be BLOCKED by Account limiter
@@ -287,10 +291,27 @@ test('CAFÉ OPS-R02D: Trusted Proxy, Client-IP Integrity & Dual-Bucket Rate Limi
         body: JSON.stringify({
           organisationId: 'ZAMORIN',
           email: 'innocent_staff@zamorin.com',
-          password: 'Password123!',
+          password: 'CorrectPassword!',
         }),
       });
       assert.equal(legitimateRes.status, 200, 'Unrelated client and account must NOT be blocked by other throttles');
+
+      // Successful sign-ins do not accumulate in failed-attempt buckets.
+      for (let i = 0; i < 8; i++) {
+        const successRes = await fetch(`${baseUrl}/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Forwarded-For': '198.51.100.150',
+          },
+          body: JSON.stringify({
+            organisationId: 'ZAMORIN',
+            email: 'repeat_success@zamorin.com',
+            password: 'CorrectPassword!',
+          }),
+        });
+        assert.equal(successRes.status, 200, `Successful sign-in ${i + 1} must not consume brute-force quota`);
+      }
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

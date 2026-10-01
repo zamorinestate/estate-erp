@@ -13,7 +13,7 @@ const path = require('path');
 const {
   // PM-02J-R1 Invariants
   CLIENT_ORGANISATION_AUTHORITY_IN_DIAGNOSTICS,
-  NORMAL_MASTER_BYPASSES_DIAGNOSTIC_CLASSIFICATION,
+  INVALID_MASTER_CLAIM_BYPASSES_DIAGNOSTIC_CLASSIFICATION,
   DIAGNOSTIC_HIDDEN_CAFE_INFERENCE,
   DIAGNOSTIC_GROSS_TO_NET_FORMULA_DUPLICATION,
   ADDITIVE_DECOMPOSITION_RECONCILIATION_ERROR,
@@ -540,8 +540,8 @@ describe('PM-02J — Advanced Graphical, Diagnostic & Exploratory Analytics', ()
       );
     });
 
-    // (4) Normal Master confidential diagnostic denial
-    it('(4) Normal Master attempting to access HIGHLY_CONFIDENTIAL report is denied with PRIMARY_MASTER_REQUIRED', () => {
+    // (4) Malformed MASTER claim confidential diagnostic denial
+    it('(4) Malformed MASTER authority claim is denied HIGHLY_CONFIDENTIAL report access', () => {
       ReportRegistry.registerReport({
         reportId: 'test-confidential-audit',
         reportName: 'Test Confidential Audit',
@@ -550,9 +550,9 @@ describe('PM-02J — Advanced Graphical, Diagnostic & Exploratory Analytics', ()
         supportedRoles: ['MASTER'],
       });
       try {
-        const normalMasterAuth = { role: 'MASTER', userId: 'MU-NORMAL', isPrimaryMaster: false };
+        const malformedMasterAuth = { role: 'MASTER', userId: 'MU-MALFORMED', isPrimaryMaster: false };
         assert.throws(
-          () => ReportRegistry.assertReportAccess('test-confidential-audit', normalMasterAuth),
+          () => ReportRegistry.assertReportAccess('test-confidential-audit', malformedMasterAuth),
           (err) => err.statusCode === 403 && err.code === 'PRIMARY_MASTER_REQUIRED'
         );
       } finally {

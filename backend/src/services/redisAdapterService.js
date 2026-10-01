@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 /**
  * Enterprise Production Redis Adapter Suite
  * 
@@ -9,7 +11,7 @@
  * 3. Ephemeral Device Presence (TTL-based presence tracking with O(1) reads)
  * 4. Distributed Job Mutex & Fencing (Safe owner release via Lua, monotonic fencing counter, lease renewal)
  * 
- * Peer Dependency: ioredis / redis client (when deployed to production cluster).
+ * Peer Dependency: official node-redis client (when deployed to production cluster).
  */
 
 const LUA_SCRIPTS = {
@@ -19,23 +21,34 @@ const LUA_SCRIPTS = {
     local now = tonumber(ARGV[1])
     local windowMs = tonumber(ARGV[2])
     local maxRequests = tonumber(ARGV[3])
+    local reservationId = ARGV[4]
     local clearBefore = now - windowMs
 
     redis.call('ZREMRANGEBYSCORE', key, 0, clearBefore)
     local currentCount = redis.call('ZCARD', key)
 
     if currentCount < maxRequests then
-      redis.call('ZADD', key, now, tostring(now) .. '-' .. tostring(math.random(1000, 9999)))
+      redis.call('ZADD', key, now, reservationId)
       redis.call('PEXPIRE', key, windowMs)
-      return { 1, maxRequests - currentCount - 1, math.floor(windowMs / 1000) }
+      return { 1, maxRequests - currentCount - 1, math.floor(windowMs / 1000), reservationId }
     else
       local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
       local resetMs = windowMs
       if oldest and oldest[2] then
         resetMs = math.max(0, math.floor((tonumber(oldest[2]) + windowMs - now) / 1000))
       end
-      return { 0, 0, resetMs }
+      return { 0, 0, resetMs, '' }
     end
+  `,
+
+  RELEASE_RATE_LIMIT_RESERVATION: `
+    local key = KEYS[1]
+    local reservationId = ARGV[1]
+    local removed = redis.call('ZREM', key, reservationId)
+    if redis.call('ZCARD', key) == 0 then
+      redis.call('DEL', key)
+    end
+    return removed
   `,
 
   // Safe distributed mutex release (only owner can delete lock)
@@ -96,23 +109,41 @@ class RedisAdapterService {
     }
     const key = `${this.keyPrefix}rl:${scope}:${identifier}`;
     const now = Date.now();
+    const reservationId = crypto.randomUUID();
 
-    const [allowed, remaining, resetAfterSeconds] = await this.client.eval(
+    const [allowed, remaining, resetAfterSeconds, acceptedReservationId] = await this.client.eval(
       LUA_SCRIPTS.SLIDING_WINDOW_LIMITER,
-      1,
-      key,
-      now,
-      windowMs,
-      limit
+      {
+        keys: [key],
+        arguments: [String(now), String(windowMs), String(limit), reservationId],
+      }
     );
 
     return {
       allowed: Boolean(allowed === 1),
       remaining: Number(remaining),
       resetAfterSeconds: Number(resetAfterSeconds),
+      reservationId: allowed === 1 ? String(acceptedReservationId || reservationId) : null,
       limit,
       windowMs,
     };
+  }
+
+  async releaseRateLimitReservation(scope, identifier, reservationId) {
+    if (!this.client) {
+      throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
+    }
+    const cleanReservationId = String(reservationId || '').trim();
+    if (!cleanReservationId) return false;
+    const key = `${this.keyPrefix}rl:${scope}:${identifier}`;
+    const removed = await this.client.eval(
+      LUA_SCRIPTS.RELEASE_RATE_LIMIT_RESERVATION,
+      {
+        keys: [key],
+        arguments: [cleanReservationId],
+      }
+    );
+    return Number(removed) > 0;
   }
 
   // --- 2. Realtime Event Bus Pub/Sub ---
@@ -130,14 +161,11 @@ class RedisAdapterService {
       throw new Error('REDIS_SUBSCRIBER_NOT_INITIALIZED');
     }
     const channel = `${this.keyPrefix}events:${topic}`;
-    await this.subscriberClient.subscribe(channel);
-    this.subscriberClient.on('message', (chan, msg) => {
-      if (chan === channel) {
-        try {
-          callback(JSON.parse(msg));
-        } catch (_) {
-          callback(msg);
-        }
+    await this.subscriberClient.subscribe(channel, (msg) => {
+      try {
+        callback(JSON.parse(msg));
+      } catch (_) {
+        callback(msg);
       }
     });
   }
@@ -147,19 +175,34 @@ class RedisAdapterService {
     if (!this.client) {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
-    const key = `${this.keyPrefix}presence:${deviceId}`;
+    const organisationId = String(payload.organisationId || '').trim().toUpperCase();
+    const cafeId = String(payload.cafeId || 'GLOBAL').trim().toUpperCase() || 'GLOBAL';
+    const normalizedDeviceId = String(deviceId || '').trim().toUpperCase();
+    if (!organisationId || !normalizedDeviceId) {
+      throw new Error('REDIS_PRESENCE_SCOPE_REQUIRED');
+    }
+    const key = `${this.keyPrefix}presence:${organisationId}:${cafeId}:${normalizedDeviceId}`;
     const data = {
       ...payload,
+      organisationId,
+      cafeId,
+      deviceId: normalizedDeviceId,
       lastHeartbeat: new Date().toISOString(),
     };
-    return this.client.set(key, JSON.stringify(data), 'EX', ttlSeconds);
+    return this.client.set(key, JSON.stringify(data), { EX: ttlSeconds });
   }
 
-  async getDevicePresence(deviceId) {
+  async getDevicePresence(deviceId, { organisationId, cafeId = 'GLOBAL' } = {}) {
     if (!this.client) {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
-    const key = `${this.keyPrefix}presence:${deviceId}`;
+    const org = String(organisationId || '').trim().toUpperCase();
+    const cafe = String(cafeId || 'GLOBAL').trim().toUpperCase() || 'GLOBAL';
+    const normalizedDeviceId = String(deviceId || '').trim().toUpperCase();
+    if (!org || !normalizedDeviceId) {
+      throw new Error('REDIS_PRESENCE_SCOPE_REQUIRED');
+    }
+    const key = `${this.keyPrefix}presence:${org}:${cafe}:${normalizedDeviceId}`;
     const raw = await this.client.get(key);
     if (!raw) return { isOnline: false };
     return {
@@ -180,7 +223,7 @@ class RedisAdapterService {
     const fencingToken = await this.client.incr(fenceKey);
 
     // Atomically acquire mutex with ownerId
-    const acquired = await this.client.set(lockKey, ownerId, 'PX', ttlMs, 'NX');
+    const acquired = await this.client.set(lockKey, ownerId, { PX: ttlMs, NX: true });
 
     if (acquired === 'OK' || acquired === true) {
       return {
@@ -206,7 +249,7 @@ class RedisAdapterService {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
     const lockKey = `${this.keyPrefix}locks:${jobName}`;
-    const released = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_RELEASE, 1, lockKey, ownerId);
+    const released = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_RELEASE, { keys: [lockKey], arguments: [String(ownerId)] });
     return Boolean(released === 1);
   }
 
@@ -215,7 +258,7 @@ class RedisAdapterService {
       throw new Error('REDIS_CLIENT_NOT_INITIALIZED');
     }
     const lockKey = `${this.keyPrefix}locks:${jobName}`;
-    const extended = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_EXTEND, 1, lockKey, ownerId, ttlMs);
+    const extended = await this.client.eval(LUA_SCRIPTS.SAFE_LOCK_EXTEND, { keys: [lockKey], arguments: [String(ownerId), String(ttlMs)] });
     return Boolean(extended === 1);
   }
 

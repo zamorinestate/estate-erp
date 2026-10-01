@@ -74,7 +74,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
     organisationId: ORG_ID,
   };
 
-  const normalMasterAuth = {
+  const malformedMasterAuth = {
     userId: 'USR-NM-01',
     name: 'Operations Master',
     email: 'ops.master@zamorin.test',
@@ -482,7 +482,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
 
     assert.equal(canAccessPersonalLedger(primaryMasterAuth), true, 'Primary Master allowed');
     assert.equal(canAccessPersonalLedger(ownerAuth), true, 'Owner allowed');
-    assert.equal(canAccessPersonalLedger(normalMasterAuth), false, 'Normal Master denied');
+    assert.equal(canAccessPersonalLedger(malformedMasterAuth), false, 'Malformed MASTER denied');
     assert.equal(canAccessPersonalLedger(cafeAManagerAuth), false, 'Cafe Admin denied');
     assert.equal(canAccessPersonalLedger(cafeAStaffAuth), false, 'Staff denied');
   });
@@ -496,6 +496,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
       businessDate: '2026-09-18',
       cafeId: CAFE_A_ID,
       organisationId: ORG_ID,
+      registerId: 'REG-A-MAIN',
       cashierUserId: cafeAStaffAuth.userId,
       openingFloatPaisa: 200000, // ₹2,000 opening float
       status: 'OPEN',
@@ -507,6 +508,7 @@ test('ACP-03 — End-to-End Multi-Café Operational Simulation', async (t) => {
       businessDate: '2026-09-18',
       cafeId: CAFE_B_ID,
       organisationId: ORG_ID,
+      registerId: 'REG-B-MAIN',
       cashierUserId: cafeBStaffAuth.userId,
       openingFloatPaisa: 350000, // ₹3,500 opening float
       status: 'OPEN',

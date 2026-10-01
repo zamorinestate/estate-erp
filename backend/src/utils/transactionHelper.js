@@ -69,11 +69,19 @@ function checkTopologySupportsTransactions() {
 async function executeTransactionWithRetry(operationFn, options = {}) {
   const maxTransientRetries = options.maxTransientRetries || 5;
   const maxCommitRetries = options.maxCommitRetries || 3;
+  const requireTransactions = options.requireTransactions === true;
   const canTransact = options.canTransact !== undefined
     ? options.canTransact
     : (mongoose.connection && mongoose.connection.readyState === 1 && typeof mongoose.connection.startSession === 'function' && checkTopologySupportsTransactions());
 
   if (!canTransact) {
+    if (requireTransactions) {
+      throw new ApiError(
+        503,
+        'TRANSACTION_SUPPORT_REQUIRED',
+        'This irreversible operation requires MongoDB transaction support and was not executed.'
+      );
+    }
     return await operationFn(null);
   }
 
@@ -106,6 +114,13 @@ async function executeTransactionWithRetry(operationFn, options = {}) {
       }
 
       if (err.message && (err.message.includes('Transaction numbers are only allowed on a replica set member or mongos') || err.message.includes('does not support retryable writes'))) {
+        if (requireTransactions) {
+          throw new ApiError(
+            503,
+            'TRANSACTION_SUPPORT_REQUIRED',
+            'This irreversible operation requires MongoDB transaction support and was not executed.'
+          );
+        }
         return await operationFn(null);
       }
 

@@ -194,7 +194,6 @@ async function run() {
     console.log('\n--- 2. FOUR-PROFILE ROUTE MATRIX ---');
     const profiles = [
       { name: 'PRIMARY MASTER', role: 'master' },
-      { name: 'NORMAL MASTER', role: 'master_normal' },
       { name: 'OWNER', role: 'owner' },
       { name: 'CAFE OPERATIONS', role: 'cafe_admin' }
     ];
