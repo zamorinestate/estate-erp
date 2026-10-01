@@ -44,3 +44,16 @@ jobs:
         run: |
           node frontend/verifyRouterImports.mjs
           node scripts/master_system_verification.mjs
+
+      - name: Verify Release Governance Truth
+        run: |
+          if grep -q "100% PRODUCTION READY & CERTIFIED" scripts/master_system_verification.mjs; then
+            echo "ERROR: software verifier must not claim commercial production certification"
+            exit 1
+          fi
+          grep -q "AUTOMATED SOFTWARE VERIFICATION PASS" scripts/master_system_verification.mjs
+          grep -q "validateExt19CutoverReadiness.ps1 -AttemptCutover" .github/workflows/release-gate.yml
+          if grep -q "0.0.0.0/0 wildcard IP entry" scripts/validateExt19CutoverReadiness.ps1; then
+            echo "ERROR: EXT-19 contains retired Atlas wildcard-access blocker"
+            exit 1
+          fi
