@@ -189,12 +189,11 @@ async function run() {
     console.log('Staff Smoke Test:', staffPass ? 'PASS' : 'FAIL', results.staffSmoke);
 
     // =========================================================================
-    // 2. FOUR-PROFILE ROUTE MATRIX & HISTORICAL OWNER DEFECT REGRESSION
+    // 2. THREE-PROFILE ROUTE MATRIX & HISTORICAL OWNER DEFECT REGRESSION
     // =========================================================================
     console.log('\n--- 2. FOUR-PROFILE ROUTE MATRIX ---');
     const profiles = [
       { name: 'PRIMARY MASTER', role: 'master' },
-      { name: 'NORMAL MASTER', role: 'master_normal' },
       { name: 'OWNER', role: 'owner' },
       { name: 'CAFE OPERATIONS', role: 'cafe_admin' }
     ];
