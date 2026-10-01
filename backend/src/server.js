@@ -350,7 +350,7 @@ function createApp(environment) {
       redisReport = { status: 'DEGRADED', isConnected: false, lastError: redisError.message };
     }
 
-    const requireScanner = isProd && process.env.REQUIRE_DOCUMENT_SCANNER !== 'false';
+    const requireScanner = isProd && process.env.REQUIRE_DOCUMENT_SCANNER === 'true';
     const isScannerReady = !requireScanner || scannerReport.DOCUMENT_SCANNER_READY === true;
     const isRedisReady = !isProd || redisReport.isConnected === true;
     const ready = isProd
@@ -524,11 +524,11 @@ async function startServer() {
   }
 
   // Validate durable document storage configuration before accepting traffic (Fails safe if unconfigured in production)
-  documentStorageAdapter.validateStartupConfiguration(environment);
+  documentStorageAdapter.validateStartupConfiguration(process.env);
 
   // Universal production configuration & secrets validator (Fails safe: reports PRESENT/MISSING/INVALID/UNSAFE without revealing secrets)
   const { validateStartupConfiguration: validateConfig } = require('./config/startupValidator');
-  validateConfig(environment, { failClosed: true });
+  validateConfig(process.env, { failClosed: true });
 
   // Redis is a mandatory distributed-state dependency in production. Initialize
   // before binding the HTTP listener so rate limits, event fan-out and device
