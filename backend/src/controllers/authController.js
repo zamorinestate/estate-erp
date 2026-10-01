@@ -1907,20 +1907,15 @@ const getMfaStatus = asyncHandler(
 
 const beginMfaReenrollment = asyncHandler(
   async (request, response) => {
-    const password =
-      typeof request.body?.password === 'string'
-        ? request.body.password
-        : '';
-
     const authorizationToken =
       request.body?.mfaReenrollmentAuthorizationToken ||
       request.get('x-mfa-reenrollment-authorization-token');
 
-    if (!password || !authorizationToken) {
+    if (!authorizationToken) {
       throw new ApiError(
         400,
-        'MFA_REENROLLMENT_FIELDS_REQUIRED',
-        'Current password and recovery authorization are required.'
+        'MFA_REENROLLMENT_AUTHORIZATION_REQUIRED',
+        'Recovery authorization is required.'
       );
     }
 
@@ -1947,7 +1942,7 @@ const beginMfaReenrollment = asyncHandler(
       accountStatus: 'ACTIVE',
       archivedAt: null,
     }).select(
-      '+passwordHash +pendingMfaSecretEncrypted'
+      '+pendingMfaSecretEncrypted'
     );
 
     if (!user || !user.mfaEnabled) {
@@ -1955,19 +1950,6 @@ const beginMfaReenrollment = asyncHandler(
         400,
         'MFA_NOT_ENABLED',
         'MFA must already be enabled before it can be replaced.'
-      );
-    }
-
-    const passwordMatches = await verifyPassword(
-      password,
-      user.passwordHash
-    );
-
-    if (!passwordMatches) {
-      throw new ApiError(
-        401,
-        'INVALID_PASSWORD',
-        'Invalid current password.'
       );
     }
 
@@ -1994,7 +1976,7 @@ const beginMfaReenrollment = asyncHandler(
         action: 'MFA_REENROLLMENT_STARTED',
         entityType: 'USER',
         entityId: user.userId,
-        reason: 'MFA replacement initiated after recovery-code verification and password confirmation.',
+        reason: 'MFA replacement initiated after successful recovery-code authentication.',
         result: 'SUCCESS',
         riskClassification: 'HIGH',
         metadata: {
