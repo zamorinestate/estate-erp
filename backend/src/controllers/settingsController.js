@@ -33,6 +33,7 @@ const { Delegation } = require('../models/Delegation');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { Approval } = require('../models/Approval');
 const { Notification } = require('../models/Notification');
+const { NotificationOutbox } = require('../models/NotificationOutbox');
 const auditService = require('../services/auditService');
 const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 const { getEffectiveAuthSecurityPolicy } = require('../services/authService');
@@ -1757,6 +1758,176 @@ async function listMySupportTickets(req, res) {
     success: true,
     data: { tickets },
   });
+}
+
+function assertSupportCaseManagementScope(user, ticket) {
+  const {
+    role,
+    assignedCafeIds = [],
+    primaryCafeId,
+  } = user || {};
+
+  if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
+    throw new ApiError(
+      403,
+      'PERMISSION_DENIED',
+      'Only management roles can access this support case.'
+    );
+  }
+
+  if (role === 'CAFE_ADMIN') {
+    const validCafes = [
+      ...new Set(
+        [
+          ...(assignedCafeIds || []),
+          primaryCafeId,
+        ]
+          .filter(Boolean)
+          .map((value) => String(value).trim().toUpperCase())
+      ),
+    ];
+    if (!validCafes.includes(String(ticket?.cafeId || '').trim().toUpperCase())) {
+      throw new ApiError(
+        403,
+        'CAFE_ACCESS_DENIED',
+        'Access denied to support case outside your assigned café.'
+      );
+    }
+  }
+
+  if (role === 'OWNER') {
+    const validCafes = [
+      ...new Set(
+        (assignedCafeIds || [])
+          .filter(Boolean)
+          .map((value) => String(value).trim().toUpperCase())
+      ),
+    ];
+    if (
+      validCafes.length === 0 ||
+      !validCafes.includes(String(ticket?.cafeId || '').trim().toUpperCase())
+    ) {
+      throw new ApiError(
+        403,
+        'CROSS_CAFE_RESOURCE_DENIED',
+        'Access denied to support case outside your assigned café.'
+      );
+    }
+  }
+}
+
+async function generateSupportSequenceId({
+  organisationId,
+  sequenceKey,
+  prefix,
+  minimumDigits = 4,
+  session = null,
+}) {
+  return SequenceCounter.generateId({
+    organisationId,
+    sequenceKey,
+    prefix,
+    minimumDigits,
+    session,
+  });
+}
+
+async function enqueueSupportRecipientNotifications({
+  organisationId,
+  ticket,
+  recipientProfile,
+  eventType,
+  title,
+  message,
+  templateId,
+  actorUserId,
+  correlationId,
+  deduplicationKey,
+  session = null,
+}) {
+  if (!recipientProfile?.userId || !recipientProfile?.role) {
+    return {
+      inAppQueued: false,
+      emailQueued: false,
+      reason: 'RECIPIENT_PROFILE_UNAVAILABLE',
+    };
+  }
+
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const notificationId = await generateSupportSequenceId({
+    organisationId,
+    sequenceKey: `NOTIFICATION_${datePart}`,
+    prefix: `NT-${datePart}`,
+    minimumDigits: 4,
+    session,
+  });
+
+  const notification = new Notification({
+    notificationId,
+    organisationId,
+    cafeId: ticket.cafeId || null,
+    eventType,
+    category: 'OPERATIONS',
+    recipientUserId: recipientProfile.userId,
+    recipientRole: recipientProfile.role,
+    title,
+    message,
+    priority: 'NORMAL',
+    channels: ['IN_APP'],
+    deepLink: `#staff-settings?section=help&ticketId=${ticket.caseId}`,
+    sourceModule: 'SETTINGS',
+    sourceEntityType: 'SUPPORT_CASE',
+    sourceEntityId: ticket.caseId,
+    deduplicationKey,
+    correlationId: correlationId || `SUPPORT-${ticket.caseId}`,
+    status: 'PENDING',
+    createdBy: actorUserId || 'SYSTEM',
+  });
+  await notification.save(session ? { session } : undefined);
+
+  let emailQueued = false;
+  const recipientEmail = String(recipientProfile.email || '').trim().toLowerCase();
+  if (recipientEmail) {
+    const outboxId = await generateSupportSequenceId({
+      organisationId,
+      sequenceKey: `NOTIFICATION_OUTBOX_${datePart}`,
+      prefix: `OUT-${datePart}`,
+      minimumDigits: 4,
+      session,
+    });
+
+    const outbox = new NotificationOutbox({
+      outboxId,
+      organisationId,
+      cafeId: ticket.cafeId || null,
+      correlationId: correlationId || `SUPPORT-${ticket.caseId}`,
+      idempotencyKey: deduplicationKey,
+      eventType,
+      recipientUserId: recipientProfile.userId,
+      recipientEmail,
+      recipientName: recipientProfile.name || '',
+      recipientRole: recipientProfile.role,
+      templateId,
+      subject: title,
+      renderedSubject: title,
+      renderedBody: message,
+      renderedBodyPlain: message,
+      severity: 'INFO',
+      priority: 'NORMAL',
+      channels: ['EMAIL'],
+      status: 'QUEUED',
+      nextAttemptAt: now,
+    });
+    await outbox.save(session ? { session } : undefined);
+    emailQueued = true;
+  }
+
+  return {
+    inAppQueued: true,
+    emailQueued,
+    notificationId,
+  };
 }
 
 /**
