@@ -1760,7 +1760,7 @@ async function openCafeEditModal(root, cafeId) {
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--line);padding-top:14px;">
             <button class="btn btn-sm btn-ghost" data-close-modal type="button">Cancel</button>
-            <button class="btn btn-sm btn-primary" type="submit">Save Changes</button>
+            <button class="btn btn-sm btn-primary" id="edit-cafe-save-btn" type="submit">Save Changes</button>
           </div>
         </form>
       </div>
@@ -1835,7 +1835,7 @@ async function openCafeEditModal(root, cafeId) {
     };
 
     try {
-      await apiPatch(`/cafes/${cafeId}`, {
+      await apiPatch(`/cafes/${encodeURIComponent(cafeId)}`, {
         body: { name, displayName, status, city, managerName, phone, address, reason: "Updated via Administration" },
       });
       showToast(`Café "${name}" updated successfully.`, "success");
