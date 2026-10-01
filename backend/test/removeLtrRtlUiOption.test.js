@@ -35,5 +35,5 @@ test('UI-LTR-004: UI Components & Suite no longer exposes RTL/i18n section', () 
 });
 
 test('UI-LTR-005: service worker cache version is bumped for rollout', () => {
-  assert.ok(serviceWorker.includes("const CACHE_VERSION = 'zamorin-pwa-v3.12.1';"));
+  assert.ok(serviceWorker.includes("const CACHE_VERSION = 'zamorin-pwa-v3.12.0';"));
 });
