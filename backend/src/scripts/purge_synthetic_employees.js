@@ -41,7 +41,7 @@ async function connectToMongo() {
       console.log(`  Connection attempt failed: ${err.message}`);
     }
   }
-  throw new Error('All connection attempts to MongoDB Atlas failed. Please ensure current IP is whitelisted in MongoDB Atlas Network Access.');
+  throw new Error('All configured MongoDB connection attempts failed. Verify the environment credential and Atlas network access.');
 }
 
 async function purgeSyntheticEmployees() {
