@@ -31,6 +31,8 @@ const cafeRoutes = read('backend/src/routes/cafeRoutes.js');
 const adminRoutes = read('backend/src/routes/adminRoutes.js');
 const userRoutes = read('backend/src/routes/userRoutes.js');
 const authRoutes = read('backend/src/routes/authRoutes.js');
+const seedSource = read('backend/src/scripts/seedInitialData.js');
+const startProdSource = read('backend/src/scripts/startProd.js');
 
 function productionEnv(overrides = {}) {
   return {
@@ -91,6 +93,16 @@ test('BACKEND-RUNTIME-004: Render manifest declares every mandatory core runtime
   assert.ok(deployCheckSource.includes("render.yaml missing REDIS_URL declaration required by production distributed state"));
   assert.ok(deployCheckSource.includes("key: 'DOCUMENT_STORAGE_PROVIDER'"));
   assert.equal(deployCheckSource.includes("key: 'DOCUMENT_STORAGE_DRIVER'"), false);
+});
+
+test('BACKEND-RUNTIME-005: production seed is minimal by default and bootstrap failures are fatal', () => {
+  assert.ok(seedSource.includes("const isProductionSeed = environment.production || process.env.NODE_ENV === 'production';"));
+  assert.ok(seedSource.includes("const isMinimalSeed = isProductionSeed || process.env.SEED_MINIMAL === 'true' || process.env.SEED_DEMO_DATA === 'false';"));
+  assert.ok(seedSource.includes('throw error;'));
+  assert.ok(startProdSource.includes("[FATAL] Production bootstrap verification failed:"));
+  assert.ok(startProdSource.includes('throw seedErr;'));
+  assert.ok(renderYaml.includes('SEED_MINIMAL'));
+  assert.ok(renderYaml.includes('SEED_DEMO_DATA'));
 });
 
 test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
