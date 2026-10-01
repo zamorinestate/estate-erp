@@ -1909,6 +1909,14 @@ const getMfaStatus = asyncHandler(
 
 const beginMfaReenrollment = asyncHandler(
   async (request, response) => {
+    if (!request.auth?.mfaReenrollmentRequired) {
+      throw new ApiError(
+        403,
+        'MFA_REENROLLMENT_SESSION_REQUIRED',
+        'MFA replacement is only available from an active recovery session.'
+      );
+    }
+
     const authorizationToken =
       request.body?.mfaReenrollmentAuthorizationToken ||
       request.get('x-mfa-reenrollment-authorization-token');
@@ -2007,6 +2015,14 @@ const beginMfaReenrollment = asyncHandler(
 
 const confirmMfaReenrollment = asyncHandler(
   async (request, response) => {
+    if (!request.auth?.mfaReenrollmentRequired) {
+      throw new ApiError(
+        403,
+        'MFA_REENROLLMENT_SESSION_REQUIRED',
+        'MFA replacement is only available from an active recovery session.'
+      );
+    }
+
     const token =
       request.body?.mfaReenrollmentToken ||
       request.get('x-mfa-reenrollment-token');
