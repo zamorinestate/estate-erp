@@ -1063,10 +1063,38 @@ async function listUserSessions({
   organisationId,
   userId,
 }) {
+  const normalizedOrganisationId =
+    normalizeIdentifier(organisationId);
+  const normalizedUserId =
+    normalizeIdentifier(userId);
+
+  const activeSessions = await Session.find({
+    organisationId: normalizedOrganisationId,
+    userId: normalizedUserId,
+    status: 'ACTIVE',
+  });
+
+  const expiredSessionIds = activeSessions
+    .filter((session) => !session.isActive())
+    .map((session) => session._id);
+
+  if (expiredSessionIds.length > 0) {
+    await Session.updateMany(
+      {
+        _id: { $in: expiredSessionIds },
+        status: 'ACTIVE',
+      },
+      {
+        $set: {
+          status: 'EXPIRED',
+        },
+      }
+    );
+  }
+
   return Session.find({
-    organisationId:
-      normalizeIdentifier(organisationId),
-    userId: normalizeIdentifier(userId),
+    organisationId: normalizedOrganisationId,
+    userId: normalizedUserId,
   }).sort({
     lastActivityAt: -1,
     issuedAt: -1,
