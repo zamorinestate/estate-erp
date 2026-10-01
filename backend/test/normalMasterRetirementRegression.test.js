@@ -12,6 +12,7 @@ const { authorize, canAccessCafe } = require('../src/middleware/authorize');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SCAN_ROOTS = [
   'backend/src',
+  'backend/test',
   'backend/tests',
   'frontend/src',
   'scripts',
