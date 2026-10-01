@@ -23,17 +23,6 @@ const PERSONAS = [
     ]
   },
   {
-    role: 'master_normal',
-    name: 'Normal Master',
-    routes: [
-      'dashboard', 'pos', 'approvals', 'attendance', 'dept-orders',
-      'inventory', 'procurement', 'assets', 'quality', 'employees',
-      'bills', 'expenses', 'finance',
-      'customers', 'menu', 'vendors', 'reports', 'admin',
-      'cafe-ops-devices', 'settings', 'notifications'
-    ]
-  },
-  {
     role: 'owner',
     name: 'Owner',
     routes: [
