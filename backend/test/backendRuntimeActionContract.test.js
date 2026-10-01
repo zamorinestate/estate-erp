@@ -158,7 +158,6 @@ test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
       `Backend missing POS support route ${method.toUpperCase()} ${routePath}`
     );
   }
-  }
 });
 
 test('BACKEND-ACTION-002: attendance and shift controls map to live backend routes', () => {
@@ -336,7 +335,6 @@ test('BACKEND-ACTION-003: administration and login actions map to live backend r
       ),
       `Backend missing administration/login route ${method.toUpperCase()} ${routePath}`
     );
-  }
   }
 
   assert.ok(cafeRoutes.includes(".route('/')"));
