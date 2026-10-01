@@ -36,7 +36,11 @@ function secureHashMatches(value, purpose, expectedHash) {
 function isResetEligibleUser(user, now = new Date()) {
   if (!user || user.archivedAt) return false;
   if (user.accountStatus === 'ACTIVE') return true;
-  // A temporary authentication lock remains eligible for password recovery\n  // both during and after the lock window. Manual/permanent locks have no\n  // lockedUntil timestamp and remain ineligible.\n  return user.accountStatus === 'LOCKED' && user.lockedUntil instanceof Date;
+
+  // A temporary authentication lock remains eligible for password recovery
+  // both during and after the lock window. Manual/permanent locks have no
+  // lockedUntil timestamp and remain ineligible.
+  return user.accountStatus === 'LOCKED' && user.lockedUntil instanceof Date;
 }
 
 async function createPasswordResetChallenge(user) {
