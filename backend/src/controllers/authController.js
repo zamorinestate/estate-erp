@@ -1491,11 +1491,13 @@ const mfaVerify = asyncHandler(
     const device = buildDeviceMetadata(request);
     const network = buildNetworkMetadata(request);
 
-    const shouldRememberDevice = Boolean(
-      request.body?.rememberDevice ||
-      request.body?.remember ||
-      payload.rem
-    );
+    const shouldRememberDevice =
+      !recoveryCode &&
+      Boolean(
+        request.body?.rememberDevice ||
+        request.body?.remember ||
+        payload.rem
+      );
 
     let registeredTrustedDevice = null;
     if (shouldRememberDevice) {
@@ -1529,6 +1531,49 @@ const mfaVerify = asyncHandler(
       sessionData
     );
 
+    let recoveryRevokedSessionCount = 0;
+    let recoveryRevokedTrustedDeviceCount = 0;
+
+    if (recoveryCode) {
+      recoveryRevokedSessionCount =
+        await revokeAllUserSessions({
+          organisationId:
+            user.organisationId,
+          userId:
+            user.userId,
+          revokedBy:
+            user.userId,
+          reason:
+            'MFA_RECOVERY_LOGIN',
+          details:
+            'Other sessions revoked after recovery-code MFA verification.',
+          excludeSessionId:
+            sessionData.session.sessionId,
+        });
+
+      const recoveryTrustedDeviceResult =
+        await deviceTrustService
+          .revokeAllUserTrustedDevices({
+            organisationId:
+              user.organisationId,
+            userId:
+              user.userId,
+            revokedBy:
+              user.userId,
+            reason:
+              'MFA_RECOVERY_LOGIN',
+            actorRole:
+              user.role,
+            correlationId:
+              request.correlationId || null,
+          });
+
+      recoveryRevokedTrustedDeviceCount =
+        recoveryTrustedDeviceResult?.modifiedCount || 0;
+
+      clearTrustedDeviceCookie(response);
+    }
+
     return response.status(200).json({
       success: true,
       message: 'MFA verification successful.',
@@ -1541,6 +1586,14 @@ const mfaVerify = asyncHandler(
         trustedDevice: Boolean(registeredTrustedDevice),
         mfaReenrollmentRequired: Boolean(recoveryCode),
         mfaReenrollmentAuthorizationToken,
+        recoverySecurityReset: recoveryCode
+          ? {
+              revokedSessionCount:
+                recoveryRevokedSessionCount,
+              revokedTrustedDeviceCount:
+                recoveryRevokedTrustedDeviceCount,
+            }
+          : null,
       },
       correlationId:
         request.correlationId || null,
