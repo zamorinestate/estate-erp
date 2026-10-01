@@ -366,6 +366,13 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
       const bill = {
         billId: 'BILL-101',
         invoiceNumber: 'INV-101',
+        businessDate: '2026-09-13',
+        sellerLegalName: 'Zamorin Hospitality Private Limited',
+        sellerGstin: '29AABCT1332L1ZV',
+        sellerAddress: 'Indiranagar, Bengaluru, Karnataka 560038',
+        subtotalPaisa: 100000,
+        taxPaisa: 5000,
+        totalPaisa: 105000,
         status: 'PAID',
         reprints: []
       };
@@ -392,6 +399,13 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
       const voidBill = {
         billId: 'BILL-102',
         invoiceNumber: 'INV-102',
+        businessDate: '2026-09-13',
+        sellerLegalName: 'Zamorin Hospitality Private Limited',
+        sellerGstin: '29AABCT1332L1ZV',
+        sellerAddress: 'Indiranagar, Bengaluru, Karnataka 560038',
+        subtotalPaisa: 100000,
+        taxPaisa: 5000,
+        totalPaisa: 105000,
         status: 'VOID',
         reprints: []
       };
