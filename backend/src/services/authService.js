@@ -487,23 +487,78 @@ function createAccessToken({
 }
 
 async function recordFailedLogin(user) {
-  user.failedLoginAttempts += 1;
-
-  if (
-    user.failedLoginAttempts >=
-    MAX_FAILED_LOGIN_ATTEMPTS
-  ) {
-    user.accountStatus = 'LOCKED';
-
-    user.lockedUntil = new Date(
-      Date.now() +
-        TEMPORARY_LOCK_MINUTES *
-          60 *
-          1000
+  if (!user?._id) {
+    throw new Error(
+      'A persisted user is required to record a failed login.'
     );
   }
 
-  await user.save();
+  const lockDurationMs =
+    TEMPORARY_LOCK_MINUTES * 60 * 1000;
+
+  // Failed-login accounting is security state and must remain correct under
+  // parallel requests. A document save is intentionally avoided here because
+  // User uses optimistic concurrency: two bad-password requests can load the
+  // same version and cause one increment to be lost with VersionError.
+  await User.updateOne(
+    {
+      _id: user._id,
+      accountStatus: 'ACTIVE',
+    },
+    [
+      {
+        $set: {
+          failedLoginAttempts: {
+            $add: [
+              { $ifNull: ['$failedLoginAttempts', 0] },
+              1,
+            ],
+          },
+          accountStatus: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $add: [
+                      { $ifNull: ['$failedLoginAttempts', 0] },
+                      1,
+                    ],
+                  },
+                  MAX_FAILED_LOGIN_ATTEMPTS,
+                ],
+              },
+              'LOCKED',
+              '$accountStatus',
+            ],
+          },
+          lockedUntil: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $add: [
+                      { $ifNull: ['$failedLoginAttempts', 0] },
+                      1,
+                    ],
+                  },
+                  MAX_FAILED_LOGIN_ATTEMPTS,
+                ],
+              },
+              { $add: ['$NOW', lockDurationMs] },
+              '$lockedUntil',
+            ],
+          },
+          updatedAt: '$NOW',
+          version: {
+            $add: [
+              { $ifNull: ['$version', 0] },
+              1,
+            ],
+          },
+        },
+      },
+    ]
+  );
 }
 
 async function clearExpiredTemporaryLock(user) {
