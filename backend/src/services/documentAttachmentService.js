@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { BusinessDocument } = require('../models/BusinessDocument');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const auditService = require('./auditService');
+const canonicalRecordAuditEvent = auditService.recordAuditEvent;
 const { DocumentMalwareScanner, defaultMalwareScanner, StaticFileSecurityValidator, getScannerRuntimeStatus } = require('./security/DocumentMalwareScanner');
 const { documentStorageAdapter } = require('./documentStorageAdapter');
 const { ApiError } = require('../utils/ApiError');
@@ -63,6 +64,7 @@ function rejectMalformedMasterContext(auth = {}) {
 function durableDocumentAuditAvailable() {
   return Boolean(
     BusinessDocument.db?.readyState === 1 ||
+    auditService.recordAuditEvent !== canonicalRecordAuditEvent ||
     auditService.recordAuditEvent?.mock ||
     typeof auditService.recordAuditEvent?.restore === 'function'
   );
