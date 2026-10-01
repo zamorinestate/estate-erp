@@ -968,6 +968,7 @@ const recordIncomingInspection = asyncHandler(async (request, response) => {
     decision,
     rejectionReason,
     inspectedByUserId: userId,
+    actorRole: request.auth.role,
     remarks,
   });
 
@@ -979,14 +980,12 @@ const recordIncomingInspection = asyncHandler(async (request, response) => {
 
 const listIncomingInspections = asyncHandler(async (request, response) => {
   const { organisationId } = request.auth;
-  const { cafeId, itemId, limit = 50 } = request.query || {};
+  const { itemId, limit = 50 } = request.query || {};
+  const filter = {
+    organisationId,
+    ...buildEffectiveCafeFilter(request),
+  };
 
-  const filter = { organisationId };
-  if (cafeId) {
-    const cleanCafe = cafeId.trim().toUpperCase();
-    assertCafeAccess(request, cleanCafe);
-    filter.cafeId = cleanCafe;
-  }
   if (itemId) filter.itemId = itemId.trim().toUpperCase();
 
   const inspections = await IncomingInspection.find(filter)
@@ -994,7 +993,10 @@ const listIncomingInspections = asyncHandler(async (request, response) => {
     .limit(Number(limit))
     .lean();
 
-  return response.status(200).json({ inspections });
+  return response.status(200).json({
+    inspections,
+    scope: filter.cafeId || 'ORGANISATION',
+  });
 });
 
 // 8c. Lot Quarantine & Release (R02-10 & Section 54-55)
@@ -1012,6 +1014,7 @@ const quarantineLot = asyncHandler(async (request, response) => {
     lotId,
     reason,
     userId,
+    actorRole: request.auth.role,
   });
 
   return response.status(200).json({
@@ -1035,6 +1038,7 @@ const releaseLot = asyncHandler(async (request, response) => {
     lotId,
     releaseReason,
     userId,
+    actorRole: request.auth.role,
   });
 
   return response.status(200).json({
@@ -1060,6 +1064,7 @@ const disposeLot = asyncHandler(async (request, response) => {
     dispositionStatus,
     dispositionReason,
     userId,
+    actorRole: request.auth.role,
   });
 
   return response.status(200).json({
