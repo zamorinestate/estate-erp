@@ -764,27 +764,8 @@ const getWorkforceAnalytics = asyncHandler(async (request, response) => {
     userRole: request.auth?.role || request.user?.role || null,
   });
 
-  // For unseeded/offline test environments without active users, provide baseline fixture values
-  let workforceMetrics = result.workforceMetrics;
-  let exceptions = result.exceptions;
-
-  if (workforceMetrics.activeHeadcount === 0 && mongoose.connection?.readyState !== 1) {
-    workforceMetrics = {
-      scheduledHours: 1240,
-      actualHoursWorked: 1218,
-      overtimeHours: 24,
-      labourCostTotal: 68570,
-      labourCostPctOfSales: 20.0,
-      salesPerLabourHour: 281.48,
-      attendanceExceptionsCount: 4,
-    };
-    exceptions = [
-      { employeeName: 'Staff Member #104', cafe: 'CAFE-01', type: 'Late Arrival', minutes: 22, status: 'RESOLVED' },
-      { employeeName: 'Staff Member #108', cafe: 'CAFE-01', type: 'Overtime +2.5h', minutes: 150, status: 'APPROVED' },
-      { employeeName: 'Staff Member #202', cafe: 'CAFE-02', type: 'Missing Punch Out', minutes: 0, status: 'PENDING_ADMIN' },
-      { employeeName: 'Staff Member #205', cafe: 'CAFE-02', type: 'Late Arrival', minutes: 15, status: 'RESOLVED' },
-    ];
-  }
+  const workforceMetrics = result.workforceMetrics;
+  const exceptions = result.exceptions || [];
 
   return response.status(200).json({
     success: true,
@@ -820,31 +801,8 @@ const getCustomerAnalytics = asyncHandler(async (request, response) => {
     filters: request.query || {},
   });
 
-  let customerSummary = result.customerSummary;
-  let rfmSegments = result.rfmSegments || result.segmentation?.rfmSegments || [];
-
-  // For unseeded/offline test environments without active data, provide baseline fixture values for SCR-022
-  if (customerSummary.totalIdentifiableCustomers === 0 && mongoose.connection?.readyState !== 1 && result.dataQuality?.status !== 'UNAVAILABLE') {
-    customerSummary = {
-      ...customerSummary,
-      totalIdentifiableCustomers: 2840,
-      newCustomersThisPeriod: 342,
-      repeatCustomersThisPeriod: 814,
-      repeatPurchaseRatePct: 70.4,
-      loyaltyPointsEarned: 142000,
-      loyaltyPointsRedeemed: 48500,
-      redemptionRatePct: 34.1,
-      averageLifetimeSpend: 4250,
-    };
-    rfmSegments = [
-      { segment: 'Champions & Daily Ritualists', count: 480, spendPct: 42.0 },
-      { segment: 'Loyal Regulars', count: 720, spendPct: 28.5 },
-      { segment: 'Potential Loyalists', count: 640, spendPct: 16.2 },
-      { segment: 'New Guests', count: 342, spendPct: 6.8 },
-      { segment: 'At Risk & Lapsing', count: 418, spendPct: 4.5 },
-      { segment: 'Dormant Accounts', count: 240, spendPct: 2.0 },
-    ];
-  }
+  const customerSummary = result.customerSummary;
+  const rfmSegments = result.rfmSegments || result.segmentation?.rfmSegments || [];
 
   return response.status(200).json({
     success: true,
@@ -963,16 +921,7 @@ const getMenuAnalytics = asyncHandler(async (request, response) => {
     },
   });
 
-  let menuPerformance = result.menuPerformance;
-
-  if (menuPerformance.length === 0 && mongoose.connection?.readyState !== 1) {
-    menuPerformance = [
-      { item: 'Zamorin House Pour (Cold Brew)', category: 'Cold Coffee', quantity: 620, revenue: 148800, cogs: 37200, theoreticalCost: 37200, marginPct: 75.0, estimatedContributionPercent: 75.0, quadrant: 'STAR', class: 'Star (High Vol / High Est. Contribution)' },
-      { item: 'Madras Filter Cappuccino', category: 'Hot Coffee', quantity: 510, revenue: 107100, cogs: 29988, theoreticalCost: 29988, marginPct: 72.0, estimatedContributionPercent: 72.0, quadrant: 'STAR', class: 'Star (High Vol / High Est. Contribution)' },
-      { item: 'Single Estate Pour-Over (Ratnagiri)', category: 'Specialty Brews', quantity: 180, revenue: 48600, cogs: 14580, theoreticalCost: 14580, marginPct: 70.0, estimatedContributionPercent: 70.0, quadrant: 'PUZZLE', class: 'Opportunity (Low Vol / High Est. Contribution)' },
-      { item: 'Butter Croissant (Artisan Bakery)', category: 'Bakery', quantity: 340, revenue: 64600, cogs: 27132, theoreticalCost: 27132, marginPct: 58.0, estimatedContributionPercent: 58.0, quadrant: 'PLOWHORSE', class: 'Workhorse (High Vol / Mid Est. Contribution)' },
-    ];
-  }
+  const menuPerformance = result.menuPerformance || [];
 
   return response.status(200).json({
     success: true,
@@ -1013,23 +962,8 @@ const getQualityAnalytics = asyncHandler(async (request, response) => {
     dateTo: dateFilters.dateTo,
   });
 
-  let qualityMetrics = result.qualityMetrics;
-  let recentIncidents = result.recentIncidents;
-
-  if (qualityMetrics.totalChecklistsSubmitted === 0 && mongoose.connection?.readyState !== 1) {
-    qualityMetrics = {
-      checklistCompletionRatePct: 98.6,
-      totalChecklistsSubmitted: 214,
-      temperatureExcursionsCount: 2,
-      activeQualityHoldsCount: 0,
-      openNcrsCount: 1,
-      overdueCapasCount: 1,
-    };
-    recentIncidents = [
-      { ref: 'QA-CAPA-142', cafe: 'CAFE-01', title: 'Chiller probe temperature drift', status: 'IN_PROGRESS', severity: 'WARNING' },
-      { ref: 'NCR-2026-003', cafe: 'CAFE-02', title: 'Packaging seal test failure', status: 'CONTAINED', severity: 'RESOLVED' },
-    ];
-  }
+  const qualityMetrics = result.qualityMetrics;
+  const recentIncidents = result.recentIncidents || [];
 
   return response.status(200).json({
     success: true,
@@ -1056,18 +990,7 @@ const getAssetAnalytics = asyncHandler(async (request, response) => {
     dateTo: dateFilters.dateTo,
   });
 
-  let assetMetrics = result.assetMetrics;
-
-  if (assetMetrics.totalTrackedAssets === 0 && mongoose.connection?.readyState !== 1) {
-    assetMetrics = {
-      totalTrackedAssets: 38,
-      activeOperationalAssets: 38,
-      availabilityRatePct: 99.4,
-      totalDowntimeMinutes: 120,
-      monthlyMaintenanceExpenditure: 6200,
-      preventativeServiceCompliancePct: 100.0,
-    };
-  }
+  const assetMetrics = result.assetMetrics;
 
   return response.status(200).json({
     success: true,
