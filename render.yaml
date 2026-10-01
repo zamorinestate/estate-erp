@@ -2,6 +2,9 @@ services:
   - type: web
     name: zamorin-cafe-erp-backend
     runtime: node
+    repo: https://github.com/zamorinestate/estate-erp
+    branch: main
+    autoDeploy: true
     rootDir: backend
     buildCommand: npm ci --only=production
     startCommand: node src/scripts/startProd.js
