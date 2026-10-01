@@ -1797,6 +1797,8 @@ async function openCafeEditModal(root, cafeId) {
 
   mount.querySelector("#edit-cafe-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const saveBtn = mount.querySelector("#edit-cafe-save-btn");
+    if (saveBtn) saveBtn.disabled = true;
     const name = mount.querySelector("#edit-cafe-name")?.value?.trim();
     const displayName = mount.querySelector("#edit-cafe-display")?.value?.trim();
     const status = mount.querySelector("#edit-cafe-status")?.value;
@@ -1847,15 +1849,20 @@ async function openCafeEditModal(root, cafeId) {
   });
 }
 
-function openCafeActionsMenu(root, cafeId) {
-  const mount = root.querySelector("#admin-modals-mount");
-  if (!mount) return;
-  const cafe = (adminState.cafes || []).find((c) => c.cafeId === cafeId);
+async function openCafeActionsMenu(root, cafeId) {
+  const mount = root.querySelector("#admin-modals-mount") || document.body;
+  let cafe = (adminState.cafes || []).find((c) => c.cafeId === cafeId);
+  if (!cafe) {
+    try {
+      const res = await apiGet(`/cafes/${encodeURIComponent(cafeId)}`);
+      if (res?.data?.cafe) cafe = res.data.cafe;
+    } catch (_e) {}
+  }
   const name = cafe?.name || cafeId;
 
   mount.innerHTML = `
-    <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
-      <div class="modal-card card" style="width:480px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
+    <div class="modal modal-backdrop open" style="opacity:1;visibility:visible;pointer-events:auto;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div class="modal-card card" style="opacity:1;transform:none;width:480px;max-width:95vw;padding:24px;background:var(--surface-raised);border:1px solid var(--line-strong);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:10px;">
           <h3 style="margin:0;font-size:16px;font-weight:700;color:var(--ink);">Actions: ${escHtml(name)} (${escHtml(cafeId)})</h3>
           <button class="btn btn-xs btn-ghost" data-close-modal type="button">✕</button>
