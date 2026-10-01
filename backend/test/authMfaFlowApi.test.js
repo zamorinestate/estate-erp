@@ -311,6 +311,9 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
     () => makeQueryMock(user)
   );
   mockSessionCreation(t);
+  t.mock.method(Session, 'find', () => ({
+    select: async () => [],
+  }));
 
   const server = await startServer(t);
 
@@ -328,6 +331,15 @@ test('POST /auth/mfa/verify consumes a recovery code exactly once', async (t) =>
 
   assert.equal(response.status, 200);
   assert.equal(user.recoveryCodeHashes.length, 0);
+  assert.equal(response.body.data?.mfaReenrollmentRequired, true);
+  assert.ok(response.body.data?.mfaReenrollmentAuthorizationToken);
+  assert.equal(response.body.data?.trustedDevice, false);
+  const reenrollPayload = mfaService.verifyMfaToken(
+    response.body.data.mfaReenrollmentAuthorizationToken,
+    'mfa_reenroll_authorized'
+  );
+  assert.equal(reenrollPayload.sub, user.userId);
+  assert.equal(reenrollPayload.org, user.organisationId);
 
   response = await request(
     server,
