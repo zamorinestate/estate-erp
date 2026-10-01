@@ -27,7 +27,7 @@ describe('AUTH FAILED-LOGIN CONCURRENCY', () => {
 
     await User.create({
       organisationId: 'ZAMORIN',
-      userId: 'ST-CONC-0001',
+      userId: 'ST-9001',
       name: 'Auth Concurrency Test',
       email: 'auth-concurrency@zamorin.test',
       passwordHash,
@@ -55,7 +55,7 @@ describe('AUTH FAILED-LOGIN CONCURRENCY', () => {
 
     const persisted = await User.findOne({
       organisationId: 'ZAMORIN',
-      userId: 'ST-CONC-0001',
+      userId: 'ST-9001',
     });
 
     assert.equal(persisted.failedLoginAttempts, 5);
