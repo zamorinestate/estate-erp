@@ -45,6 +45,6 @@ test('TOPBAR-CLEAN-004: connectivity status is exceptional, not permanent clutte
 });
 
 test('TOPBAR-CLEAN-005: rollout versions are bumped', () => {
-  assert.ok(indexHtml.includes('/src/js/main.js?v=3.9.3'));
-  assert.ok(serviceWorker.includes("const CACHE_VERSION = 'zamorin-pwa-v3.9.2';"));
+  assert.ok(indexHtml.includes('/src/js/main.js?v=3.10.0'));
+  assert.ok(serviceWorker.includes("const CACHE_VERSION = 'zamorin-pwa-v3.10.0';"));
 });
