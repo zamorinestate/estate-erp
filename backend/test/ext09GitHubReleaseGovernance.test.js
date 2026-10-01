@@ -287,9 +287,17 @@ describe('EXT-09 — GitHub Branch Protection & Release Governance (38-Point Sui
   // -------------------------------------------------------------------------
   // TEST 26 — Vercel Production Branch Audit
   // -------------------------------------------------------------------------
-  it('26. Vercel production branch audit: Vercel production branch target is main', () => {
-    assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'vercel.json')), 'vercel.json exists');
-    assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, '.vercel', 'project.json')), '.vercel/project.json exists');
+  it('26. Vercel deployment config is tracked without fabricating a local project binding', () => {
+    assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'vercel.json')), 'root vercel.json exists');
+    assert.ok(
+      fs.existsSync(path.join(WORKSPACE_ROOT, 'frontend', 'vercel.json')),
+      'frontend/vercel.json exists'
+    );
+    assert.equal(
+      fs.existsSync(path.join(WORKSPACE_ROOT, '.vercel', 'project.json')),
+      false,
+      'Repository must not invent a local Vercel project binding while control-plane authorization is unresolved'
+    );
   });
 
   // -------------------------------------------------------------------------
