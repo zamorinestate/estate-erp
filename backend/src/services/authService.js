@@ -666,6 +666,7 @@ async function createSession({
   device,
   network = {},
   mfaVerified = false,
+  mfaReenrollmentRequired = false,
   createdBy,
 }) {
   if (!user?.userId || !user?.organisationId) {
@@ -747,6 +748,8 @@ async function createSession({
     mfaVerifiedAt: mfaVerified
       ? tokenDates.now
       : null,
+    mfaReenrollmentRequired:
+      Boolean(mfaReenrollmentRequired),
     device,
     network,
     issuedAt: tokenDates.now,
