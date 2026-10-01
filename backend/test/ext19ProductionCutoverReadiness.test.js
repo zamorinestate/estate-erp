@@ -12,7 +12,7 @@
  * Requirements:
  *  - Mechanically verifies that commercial production cutover is BLOCKED.
  *  - EXT-18 decision is NO_GO_COMMERCIAL_PRODUCTION: fails closed.
- *  - Confirms zero production mutations, zero markdown files, $0 cost added.
+ *  - Confirms this audit/test path performs zero production mutations, zero markdown changes, and $0 added cost.
  *  - Enforces all 34 required test invariants from EXT-19 specification Section 53.
  */
 
@@ -43,7 +43,7 @@ const AUTHORITATIVE_GATES = Object.freeze({
   'EXT-13': { name: 'Thermal Receipt Printer Hardware', status: 'BLOCKED_PHYSICAL_PRINTER', hardBlocker: false, scopeDependent: true },
   'EXT-14': { name: 'Real Café Operator Shadow Pilot', status: 'READY_FOR_REAL_SHADOW_PILOT', hardBlocker: true },
   'EXT-15': { name: 'PWA Distribution Preparation', status: 'DISTRIBUTION_PREPARATION_COMPLETE', hardBlocker: false },
-  'EXT-16': { name: 'Secrets, IAM & Account Ownership', status: 'PASS_WITH_HUMAN_GOVERNANCE_ITEMS', hardBlocker: true },
+  'EXT-16': { name: 'Secrets, IAM & Account Ownership', status: 'BLOCKED_CONTROL_PLANE_REMEDIATION', hardBlocker: true },
   'EXT-17': { name: 'Zero-Cost Monitoring & Observability', status: 'ZERO_COST_MONITORING_VERIFIED', hardBlocker: false },
 });
 
@@ -89,16 +89,21 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
     const psScript = path.join(WORKSPACE_ROOT, 'scripts/validateExt19CutoverReadiness.ps1');
     assert.ok(fs.existsSync(psScript), 'validateExt19CutoverReadiness.ps1 must exist');
 
+    const powershell = process.platform === 'win32' ? 'powershell' : 'pwsh';
     try {
-      cp.execSync(`powershell -ExecutionPolicy Bypass -File "${psScript}" -AttemptCutover`, {
-        cwd: WORKSPACE_ROOT,
-        stdio: 'pipe',
-      });
+      cp.execFileSync(
+        powershell,
+        ['-NoProfile', '-File', psScript, '-AttemptCutover'],
+        { cwd: WORKSPACE_ROOT, stdio: 'pipe' }
+      );
       assert.fail('Attempting cutover execution must throw an error');
     } catch (err) {
       assert.ok(err.status !== 0, 'Script must exit with non-zero code on cutover attempt');
       const stdout = err.stdout ? err.stdout.toString() : '';
-      assert.ok(stdout.includes('EXECUTION_DENIED') || stdout.includes('HARD GUARD TRIGGERED'), 'Must state execution denied');
+      assert.ok(
+        stdout.includes('EXECUTION_DENIED') || stdout.includes('HARD GUARD TRIGGERED'),
+        'Must state execution denied'
+      );
     }
   });
 
@@ -117,9 +122,19 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
   // -------------------------------------------------------------------------
   // 04. Current Branch Not Release-Authorized
   // -------------------------------------------------------------------------
-  await t.test('04. Current branch not release-authorized: owner-strategic-batch-03 is not release candidate', () => {
-    const branch = cp.execSync(`git -C "${WORKSPACE_ROOT}" branch --show-current`, { encoding: 'utf8' }).trim();
-    assert.equal(branch, 'owner-strategic-batch-03');
+  await t.test('04. Release source is constrained to canonical main and current test checkout is not self-authorizing', () => {
+    const releaseGate = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, '.github', 'workflows', 'release-gate.yml'),
+      'utf8'
+    );
+    assert.ok(
+      releaseGate.includes("default: 'main'"),
+      'Release workflow must target canonical main'
+    );
+    assert.ok(
+      releaseGate.includes('CURRENT_BRANCH') && releaseGate.includes('!= "main"'),
+      'Release workflow must reject a non-main target branch'
+    );
     const releaseCandidateStatus = 'NOT_AUTHORIZED';
     assert.equal(releaseCandidateStatus, 'NOT_AUTHORIZED');
   });
@@ -224,14 +239,23 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
   // -------------------------------------------------------------------------
   // 14. Atlas Wildcard Tracked
   // -------------------------------------------------------------------------
-  await t.test('14. Atlas wildcard tracked: 0.0.0.0/0 IP access entry tracked as hardening blocker', () => {
-    const atlasNetwork = {
-      currentRule: '0.0.0.0/0',
-      status: 'SECURITY_HARDENING_BLOCKER',
-      targetBaseline: 'RENDER_OUTBOUND_CIDR_PLUS_ADMIN_RANGES',
-    };
-    assert.equal(atlasNetwork.currentRule, '0.0.0.0/0');
-    assert.equal(atlasNetwork.status, 'SECURITY_HARDENING_BLOCKER');
+  await t.test('14. Atlas wildcard retirement retained: governance record marks 0.0.0.0/0 removed', () => {
+    const networkAudit = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'scripts', 'validateBcp01GovernanceNetwork.ps1'),
+      'utf8'
+    );
+    const ext19Audit = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'scripts', 'validateExt19CutoverReadiness.ps1'),
+      'utf8'
+    );
+    assert.ok(
+      networkAudit.includes('ATLAS_WILDCARD_REMOVED'),
+      'Network governance record must retain the closed wildcard state'
+    );
+    assert.ok(
+      !ext19Audit.includes('0.0.0.0/0 wildcard IP entry'),
+      'EXT-19 must not restore the retired Atlas wildcard blocker'
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -283,11 +307,27 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
   // -------------------------------------------------------------------------
   // 20. Production Secret Isolation
   // -------------------------------------------------------------------------
-  await t.test('20. Production secret isolation: staging credentials isolated, zero secrets exposed in repository', () => {
-    const scanScript = path.join(WORKSPACE_ROOT, 'scripts/scan_repository_secrets.mjs');
-    assert.ok(fs.existsSync(scanScript), 'Secret scanner must exist');
-    const result = cp.execSync(`node "${scanScript}"`, { cwd: WORKSPACE_ROOT, encoding: 'utf8' });
-    assert.ok(result.includes('0 active credentials') || result.includes('Potential Secrets Found: 0'), 'Zero secrets in repository');
+  await t.test('20. Production secret isolation: both committed-secret scanners pass the current tree', () => {
+    const ciScanner = path.join(WORKSPACE_ROOT, 'scripts', 'scan_secrets.mjs');
+    const repositoryScanner = path.join(WORKSPACE_ROOT, 'scripts', 'scan_repository_secrets.mjs');
+    assert.ok(fs.existsSync(ciScanner), 'CI committed-secret scanner must exist');
+    assert.ok(fs.existsSync(repositoryScanner), 'Repository-wide secret scanner must exist');
+
+    const ciResult = cp.execSync(`node "${ciScanner}"`, {
+      cwd: WORKSPACE_ROOT,
+      encoding: 'utf8',
+    });
+    assert.ok(ciResult.includes('[PASS] Secret scan verified'), 'CI secret scanner must pass');
+
+    const repositoryResult = cp.execSync(`node "${repositoryScanner}"`, {
+      cwd: WORKSPACE_ROOT,
+      encoding: 'utf8',
+    });
+    assert.ok(
+      repositoryResult.includes('0 active credentials') ||
+      repositoryResult.includes('Potential Secrets Found: 0'),
+      'Repository-wide scanner must report zero active credentials'
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -349,7 +389,7 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
   // -------------------------------------------------------------------------
   // 27. Personal Ledger Invariant
   // -------------------------------------------------------------------------
-  await t.test('27. Personal Ledger invariant: Primary Master & Owner ALLOW, Normal Master DENY', () => {
+  await t.test('27. Personal Ledger invariant: Primary Master & Owner ALLOW, non-primary Master DENY', () => {
     function canAccessPersonalLedger(auth) {
       if (auth.role === 'OWNER') return true;
       if (auth.role === 'MASTER' && auth.isPrimaryMaster === true) return true;
@@ -366,17 +406,16 @@ test('EXT-19 — Production Cutover Preparation & Execution-Safety (34-Point Sui
   // -------------------------------------------------------------------------
   // 28. PO Approval Invariant
   // -------------------------------------------------------------------------
-  await t.test('28. PO approval invariant: Primary Master & Normal Master ALLOW, Owner DENY', () => {
-    function canApprovePo(auth) {
-      if (auth.role === 'MASTER') return true;
-      return false;
+  await t.test('28. Protected approval invariant: Primary Master ALLOW; non-primary Master and other roles DENY', () => {
+    function canApproveProtectedWorkflow(auth) {
+      return auth.role === 'MASTER' && auth.isPrimaryMaster === true;
     }
 
-    assert.equal(canApprovePo({ role: 'MASTER', isPrimaryMaster: true }), true);
-    assert.equal(canApprovePo({ role: 'MASTER', isPrimaryMaster: false }), true);
-    assert.equal(canApprovePo({ role: 'OWNER' }), false);
-    assert.equal(canApprovePo({ role: 'CAFE_ADMIN' }), false);
-    assert.equal(canApprovePo({ role: 'STAFF' }), false);
+    assert.equal(canApproveProtectedWorkflow({ role: 'MASTER', isPrimaryMaster: true }), true);
+    assert.equal(canApproveProtectedWorkflow({ role: 'MASTER', isPrimaryMaster: false }), false);
+    assert.equal(canApproveProtectedWorkflow({ role: 'OWNER' }), false);
+    assert.equal(canApproveProtectedWorkflow({ role: 'CAFE_ADMIN' }), false);
+    assert.equal(canApproveProtectedWorkflow({ role: 'STAFF' }), false);
   });
 
   // -------------------------------------------------------------------------
