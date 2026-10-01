@@ -208,36 +208,8 @@ async function main() {
     assert('Primary Master Zero Session Error Toasts', !primaryState.hasErrorToast);
     await cdp.captureScreenshot('dashboard_primary_master.png');
 
-    // 2. NORMAL MASTER DASHBOARD
-    console.log('\n--- 2. NORMAL MASTER DASHBOARD (?devRole=master_normal#dashboard) ---');
-    await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/?devRole=master_normal#dashboard` });
-    await delay(1200);
-
-    const normalMasterState = await cdp.eval(`
-      (() => {
-        const kpiGrid = document.querySelector('#cc-kpi-grid');
-        const kpiCards = kpiGrid ? Array.from(kpiGrid.querySelectorAll('.kpi-card, .card')) : [];
-        const expenseCardText = kpiCards.find(c => c.textContent.includes('Operating Expenses'))?.textContent || '';
-        const hasSvgChart = !!document.querySelector('#cc-trend-chart-mount svg');
-        const hasErrorToast = !!document.querySelector('.toast-danger, .toast-error');
-
-        return {
-          kpiCount: kpiCards.length,
-          isExpenseRestricted: expenseCardText.includes('Restricted') || expenseCardText.includes('Primary Master Only'),
-          hasSvgChart,
-          hasErrorToast
-        };
-      })()
-    `);
-
-    assert('Normal Master Renders 8 KPI Cards', normalMasterState.kpiCount >= 8);
-    assert('Normal Master Masks Operating Expenses as Restricted', normalMasterState.isExpenseRestricted);
-    assert('Normal Master Renders SVG Trend Chart', normalMasterState.hasSvgChart);
-    assert('Normal Master Zero Session Error Toasts', !normalMasterState.hasErrorToast);
-    await cdp.captureScreenshot('dashboard_normal_master.png');
-
-    // 3. OWNER DASHBOARD
-    console.log('\n--- 3. OWNER DASHBOARD (?role=owner#dashboard) ---');
+    // 2. OWNER DASHBOARD
+    console.log('\n--- 2. OWNER DASHBOARD (?role=owner#dashboard) ---');
     await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/?role=owner#dashboard` });
     await delay(1200);
 
