@@ -782,21 +782,44 @@ async function seedPermissionRules({
 }) {
   let createdCount = 0;
   let existingCount = 0;
+  let deactivatedCount = 0;
 
-  for (
-    const rule of
-    DEFAULT_PERMISSION_RULES
-  ) {
+  // Production startup runs this reconciliation before the HTTP listener opens.
+  // Read the active system permission set once, then reconcile in memory instead
+  // of issuing one findOne() round trip per default rule.
+  const activeSystemRules = await RolePermission.find({
+    organisationId,
+    cafeId: null,
+    isActive: true,
+    archivedAt: null,
+  });
+
+  const existingRulesByKey = new Map();
+
+  for (const dbRule of activeSystemRules) {
+    const key = `${dbRule.role}|${dbRule.permissionCode}`;
+
+    if (existingRulesByKey.has(key)) {
+      throw new Error(
+        `Duplicate active permission rule detected for ${key}.`
+      );
+    }
+
+    existingRulesByKey.set(key, dbRule);
+  }
+
+  const validRuleKeys = new Set(
+    DEFAULT_PERMISSION_RULES.map(
+      (rule) =>
+        `${rule.role}|${rule.permissionCode}`
+    )
+  );
+
+  for (const rule of DEFAULT_PERMISSION_RULES) {
+    const key =
+      `${rule.role}|${rule.permissionCode}`;
     const existingRule =
-      await RolePermission.findOne({
-        organisationId,
-        role: rule.role,
-        cafeId: null,
-        permissionCode:
-          rule.permissionCode,
-        isActive: true,
-        archivedAt: null,
-      });
+      existingRulesByKey.get(key);
 
     if (existingRule) {
       const desiredProperties = {
@@ -806,27 +829,46 @@ async function seedPermissionRules({
         action: rule.action,
         effect: rule.effect,
         description: rule.description,
-        requiresMfa: Boolean(rule.requiresMfa),
-        requiresStepUpAuthentication: Boolean(rule.requiresStepUpAuthentication),
-        requiresReason: Boolean(rule.requiresReason),
-        requiresAuditEvent: rule.requiresAuditEvent !== false,
-        requiresReauthentication: Boolean(rule.requiresReauthentication),
+        requiresMfa:
+          Boolean(rule.requiresMfa),
+        requiresStepUpAuthentication:
+          Boolean(
+            rule.requiresStepUpAuthentication
+          ),
+        requiresReason:
+          Boolean(rule.requiresReason),
+        requiresAuditEvent:
+          rule.requiresAuditEvent !== false,
+        requiresReauthentication:
+          Boolean(
+            rule.requiresReauthentication
+          ),
       };
 
       let ruleChanged = false;
 
-      for (const [field, value] of Object.entries(desiredProperties)) {
-        if (existingRule[field] !== undefined && existingRule[field] !== value) {
+      for (
+        const [field, value] of
+        Object.entries(desiredProperties)
+      ) {
+        if (
+          existingRule[field] !== undefined &&
+          existingRule[field] !== value
+        ) {
           existingRule[field] = value;
           ruleChanged = true;
         }
       }
 
       if (ruleChanged) {
-        existingRule.updatedBy = masterUserId;
-        existingRule.policyVersion = Number.isInteger(existingRule.policyVersion)
-          ? existingRule.policyVersion + 1
-          : 1;
+        existingRule.updatedBy =
+          masterUserId;
+        existingRule.policyVersion =
+          Number.isInteger(
+            existingRule.policyVersion
+          )
+            ? existingRule.policyVersion + 1
+            : 1;
 
         await existingRule.save();
       }
@@ -893,29 +935,16 @@ async function seedPermissionRules({
     createdCount += 1;
   }
 
-  // Deactivate any stale active system-level rules (cafeId: null) that are no longer in DEFAULT_PERMISSION_RULES
-  let deactivatedCount = 0;
-  if (RolePermission.db && RolePermission.db.readyState === 1) {
-    const validRuleKeys = new Set(
-      DEFAULT_PERMISSION_RULES.map((r) => `${r.role}|${r.permissionCode}`)
-    );
+  for (const dbRule of activeSystemRules) {
+    const key =
+      `${dbRule.role}|${dbRule.permissionCode}`;
 
-    const activeSystemRules = await RolePermission.find({
-      organisationId,
-      cafeId: null,
-      isActive: true,
-      archivedAt: null,
-    });
-
-    for (const dbRule of activeSystemRules) {
-      const key = `${dbRule.role}|${dbRule.permissionCode}`;
-      if (!validRuleKeys.has(key)) {
-        dbRule.isActive = false;
-        dbRule.archivedAt = new Date();
-        dbRule.updatedBy = masterUserId;
-        await dbRule.save();
-        deactivatedCount += 1;
-      }
+    if (!validRuleKeys.has(key)) {
+      dbRule.isActive = false;
+      dbRule.archivedAt = new Date();
+      dbRule.updatedBy = masterUserId;
+      await dbRule.save();
+      deactivatedCount += 1;
     }
   }
 
