@@ -34,6 +34,7 @@ const { SequenceCounter } = require('../models/SequenceCounter');
 const { Approval } = require('../models/Approval');
 const { Notification } = require('../models/Notification');
 const auditService = require('../services/auditService');
+const { getEffectiveAuthSecurityPolicy } = require('../services/authService');
 const ApiError = require('../utils/ApiError');
 
 // â”€â”€ 23 top-level language definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -96,7 +97,7 @@ async function getSettingsOverview(req, res) {
     const { userId, organisationId, role } = req.user;
 
     const [user, pref] = await Promise.all([
-      User.findOne({ userId }).lean(),
+      User.findOne({ organisationId, userId }).lean(),
       UserPreference.findOrCreateForUser(userId, organisationId),
     ]);
 
@@ -109,7 +110,7 @@ async function getSettingsOverview(req, res) {
     if (!user.workEmail) attentionItems.push({ id: 'no_work_email', label: 'Work email not set â€” add a contact email for notifications.' });
 
     // Session count
-    const sessionCount = await Session.countDocuments({ userId, status: 'ACTIVE' });
+    const sessionCount = await Session.countDocuments({ organisationId, userId, status: 'ACTIVE' });
 
     res.json({
       success: true,
@@ -156,7 +157,7 @@ async function getSettingsOverview(req, res) {
  */
 async function getMyProfile(req, res) {
   const { userId, organisationId } = req.user;
-  const user = await User.findOne({ userId }).lean();
+  const user = await User.findOne({ organisationId, userId }).lean();
   if (!user) throw new ApiError(404, 'USER_NOT_FOUND', 'Account not found.');
 
   // Field governance map â€” backend determines editability, never client
@@ -179,6 +180,7 @@ async function getMyProfile(req, res) {
   };
 
   const pendingRequests = await ProfileChangeRequest.find({
+    organisationId,
     userId,
     status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED'] },
   }).lean();
@@ -241,7 +243,7 @@ async function updateMyProfile(req, res) {
   }
 
   const user = await User.findOneAndUpdate(
-    { userId },
+    { organisationId, userId },
     { $set: updates },
     { new: true, runValidators: true }
   );
@@ -402,8 +404,8 @@ async function submitProfileChangeRequest(req, res) {
  * GET /api/v1/settings/profile/change-requests
  */
 async function listMyProfileChangeRequests(req, res) {
-  const { userId } = req.user;
-  const requests = await ProfileChangeRequest.find({ userId })
+  const { userId, organisationId } = req.user;
+  const requests = await ProfileChangeRequest.find({ organisationId, userId })
     .sort({ createdAt: -1 })
     .limit(50)
     .lean();
@@ -1241,49 +1243,57 @@ async function getLanguageCatalogue(req, res) {
  */
 async function getSecurityOverview(req, res) {
   const auth = req.user || req.auth || {};
-  const { userId, role } = auth;
+  const { userId, organisationId, role } = auth;
 
-  const user = await User.findOne({ userId }).lean();
+  const [user, sessionCount, passkeyCount] = await Promise.all([
+    User.findOne({ organisationId, userId }).lean(),
+    Session.countDocuments({ organisationId, userId, status: 'ACTIVE' }),
+    PasskeyCredential.countDocuments({ organisationId, userId, status: 'ACTIVE' }),
+  ]);
+
   if (!user) throw new ApiError(404, 'USER_NOT_FOUND', 'Account not found.');
 
-  const sessionCount = await Session.countDocuments({ userId, status: 'ACTIVE' });
+  const enforcedPolicy = getEffectiveAuthSecurityPolicy();
+  const roleRequiresMfa = enforcedPolicy.mfa.requiredRoles.includes(role);
 
   res.json({
     success: true,
     data: {
-      // Password state â€” truthful states, never expose hash
       password: {
         state: user.passwordHash ? 'CONFIGURED' : 'NOT_CONFIGURED',
         label: user.passwordHash ? 'Password is configured' : 'No password set',
         canChange: Boolean(user.passwordHash),
       },
-      // MFA state
       mfa: {
         state: user.mfaEnabled ? 'CONFIGURED' : 'NOT_CONFIGURED',
         label: user.mfaEnabled ? 'Two-factor authentication enabled' : 'Two-factor authentication not enabled',
+        requiredForRole: roleRequiresMfa,
       },
-      // Passkeys — WebAuthn FIDO2 Infrastructure
       passkeys: {
-        state: (await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' })) > 0 ? 'CONFIGURED' : 'SUPPORTED',
-        label: (await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' })) > 0
-          ? `${await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' })} passkey(s) registered`
+        state: passkeyCount > 0 ? 'CONFIGURED' : 'SUPPORTED',
+        label: passkeyCount > 0
+          ? `${passkeyCount} passkey(s) registered`
           : 'Passkeys supported — register device in settings.',
-        count: await PasskeyCredential.countDocuments({ userId, status: 'ACTIVE' }),
+        count: passkeyCount,
       },
-      // Sessions
       sessions: {
         activeCount: sessionCount,
       },
-      // Recovery
       recovery: {
         state: user.mfaEnabled && user.mfaSecret ? 'CONFIGURED' : 'NOT_CONFIGURED',
-        label: user.mfaEnabled ? 'Recovery codes configured' : 'Recovery not fully configured',
+        label: user.mfaEnabled ? 'Recovery factors configured' : 'Recovery not fully configured',
       },
-      // Read-only policy summary — never expose policy internals
       securityPolicy: {
-        mfaRequired: false,
-        sessionPolicy: 'Standard enterprise session management',
-        passwordPolicy: 'Minimum 15 characters (passphrase length-first, zero forced composition rules, blocklist protected)',
+        source: enforcedPolicy.source,
+        runtimeMutable: enforcedPolicy.runtimeMutable,
+        password: enforcedPolicy.password,
+        mfa: enforcedPolicy.mfa,
+        session: enforcedPolicy.session,
+        mfaRequired: roleRequiresMfa,
+        passwordPolicy:
+          `Minimum ${roleRequiresMfa ? enforcedPolicy.password.minimumLengthWithMfa : enforcedPolicy.password.minimumLengthWithoutMfa} characters for this role; maximum ${enforcedPolicy.password.maximumLength}; blocklist enabled; no forced composition rules.`,
+        sessionPolicy:
+          `Access token ${enforcedPolicy.session.accessTokenTtlMinutes} min; refresh token up to ${enforcedPolicy.session.refreshTokenTtlDays} day(s); absolute session ${enforcedPolicy.session.absoluteSessionTtlDays} day(s).`,
       },
     },
   });
@@ -1303,9 +1313,9 @@ async function getSecurityOverview(req, res) {
  * If request succeeds with 0 results â†’ LOADED_EMPTY (never AUTH_ERROR).
  */
 async function getMySessions(req, res) {
-  const { userId, sessionId: currentSessionId } = req.user;
+  const { userId, organisationId, sessionId: currentSessionId } = req.user;
 
-  const sessions = await Session.find({ userId, status: 'ACTIVE' })
+  const sessions = await Session.find({ organisationId, userId, status: 'ACTIVE' })
     .sort({ lastActivityAt: -1 })
     .lean();
 
@@ -1348,7 +1358,7 @@ async function revokeMySession(req, res) {
   if (!sessionId) throw new ApiError(400, 'MISSING_SESSION_ID', 'Session ID is required.');
 
   // SECURITY: Verify this session belongs to the authenticated user
-  const session = await Session.findOne({ sessionId, userId });
+  const session = await Session.findOne({ organisationId, sessionId, userId });
   if (!session) {
     // Return 404, not 403, to avoid session enumeration
     throw new ApiError(404, 'SESSION_NOT_FOUND', 'Session not found or already revoked.');
@@ -1360,7 +1370,7 @@ async function revokeMySession(req, res) {
   }
 
   await Session.findOneAndUpdate(
-    { sessionId, userId },
+    { organisationId, sessionId, userId },
     { status: 'REVOKED', revokedAt: new Date(), revokedReason: 'USER_SELF_REVOKE' }
   );
 
@@ -1382,7 +1392,7 @@ async function revokeOtherSessions(req, res) {
   const { userId, role, organisationId, sessionId: currentSessionId } = req.user;
 
   const result = await Session.updateMany(
-    { userId, sessionId: { $ne: currentSessionId }, status: 'ACTIVE' },
+    { organisationId, userId, sessionId: { $ne: currentSessionId }, status: 'ACTIVE' },
     { status: 'REVOKED', revokedAt: new Date(), revokedReason: 'REVOKE_OTHERS' }
   );
 
@@ -1408,7 +1418,7 @@ async function revokeAllSessions(req, res) {
   }
 
   const result = await Session.updateMany(
-    { userId, status: 'ACTIVE' },
+    { organisationId, userId, status: 'ACTIVE' },
     { status: 'REVOKED', revokedAt: new Date(), revokedReason: 'REVOKE_ALL' }
   );
 
@@ -2249,45 +2259,30 @@ async function updateSecurityPolicy(req, res) {
     throw new ApiError(
       403,
       'PRIMARY_MASTER_AUTHORITY_REQUIRED',
-      'Only the Primary Master may modify organisation security policies.'
+      'Only the Primary Master may administer organisation security policy.'
     );
   }
 
-  const { passwordPolicy, sessionPolicy } = req.body || {};
-  const effectivePasswordPolicy = passwordPolicy || 'Minimum 15 characters (passphrase length-first, zero forced composition rules, blocklist protected)';
-  const effectiveSessionPolicy = sessionPolicy || 'Standard enterprise session management';
+  const enforcedPolicy = getEffectiveAuthSecurityPolicy();
 
-  try {
-    const { recordAuditEvent } = require('../services/auditService');
-    await recordAuditEvent({
-      organisationId: auth.organisationId || 'ORG-ZAMORIN',
-      actorUserId: auth.userId || 'MU-0001',
-      actorRole: auth.role,
-      module: 'SECURITY_POLICY',
-      action: 'SECURITY_POLICY_UPDATED',
-      entityType: 'SECURITY_POLICY',
-      entityId: 'GLOBAL_POLICY',
-      result: 'SUCCESS',
-      riskClassification: 'HIGH',
-      details: {
-        passwordPolicy: effectivePasswordPolicy,
-        sessionPolicy: effectiveSessionPolicy,
-        mfaRequired: false,
-      },
-    });
-  } catch (_) {}
-
-  return res.status(200).json({
-    success: true,
-    message: 'Security policy updated successfully.',
-    data: {
+  // The authentication stack currently enforces password/session policy from
+  // deployment/runtime configuration. Until every auth path consumes a durable
+  // organisation policy atomically, accepting arbitrary strings here would
+  // create a false claim that security changed when enforcement did not.
+  throw new ApiError(
+    409,
+    'SECURITY_POLICY_RUNTIME_MUTATION_UNSUPPORTED',
+    'Runtime security-policy mutation is disabled because password and session enforcement are deployment-controlled. Change the authenticated runtime configuration and redeploy through the governed release process.',
+    {
       securityPolicy: {
-        mfaRequired: false,
-        sessionPolicy: effectiveSessionPolicy,
-        passwordPolicy: effectivePasswordPolicy,
+        source: enforcedPolicy.source,
+        runtimeMutable: false,
+        password: enforcedPolicy.password,
+        mfa: enforcedPolicy.mfa,
+        session: enforcedPolicy.session,
       },
-    },
-  });
+    }
+  );
 }
 
 module.exports = {
