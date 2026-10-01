@@ -53,6 +53,7 @@ const authServiceSource = read('backend/src/services/authService.js');
 const authenticateSource = read('backend/src/middleware/authenticate.js');
 const sessionModelSource = read('backend/src/models/Session.js');
 const backendPackage = JSON.parse(read('backend/package.json'));
+const backendPackageLock = JSON.parse(read('backend/package-lock.json'));
 const authMainSource = read('frontend/src/js/main.js');
 const loginUiSource = read('frontend/src/js/pages/login2.js');
 
@@ -219,6 +220,24 @@ test('BACKEND-RUNTIME-011: recovery login authorizes secure MFA replacement and 
 
 test('BACKEND-RUNTIME-012: backend runtime is pinned to the Node 20 CI major', () => {
   assert.equal(backendPackage.engines?.node, '20.x');
+});
+
+test('BACKEND-RUNTIME-013: backend production dependencies stay above patched advisory floors', () => {
+  const lockedPackages = backendPackageLock.packages || {};
+
+  assert.equal(backendPackage.dependencies?.multer, '2.4.0');
+  assert.equal(lockedPackages['']?.dependencies?.multer, '2.4.0');
+  assert.equal(lockedPackages['node_modules/multer']?.version, '2.4.0');
+  assert.equal(lockedPackages['node_modules/ip-address']?.version, '10.7.2');
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(lockedPackages, 'node_modules/concat-stream'),
+    false
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(lockedPackages, 'node_modules/typedarray'),
+    false
+  );
 });
 
 test('BACKEND-ACTION-001: POS buttons map to live backend routes', () => {
