@@ -1883,7 +1883,7 @@ function renderHelp() {
           <h2 class="settings-card-title">System Status &amp; Environment</h2>
           <div class="settings-card-subtitle">Live health and connectivity metrics across application services.</div>
         </div>
-        <span class="settings-status-chip success">All Services Healthy</span>
+        <span class="settings-status-chip" id="settings-service-health-chip">Checking services…</span>
       </div>
 
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
@@ -3585,23 +3585,40 @@ function _wireWorkspace(root) {
       setSettings({ workspace: updates });
       showToast("Workspace preferences saved.", "mint");
     } catch (err) {
-      showToast(err?.message || "Workspace preferences saved.", "mint");
+      showToast(err?.message || "Failed to save workspace preferences.", "coral");
     }
   });
 }
 
 async function _wireHelp(root) {
   const diagEl = root.querySelector("#settings-diagnostics-content");
+  const healthChip = root.querySelector("#settings-service-health-chip");
   if (diagEl) {
     try {
       const res = await apiGet("/settings/diagnostics");
       const d = res?.data || {};
+      const services = d.services || {};
+      const serviceRows = Object.entries(services)
+        .map(([name, value]) => `${escHtml(name)}: ${escHtml(value?.status || "UNKNOWN")}`)
+        .join(" · ");
+      const isReady = d.serviceHealth === "READY";
+      if (healthChip) {
+        healthChip.classList.toggle("success", isReady);
+        healthChip.classList.toggle("danger", !isReady);
+        healthChip.textContent = isReady ? "All Core Services Ready" : "Backend Dependency Degraded";
+      }
       diagEl.innerHTML = `
         <div style="color:var(--ink); font-size:13px;">App v${escHtml(d.appVersion || "2.0.0")} · Node: ${escHtml(d.environment || "production")}</div>
-        <div class="settings-field-helper" style="margin-top:2px;">Time: ${escHtml(new Date(d.serverTime || Date.now()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))} IST · Health: <span style="color:var(--success, #1e7a4c); font-weight:700;">CONNECTED</span></div>
+        <div class="settings-field-helper" style="margin-top:2px;">Time: ${escHtml(new Date(d.serverTime || Date.now()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))} IST · Health: <span style="font-weight:700;">${escHtml(d.serviceHealth || "UNKNOWN")}</span></div>
+        ${serviceRows ? `<div class="settings-field-helper" style="margin-top:2px;">${serviceRows}</div>` : ""}
       `;
-    } catch {
-      diagEl.innerHTML = `<span style="color:var(--muted);">Diagnostics loaded (Offline preview mode)</span>`;
+    } catch (err) {
+      if (healthChip) {
+        healthChip.classList.remove("success");
+        healthChip.classList.add("danger");
+        healthChip.textContent = "Backend Unreachable";
+      }
+      diagEl.innerHTML = `<span style="color:var(--danger);">${escHtml(err?.message || "Backend diagnostics are unavailable.")}</span>`;
     }
   }
 
