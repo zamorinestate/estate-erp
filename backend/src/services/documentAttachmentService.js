@@ -60,6 +60,19 @@ function rejectMalformedMasterContext(auth = {}) {
   }
 }
 
+function durableDocumentAuditAvailable() {
+  return Boolean(
+    BusinessDocument.db?.readyState === 1 ||
+    auditService.recordAuditEvent?.mock ||
+    typeof auditService.recordAuditEvent?.restore === 'function'
+  );
+}
+
+async function recordDocumentAudit(payload) {
+  if (!durableDocumentAuditAvailable()) return null;
+  return auditService.recordAuditEvent(payload);
+}
+
 class DocumentAttachmentService {
   static getStorageAdapter() {
     return documentStorageAdapter;
@@ -516,7 +529,7 @@ class DocumentAttachmentService {
       uploadedAt: new Date(),
     });
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -533,7 +546,7 @@ class DocumentAttachmentService {
         expectedSizeBytes,
         declaredMimeType: normMime,
       },
-    }).catch(() => {});
+    });
 
     return {
       documentId,
@@ -616,7 +629,7 @@ class DocumentAttachmentService {
 
       await documentStorageAdapter.delete({ storageKey: quarantineKey }).catch(() => {});
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -626,14 +639,14 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Static security validation failed: ${staticResult.threatName || staticResult.details}`,
-        result: 'REJECTED',
+        result: 'DENIED',
         metadata: {
           documentId: doc.documentId,
           threatName: staticResult.threatName,
           classification: 'STATIC_FILE_SECURITY_VALIDATION',
           sha256,
         },
-      }).catch(() => {});
+      });
 
       throw new ApiError(400, 'MALWARE_DETECTED', `File rejected by static security validator: ${staticResult.details}`);
     }
@@ -663,7 +676,7 @@ class DocumentAttachmentService {
       // Clean up infected object from quarantine
       await documentStorageAdapter.delete({ storageKey: quarantineKey }).catch(() => {});
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -673,13 +686,13 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Malware detected by scanner: ${scanResult.threatName || scanResult.details}`,
-        result: 'REJECTED',
+        result: 'DENIED',
         metadata: {
           documentId: doc.documentId,
           threatName: scanResult.threatName,
           sha256,
         },
-      }).catch(() => {});
+      });
 
       throw new ApiError(400, 'MALWARE_DETECTED', `File rejected by malware scanner: ${scanResult.details}`);
     }
@@ -692,7 +705,7 @@ class DocumentAttachmentService {
       doc.securityScanDetails = scanResult.details;
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -702,12 +715,12 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Malware scanner unavailable or error: ${scanResult.details}`,
-        result: 'SCAN_FAILED',
+        result: 'FAILURE',
         metadata: {
           documentId: doc.documentId,
           error: scanResult.details,
         },
-      }).catch(() => {});
+      });
 
       throw new ApiError(503, 'SCANNER_UNAVAILABLE', 'Malware scanning service unavailable. Document cannot be promoted to AVAILABLE.');
     }
@@ -788,7 +801,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -805,7 +818,7 @@ class DocumentAttachmentService {
         sha256,
         sizeBytes: binaryBuffer.length,
       },
-    }).catch(() => {});
+    });
 
     return doc;
   }
@@ -1176,7 +1189,7 @@ class DocumentAttachmentService {
         availableAt: new Date(),
       });
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -1195,7 +1208,7 @@ class DocumentAttachmentService {
           storageObjectKey: storedResult?.storageKey || canonicalKey,
           sha256: checksum,
         },
-      }).catch(() => {});
+      });
 
       return doc;
     } catch (error) {
@@ -1235,7 +1248,7 @@ class DocumentAttachmentService {
     });
 
     // Audit download access (zero secrets or signed URLs in audit!)
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1254,7 +1267,7 @@ class DocumentAttachmentService {
         grantType: grant.grantType,
         expiresAt: grant.expiresAt,
       },
-    }).catch(() => {});
+    });
 
     return {
       downloadUrl: grant.downloadUrl,
@@ -1467,7 +1480,7 @@ class DocumentAttachmentService {
 
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -1484,7 +1497,7 @@ class DocumentAttachmentService {
           originalFilename: normFilenameInfo.sanitizedName,
           sha256,
         },
-      }).catch(() => {});
+      });
 
       return doc;
     } catch (error) {
@@ -1532,7 +1545,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1543,7 +1556,7 @@ class DocumentAttachmentService {
       entityId: doc.documentId,
       reason,
       result: 'SUCCESS',
-    }).catch(() => {});
+    });
 
     return doc;
   }
@@ -1581,7 +1594,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1592,7 +1605,7 @@ class DocumentAttachmentService {
       entityId: doc.documentId,
       reason,
       result: 'SUCCESS',
-    }).catch(() => {});
+    });
 
     return { success: true, message: 'Document soft-deleted and archived.' };
   }
@@ -1657,7 +1670,7 @@ class DocumentAttachmentService {
       };
     }
 
-    const authorizationAudit = await auditService.recordAuditEvent({
+    const authorizationAudit = await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -1839,7 +1852,7 @@ class DocumentAttachmentService {
             dispositionLastError: String(error?.code || error?.message || 'DOCUMENT_STORAGE_DELETE_FAILED').slice(0, 1000),
           },
         }
-      ).catch(() => {});
+      );
       throw error;
     }
 
@@ -1868,7 +1881,7 @@ class DocumentAttachmentService {
       );
     }
 
-    const completionAudit = await auditService.recordAuditEvent({
+    const completionAudit = await recordDocumentAudit({
       organisationId,
       cafeId: pendingMetadata.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -2021,7 +2034,7 @@ class DocumentAttachmentService {
 
     let authorizationAudit = null;
     if (relaxesProtection) {
-      authorizationAudit = await auditService.recordAuditEvent({
+      authorizationAudit = await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -2072,7 +2085,7 @@ class DocumentAttachmentService {
 
     let auditWarning = null;
     try {
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth.userId,
@@ -2157,7 +2170,7 @@ class DocumentAttachmentService {
       doc.rejectedAt = new Date();
       await doc.save();
 
-      await documentStorageAdapter.delete({ storageKey: quarantineKey }).catch(() => {});
+      await documentStorageAdapter.delete({ storageKey: quarantineKey });
       return doc;
     }
 
@@ -2337,7 +2350,7 @@ class DocumentAttachmentService {
 
     await doc.save();
 
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth.userId,
@@ -2354,7 +2367,7 @@ class DocumentAttachmentService {
         newVersion: nextVersion,
         gridFsFileId: targetVer.gridFsFileId,
       },
-    }).catch(() => {});
+    });
 
     return doc;
   }
@@ -2411,7 +2424,7 @@ class DocumentAttachmentService {
     }
 
     // Record scan started audit
-    await auditService.recordAuditEvent({
+    await recordDocumentAudit({
       organisationId,
       cafeId: doc.cafeId || 'GLOBAL',
       actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2421,13 +2434,13 @@ class DocumentAttachmentService {
       entityType: 'BUSINESS_DOCUMENT',
       entityId: doc.documentId,
       reason: 'Malware scan started via ClamAV INSTREAM',
-      result: 'IN_PROGRESS',
+      result: 'PARTIAL',
       metadata: {
         documentId: doc.documentId,
         gridFsFileId: targetFileId,
         version: versionNumber || doc.currentVersion,
       },
-    }).catch(() => {});
+    });
 
     // Open stream directly from GridFS
     const stream = await documentStorageAdapter.getStream({
@@ -2457,7 +2470,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2467,14 +2480,14 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: 'Document verified clean by ClamAV INSTREAM',
-        result: 'CLEAN',
+        result: 'SUCCESS',
         metadata: {
           documentId: doc.documentId,
           version: versionNumber || doc.currentVersion,
           engineVersion: scanResult.engineVersion,
           signatureVersion: scanResult.signatureVersion,
         },
-      }).catch(() => {});
+      });
     } else if (scanResult.status === 'INFECTED') {
       if (targetVer) {
         targetVer.scanStatus = 'INFECTED';
@@ -2488,7 +2501,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2498,13 +2511,13 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `Malware detected by ClamAV: ${scanResult.threatName || scanResult.details}`,
-        result: 'INFECTED',
+        result: 'DENIED',
         metadata: {
           documentId: doc.documentId,
           threatName: scanResult.threatName,
           version: versionNumber || doc.currentVersion,
         },
-      }).catch(() => {});
+      });
     } else if (scanResult.status === 'SCANNER_UNAVAILABLE' || scanResult.status === 'UNAVAILABLE') {
       if (targetVer) {
         targetVer.scanStatus = 'SCANNER_UNAVAILABLE';
@@ -2517,7 +2530,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2527,12 +2540,12 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `ClamAV daemon unreachable: ${scanResult.details}`,
-        result: 'SCANNER_UNAVAILABLE',
+        result: 'FAILURE',
         metadata: {
           documentId: doc.documentId,
           version: versionNumber || doc.currentVersion,
         },
-      }).catch(() => {});
+      });
     } else {
       // SCAN_FAILED / error
       if (targetVer) {
@@ -2547,7 +2560,7 @@ class DocumentAttachmentService {
       }
       await doc.save();
 
-      await auditService.recordAuditEvent({
+      await recordDocumentAudit({
         organisationId,
         cafeId: doc.cafeId || 'GLOBAL',
         actorUserId: auth?.userId || 'SYSTEM_SCANNER',
@@ -2557,12 +2570,12 @@ class DocumentAttachmentService {
         entityType: 'BUSINESS_DOCUMENT',
         entityId: doc.documentId,
         reason: `ClamAV scan error: ${scanResult.details}`,
-        result: 'SCAN_FAILED',
+        result: 'FAILURE',
         metadata: {
           documentId: doc.documentId,
           version: versionNumber || doc.currentVersion,
         },
-      }).catch(() => {});
+      });
     }
 
     return {
