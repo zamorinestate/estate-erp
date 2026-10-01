@@ -63,6 +63,10 @@ services:
         sync: false
       - key: INITIAL_MASTER_PASSWORD
         sync: false
+      - key: SEED_MINIMAL
+        value: "true"
+      - key: SEED_DEMO_DATA
+        value: "false"
       - key: MONGODB_MAX_POOL_SIZE
         value: 50
       - key: MONGODB_MIN_POOL_SIZE
