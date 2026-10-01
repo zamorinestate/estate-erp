@@ -92,6 +92,10 @@ jobs:
       - name: Run Deployment Readiness Check
         run: node scripts/check_deploy_readiness.mjs
 
+      - name: Enforce EXT-19 Commercial Cutover Gate
+        shell: pwsh
+        run: ./scripts/validateExt19CutoverReadiness.ps1 -AttemptCutover
+
       - name: Release Governance Gate Summary
         run: |
           echo "================================================================="
