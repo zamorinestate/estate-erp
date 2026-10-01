@@ -11,12 +11,24 @@ function getMfaEncryptionKey() {
     throw new Error('MFA_ENCRYPTION_KEY environment variable is required.');
   }
 
-  const trimmed = keyHex.trim();
-  if (trimmed.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+  let normalized = keyHex.trim();
+  if (normalized.length >= 2) {
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    const isMatchingQuotedPair =
+      (first === '"' && last === '"') ||
+      (first === "'" && last === "'");
+
+    if (isMatchingQuotedPair) {
+      normalized = normalized.slice(1, -1).trim();
+    }
+  }
+
+  if (normalized.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(normalized)) {
     throw new Error('MFA_ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
   }
 
-  return Buffer.from(trimmed, 'hex');
+  return Buffer.from(normalized, 'hex');
 }
 
 function encryptMfaSecret(secretText) {
