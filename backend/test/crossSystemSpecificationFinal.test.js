@@ -288,7 +288,7 @@ test('Cross-System Implementation Specification — Comprehensive Verification',
       assert.ok(invoiceStr.includes('INV-2026-000452'), 'Contains invoice number');
       assert.ok(invoiceStr.includes('(Sl. No.)'), 'Contains Sl. No. header');
       assert.ok(invoiceStr.includes('Subtotal:'), 'Contains subtotal line');
-      assert.ok(invoiceStr.includes('Tax (GST 5%):'), 'Contains GST line');
+      assert.ok(invoiceStr.includes('Total GST:'), 'Contains authoritative GST total line without assuming a fixed tax rate');
       assert.ok(invoiceStr.includes('Grand Total:'), 'Contains grand total line');
     });
 
