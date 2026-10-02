@@ -41,6 +41,10 @@
  * 34 no paid infrastructure
  * 35 no Markdown
  * 36 zero KDS
+ * 37 current dependency map
+ * 38 retired Normal Master absent
+ * 39 machine-verifiable DR runbook
+ * 40 dependency register references valid DR procedures
  * =============================================================================
  */
 
@@ -438,16 +442,16 @@ describe('EXT-05 — Zero-Cost Disaster Recovery Exercise & Business Continuity 
     const inv = orchestrator.verifyPostRecoverySecurityInvariants();
     assert.equal(inv.personalLedgerPolicy.PRIMARY_MASTER, 'ALLOW');
     assert.equal(inv.personalLedgerPolicy.OWNER, 'ALLOW');
-    assert.equal(inv.personalLedgerPolicy.NORMAL_MASTER, 'DENY');
+    assert.equal(Object.hasOwn(inv.personalLedgerPolicy, 'NORMAL_MASTER'), false);
     assert.equal(inv.personalLedgerPolicy.CAFE_ADMIN, 'DENY');
     assert.equal(inv.personalLedgerPolicy.STAFF, 'DENY');
   });
 
   // 27 post-recovery PO authority
-  test('27. Post-recovery PO Approval permanent authority remains: Primary & Normal Master ALLOW, others DENY', () => {
+  test('27. Post-recovery PO Approval permanent authority remains Primary-Master-only', () => {
     const inv = orchestrator.verifyPostRecoverySecurityInvariants();
     assert.equal(inv.poApprovalPolicy.PRIMARY_MASTER, 'ALLOW');
-    assert.equal(inv.poApprovalPolicy.NORMAL_MASTER, 'ALLOW');
+    assert.equal(Object.hasOwn(inv.poApprovalPolicy, 'NORMAL_MASTER'), false);
     assert.equal(inv.poApprovalPolicy.OWNER, 'DENY');
     assert.equal(inv.poApprovalPolicy.CAFE_ADMIN, 'DENY');
     assert.equal(inv.poApprovalPolicy.STAFF, 'DENY');
@@ -530,5 +534,50 @@ describe('EXT-05 — Zero-Cost Disaster Recovery Exercise & Business Continuity 
     const serverJsContent = fs.readFileSync(path.resolve(__dirname, '../src/server.js'), 'utf8');
     const hasMountedKdsRoute = serverJsContent.includes("app.use('/kds'") || serverJsContent.includes("app.use('/api/v1/kds'");
     assert.equal(hasMountedKdsRoute, false);
+  });
+
+  // 37 current dependency map
+  test('37. DR dependency map reflects main branch, stateless Render, GridFS, and blocked Free-tier PITR', () => {
+    const map = orchestrator.getRuntimeDependencyMap();
+    assert.equal(map.repository.defaultBranch, 'main');
+    assert.match(map.backend.disk, /Ephemeral|Stateless/i);
+    assert.equal(map.documentStorage.provider, 'MongoDB GridFS');
+    assert.equal(map.database.tier, 'FREE');
+    assert.equal(map.database.pitr, 'NOT_AVAILABLE');
+  });
+
+  // 38 retired Normal Master absent
+  test('38. Retired Normal Master is absent from all post-recovery authority maps', () => {
+    const inv = orchestrator.verifyPostRecoverySecurityInvariants();
+    assert.equal(Object.hasOwn(inv.personalLedgerPolicy, 'NORMAL_MASTER'), false);
+    assert.equal(Object.hasOwn(inv.poApprovalPolicy, 'NORMAL_MASTER'), false);
+  });
+
+  // 39 machine-verifiable DR runbook
+  test('39. Machine-verifiable DR runbook blocks automatic production restore and requires isolated targets', () => {
+    const runbookPath = path.resolve(__dirname, '../../config/disasterRecoveryRunbook.json');
+    const runbook = JSON.parse(fs.readFileSync(runbookPath, 'utf8'));
+    assert.equal(runbook.safety.automaticProductionRestoreAllowed, false);
+    assert.equal(runbook.safety.productionDataDestructiveDrillAllowed, false);
+    assert.equal(runbook.safety.restoreTargetPolicy, 'ISOLATED_NON_PRODUCTION_TARGET_ONLY');
+    assert.equal(runbook.safety.zeroCostLogicalBackupIsEquivalentToPitr, false);
+    assert.ok(runbook.procedures.some((p) => p.id === 'DR-10'));
+    assert.ok(runbook.externalBlockers.some((b) => b.id === 'EXT-03' && b.status === 'BLOCKED'));
+    assert.ok(runbook.externalBlockers.some((b) => b.id === 'EXT-05' && b.status === 'BLOCKED'));
+  });
+
+  // 40 dependency register references valid DR procedures
+  test('40. Third-party dependency register uses existing JSON DR procedures and no missing Markdown runbooks', () => {
+    const depsPath = path.resolve(__dirname, '../../config/thirdPartyDependencies.json');
+    const deps = JSON.parse(fs.readFileSync(depsPath, 'utf8'));
+    const runbook = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../config/disasterRecoveryRunbook.json'), 'utf8'));
+    const procedureIds = new Set(runbook.procedures.map((p) => p.id));
+
+    for (const dep of deps.dependencies) {
+      assert.equal(dep.recoveryProcedure.endsWith('.md'), false, dep.serviceId + ' must not reference a missing Markdown runbook');
+      const match = dep.recoveryProcedure.match(/#(DR-\d+)$/);
+      assert.ok(match, dep.serviceId + ' must reference a DR procedure ID');
+      assert.equal(procedureIds.has(match[1]), true, dep.serviceId + ' references unknown ' + match[1]);
+    }
   });
 });
