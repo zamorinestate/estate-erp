@@ -4,6 +4,7 @@ const DailyClosePack = require('../models/DailyClosePack');
 const { Cafe } = require('../models/Cafe');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -29,6 +30,7 @@ function assertCafeAccess(request, cafeId) {
 }
 
 const submitDailyClosePack = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
   const {
     cafeId,
@@ -116,6 +118,7 @@ const submitDailyClosePack = asyncHandler(async (request, response) => {
 });
 
 const listDailyClosePacks = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
   const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
 
@@ -148,6 +151,7 @@ const listDailyClosePacks = asyncHandler(async (request, response) => {
 });
 
 const getDailyClosePack = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const organisationId = request.auth?.organisationId || 'ORG-ZAMORIN';
   const { packId } = request.params;
 
@@ -165,6 +169,7 @@ const getDailyClosePack = asyncHandler(async (request, response) => {
 });
 
 const reviewDailyClosePack = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
   if (role !== 'MASTER' && role !== 'OWNER') {
     throw new ApiError(403, 'GOVERNANCE_ROLE_REQUIRED', 'Only Master and Owner roles can review daily close packs.');
