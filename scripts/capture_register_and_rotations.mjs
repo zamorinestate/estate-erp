@@ -15,14 +15,8 @@ async function run() {
   await page.setViewport({ width: 1440, height: 960 });
 
   try {
-    // 1. Direct register page capture
-    await page.goto("http://localhost:3000/#login", { waitUntil: "networkidle0" });
-    await page.waitForSelector("#l2-to-register-btn", { timeout: 8000 });
-    await page.click("#l2-to-register-btn");
-    await page.waitForSelector("#l2-reg-submit", { timeout: 4000 });
-    await new Promise(r => setTimeout(r, 400));
-    await page.screenshot({ path: path.join(ARTIFACTS_DIR, "register_page_theme.png") });
-    console.log("Captured register_page_theme.png");
+    // 1. Public self-registration is intentionally unavailable.
+    // Capture only the canonical enterprise login and wallpaper rotations.
 
     // 2. Wallpaper rotations across 3 refreshes
     for (let i = 1; i <= 3; i++) {
