@@ -32,26 +32,6 @@ const canonicalModules = [
     retiredStatus: "ACTIVE"
   },
   {
-    id: "DASHBOARD_NORMAL_MASTER",
-    name: "Normal Master Operational Dashboard",
-    family: "Dashboard",
-    personas: ["MASTER"],
-    route: "#dashboard",
-    frontendFile: "frontend/src/js/pages/dashboardMaster.js",
-    backendRoute: "backend/src/routes/dashboardRoutes.js",
-    controller: "backend/src/controllers/dashboardController.js",
-    exportSupport: "ZURF_PDF",
-    uploadSupport: "NOT_APPLICABLE",
-    receiptSupport: "NOT_APPLICABLE",
-    documentType: "STATEMENT",
-    testOwnership: "backend/test/dashboardCommandCentre.test.js",
-    supportStatus: "COMPLETE",
-    businessStatus: "READY",
-    productionStatus: "LOCAL_TEST_PASS",
-    userReviewStatus: "APPROVED",
-    retiredStatus: "ACTIVE"
-  },
-  {
     id: "DASHBOARD_OWNER",
     name: "Owner Portfolio Dashboard",
     family: "Dashboard",
