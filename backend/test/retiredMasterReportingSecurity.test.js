@@ -51,8 +51,10 @@ describe('Retired MASTER reporting security boundary', () => {
     );
   });
 
-  it('contains no secondary MASTER authority type in reporting scope', () => {
-    assert.equal(Object.hasOwn(ROLE_AUTHORITY_MATRIX, 'NORMAL_MASTER'), false);
+  it('contains exactly one MASTER-derived authority type in reporting scope', () => {
+    const masterDerivedAuthorityKeys = Object.keys(ROLE_AUTHORITY_MATRIX)
+      .filter((key) => key.endsWith('_MASTER'));
+    assert.deepEqual(masterDerivedAuthorityKeys, ['PRIMARY_MASTER']);
     assert.deepEqual(
       Object.keys(ROLE_AUTHORITY_MATRIX).sort(),
       ['CAFE_ADMIN', 'OWNER', 'PRIMARY_MASTER', 'STAFF'].sort()
@@ -97,8 +99,10 @@ describe('Retired MASTER reporting security boundary', () => {
     );
   });
 
-  it('does not expose an organisation-shared creation policy for a secondary MASTER authority', () => {
-    assert.equal(Object.hasOwn(ROLE_VISIBILITY_CREATE_PERMISSIONS, 'NORMAL_MASTER'), false);
+  it('exposes organisation-shared creation only through PRIMARY_MASTER among MASTER-derived authorities', () => {
+    const masterDerivedAuthorityKeys = Object.keys(ROLE_VISIBILITY_CREATE_PERMISSIONS)
+      .filter((key) => key.endsWith('_MASTER'));
+    assert.deepEqual(masterDerivedAuthorityKeys, ['PRIMARY_MASTER']);
     assert.ok(ROLE_VISIBILITY_CREATE_PERMISSIONS.PRIMARY_MASTER.includes('SHARED_ORGANISATION'));
   });
 });
