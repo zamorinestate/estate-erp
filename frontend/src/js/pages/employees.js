@@ -41,12 +41,9 @@ export function getActiveViewer() {
 
 export function isCurrentViewerPrimaryMaster() {
   const viewer = getActiveViewer();
-  const vId = viewer.userId || viewer.id || viewer._id || "";
-  const vEmail = String(viewer.email || "").toLowerCase();
   return (
-    viewer.isPrimaryMaster === true ||
-    (vId === "MU-0001" && vEmail === "pradeeshk331@gmail.com") ||
-    vEmail === "pradeeshk331@gmail.com"
+    String(viewer.role || state.role || "").toUpperCase() === "MASTER" &&
+    viewer.isPrimaryMaster === true
   );
 }
 
