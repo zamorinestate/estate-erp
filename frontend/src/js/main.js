@@ -375,15 +375,10 @@ export function getSafeInternalRedirect(target) {
 function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
-  if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
-    // ⚠️ PRIMARY MASTER LOCK: Only the single administrator account
-    // (MU-0001 / pradeeshk331@gmail.com) holds the MASTER role and window.
-    const isHardcodedPrimaryMaster =
-      user?.userId === "MU-0001" &&
-      String(user?.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+  if (rawRole === "MASTER") {
     return {
       role: "master",
-      isPrimaryMaster: isHardcodedPrimaryMaster,
+      isPrimaryMaster: user?.isPrimaryMaster === true,
     };
   }
 
