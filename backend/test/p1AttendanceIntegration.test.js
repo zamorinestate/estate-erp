@@ -523,7 +523,7 @@ test('P1-15: Employee own-only privacy (STAFF viewing other employee calendar ge
   );
 });
 
-test('P1-16: Master org scope (MASTER can view any staff calendar within organization)', async () => {
+test('P1-16: Primary Master org scope can view any staff calendar within organization)', async () => {
   const origFind = Attendance.find;
   Attendance.find = () => ({
     sort: () => ({
@@ -532,7 +532,7 @@ test('P1-16: Master org scope (MASTER can view any staff calendar within organiz
   });
 
   const req = {
-    auth: { userId: 'MU-NORMAL-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
+    auth: { userId: 'MU-PRIMARY-01', role: 'MASTER', isPrimaryMaster: true, organisationId: 'ORG-ZAMORIN' },
     params: { userId: 'EMP-002' },
     query: { year: '2026', month: '8' },
   };
@@ -851,7 +851,7 @@ test('P1-26: Concurrent edit after lock denied (423 PERIOD_LOCKED)', async () =>
   });
 
   const req = {
-    auth: { userId: 'MU-NORMAL-02', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
+    auth: { userId: 'MU-PRIMARY-02', role: 'MASTER', isPrimaryMaster: true, organisationId: 'ORG-ZAMORIN' },
     params: { attendanceId: 'AT-20260720-001' },
     body: { checkInAt: '2026-07-20T09:00:00Z', checkOutAt: '2026-07-20T17:00:00Z', reason: 'Audit patch' },
   };
