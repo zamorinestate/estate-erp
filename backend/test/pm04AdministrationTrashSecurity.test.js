@@ -56,7 +56,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     await TrashEntry.deleteMany({});
 
     const req = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       query: {},
     };
     let sentData = null;
@@ -248,7 +248,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
 
     // Attempt role change on Primary Master
     const roleChangeReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { userId: primaryMaster.userId },
       body: { confirmed: true, proposedRole: 'STAFF', reason: 'Attempted demotion' },
     };
@@ -270,7 +270,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
 
     // Attempt archive on Primary Master
     const archiveReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { userId: primaryMaster.userId },
       body: { reason: 'Attempted archive' },
     };
@@ -292,8 +292,8 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     delete process.env.REQUIRE_MFA; // Default: TOTP not globally required
 
     const req = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
-      user: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
+      user: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
     };
     let sentData = null;
     const res = {
@@ -418,7 +418,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     });
 
     const foreignCafeReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { cafeId: 'ZC-9999' },
     };
     const dummyRes = {
@@ -459,7 +459,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     await foreignTrash.save();
 
     const restoreReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       body: { trashId: 'TRASH-202609-00099' },
     };
     await assert.rejects(
@@ -493,7 +493,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     });
 
     const roleReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { userId: 'AD-9001' },
       body: {
         confirmed: true,
@@ -610,6 +610,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
       userId: 'MU-0001',
       organisationId: 'ORG-ZAMORIN',
       role: 'MASTER',
+      isPrimaryMaster: true,
       mfaEnabled: false,
     };
 
