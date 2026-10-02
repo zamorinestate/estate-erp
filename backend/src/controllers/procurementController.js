@@ -1808,13 +1808,13 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
 
 /**
  * POST /procurement/orders/:purchaseOrderId/master-approve
- * Master verifies and approves the order, discrepancy notes, and attached bills.
+ * Primary Master verifies and approves the order, discrepancy notes, and attached bills.
  * Finalizes the order process.
  */
 const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
   assertCanonicalMasterState(request.auth);
-  if (request.auth?.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to approve purchase orders.');
+  if (request.auth?.role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'Only Primary Master has authority to approve purchase orders.');
   }
 
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
@@ -1834,7 +1834,7 @@ const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
   order.masterApproval = {
     approvedAt: new Date(),
     approvedByUserId: request.auth.userId,
-    approvalNotes: String(notes || 'Approved by Master with attached vendor bill verified').trim(),
+    approvalNotes: String(notes || 'Approved by Primary Master with attached vendor bill verified').trim(),
   };
 
   // Recalculate fulfillment
