@@ -24,6 +24,7 @@ const {
 const {
   ApiError,
 } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 
@@ -85,11 +86,12 @@ function normalizeCafeIds(value) {
 }
 
 function requireMaster(request) {
-  if (request.auth.role !== 'MASTER') {
+  assertCanonicalMasterState(request.auth);
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
     throw new ApiError(
       403,
-      'MASTER_ACCESS_REQUIRED',
-      'Only the MASTER role may perform this action.'
+      'PRIMARY_MASTER_REQUIRED',
+      'Only Primary Master may perform this action.'
     );
   }
 }
@@ -290,6 +292,7 @@ function ensureUserIsAccessible(
 
 const listUsers = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     if (request.auth.role === 'VENDOR') {
       throw new ApiError(
         403,
@@ -319,6 +322,7 @@ const listUsers = asyncHandler(
 
 const getUser = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     if (request.auth.role === 'VENDOR') {
       throw new ApiError(
         403,
@@ -364,6 +368,7 @@ const getUser = asyncHandler(
 
 const createUser = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     requireMaster(request);
 
     const {
@@ -546,6 +551,7 @@ const createUser = asyncHandler(
 
 const updateUser = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     requireMaster(request);
 
     // ── Reject protected fields first ──
@@ -782,6 +788,7 @@ const updateUser = asyncHandler(
 
 const changeUserStatus = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     requireMaster(request);
 
     const userId =
@@ -936,6 +943,7 @@ const changeUserStatus = asyncHandler(
 
 const archiveUser = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     requireMaster(request);
 
     const userId =
