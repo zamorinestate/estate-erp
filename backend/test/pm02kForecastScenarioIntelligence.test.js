@@ -21,7 +21,7 @@ const {
   SEASONAL_NAIVE_INTERVAL_USES_NAIVE_SQRT_H_FORMULA,
   ARBITRARY_FORECAST_INTERVAL,
   FORECAST_SECONDARY_ROLE_TAXONOMY,
-  NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION,
+  RETIRED_MASTER_FORECAST_BYPASS,
   HIDDEN_CAFE_FORECAST_LEAK,
   UNEXPLAINED_FROZEN_TEST_LOSS,
   INCOMPLETE_SUPPLY_VIEW_REPORTED_AS_CERTAIN_STOCKOUT,
@@ -284,7 +284,7 @@ describe('PM-02K — Forecasting, Predictive Trends, Scenario & What-If Intellig
     });
 
     it('allows Primary Master and Owner access to authorized forecast targets', () => {
-      const pmTarget = ForecastRegistry.assertForecastTargetAccess('NET_SALES', { role: 'MASTER', userId: 'MU-0001' });
+      const pmTarget = ForecastRegistry.assertForecastTargetAccess('NET_SALES', { role: 'MASTER', isPrimaryMaster: true, userId: 'MU-0001' });
       assert.ok(pmTarget);
 
       const ownerTarget = ForecastRegistry.assertForecastTargetAccess('NET_SALES', { role: 'OWNER', userId: 'OW-001' });
@@ -475,7 +475,7 @@ describe('PM-02K — Forecasting, Predictive Trends, Scenario & What-If Intellig
       assert.strictEqual(SEASONAL_NAIVE_INTERVAL_USES_NAIVE_SQRT_H_FORMULA, 0);
       assert.strictEqual(ARBITRARY_FORECAST_INTERVAL, 0);
       assert.strictEqual(FORECAST_SECONDARY_ROLE_TAXONOMY, 0);
-      assert.strictEqual(NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION, 0);
+      assert.strictEqual(RETIRED_MASTER_FORECAST_BYPASS, 0);
       assert.strictEqual(HIDDEN_CAFE_FORECAST_LEAK, 0);
       assert.strictEqual(UNEXPLAINED_FROZEN_TEST_LOSS, 0);
       assert.strictEqual(INCOMPLETE_SUPPLY_VIEW_REPORTED_AS_CERTAIN_STOCKOUT, 0);
@@ -648,7 +648,7 @@ describe('PM-02K — Forecasting, Predictive Trends, Scenario & What-If Intellig
       assert.ok(target);
     });
 
-    it('proves Normal Master without primary invariant is denied Primary-Master restricted capability (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)', () => {
+    it('proves Retired non-primary MASTER is denied all forecasting access (RETIRED_MASTER_FORECAST_BYPASS = 0)', () => {
       assert.throws(
         () => ForecastRegistry.assertForecastTargetAccess('NET_SALES', {
           role: 'MASTER',
@@ -656,14 +656,15 @@ describe('PM-02K — Forecasting, Predictive Trends, Scenario & What-If Intellig
           requirePrimaryMaster: true,
           userId: 'MU-0002',
         }),
-        (err) => err.statusCode === 403 && err.code === 'PRIMARY_MASTER_AUTHORITY_REQUIRED'
+        (err) => err.statusCode === 403 && err.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
       );
-      assert.strictEqual(NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION, 0);
+      assert.strictEqual(RETIRED_MASTER_FORECAST_BYPASS, 0);
     });
 
     it('proves CAFE_ADMIN is recognized and permitted for assigned café', () => {
       const target = ForecastRegistry.assertForecastTargetAccess('NET_SALES', {
         role: 'CAFE_ADMIN',
+        userId: 'CA-FORECAST-001',
         primaryCafeId: 'CF-001',
       });
       assert.ok(target);
@@ -671,11 +672,11 @@ describe('PM-02K — Forecasting, Predictive Trends, Scenario & What-If Intellig
 
     it('proves invented secondary roles like SUPER_ADMIN or ADMIN are rejected (FORECAST_SECONDARY_ROLE_TAXONOMY = 0)', () => {
       assert.throws(
-        () => ForecastRegistry.assertForecastTargetAccess('NET_SALES', { role: 'SUPER_ADMIN' }),
+        () => ForecastRegistry.assertForecastTargetAccess('NET_SALES', { role: 'SUPER_ADMIN', userId: 'SUPER-001' }),
         (err) => err.statusCode === 403 && err.code === 'FORECAST_ROLE_DENIED'
       );
       assert.throws(
-        () => ForecastRegistry.assertForecastTargetAccess('NET_SALES', { role: 'ADMIN' }),
+        () => ForecastRegistry.assertForecastTargetAccess('NET_SALES', { role: 'ADMIN', userId: 'ADMIN-001' }),
         (err) => err.statusCode === 403 && err.code === 'FORECAST_ROLE_DENIED'
       );
       assert.strictEqual(FORECAST_SECONDARY_ROLE_TAXONOMY, 0);
