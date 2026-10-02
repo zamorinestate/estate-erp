@@ -248,6 +248,7 @@ const DEFAULT_POLICY_MAP = [
   { prefix: "/finance/gl-journals", policy: CachePolicy.SENSITIVE_NO_CACHE },
   { prefix: "/cafe-operations/operator/sign-in", policy: CachePolicy.SENSITIVE_NO_CACHE },
   { prefix: "/cafe-device-state", policy: CachePolicy.SENSITIVE_NO_CACHE },
+  { prefix: "/exports", policy: CachePolicy.SENSITIVE_NO_CACHE },
   { prefix: "/auth/refresh", policy: CachePolicy.SENSITIVE_NO_CACHE },
   { prefix: "/auth/step-up", policy: CachePolicy.SENSITIVE_NO_CACHE },
   { prefix: "/auth/login", policy: CachePolicy.SENSITIVE_NO_CACHE },
@@ -1120,7 +1121,7 @@ export async function requestJson(
     inFlightGetRequests.set(cacheKey, executionPromise);
     executionPromise.finally(() => {
       inFlightGetRequests.delete(cacheKey);
-    });
+    }).catch(() => {});
   }
 
   if (signal) {

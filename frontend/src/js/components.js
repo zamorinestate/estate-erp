@@ -27,6 +27,16 @@ const ROLE_INITIALS = {
   [ROLES.VENDOR]: "VN",
 };
 
+export function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 const SIDEBAR_COLLAPSED_KEY = "zamorin-sidebar-collapsed";
 
 export function isSidebarCollapsed() {
