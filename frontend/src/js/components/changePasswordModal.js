@@ -57,11 +57,26 @@ function evaluatePasswordStrength(password) {
 /**
  * Opens the universal Change Password modal
  */
-export function openChangePasswordModal() {
+export function openChangePasswordModal({ forced = false } = {}) {
+  const exitForcedPasswordFlow = async () => {
+    if (!forced) return;
+    try {
+      await apiPost("/auth/logout", {});
+    } catch {}
+    clearAllAuthTokens();
+    clearAccessToken();
+    clearApiCacheAndInFlight();
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+  };
+
   const bodyHtml = `
     <form id="universal-change-password-form" style="display:flex; flex-direction:column; gap:16px; font-size:13px;" onsubmit="return false;">
       <p style="margin:0; color:var(--muted); line-height:1.4;">
-        For your security, enter your current password followed by a strong new password meeting enterprise complexity standards.
+        ${forced
+          ? "Your account requires a password change before you can continue. Enter your current password and choose a new secure password."
+          : "For your security, enter your current password followed by a strong new password meeting enterprise complexity standards."}
       </p>
 
       <div id="caps-lock-warning" style="display:none; background:rgba(245,158,11,0.15); border:1px solid #f59e0b; color:#b45309; padding:8px 12px; border-radius:6px; font-size:12px; font-weight:600;">
@@ -173,11 +188,12 @@ export function openChangePasswordModal() {
   `;
 
   openModal({
-    title: "Change Account Password",
+    title: forced ? "Password Change Required" : "Change Account Password",
     body: bodyHtml,
     maxWidth: "480px",
     saveLabel: "Update Password",
-    cancelLabel: "Cancel",
+    cancelLabel: forced ? "Sign Out" : "Cancel",
+    onCancel: forced ? exitForcedPasswordFlow : null,
     onSave: async () => {
       const currentInput = document.getElementById("pwd-current");
       const newInput = document.getElementById("pwd-new");
