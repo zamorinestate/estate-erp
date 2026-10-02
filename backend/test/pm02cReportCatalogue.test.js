@@ -7,7 +7,7 @@
  * Verifies:
  * - Canonical Category Registry (all 25 categories, human-friendly labels, management descriptions)
  * - Canonical Report Registry integrity (valid IDs, categories, trust, classification, runnable routes)
- * - Server-authorized catalogue filtering across Primary Master, Normal Master, Owner, Café Admin, Staff
+ * - Server-authorized catalogue filtering across Primary Master, Owner, Café Admin, Staff; retired non-primary MASTER fails closed
  * - Zero count leakage across security tiers (category counts reflect only authorized reports)
  * - Direct navigation, endpoint resolution, legacy route deduplication, and terminology compliance
  */
@@ -215,10 +215,10 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
     assert.ok(confidentialRep, 'Primary Master must receive CONFIDENTIAL reports');
   });
 
-  await suite.test('3.2 Normal Master: Excludes HIGHLY_CONFIDENTIAL reports', async () => {
+  await suite.test('3.2 Retired non-primary MASTER: catalogue access fails closed', async () => {
     const req = {
       auth: {
-        userId: 'MU-0002',
+        userId: 'MU-RETIRED-0002',
         role: 'MASTER',
         isPrimaryMaster: false,
         organisationId: 'ORG-ZAMORIN',
@@ -226,19 +226,15 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
       query: {},
     };
     const res = createMockResponse();
+    let denied = null;
 
-    await reportController.getReportCatalogue(req, res);
+    await reportController.getReportCatalogue(req, res, (err) => {
+      denied = err;
+    });
 
-    assert.equal(res.statusCode, 200);
-    const { reports } = res.jsonData.data;
-
-    for (const r of reports) {
-      assert.notEqual(
-        r.classification,
-        'HIGHLY_CONFIDENTIAL',
-        `Normal Master must not receive HIGHLY_CONFIDENTIAL report: ${r.reportId}`
-      );
-    }
+    assert.ok(denied, 'Retired non-primary MASTER must be rejected');
+    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.code, 'RETIRED_MASTER_ACCOUNT_DENIED');
   });
 
   await suite.test('3.3 Owner: Receives only OWNER-supported reports, excluding HIGHLY_CONFIDENTIAL', async () => {
@@ -578,8 +574,7 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
 
   // ─── 8. PRIMARY MASTER vs NORMAL MASTER DISTINCTION (§11) ───────────────────
 
-  await suite.test('8.1 Primary Master receives HIGHLY_CONFIDENTIAL reports; Normal Master does not', async () => {
-    // Register a temporary HIGHLY_CONFIDENTIAL test report
+  await suite.test('8.1 Primary Master receives HIGHLY_CONFIDENTIAL reports; retired non-primary MASTER is rejected', async () => {
     ReportRegistry.registerReport({
       reportId: 'test-hc-report-pm02cr1',
       title: 'Test HC Report',
@@ -600,30 +595,32 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
     });
 
     const makeReq = (isPrimary) => ({
-      auth: { userId: isPrimary ? 'MU-0001' : 'MU-0002', role: 'MASTER', isPrimaryMaster: isPrimary, organisationId: 'ORG-ZAMORIN' },
+      auth: { userId: isPrimary ? 'MU-0001' : 'MU-RETIRED-0002', role: 'MASTER', isPrimaryMaster: isPrimary, organisationId: 'ORG-ZAMORIN' },
       query: {},
     });
     const makeRes = () => {
       const r = { statusCode: 200, jsonData: null };
-      r.status = (c) => { r.statusCode = c; return r; };
-      r.json = (d) => { r.jsonData = d; return r; };
+      r.status = (code) => { r.statusCode = code; return r; };
+      r.json = (data) => { r.jsonData = data; return r; };
       return r;
     };
 
-    const reportController = require('../src/controllers/reportController');
+    try {
+      const pmRes = makeRes();
+      await reportController.getReportCatalogue(makeReq(true), pmRes);
+      const pmReports = pmRes.jsonData.data.reports;
+      assert.ok(pmReports.find((r) => r.reportId === 'test-hc-report-pm02cr1'));
 
-    const pmRes = makeRes();
-    await reportController.getReportCatalogue(makeReq(true), pmRes);
-    const pmReports = pmRes.jsonData.data.reports;
-    assert.ok(pmReports.find((r) => r.reportId === 'test-hc-report-pm02cr1'), 'Primary Master must receive HIGHLY_CONFIDENTIAL reports');
-
-    const nmRes = makeRes();
-    await reportController.getReportCatalogue(makeReq(false), nmRes);
-    const nmReports = nmRes.jsonData.data.reports;
-    assert.equal(nmReports.find((r) => r.reportId === 'test-hc-report-pm02cr1'), undefined, 'Normal Master must NOT receive HIGHLY_CONFIDENTIAL reports');
-
-    // Cleanup
-    ReportRegistry.unregisterReport('test-hc-report-pm02cr1');
+      const retiredRes = makeRes();
+      let denied = null;
+      await reportController.getReportCatalogue(makeReq(false), retiredRes, (err) => {
+        denied = err;
+      });
+      assert.ok(denied);
+      assert.equal(denied.code, 'RETIRED_MASTER_ACCOUNT_DENIED');
+    } finally {
+      ReportRegistry.unregisterReport('test-hc-report-pm02cr1');
+    }
   });
 
   // ─── 9. COUNT SECURITY & ZERO-REPORT CATEGORIES (§37–§38) ───────────────────
@@ -816,14 +813,17 @@ test('PM-02C: Universal Category-Wise Report Catalogue & Navigation Suite', asyn
       const ownerReports = ownerRes.jsonData.data.reports;
       assert.equal(ownerReports.find((r) => r.reportId === 'test-hc-search-pm02cr2'), undefined, 'Owner must NOT discover HIGHLY_CONFIDENTIAL reports');
 
-      // 2. Normal Master: Cannot discover HIGHLY_CONFIDENTIAL reports
-      const nmRes = makeRes();
+      // 2. Retired non-primary MASTER: denied before catalogue discovery
+      const retiredRes = makeRes();
+      let retiredDenied = null;
       await reportController.getReportCatalogue({
-        auth: { userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
+        auth: { userId: 'MU-RETIRED-0002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
         query: {},
-      }, nmRes);
-      const nmReports = nmRes.jsonData.data.reports;
-      assert.equal(nmReports.find((r) => r.reportId === 'test-hc-search-pm02cr2'), undefined, 'Normal Master must NOT discover HIGHLY_CONFIDENTIAL reports');
+      }, retiredRes, (err) => {
+        retiredDenied = err;
+      });
+      assert.ok(retiredDenied);
+      assert.equal(retiredDenied.code, 'RETIRED_MASTER_ACCOUNT_DENIED');
 
       // 3. Cafe Admin: Cannot discover CONFIDENTIAL reports restricted to Owner/Master
       const caRes = makeRes();
