@@ -47,7 +47,7 @@ import {
   wireMfaReenrollment2,
   showGlassAlert,
   abortActivePasskeyRequests,
-} from "./pages/login2.js?v=3.5.4";
+} from "./pages/login2.js?v=3.6.0";
 
 // Lazy-loaded Router Module: Prevents 75+ admin pages (4.5 MB) from loading during initial login screen display
 let routerModulePromise = null;
@@ -1216,7 +1216,7 @@ async function boot() {
     if (isCafeOpsLogin) {
       const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
       const preselectedCafeId = urlParams.get('cafe') || '';
-      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
+      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js?v=2.1.0");
       const appEl = document.getElementById("app");
       if (appEl) {
         appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
@@ -1309,7 +1309,7 @@ async function boot() {
     ) {
       const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
       const preselectedCafeId = urlParams.get('cafe') || '';
-      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
+      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js?v=2.1.0");
       const appEl = document.getElementById("app");
       if (appEl) {
         appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
@@ -1464,7 +1464,7 @@ if (typeof window !== "undefined") {
     ) {
       const urlParams = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
       const preselectedCafeId = urlParams.get('cafe') || '';
-      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js");
+      const { renderCafeOperationsLogin2, wireCafeOperationsLogin2 } = await import("./pages/cafeOperationsLogin2.js?v=2.1.0");
       const appEl = document.getElementById("app");
       if (appEl) {
         appEl.innerHTML = renderCafeOperationsLogin2({ preselectedCafeId });
