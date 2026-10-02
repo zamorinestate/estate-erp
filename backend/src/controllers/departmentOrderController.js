@@ -29,6 +29,7 @@ const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { recordRequestAudit } = require('../services/auditService');
 const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -66,6 +67,7 @@ function assertCafeAccess(request, cafeId) {
  * 1. GET OVERVIEW & CONTROL STRIP
  */
 const getDepartmentOrdersOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const organisationId = request.auth.organisationId;
   const today = getIstBusinessDate();
   const effectiveCafe = resolveEffectiveCafeScope(request);
@@ -159,6 +161,7 @@ const getDepartmentOrdersOverview = asyncHandler(async (request, response) => {
  * 2. LIST DEPARTMENT ORDERS (WITH ADVANCED SEARCH & FILTER)
  */
 const listDepartmentOrders = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const page = parsePositiveInteger(request.query.page, 1, 1000);
   const limit = parsePositiveInteger(request.query.limit, 25, 100);
   const skip = (page - 1) * limit;
@@ -226,6 +229,7 @@ const listDepartmentOrders = asyncHandler(async (request, response) => {
  * 3. GET SINGLE DEPARTMENT ORDER (360 DETAIL)
  */
 const getDepartmentOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orderId = normalizeId(request.params.orderId);
   const order = await DepartmentOrder.findOne({
     orderId,
@@ -270,6 +274,7 @@ const getDepartmentOrder = asyncHandler(async (request, response) => {
  * 4. CREATE NEW DEPARTMENT ORDER (WIZARD SUBMISSION WITH DUPLICATE DETECTION)
  */
 const createDepartmentOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const {
     cafeId,
     institutionName,
@@ -423,6 +428,7 @@ const createDepartmentOrder = asyncHandler(async (request, response) => {
  * 5. CREATE ORDER REVISION
  */
 const createOrderRevision = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orderId = normalizeId(request.params.orderId);
   const { field, before, after, reason } = request.body;
 
@@ -498,6 +504,7 @@ const createOrderRevision = asyncHandler(async (request, response) => {
  * 6. CONFIRM FULFILMENT WITH RECEIVING CONTACT & PROOF
  */
 const confirmOrderFulfilment = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orderId = normalizeId(request.params.orderId);
   const { receivingContactName, receivingSignature, discrepancyNotes, isPartial } = request.body;
 
@@ -559,6 +566,7 @@ const confirmOrderFulfilment = asyncHandler(async (request, response) => {
  * 7. RECORD SETTLEMENT REFERENCE
  */
 const recordOrderSettlement = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orderId = normalizeId(request.params.orderId);
   const { amountPaisa, paymentMethod, paymentReference, notes } = request.body;
 
@@ -639,6 +647,7 @@ const recordOrderSettlement = asyncHandler(async (request, response) => {
  * 8. LIST & CREATE QUOTES
  */
 const listQuotes = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const filter = { organisationId: request.auth.organisationId };
   if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
     filter.cafeId = { $in: request.auth.assignedCafeIds };
@@ -659,6 +668,7 @@ const listQuotes = asyncHandler(async (request, response) => {
 });
 
 const createQuote = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const {
     cafeId,
     institutionName,
@@ -747,6 +757,7 @@ const createQuote = asyncHandler(async (request, response) => {
  * 9. GET SCHEDULE
  */
 const getInstitutionalSchedule = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const filter = {
     organisationId: request.auth.organisationId,
     orderStatus: { $ne: 'CANCELLED' },
@@ -781,6 +792,7 @@ const getInstitutionalSchedule = asyncHandler(async (request, response) => {
  * 10. INSTITUTIONAL ACCOUNTS
  */
 const getInstitutionalAccounts = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const filter = { organisationId: request.auth.organisationId };
   const accounts = await InstitutionalAccount.find(filter).lean();
 
@@ -797,6 +809,7 @@ const getInstitutionalAccounts = asyncHandler(async (request, response) => {
  * 11. INTEGRITY & THREE-WAY RECONCILIATION
  */
 const getInstitutionalIntegrityStatus = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const filter = { organisationId: request.auth.organisationId };
   if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
     filter.cafeId = { $in: request.auth.assignedCafeIds };

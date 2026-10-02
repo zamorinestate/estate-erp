@@ -270,8 +270,8 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
     );
   });
 
-  // 05. PAYMENT AUTHORITY: MASTER (PRIMARY & NORMAL) CAN RELEASE PAYMENTS
-  it('05. Payment Authority: Master (both Primary & Normal) has payment release authority', async () => {
+  // 05. PAYMENT AUTHORITY: PRIMARY MASTER ONLY
+  it('05. Payment Authority: retired non-primary MASTER is denied; Primary Master can release payment', async () => {
     await Vendor.create({
       organisationId: ORG_ID,
       vendorId: 'VEN-0001',
@@ -329,10 +329,14 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
       },
     };
     const resNm = createMockResponse();
-    await invokeController(vendorLedgerController.recordPayment, nmPayReq, resNm);
-    assert.strictEqual(resNm.statusCode, 200);
-    assert.strictEqual(resNm.body.success, true);
-    assert.strictEqual(resNm.body.data.ledgerEntry.debitPaisa, 25000);
+    await assert.rejects(
+      async () => invokeController(vendorLedgerController.recordPayment, nmPayReq, resNm),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'RETIRED_MASTER_ACCOUNT_DENIED');
+        return true;
+      }
+    );
 
     // Primary Master records payment
     const pmPayReq = {
@@ -359,8 +363,8 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
     assert.strictEqual(resPm.body.data.ledgerEntry.debitPaisa, 25000);
 
     const updatedInv = await APInvoice.findOne({ invoiceId: 'INV-PM-0001' });
-    assert.strictEqual(updatedInv.amountPaidPaisa, 50000);
-    assert.strictEqual(updatedInv.outstandingPayableAmountPaisa, 50000);
+    assert.strictEqual(updatedInv.amountPaidPaisa, 25000);
+    assert.strictEqual(updatedInv.outstandingPayableAmountPaisa, 75000);
     assert.strictEqual(updatedInv.paymentStatus, 'PARTIALLY_PAID');
   });
 
