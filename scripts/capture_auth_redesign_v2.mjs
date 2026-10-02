@@ -45,13 +45,7 @@ async function run() {
     await new Promise(r => setTimeout(r, 400));
     await page.screenshot({ path: path.join(ARTIFACTS_DIR, "enter_pin_bronze_timer.png") });
 
-    // 5. Test Register page
-    await page.goto("http://localhost:3000/#login", { waitUntil: "networkidle0" });
-    await page.waitForSelector("#l2-to-register-btn", { timeout: 4000 });
-    await page.click("#l2-to-register-btn");
-    await page.waitForSelector("#l2-reg-submit", { timeout: 4000 });
-    await new Promise(r => setTimeout(r, 400));
-    await page.screenshot({ path: path.join(ARTIFACTS_DIR, "register_page_theme.png") });
+    // 5. Public self-registration is intentionally unavailable; continue with login wallpaper capture.
 
     // 6. Test wallpaper rotation on multiple refreshes
     await page.goto("http://localhost:3000/#login", { waitUntil: "networkidle0" });
