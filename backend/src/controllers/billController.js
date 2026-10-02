@@ -447,16 +447,14 @@ const getBill = asyncHandler(async (request, response) => {
   assertResourceCafeOwnership(bill, request, 'Bill');
   assertCafeAccess(request, bill.cafeId);
 
-  const isPrimary = request.auth.isPrimaryMaster === true;
-  const isMaster = request.auth.role === 'MASTER';
+  const isPrimary = request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true;
   const isCompleted = bill.status === 'COMPLETED' || bill.status === 'PARTIALLY_REFUNDED';
-  const isToday = bill.businessDate === getIstBusinessDate();
 
   const allowedActions = {
     canReprint: true,
-    canVoid: isCompleted && (isPrimary || (isMaster && isToday)),
+    canVoid: isCompleted && isPrimary,
     canRefund: isCompleted && (bill.totalPaisa - (bill.refundedTotalPaisa || 0)) > 0,
-    canCreditNote: isCompleted && isMaster,
+    canCreditNote: isCompleted && isPrimary,
     canReopen: false, // highly restricted
   };
 
@@ -851,11 +849,11 @@ const reprintBill = asyncHandler(async (request, response) => {
  * Controlled post-sale void with mandatory reason and audit tracking.
  */
 const voidBill = asyncHandler(async (request, response) => {
-  if (request.auth.role === 'OWNER') {
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
     throw new ApiError(
       403,
       'VOID_FORBIDDEN',
-      'Owner does not possess POS void mutation authority.'
+      'Only the Primary Master may void a finalized bill.'
     );
   }
 
@@ -880,18 +878,6 @@ const voidBill = asyncHandler(async (request, response) => {
 
   if (bill.status === 'VOIDED') {
     throw new ApiError(409, 'ALREADY_VOIDED', 'This bill is already voided.');
-  }
-
-  const isPrimary = request.auth.isPrimaryMaster === true;
-  const isMaster = request.auth.role === 'MASTER';
-  const isToday = bill.businessDate === getIstBusinessDate();
-
-  if (!isPrimary && (!isMaster || !isToday)) {
-    throw new ApiError(
-      403,
-      'VOID_FORBIDDEN',
-      'Normal Master can only void same-day invoices. Historical day voids require Primary Master authority.'
-    );
   }
 
   const prevStatus = bill.status;

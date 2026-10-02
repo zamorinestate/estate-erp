@@ -102,14 +102,27 @@ function getIstBusinessDate(date = new Date()) {
 }
 
 function ensureCafeOperationsAllowed(request) {
-  if (['MASTER', 'OWNER'].includes(request.auth.role)) return;
+  if (request.auth.role === 'MASTER') {
+    if (request.auth.isPrimaryMaster !== true) {
+      throw new ApiError(
+        403,
+        'RETIRED_MASTER_ACCOUNT_DENIED',
+        'Non-primary MASTER accounts are retired and cannot administer attendance.'
+      );
+    }
+    return;
+  }
+  if (request.auth.role === 'OWNER') return;
   if (request.auth.privilegeProfile === 'SELF_ONLY') {
     throw new ApiError(403, 'PERMISSION_DENIED', 'Cafe Operations attendance administration is restricted on personal or untrusted devices.');
   }
 }
 
 function ensureCafeAccess(request, cafeId) {
-  if (request.auth.role === 'MASTER') return;
+  if (request.auth.role === 'MASTER') {
+    ensureCafeOperationsAllowed(request);
+    return;
+  }
   ensureCafeOperationsAllowed(request);
   const assigned = (request.auth.assignedCafeIds || []).map((c) => String(c).trim().toUpperCase());
   if (!assigned.length && request.auth.role === 'OWNER') {
@@ -317,7 +330,7 @@ const getLiveAttendance = asyncHandler(async (request, response) => {
   });
 });
 
-// 3. POST /api/v1/attendance/master-manual (Primary AND Normal Master authority)
+// 3. POST /api/v1/attendance/master-manual (Primary Master or scoped Café Admin authority)
 const recordMasterManualAttendance = asyncHandler(async (request, response) => {
   const {
     userId: rawUserId,
@@ -330,7 +343,7 @@ const recordMasterManualAttendance = asyncHandler(async (request, response) => {
   } = request.body || {};
 
   if (!['MASTER', 'CAFE_ADMIN'].includes(request.auth.role)) {
-    throw new ApiError(403, 'PERMISSION_DENIED', 'Only Master or Café Admin can record manual attendance.');
+    throw new ApiError(403, 'PERMISSION_DENIED', 'Only Primary Master or Café Admin can record manual attendance.');
   }
 
   ensureCafeOperationsAllowed(request);
@@ -719,10 +732,16 @@ const listShiftsForRoster = asyncHandler(async (request, response) => {
   });
 });
 
-// 6. Overtime Decision (CAFE_ADMIN verify -> Normal Master review -> Primary Master final decision)
+// 6. Overtime Decision (CAFE_ADMIN verification -> Primary Master final decision)
 const decideOvertime = asyncHandler(async (request, response) => {
   const { attendanceId: rawAttId, decision, approvedMinutes = 0, reason = '' } = request.body || {};
   const attendanceId = normalizeIdentifier(rawAttId);
+  const isFinalDecision = decision === 'APPROVE' || decision === 'REJECT';
+  const isPrimary = request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true;
+
+  if (isFinalDecision && !isPrimary) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for final Overtime decision.');
+  }
 
   const attendance = await Attendance.findOne({
     attendanceId,
@@ -733,12 +752,7 @@ const decideOvertime = asyncHandler(async (request, response) => {
 
   ensureCafeAccess(request, attendance.cafeId);
 
-  const isPrimary = request.auth.isPrimaryMaster === true;
-
   if (decision === 'APPROVE') {
-    if (!isPrimary && request.auth.role !== 'MASTER') {
-      throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for final Overtime decision.');
-    }
     attendance.overtimeStatus = 'APPROVED_BY_PRIMARY';
     attendance.approvedOvertimeMinutes = Number(approvedMinutes) || attendance.detectedOvertimeMinutes || 0;
     attendance.overtimeDecidedByUserId = request.auth.userId;
@@ -747,9 +761,6 @@ const decideOvertime = asyncHandler(async (request, response) => {
   } else if (decision === 'VERIFY_ADMIN') {
     attendance.overtimeStatus = 'VERIFIED_BY_ADMIN';
   } else {
-    if (!isPrimary && request.auth.role !== 'MASTER') {
-      throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Primary Master authority is required for final Overtime decision.');
-    }
     attendance.overtimeStatus = 'REJECTED';
     attendance.approvedOvertimeMinutes = 0;
     attendance.overtimeDecidedByUserId = request.auth.userId;
