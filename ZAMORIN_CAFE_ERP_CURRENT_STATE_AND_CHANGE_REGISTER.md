@@ -1,10 +1,10 @@
 # Zamorin Café ERP — Current State & Change Register
 
-**Document Version:** 2.0.0  
+**Document Version:** 2.0.1  
 **Generated:** 2026-10-02  
 **Baseline Repository:** `zamorinestate/estate-erp`  
 **Active Branch:** `ui/clean-navigation-v1`  
-**Candidate Head SHA:** `19c47e50b73c448bb95b3d9d300eb033b006e8b4`  
+**Verified Implementation SHA:** `44309b243e2342f75648cef702cd6460a8c9424f` (final export-policy remediation baseline); **Live PR Head:** query PR #35 at review/merge time rather than self-pinning this documentation commit.  
 **Release Governance Status:** Software Verification Pass; Commercial Cutover Gated by EXT-19 & Physical Hardware Gate REC-04E  
 
 ---
@@ -17,7 +17,7 @@ The application has completed comprehensive architectural, operational, and secu
 1. **Permanent 4-Window Topology:** Non-primary Normal Master is completely abolished. System authority operates strictly across four canonical windows: Primary Master (`MASTER` with `isPrimaryMaster: true`), Owner Portal (`OWNER`), Café Operations (`CAFE_ADMIN`), and Employee Self-Service / Cashier (`STAFF`).
 2. **Clean Navigation & Parent-Workspace Consolidation:** Primary Master first-level navigation is streamlined to exactly 19 destinations; Owner navigation is streamlined to exactly 17 destinations. Secondary operational tools (customers, bills, passbook, departmental orders, assets, quality, mail operations, system health) are consolidated into their logical parent workspaces while remaining accessible via authorized deep links.
 3. **Export Centre — PDF + XLSX Exclusively:** The Export Centre has been standardized strictly to authentic PDF and OpenXML XLSX (.xlsx) workbooks with formula-injection neutralization (`'`, `+`, `-`, `=`, `@` neutralization in shared strings). User-facing CSV has been eliminated across all operational export actions.
-4. **Authoritative POS Menu Pipeline:** Resolved the production defect where POS displayed no sale items. Implemented a canonical café-scoped POS catalog pipeline (`GET /api/v1/pos/catalog/:cafeId`) linking `MenuItem` master definitions to `OutletOffering` café assignments, pricing overrides, POS channel eligibility, and dynamic frontend caching in [posTill.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/pages/posTill.js).
+4. **Authoritative POS Menu Pipeline:** Resolved the production defect where POS displayed no sale items. Implemented a canonical café-scoped POS catalog pipeline (`GET /api/v1/pos/catalog/:cafeId`) linking `MenuItem` master definitions to `OutletOffering` café assignments, pricing overrides, POS channel eligibility, and dynamic frontend caching in [posTill.js](frontend/src/js/pages/posTill.js).
 5. **Robust Attendance & Evidence Retention:** Hardened rotating cryptographic QR challenge generation, GPS geofencing, selfie photo capture, and private document storage. Committed attendance evidence is permanently protected against orphan purges through a non-destructive administrative review model.
 
 All 644 backend regression tests pass, all 730 frontend JavaScript modules parse without error, 36/36 system verification gates pass, and committed secret scanning detects 0 credentials.
@@ -27,10 +27,10 @@ All 644 backend regression tests pass, all 730 frontend JavaScript modules parse
 ## B. Current Canonical Repository
 
 - **Canonical GitHub Repository:** `https://github.com/zamorinestate/estate-erp` (Organization: `zamorinestate`, Repository: `estate-erp`).
-- **Legacy Namespace Notice:** `zamorinestate-erp/estate-erp` is a redirect; all active remotes and CI targets point to `zamorinestate/estate-erp`.
+- **Legacy Namespace Notice:** `zamorinestate-erp/estate-erp` is a GitHub redirect. The canonical repository and GitHub Actions use `zamorinestate/estate-erp`; both Render services still require an operational repository rebind from the legacy namespace.
 - **Default Production Branch:** `main` (Latest commit: `a3b3bd1f6171bb4cd501970e8d7c7ed083a87e2c` — *Merge PR #34: make Atlas helper fail closed in production*).
 - **Active Working Branch:** `ui/clean-navigation-v1` (PR #35).
-- **Current Candidate Head SHA:** `19c47e50b73c448bb95b3d9d300eb033b006e8b4`.
+- **Verified Implementation SHA:** `44309b243e2342f75648cef702cd6460a8c9424f`. The live PR head must be read directly from PR #35 because documentation-only commits can advance the branch without changing the verified software implementation.
 - **Status of Active Pull Requests:**
   - **PR #35 (`ui/clean-navigation-v1`):** Open. Contains clean navigation architecture, parent-workspace consolidation, Export Centre workspace, stored-XSS mitigations, universal OpenXML XLSX engine, elimination of user-facing CSV, and the canonical POS menu pipeline fix.
   - **PR #16 (`hardware-acceptance`):** DRAFT / DO NOT MERGE WHOLESALE. Historical diverged branch. Software hardening was extracted into separate PRs. Hardware gate REC-04E remains pending real physical thermal printer hardware.
@@ -41,19 +41,19 @@ All 644 backend regression tests pass, all 730 frontend JavaScript modules parse
 
 | ID | Area / Requirement | Status | Implementation Location | Files Involved | Verification Tests |
 |---|---|---|---|---|---|
-| **CR-01** | **Normal Master Retirement** | COMPLETE_ON_MAIN | Backend middleware, auth service, frontend router | [authenticate.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/middleware/authenticate.js), [authService.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/services/authService.js), [navigation.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/navigation.js) | `normalMasterRetirementRegression.test.js`, `cleanNavigationSuite.test.js` |
-| **CR-02** | **Clean Navigation Architecture** | COMPLETE_IN_OPEN_PR (PR #35) | Navigation configuration & app shell | [navigation.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/navigation.js), [app.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/app.js) | `cleanNavigationSuite.test.js` (NAV-001–003) |
-| **CR-03** | **Parent-Workspace Consolidation** | COMPLETE_IN_OPEN_PR (PR #35) | Parent workspace hubs & route allowance | [navigation.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/navigation.js), [router.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/router.js) | `cleanNavigationSuite.test.js` (NAV-005–007) |
-| **CR-04** | **Export Centre: PDF + XLSX Only** | COMPLETE_IN_OPEN_PR (PR #35) | Export controllers, generator utilities, catalogue | [exportCentre.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/pages/exportCentre.js), [openXmlExport.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/utils/openXmlExport.js), [reportsExportController.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/reporting/controllers/reportsExportController.js) | `exportDataIntegritySuite.test.js` (EXP-001–012) |
-| **CR-05** | **Export History Stored-XSS Mitigation** | COMPLETE_IN_OPEN_PR (PR #35) | Export history DOM renderer | [exportCentre.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/pages/exportCentre.js) | `exportHistoryXssSuite.test.js` |
+| **CR-01** | **Normal Master Retirement** | COMPLETE_ON_MAIN | Backend middleware, auth service, frontend router | [authenticate.js](backend/src/middleware/authenticate.js), [authService.js](backend/src/services/authService.js), [navigation.js](frontend/src/js/navigation.js) | `normalMasterRetirementRegression.test.js`, `cleanNavigationSuite.test.js` |
+| **CR-02** | **Clean Navigation Architecture** | COMPLETE_IN_OPEN_PR (PR #35) | Navigation configuration & app shell | [navigation.js](frontend/src/js/navigation.js), [app.js](frontend/src/js/app.js) | `cleanNavigationSuite.test.js` (NAV-001–003) |
+| **CR-03** | **Parent-Workspace Consolidation** | COMPLETE_IN_OPEN_PR (PR #35) | Parent workspace hubs & route allowance | [navigation.js](frontend/src/js/navigation.js), [router.js](frontend/src/js/router.js) | `cleanNavigationSuite.test.js` (NAV-005–007) |
+| **CR-04** | **Export Centre: PDF + XLSX Only** | COMPLETE_IN_OPEN_PR (PR #35) | Export controllers, generator utilities, catalogue | [exportCentre.js](frontend/src/js/pages/exportCentre.js), [openXmlExport.js](frontend/src/js/utils/openXmlExport.js), [reportsExportController.js](backend/src/reporting/controllers/reportsExportController.js) | `exportDataIntegritySuite.test.js` (EXP-001–012) |
+| **CR-05** | **Export History Stored-XSS Mitigation** | COMPLETE_IN_OPEN_PR (PR #35) | Export history DOM renderer | [exportCentre.js](frontend/src/js/pages/exportCentre.js) | `exportHistoryXssSuite.test.js` |
 | **CR-06** | **Elimination of User-Facing CSV** | COMPLETE_IN_OPEN_PR (PR #35) | Contextual export buttons across 28 frontend pages | Attendance, Leave, Inventory, Payroll, Assets, Menu, Loans, Bills, Vendors | `exportDataIntegritySuite.test.js` (EXP-011) |
-| **CR-07** | **POS Menu / Sale Items Pipeline (§28)** | COMPLETE_IN_OPEN_PR (PR #35) | Backend POS controller & frontend POS till | [posController.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/controllers/posController.js), [posRoutes.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/routes/posRoutes.js), [posTill.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/pages/posTill.js) | `posCatalogPipeline.test.js` (POS-CAT-01–04) |
-| **CR-08** | **Café Administration Action Wiring (§22)** | COMPLETE_ON_MAIN | Administration table delegation & address formatter | [administration.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/pages/administration.js), [addressFormatter.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/utils/addressFormatter.js) | `cafeAdministrationActionsWiring.test.js` (TC-1–13) |
-| **CR-09** | **Attendance QR + Geo + Selfie Verification** | COMPLETE_ON_MAIN | Attendance controllers, geofence utils, scanner | [attendanceController.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/modules/attendance/attendanceController.js), [attendanceQrScannerPage.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/pages/attendanceQrScannerPage.js) | `attendanceSecurePresence.test.js`, `p0AttendanceRemediation.test.js` |
-| **CR-10** | **Attendance Evidence Retention & Non-Destructive Purge** | COMPLETE_ON_MAIN | Document reconciliation service | [documentReconciliationService.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/services/documentReconciliationService.js) | `documentStorageDurability.test.js` |
-| **CR-11** | **Server-Authoritative POS Settlement** | COMPLETE_ON_MAIN | POS order service & bill model | [posOrderService.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/services/posOrderService.js), [Bill.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/models/Bill.js) | `posBillingTerminal.test.js`, `posOfflineFinancialSafety.test.js` |
-| **CR-12** | **Fail-Closed Production Bootstrap & Secrets** | COMPLETE_ON_MAIN | Config loaders & database connection scripts | [db.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/config/db.js), [startAtlasServer.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/scripts/startAtlasServer.js) | `bootstrapSecretFallbacks.test.js`, `startAtlasServerSafety.test.js` |
-| **CR-13** | **Vendor Procurement & Order Verification Freeze** | COMPLETE_ON_MAIN | Procurement controllers, GRN verification, StockMovement | [vendorOrderLifecycle.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Backend/src/controllers/vendorOrderLifecycle.js) | `e2e_vendor_freeze_gate.mjs`, `rec17VendorAccountsPayableLedger.test.js` |
+| **CR-07** | **POS Menu / Sale Items Pipeline (§28)** | COMPLETE_IN_OPEN_PR (PR #35) | Backend POS controller & frontend POS till | [posController.js](backend/src/controllers/posController.js), [posRoutes.js](backend/src/routes/posRoutes.js), [posTill.js](frontend/src/js/pages/posTill.js) | `posCatalogPipeline.test.js` (POS-CAT-01–04) |
+| **CR-08** | **Café Administration Action Wiring (§22)** | COMPLETE_ON_MAIN | Administration table delegation & address formatter | [administration.js](frontend/src/js/pages/administration.js), [addressFormatter.js](frontend/src/js/utils/addressFormatter.js) | `cafeAdministrationActionsWiring.test.js` (TC-1–13) |
+| **CR-09** | **Attendance QR + Geo + Selfie Verification** | COMPLETE_ON_MAIN | Attendance controllers, geofence utils, scanner | [attendanceController.js](backend/src/modules/attendance/attendanceController.js), [attendanceQrScannerPage.js](frontend/src/js/pages/attendanceQrScannerPage.js) | `attendanceSecurePresence.test.js`, `p0AttendanceRemediation.test.js` |
+| **CR-10** | **Attendance Evidence Retention & Non-Destructive Purge** | COMPLETE_ON_MAIN | Document reconciliation service | [documentReconciliationService.js](backend/src/services/documentReconciliationService.js) | `documentStorageDurability.test.js` |
+| **CR-11** | **Server-Authoritative POS Settlement** | COMPLETE_ON_MAIN | POS order service & bill model | [posOrderService.js](backend/src/services/posOrderService.js), [Bill.js](backend/src/models/Bill.js) | `posBillingTerminal.test.js`, `posOfflineFinancialSafety.test.js` |
+| **CR-12** | **Fail-Closed Production Bootstrap & Secrets** | COMPLETE_ON_MAIN | Config loaders & database connection scripts | [db.js](backend/src/config/db.js), [startAtlasServer.js](backend/src/scripts/startAtlasServer.js) | `bootstrapSecretFallbacks.test.js`, `startAtlasServerSafety.test.js` |
+| **CR-13** | **Vendor Procurement & Order Verification Freeze** | COMPLETE_ON_MAIN | Procurement controllers, GRN verification, StockMovement | [vendorOrderLifecycle.js](backend/src/controllers/vendorOrderLifecycle.js) | `e2e_vendor_freeze_gate.mjs`, `rec17VendorAccountsPayableLedger.test.js` |
 
 ---
 
@@ -150,7 +150,7 @@ graph TD
 
 - **Menu/Product Pipeline (§28 Fix):**
   - Backend: `GET /api/v1/pos/catalog/:cafeId` verifies café access, fetches active `MenuItem` records for concept `CAFE` / `SHARED`, queries `OutletOffering` for café enablement, channel eligibility, and local price overrides, maps categories to POS display buckets (`Hot Coffees`, `Cold Brews`, `Bakery & Viennoiserie`, `Savouries & Mains`, `Desserts`), and returns authoritative prices.
-  - Frontend: [posTill.js](file:///d:/Zamorin_Cafe_ERP_Build/A%20Main%20Workspace/Frontend/src/js/pages/posTill.js) dynamically fetches this catalog into `_menuCatalogue` upon mount and café-switch, caches the catalog in `localStorage`, and cleanly updates the view.
+  - Frontend: [posTill.js](frontend/src/js/pages/posTill.js) dynamically fetches this catalog into `_menuCatalogue` upon mount and café-switch, caches the catalog in `localStorage`, and cleanly updates the view.
   - Empty State: Renders a clear operational prompt if no items are configured.
 - **Server-Authoritative Settlement:** Client totals are treated as advisory. The backend derives line item totals, GST splits (CGST/SGST/IGST), discount deductions, and final payable paisa.
 - **Register Sessions:** Each till operates in an isolated register session with cash drawer tracking and daily Z-Report reconciliations.
@@ -203,13 +203,13 @@ The Export Centre operates under a strict format policy: **PDF and OpenXML XLSX 
 - **Render Production Service:** `zamorin-cafe-erp-backend` (Region: Singapore, Root: `backend`, Branch: `main`).
 - **Render Staging Service:** `zamorin-cafe-erp-staging` (Region: Singapore, Root: `backend`, Branch: `main`).
   - *Infrastructure Finding:* Render dashboard settings currently list repository as `https://github.com/zamorinestate-erp/estate-erp`. A manual rebind in Render to `zamorinestate/estate-erp` is documented for operational execution.
-- **Vercel:** Static frontend preview environment without hardcoded `.vercel/project.json` dependencies.
+- **Vercel:** No authorized Vercel team/project is exposed by the connected Vercel session at this audit point. The repository intentionally has no hardcoded `.vercel/project.json` dependency; do not infer or fabricate a live Vercel project binding.
 
 ---
 
 ## K. CI & Verification Test Accounting
 
-Tests executed against exact candidate head `19c47e50b73c448bb95b3d9d300eb033b006e8b4`:
+Canonical software verification was independently audited on implementation SHA `44309b243e2342f75648cef702cd6460a8c9424f`. PR #35 must additionally have all required GitHub Actions green on its live head/merge ref immediately before merge; documentation-only commits do not waive exact-head CI.
 
 | Verification Suite | Checks Executed | Passed | Failed | Duration |
 |---|---|---|---|---|
@@ -243,7 +243,7 @@ Tests executed against exact candidate head `19c47e50b73c448bb95b3d9d300eb033b00
 
 ## M. Deleted & Retired Functionality
 
-- **Normal Master Role:** Deleted across database models, routes, navigation, and frontend UI.
+- **Non-primary Normal Master Persona/Authority:** Permanently retired across authentication, authorization, routes, navigation, and frontend UI. The canonical `MASTER` model remains valid only for Primary Master when `isPrimaryMaster === true`.
 - **Export Centre CSV Format:** Completely removed from user-facing UI, catalogues, dropdowns, and download endpoints.
 - **Developer Badges & Stage Chips:** Engineering labels (`STAGE xx`, `OWN-SCR-xxx`, internal badges) removed from production views.
 - **Hardcoded Secret Fallbacks:** Predictable bootstrap secrets permanently purged.
