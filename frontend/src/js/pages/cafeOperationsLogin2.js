@@ -10,7 +10,14 @@
 
 "use strict";
 
-import { apiGet, apiPost, setAccessToken, setSessionId, setCafeOpsSessionToken } from "../apiClient.js";
+import {
+  apiGet,
+  apiPost,
+  getOrCreateDeviceId,
+  setAccessToken,
+  setSessionId,
+  setCafeOpsSessionToken,
+} from "../apiClient.js";
 import { state, setState } from "../state.js";
 import { getFixedPageBackground } from "./login2.js";
 
@@ -361,6 +368,11 @@ export function wireCafeOperationsLogin2(root = document, { onSignIn } = {}) {
         userId,
         cafePin,
         employeePin,
+        device: {
+          deviceId: getOrCreateDeviceId(),
+          deviceName: "Café Operations Browser",
+          deviceType: "DESKTOP",
+        },
       };
 
       let res = null;
@@ -384,7 +396,6 @@ export function wireCafeOperationsLogin2(root = document, { onSignIn } = {}) {
       const data = res.data || {};
       if (data.accessToken) {
         setAccessToken(data.accessToken);
-        try { localStorage.setItem("zamorin_token", data.accessToken); } catch {}
       }
 
       if (data.session?.sessionId) {
