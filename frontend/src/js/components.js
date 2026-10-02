@@ -406,15 +406,11 @@ export function renderTopbar({ scopeChip } = {}) {
   }
 
   let cafeScopeHtml = '';
-  const isPrimaryMasterUser = Boolean(
-    (state.auth?.user?.role === 'master' || state.user?.role === 'master' || state.role === 'master' || state.originalRole === 'master') &&
-    // ⚠️ Strict identity check: isPrimaryMaster ONLY for MU-0001 / pradeeshk331@gmail.com
-    (
-      (state.auth?.user?.userId === 'MU-0001' && String(state.auth?.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com') ||
-      (state.user?.userId === 'MU-0001' && String(state.user?.email || '').toLowerCase() === 'pradeeshk331@gmail.com')
-    ) &&
-    (state.isPrimaryMaster !== false)
-  );
+  const authorityUser = state.auth?.user || state.user || {};
+  const authorityRole = String(authorityUser.role || state.role || '').toLowerCase();
+  const isPrimaryMasterUser =
+    authorityRole === ROLES.MASTER &&
+    authorityUser.isPrimaryMaster === true;
 
   if (isPrimaryMasterUser) {
     const cafeOptions = (state.cafes || []).map(c => `<option value="${c.cafeId || c.id || c.code}" ${(state.selectedCafeId === (c.cafeId || c.id || c.code)) ? 'selected' : ''}>☕ ${c.cafeId || c.id || c.code} · ${c.name || 'Outlet'}</option>`).join('');
