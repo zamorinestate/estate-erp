@@ -39,15 +39,29 @@ const { redisClientFactory } = require('./services/redisClientFactory');
 const SERVICE_NAME =
   'zamorin-cafe-erp-api';
 
+const TRUSTED_VERCEL_ORIGINS = new Set([
+  'https://zamorin-cafe-erp.vercel.app',
+  'https://estate-erp.vercel.app',
+]);
+
 function isAllowedVercelOrigin(origin) {
   if (!origin || typeof origin !== 'string') return false;
+
+  const normalizedOrigin = origin.trim();
+
   try {
-    const url = new URL(origin);
-    if (url.protocol !== 'https:') return false;
-    const hostname = url.hostname.toLowerCase();
-    if (hostname === 'zamorin-cafe-erp.vercel.app' || hostname === 'estate-erp.vercel.app') return true;
-    if (hostname.endsWith('.vercel.app') && (hostname.includes('zamorin') || hostname.includes('estate'))) return true;
-    return false;
+    const url = new URL(normalizedOrigin);
+
+    if (
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      url.origin !== normalizedOrigin
+    ) {
+      return false;
+    }
+
+    return TRUSTED_VERCEL_ORIGINS.has(url.origin);
   } catch {
     return false;
   }
@@ -722,6 +736,7 @@ if (require.main === module) {
 module.exports = {
   createApp,
   createCorsOptions,
+  isAllowedVercelOrigin,
   closeHttpServer,
   registerShutdownHandlers,
   startServer,

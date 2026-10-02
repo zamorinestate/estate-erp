@@ -127,6 +127,26 @@ describe('EXT-10 — Production Domain, DNS, TLS/HTTPS & Hosting Readiness (24-P
     assert.equal(corsError.statusCode, 403, 'Must return 403 Forbidden');
     assert.equal(corsError.code, 'CORS_ORIGIN_DENIED', 'Must identify CORS_ORIGIN_DENIED');
 
+    // Vercel trust must be exact. Name-based lookalikes are attacker-controlled origins.
+    const { isAllowedVercelOrigin } = require('../src/server');
+    assert.equal(isAllowedVercelOrigin('https://zamorin-cafe-erp.vercel.app'), true,
+      'Canonical Vercel origin remains trusted');
+    assert.equal(isAllowedVercelOrigin('https://estate-erp.vercel.app'), true,
+      'Legacy exact Vercel origin remains trusted during migration');
+
+    for (const lookalike of [
+      'https://zamorin-attacker.vercel.app',
+      'https://estate-phish.vercel.app',
+      'https://zamorin-cafe-erp.attacker.vercel.app',
+      'https://estate-erp.vercel.app.evil.example',
+      'https://zamorin-cafe-erp.vercel.app:444',
+      'http://zamorin-cafe-erp.vercel.app',
+      'https://zamorin-cafe-erp.vercel.app/path',
+    ]) {
+      assert.equal(isAllowedVercelOrigin(lookalike), false,
+        `Unverified Vercel/lookalike origin must be rejected: ${lookalike}`);
+    }
+
     // Deployment config checker validates wildcard absence
     const verifyDeploySrc = fs.readFileSync(path.join(BACKEND_ROOT, 'src', 'scripts', 'verifyDeploymentConfig.js'), 'utf8');
     assert.ok(verifyDeploySrc.includes("!allowedOrigins.includes('*')"),
