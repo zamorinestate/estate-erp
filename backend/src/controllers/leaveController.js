@@ -16,6 +16,7 @@ const { User } = require('../models/User');
 const { SequenceCounter } = require('../models/SequenceCounter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 const { recordRequestAudit } = require('../services/auditService');
 const { extractIdempotencyKey, acquireLock } = require('../utils/idempotencyHelper');
 
@@ -25,6 +26,7 @@ function normalizeIdentifier(val) {
 
 // 1. GET /api/v1/leave/balances
 const getLeaveBalances = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
 
   // Retrieve any pending requests to calculate projected balance
@@ -534,9 +536,8 @@ const applyLeave = asyncHandler(async (request, response) => {
         });
       }
 
-      const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+      const masterUsers = await User.find({ organisationId, role: 'MASTER', isPrimaryMaster: true, accountStatus: 'ACTIVE' }).select('userId email').lean();
       const recipientIds = new Set(masterUsers.map((m) => m.userId));
-      recipientIds.add('MU-0001');
 
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       for (const masterId of recipientIds) {

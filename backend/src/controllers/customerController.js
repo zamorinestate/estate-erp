@@ -57,7 +57,7 @@ const {
   recordRequestAudit,
 } = require('../services/auditService');
 
-const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { resolveEffectiveCafeScope, assertResourceCafeOwnership, assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeId(value) {
   return typeof value === 'string'
@@ -75,6 +75,7 @@ function parsePositiveInteger(value, fallback, maximum) {
  * GET /api/v1/customers/overview
  */
 const getCustomersOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const orgId = request.auth.organisationId;
   const effectiveCafe = resolveEffectiveCafeScope(request);
 
@@ -95,7 +96,9 @@ const getCustomersOverview = asyncHandler(async (request, response) => {
     ? cafes.filter((c) => c.cafeId === effectiveCafe)
     : (request.auth.role === 'OWNER' || request.auth.role === 'CAFE_ADMIN'
         ? cafes.filter((c) => (request.auth.assignedCafeIds || []).includes(c.cafeId))
-        : cafes);
+        : (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true
+            ? cafes
+            : []));
   for (const c of visibleCafes) {
     cafeMap[c.cafeId] = {
       cafeId: c.cafeId,
@@ -170,6 +173,7 @@ const getCustomersOverview = asyncHandler(async (request, response) => {
  * GET /api/v1/customers
  */
 const listCustomers = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const page = parsePositiveInteger(request.query.page, 1, 1000);
   const limit = parsePositiveInteger(request.query.limit, 25, 200);
   const skip = (page - 1) * limit;
@@ -229,6 +233,7 @@ const listCustomers = asyncHandler(async (request, response) => {
  * GET /api/v1/customers/:customerId
  */
 const getCustomer = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const customerId = normalizeId(request.params.customerId);
 
   const [customer, ledger, feedback, bills] = await Promise.all([
@@ -656,7 +661,8 @@ const getProgrammeStatus = asyncHandler(async (request, response) => {
  * POST /api/v1/customers/programme/publish
  */
 const publishProgrammeVersion = asyncHandler(async (request, response) => {
-  if (request.auth.isPrimaryMaster !== true) {
+  assertCanonicalMasterState(request?.auth);
+  if (request.auth?.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
     throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'Only Primary Master can publish loyalty programme versions.');
   }
 

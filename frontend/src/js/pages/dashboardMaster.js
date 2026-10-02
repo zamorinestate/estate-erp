@@ -532,14 +532,8 @@ export function renderCommercialMixHtml(items = []) {
 export function renderMasterDashboard({ roleLabel = "Master Administrator" } = {}) {
   const isPrimary = Boolean(state.user?.isPrimaryMaster);
   const isMaster = state.role === "master";
-  const isOwner = state.role === "owner";
-  const isNormalMaster = isMaster && !isPrimary;
-
   // Authoritative Initial Baseline Data (Pre-rendered for instantaneous visual perfection)
   const initialData = JSON.parse(JSON.stringify(DEFAULT_MASTER_DASHBOARD_DATA));
-  if (isNormalMaster && initialData.portfolioKpis?.expenses) {
-    initialData.portfolioKpis.expenses.restricted = true;
-  }
 
   const kpis = initialData.portfolioKpis;
   const cafes = initialData.cafePerformanceCards;
@@ -1232,13 +1226,8 @@ export async function hydrateMasterDashboard(root) {
   }
 
   // Immediately render baseline state on initial mount to prevent empty skeleton layout shifts
-  const isNormalMaster = state.role === "master" && !state.user?.isPrimaryMaster;
   if (!dashboardState.data) {
-    const initialFallback = JSON.parse(JSON.stringify(DEFAULT_MASTER_DASHBOARD_DATA));
-    if (isNormalMaster && initialFallback.portfolioKpis?.expenses) {
-      initialFallback.portfolioKpis.expenses.restricted = true;
-    }
-    dashboardState.data = initialFallback;
+    dashboardState.data = JSON.parse(JSON.stringify(DEFAULT_MASTER_DASHBOARD_DATA));
     renderDashboardContent(root, dashboardState.data);
   }
 
@@ -1266,27 +1255,17 @@ async function loadDashboardData(root) {
     params.set("cafeIds", dashboardState.selectedCafeIds.join(","));
   }
 
-  const isNormalMaster = state.role === "master" && !state.user?.isPrimaryMaster;
-
   try {
     const res = await apiGet(`/dashboard?${params.toString()}`);
     if (res?.data) {
       dashboardState.data = res.data;
     } else {
-      const fallbackData = JSON.parse(JSON.stringify(DEFAULT_MASTER_DASHBOARD_DATA));
-      if (isNormalMaster && fallbackData.portfolioKpis?.expenses) {
-        fallbackData.portfolioKpis.expenses.restricted = true;
-      }
-      dashboardState.data = fallbackData;
+      dashboardState.data = JSON.parse(JSON.stringify(DEFAULT_MASTER_DASHBOARD_DATA));
     }
     renderDashboardContent(root, dashboardState.data);
   } catch (err) {
     console.warn("Live dashboard endpoint unavailable, using authoritative baseline:", err.message);
-    const fallbackData = JSON.parse(JSON.stringify(DEFAULT_MASTER_DASHBOARD_DATA));
-    if (isNormalMaster && fallbackData.portfolioKpis?.expenses) {
-      fallbackData.portfolioKpis.expenses.restricted = true;
-    }
-    dashboardState.data = fallbackData;
+    dashboardState.data = JSON.parse(JSON.stringify(DEFAULT_MASTER_DASHBOARD_DATA));
     renderDashboardContent(root, dashboardState.data);
   } finally {
     if (refreshIcon) refreshIcon.style.display = "inline";

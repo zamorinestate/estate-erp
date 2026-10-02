@@ -14,15 +14,16 @@ const { HygieneInspection } = require('../models/HygieneInspection');
 const { HygieneChecklistTemplate } = require('../models/HygieneChecklistTemplate');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
-const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { resolveEffectiveCafeScope, assertResourceCafeOwnership, assertCanonicalMasterState } = require('../utils/cafeScope');
 const { recordRequestAudit } = require('../services/auditService');
 
 function assertCafeAccess(request, cafeId) {
+  assertCanonicalMasterState(request?.auth);
   if (!cafeId) return;
   const cleanCafe = cafeId.trim().toUpperCase();
-  const { role, assignedCafeIds } = request.auth;
+  const { role, assignedCafeIds, isPrimaryMaster } = request?.auth || {};
 
-  if (role === 'MASTER') return;
+  if (role === 'MASTER' && isPrimaryMaster === true) return;
   if (role === 'OWNER') {
     if (Array.isArray(assignedCafeIds) && assignedCafeIds.length > 0 && !assignedCafeIds.includes(cleanCafe)) {
       throw new ApiError(403, 'CAFE_SCOPE_DENIED', `Access to café ${cleanCafe} is not authorized for this Owner account.`);
@@ -36,6 +37,7 @@ function assertCafeAccess(request, cafeId) {
 
 // ── 1. Dashboard & Portfolio Overview ──────────────────────────────────────────
 const getDashboardOverview = asyncHandler(async (req, res) => {
+  assertCanonicalMasterState(req?.auth);
   const { organisationId } = req.auth;
   const requestedCafe = req.query.cafeId ? req.query.cafeId.trim().toUpperCase() : null;
   if (requestedCafe) assertCafeAccess(req, requestedCafe);
@@ -54,6 +56,7 @@ const getDashboardOverview = asyncHandler(async (req, res) => {
 
 // ── 2. Registration & Licences ─────────────────────────────────────────────────
 const listLicences = asyncHandler(async (req, res) => {
+  assertCanonicalMasterState(req?.auth);
   const { organisationId } = req.auth;
   const requestedCafe = req.query.cafeId ? req.query.cafeId.trim().toUpperCase() : null;
   if (requestedCafe) assertCafeAccess(req, requestedCafe);

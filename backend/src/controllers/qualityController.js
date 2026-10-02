@@ -32,7 +32,7 @@ const {
   recordRequestAudit,
 } = require('../services/auditService');
 
-const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { resolveEffectiveCafeScope, assertResourceCafeOwnership, assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeId(value) {
   return typeof value === 'string'
@@ -56,10 +56,11 @@ function parsePositiveInteger(value, fallback, maximum) {
 }
 
 function assertCafeAccess(request, cafeId) {
+  assertCanonicalMasterState(request?.auth);
   if (!cafeId) return;
   const cleanCafe = cafeId.trim().toUpperCase();
   const role = request?.auth?.role;
-  if (role === 'MASTER') return;
+  if (role === 'MASTER' && request?.auth?.isPrimaryMaster === true) return;
   if (role === 'OWNER') {
     const assignedCafeIds = (request?.auth?.assignedCafeIds || []).map((c) => String(c).trim().toUpperCase());
     if (!assignedCafeIds.includes(cleanCafe)) {
@@ -305,6 +306,7 @@ const getQualityOverview = asyncHandler(async (request, response) => {
  * 2. GET /api/v1/quality/checklists
  */
 const listChecklists = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const page = parsePositiveInteger(request.query.page, 1, 1000);
   const limit = parsePositiveInteger(request.query.limit, 25, 100);
   const skip = (page - 1) * limit;
@@ -316,8 +318,10 @@ const listChecklists = asyncHandler(async (request, response) => {
     const normCafeId = normalizeId(cafeId);
     assertCafeAccess(request, normCafeId);
     filter.cafeId = normCafeId;
-  } else if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
-    filter.cafeId = { $in: request.auth.assignedCafeIds };
+  } else if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true) {
+    // Primary Master can see all checklists
+  } else {
+    filter.cafeId = { $in: request.auth.assignedCafeIds || [] };
   }
 
   if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -508,13 +512,14 @@ const listTemplates = asyncHandler(async (request, response) => {
  * 5. Temperature Monitoring & Excursions (Food Safety R02-01)
  */
 const listTemperatures = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   const { cafeId: queryCafe, excursionsOnly, limit = 50 } = request.query || {};
 
   let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
   if (targetCafe) {
     assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
+  } else if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER' && assignedCafeIds?.length > 0) {
     targetCafe = assignedCafeIds[0];
   }
 
@@ -654,13 +659,14 @@ const applyCorrectiveAction = asyncHandler(async (request, response) => {
  * 5b. Cleaning & Sanitation Tasks (Food Safety R02-01)
  */
 const listCleaningTasks = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   const { cafeId: queryCafe, status, limit = 50 } = request.query || {};
 
   let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
   if (targetCafe) {
     assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
+  } else if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER' && assignedCafeIds?.length > 0) {
     targetCafe = assignedCafeIds[0];
   }
 
@@ -736,13 +742,14 @@ const completeCleaningTask = asyncHandler(async (request, response) => {
  * 5c. Pest Control Register (Food Safety R02-01)
  */
 const listPestControl = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   const { cafeId: queryCafe, limit = 50 } = request.query || {};
 
   let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
   if (targetCafe) {
     assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
+  } else if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER' && assignedCafeIds?.length > 0) {
     targetCafe = assignedCafeIds[0];
   }
 
@@ -809,13 +816,14 @@ const recordPestControl = asyncHandler(async (request, response) => {
  * 5d. Calibration Register (Food Safety R02-01)
  */
 const listCalibrations = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   const { cafeId: queryCafe, limit = 50 } = request.query || {};
 
   let targetCafe = queryCafe ? normalizeId(queryCafe) : null;
   if (targetCafe) {
     assertCafeAccess(request, targetCafe);
-  } else if (role !== 'MASTER' && role !== 'OWNER' && assignedCafeIds?.length > 0) {
+  } else if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER' && assignedCafeIds?.length > 0) {
     targetCafe = assignedCafeIds[0];
   }
 
@@ -880,11 +888,12 @@ const recordCalibration = asyncHandler(async (request, response) => {
  * 6. Quality Holds: listQualityHolds, createQualityHold, releaseQualityHold
  */
 const listQualityHolds = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   ensureQualitySeeded(organisationId);
 
   let holds = inMemoryQualityHolds.filter((h) => h.organisationId === organisationId);
-  if (role !== 'MASTER' && role !== 'OWNER') {
+  if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER') {
     holds = holds.filter((h) => assignedCafeIds.includes(h.cafeId));
   }
 
@@ -985,11 +994,12 @@ const releaseQualityHold = asyncHandler(async (request, response) => {
  * 7. NCRs & CAPAs
  */
 const listNcrs = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   ensureQualitySeeded(organisationId);
 
   let ncrs = inMemoryNcrs.filter((n) => n.organisationId === organisationId);
-  if (role !== 'MASTER' && role !== 'OWNER') {
+  if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER') {
     ncrs = ncrs.filter((n) => assignedCafeIds.includes(n.cafeId));
   }
 
@@ -1045,11 +1055,12 @@ const createNcr = asyncHandler(async (request, response) => {
 });
 
 const listCapas = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   ensureQualitySeeded(organisationId);
 
   let capas = inMemoryCapas.filter((c) => c.organisationId === organisationId);
-  if (role !== 'MASTER' && role !== 'OWNER') {
+  if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER') {
     capas = capas.filter((c) => assignedCafeIds.includes(c.cafeId));
   }
 
@@ -1147,11 +1158,12 @@ const verifyCapa = asyncHandler(async (request, response) => {
  * 8. Audits & Compliance
  */
 const listAudits = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   ensureQualitySeeded(organisationId);
 
   let audits = inMemoryAudits.filter((a) => a.organisationId === organisationId);
-  if (role !== 'MASTER' && role !== 'OWNER') {
+  if ((role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) && role !== 'OWNER') {
     audits = audits.filter((a) => assignedCafeIds.includes(a.cafeId));
   }
 

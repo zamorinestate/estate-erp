@@ -266,7 +266,7 @@ describe('REC-17C — PO Approval Authority, Accounts Capabilities & AP Aging Su
       assert.strictEqual(res.body.data.order.approvedByUserId, 'MU-1001');
     });
 
-    it('Normal Master: ALLOW PO Approval', async () => {
+    it('Retired Master: DENY PO Approval (403 RETIRED_MASTER_ACCOUNT_DENIED)', async () => {
       await createSubmittedPo('PO-REC17C-NM');
       const req = {
         auth: {
@@ -277,15 +277,18 @@ describe('REC-17C — PO Approval Authority, Accounts Capabilities & AP Aging Su
           assignedCafeIds: [CAFE_ID],
         },
         params: { purchaseOrderId: 'PO-REC17C-NM' },
-        body: { notes: 'Approved by Normal Master' },
+        body: { notes: 'Attempted approval by retired Normal Master' },
       };
       const res = createMockResponse();
 
-      await invokeController(procurementController.approveOrder, req, res);
-      assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(res.body.success, true);
-      assert.strictEqual(res.body.data.order.status, 'APPROVED');
-      assert.strictEqual(res.body.data.order.approvedByUserId, 'MU-1002');
+      await assert.rejects(
+        async () => invokeController(procurementController.approveOrder, req, res),
+        (err) => {
+          assert.strictEqual(err.statusCode, 403);
+          assert.strictEqual(err.code, 'RETIRED_MASTER_ACCOUNT_DENIED');
+          return true;
+        }
+      );
     });
 
     it('Owner: DENY PO Approval (403 FORBIDDEN_ROLE)', async () => {

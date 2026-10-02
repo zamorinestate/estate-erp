@@ -43,6 +43,7 @@ function createAuthContext(role = 'MASTER', cafeId = 'ZC-0001', userId = 'USR-PR
     name: 'Procurement Master',
     email: 'procurement@zamorin.local',
     role,
+    isPrimaryMaster: role === 'MASTER',
     organisationId: 'ORG-ZAMORIN',
     assignedCafeIds: [cafeId],
     primaryCafeId: cafeId,

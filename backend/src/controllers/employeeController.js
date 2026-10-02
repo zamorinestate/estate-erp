@@ -24,6 +24,7 @@ const { Approval } = require('../models/Approval');
 const { Notification } = require('../models/Notification');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 const auditService = require('../services/auditService');
 const { recordRequestAudit } = auditService;
 const { resolveEmployeeShiftForDate, getWeekStartDate } = require('../services/shiftResolverService');
@@ -169,6 +170,7 @@ const getWorkforceOverview = asyncHandler(async (req, res) => {
 
 // ─── 2. EMPLOYEE DIRECTORY & SEARCH ──────────────────────────────────────────
 const listEmployees = asyncHandler(async (req, res) => {
+  assertCanonicalMasterState(req?.auth);
   const { organisationId, role, isPrimaryMaster, assignedCafeIds } = req.auth;
   const {
     query = '',
@@ -282,6 +284,7 @@ const listEmployees = asyncHandler(async (req, res) => {
 
 // ─── 3. EMPLOYEE 360 PROFILE ─────────────────────────────────────────────────
 const getEmployee360 = asyncHandler(async (req, res) => {
+  assertCanonicalMasterState(req?.auth);
   const { organisationId, isPrimaryMaster, role, userId: authUserId, assignedCafeIds } = req.auth;
   const { userId } = req.params;
 
@@ -665,11 +668,7 @@ const setEmployeeCredentials = asyncHandler(async (req, res) => {
     String(user.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
 
   if (isTargetPrimaryMaster) {
-    const callerId = req.auth?.userId;
-    const isCallerPM =
-      callerId === 'MU-0001' ||
-      req.auth?.isPrimaryMaster === true ||
-      String(req.auth?.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+    const isCallerPM = req.auth?.role === 'MASTER' && req.auth?.isPrimaryMaster === true;
     if (!isCallerPM) {
       throw new ApiError(
         403,
@@ -782,10 +781,7 @@ const updateEmployeeProfile = asyncHandler(async (req, res) => {
     String(user.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
 
   const callerId = req.auth?.userId;
-  const isCallerPM =
-    callerId === 'MU-0001' ||
-    req.auth?.isPrimaryMaster === true ||
-    String(req.auth?.email || '').toLowerCase() === 'pradeeshk331@gmail.com';
+  const isCallerPM = req.auth?.role === 'MASTER' && req.auth?.isPrimaryMaster === true;
 
   if (isTargetPM) {
     if (!isCallerPM) {

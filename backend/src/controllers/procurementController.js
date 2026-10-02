@@ -97,7 +97,7 @@ const {
   recordRequestAudit,
 } = require('../services/auditService');
 
-const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { resolveEffectiveCafeScope, assertResourceCafeOwnership, assertCanonicalMasterState } = require('../utils/cafeScope');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -135,7 +135,10 @@ async function notifyMasterOfOrderEvent({
   try {
     const masterUsers = await User.find({
       organisationId,
-      role: { $in: ['MASTER', 'OWNER'] },
+      $or: [
+        { role: 'MASTER', isPrimaryMaster: true },
+        { role: 'OWNER' },
+      ],
       accountStatus: 'ACTIVE',
     }).select('userId email name role').lean();
 
@@ -281,6 +284,7 @@ async function executeTransactionWithRetry(operationFn, options = {}) {
 }
 
 function assertCafeAccess(request, cafeId) {
+  assertCanonicalMasterState(request.auth);
   if (!cafeId) return;
   const isCafeOps = request.auth.workspaceMode === 'CAFE_OPERATIONS' ||
     request.headers?.['x-workspace-mode'] === 'CAFE_OPERATIONS' ||
@@ -294,7 +298,7 @@ function assertCafeAccess(request, cafeId) {
       'Cross-café access is denied. You are not authorized for the requested café.'
     );
   }
-  if (request.auth.role === 'MASTER') return;
+  if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true) return;
   if (request.auth.role === 'OWNER') {
     const assigned = request.auth.assignedCafeIds || [];
     const target = cafeId.trim().toUpperCase();

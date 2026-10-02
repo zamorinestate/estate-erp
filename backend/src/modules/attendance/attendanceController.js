@@ -1951,9 +1951,8 @@ const requestStaffCorrection = asyncHandler(async (request, response) => {
       status: 'PENDING',
     });
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', isPrimaryMaster: true, accountStatus: 'ACTIVE' }).select('userId email').lean();
     const recipientUserIds = new Set(masterUsers.map((m) => m.userId));
-    recipientUserIds.add('MU-0001');
 
     const notifDateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     for (const masterId of recipientUserIds) {

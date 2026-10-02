@@ -58,6 +58,7 @@ function mockAuth(role = 'MASTER', cafeId = 'ZC-0001', userId = 'USR-TEST-01') {
     name: 'Test User',
     email: 'test@zamorin.local',
     role,
+    isPrimaryMaster: role === 'MASTER',
     organisationId: 'ORG-ZAMORIN',
     assignedCafeIds: [cafeId],
     primaryCafeId: cafeId,

@@ -18,6 +18,8 @@ const {
   ApiError,
 } = require('../utils/ApiError');
 
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
+
 const PAYSLIP_SELF_SERVICE_ROLES = [
   'MASTER',
   'OWNER',
@@ -60,6 +62,7 @@ function parsePositiveInteger(
 function ensurePayrollSelfServiceAccess(
   request
 ) {
+  assertCanonicalMasterState(request.auth);
   if (
     !PAYSLIP_SELF_SERVICE_ROLES.includes(
       request.auth.role
@@ -149,6 +152,7 @@ function buildMyPayslipFilter(
 
 const listMyPayslips = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     ensurePayrollSelfServiceAccess(
       request
     );
@@ -219,6 +223,7 @@ const listMyPayslips = asyncHandler(
 
 const getMyPayslip = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     ensurePayrollSelfServiceAccess(
       request
     );
@@ -316,6 +321,7 @@ const getMyPayslip = asyncHandler(
  */
 const downloadEmployeeMonthlyPayslip = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     const { organisationId, userId, role, assignedCafeIds } = request.auth;
     const requestedEmployeeId = String(request.params.employeeId || '').trim().toUpperCase();
     const periodKey = String(request.params.month || '').trim();
@@ -326,8 +332,7 @@ const downloadEmployeeMonthlyPayslip = asyncHandler(
 
     // Role privacy gate: Non-Primary-Master roles cannot access colleague payslips by default (F01)
     const isPrimaryMaster = Boolean(
-      role === 'MASTER' &&
-      (request.auth.isPrimaryMaster === true || (request.auth.isPrimaryMaster !== false && userId === 'MU-0001'))
+      role === 'MASTER' && request.auth.isPrimaryMaster === true
     );
     const selfIdentifiers = [
       userId,
@@ -391,6 +396,7 @@ const downloadEmployeeMonthlyPayslip = asyncHandler(
  */
 const exportBankDisbursement = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     const { organisationId, role, assignedCafeIds } = request.auth;
     const payrollRunId = String(request.params.batchId || request.params.payrollRunId || '').trim().toUpperCase();
 

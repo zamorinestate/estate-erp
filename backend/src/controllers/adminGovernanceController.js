@@ -11,11 +11,13 @@ const { SequenceCounter } = require('../models/SequenceCounter');
 
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 const auditService = require('../services/auditService');
 
 // ─── Overview & KPIs ─────────────────────────────────────────────────────────
 
 const getAdminOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, isPrimaryMaster, role } = request.auth;
 
   // 1. Cafes summary
@@ -94,6 +96,7 @@ const getAdminOverview = asyncHandler(async (request, response) => {
 // ─── Governance Work Queue ──────────────────────────────────────────────────
 
 const getGovernanceWorkQueue = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
 
   const queue = [];
@@ -175,6 +178,7 @@ const getGovernanceWorkQueue = asyncHandler(async (request, response) => {
 // ─── Administrative Requests (Request Primary Action) ───────────────────────
 
 const listAdminRequests = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, isPrimaryMaster, userId } = request.auth;
 
   const filter = { organisationId };
@@ -196,6 +200,7 @@ const listAdminRequests = asyncHandler(async (request, response) => {
 });
 
 const submitAdminRequest = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId, role } = request.auth;
   const { requestType, title, targetId, cafeId, reason, payload } = request.body;
 
@@ -246,6 +251,7 @@ const submitAdminRequest = asyncHandler(async (request, response) => {
 });
 
 const decideAdminRequest = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, isPrimaryMaster, userId, role } = request.auth;
   const { requestId } = request.params;
   const { decision, comment } = request.body;
@@ -291,6 +297,7 @@ const decideAdminRequest = asyncHandler(async (request, response) => {
 // ─── Access Reviews & Certification ─────────────────────────────────────────
 
 const listAccessReviews = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, isPrimaryMaster, userId } = request.auth;
 
   const filter = { organisationId };
@@ -307,6 +314,7 @@ const listAccessReviews = asyncHandler(async (request, response) => {
 });
 
 const createAccessReview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId, role, isPrimaryMaster } = request.auth;
   const { campaignName, scopeType, scopeRole, scopeCafeId } = request.body;
 
@@ -379,6 +387,7 @@ const createAccessReview = asyncHandler(async (request, response) => {
 });
 
 const decideAccessFinding = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId, role, isPrimaryMaster } = request.auth;
 
   if (role === 'MASTER' && isPrimaryMaster !== true) {
@@ -432,6 +441,7 @@ const decideAccessFinding = asyncHandler(async (request, response) => {
 // ─── Service & Integration Access (Machine Identities) ──────────────────────
 
 const listServiceIdentities = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, isPrimaryMaster } = request.auth;
 
   let services = await ServiceIdentity.find({ organisationId }).lean();

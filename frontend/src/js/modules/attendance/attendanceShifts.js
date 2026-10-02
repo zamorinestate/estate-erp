@@ -86,7 +86,6 @@ export function renderAttendance(subroute) {
   }
   const role = state.role || state.user?.role || ROLES.MASTER;
   const isPrimary = state.user?.isPrimaryMaster === true;
-  const isNormalMaster = role === ROLES.MASTER && !isPrimary;
   const isCafeAdmin = role === ROLES.CAFE_ADMIN;
   const isOwner = role === ROLES.OWNER;
 

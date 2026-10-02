@@ -150,8 +150,8 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
     assert.strictEqual(reloaded.status, 'APPROVED');
   });
 
-  // 02. PO APPROVAL: NORMAL MASTER ALLOW
-  it('02. PO Approval: Normal Master (isPrimaryMaster=false) approves SUBMITTED order -> APPROVED', async () => {
+  // 02. PO APPROVAL: RETIRED MASTER DENIED
+  it('02. PO Approval: Retired Master (isPrimaryMaster=false) denied approval authority', async () => {
     const po = await PurchaseOrder.create({
       organisationId: ORG_ID,
       purchaseOrderId: 'PO-NM-0001',
@@ -181,18 +181,21 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
         assignedCafeIds: [CAFE_ID],
       },
       params: { purchaseOrderId: 'PO-NM-0001' },
-      body: { notes: 'Approved by Normal Master' },
+      body: { notes: 'Attempted approval by retired non-primary Master' },
     };
     const res = createMockResponse();
 
-    await invokeController(procurementController.approveOrder, req, res);
-    assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(res.body.success, true);
-    assert.strictEqual(res.body.data.order.status, 'APPROVED');
-    assert.strictEqual(res.body.data.order.approvedByUserId, USER_NORMAL_MASTER);
+    await assert.rejects(
+      async () => invokeController(procurementController.approveOrder, req, res),
+      (err) => {
+        assert.strictEqual(err.statusCode, 403);
+        assert.strictEqual(err.code, 'RETIRED_MASTER_ACCOUNT_DENIED');
+        return true;
+      }
+    );
 
     const reloaded = await PurchaseOrder.findOne({ purchaseOrderId: 'PO-NM-0001' });
-    assert.strictEqual(reloaded.status, 'APPROVED');
+    assert.strictEqual(reloaded.status, 'SUBMITTED');
   });
 
   // 03. SEPARATION OF DUTIES: PO APPROVAL DOES NOT CONFER PAYMENT RELEASE
