@@ -6,8 +6,8 @@
 //   - Items not listed for a role here are unreachable by that role anywhere.
 //   - Navigation is structured in logical groups (COMMAND, OPERATIONS, PEOPLE,
 //     FINANCE, COMMERCIAL, INSIGHTS, ADMINISTRATION, SYSTEM).
-//   - Primary Master vs Normal Master distinction is enforced here and in
-//     router.js — no 5th/6th role is created.
+//   - MASTER navigation requires explicit isPrimaryMaster === true.
+//     Non-primary/unattested MASTER accounts are retired and fail closed.
 //   - User-facing CAFE_ADMIN terminology is "Cafe Operations" / "Operator".
 //   - My Profile, My Payslip → Avatar menu / Settings (not main sidebar).
 //   - My Payslips, My Loans & Advances → Settings → My Employment (not STAFF sidebar).
@@ -275,21 +275,19 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
     return VENDOR_ALLOWED_ROUTES.has(route);
   }
 
+  // MASTER is a valid application persona only when explicitly attested as Primary Master.
+  // This check intentionally precedes implicit-route handling so retired/unattested
+  // MASTER accounts cannot inherit notifications, staff aliases, settings, or deep links.
+  if (role === ROLES.MASTER && isPrimaryMaster !== true) {
+    return false;
+  }
+
   // Implicit routes allowed for all authenticated internal roles
   if (IMPLICIT_ROUTES_ALL.has(route)) return true;
 
   // Primary Master has 100% universal unrestricted access to every route and module
   if ((role === ROLES.MASTER || role === 'master') && isPrimaryMaster) {
     return true;
-  }
-
-  // For MASTER: Non-primary master claim is strictly denied sensitive primary-only routes
-  if (
-    (role === ROLES.MASTER || role === 'master') &&
-    !isPrimaryMaster &&
-    (PRIMARY_MASTER_ONLY_ROUTES.has(pathOnly) || PRIMARY_MASTER_ONLY_ROUTES.has(route) || PRIMARY_MASTER_ONLY_ROUTES.has(baseRoute))
-  ) {
-    return false;
   }
 
   // Implicit CAFE_ADMIN auth-context routes
@@ -324,7 +322,7 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
     }
     // Organisation governance / trash subroutes are restricted to MASTER
     if (sub === "trash" || sub === "data-recovery" || sub === "admin" || sub === "system-administration" || sub === "templates") {
-      return role === ROLES.MASTER;
+      return role === ROLES.MASTER && isPrimaryMaster === true;
     }
     // All personal preference and identity subroutes are accessible to all authenticated profiles
     return true;
@@ -422,6 +420,7 @@ export function isRouteAllowed(rawRole, rawRoute, isPrimaryMaster = false) {
 export function getGroupedNavItems(role, isPrimaryMaster = false) {
   const navConfig = NAVIGATION[role];
   if (!navConfig) return {};
+  if (role === ROLES.MASTER && isPrimaryMaster !== true) return {};
 
   const items = navConfig.items || navConfig.primaryItems || [];
 
