@@ -115,3 +115,33 @@ test('retired non-primary MASTER cannot create manual attendance entries', async
     (err) => err?.statusCode === 403 && err?.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
   );
 });
+
+test('MASTER without explicit Primary-Master attestation is rejected before mutation', async () => {
+  const malformedMaster = {
+    userId: 'MU-MALFORMED-HIGH-RISK',
+    organisationId: 'ORG-ZAMORIN',
+    role: 'MASTER',
+  };
+
+  await assert.rejects(
+    () => voidBill({
+      auth: malformedMaster,
+      params: { billId: 'BILL-TEST-MALFORMED' },
+      body: { reason: 'security regression' },
+    }, responseStub()),
+    (err) => err?.statusCode === 403 && err?.code === 'VOID_FORBIDDEN'
+  );
+
+  await assert.rejects(
+    () => recordMasterManualAttendance({
+      auth: malformedMaster,
+      body: {
+        userId: 'EMP-TEST-001',
+        cafeId: 'ZC-0001',
+        eventType: 'CHECK_IN',
+        reason: 'security regression',
+      },
+    }, responseStub()),
+    (err) => err?.statusCode === 403 && err?.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
+  );
+});
