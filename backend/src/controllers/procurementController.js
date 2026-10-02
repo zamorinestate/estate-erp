@@ -756,7 +756,10 @@ const submitOrder = asyncHandler(async (request, response) => {
  */
 const approveOrder = asyncHandler(async (request, response) => {
   assertCanonicalMasterState(request.auth);
-  if (request.auth?.role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) {
+  if (request.auth?.role !== 'MASTER') {
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Primary Master has authority to approve purchase orders.');
+  }
+  if (request.auth?.isPrimaryMaster !== true) {
     throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'Only Primary Master has authority to approve purchase orders.');
   }
 
@@ -1813,7 +1816,10 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
  */
 const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
   assertCanonicalMasterState(request.auth);
-  if (request.auth?.role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) {
+  if (request.auth?.role !== 'MASTER') {
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Primary Master has authority to approve purchase orders.');
+  }
+  if (request.auth?.isPrimaryMaster !== true) {
     throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'Only Primary Master has authority to approve purchase orders.');
   }
 
