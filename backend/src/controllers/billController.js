@@ -61,6 +61,7 @@ const {
   assertResourceCafeOwnership,
   resolveEffectiveCafeScope,
 } = require('../utils/cafeScope');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 const auditService = require('../services/auditService');
 const recordRequestAudit = (opts) => auditService.recordRequestAudit(opts);
@@ -112,6 +113,7 @@ function assertCafeAccess(request, cafeId) {
  * Returns post-sale KPIs, café billing summaries, and Needs Attention queue.
  */
 const getBillsOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const businessDate = request.query.date || getIstBusinessDate();
 
@@ -326,6 +328,7 @@ const getBillsOverview = asyncHandler(async (request, response) => {
  * Advanced Bill Register with multi-field search and filters.
  */
 const listBills = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const page = parsePositiveInteger(request.query.page, 1, 1000);
   const limit = parsePositiveInteger(request.query.limit, 50, 200);
   const skip = (page - 1) * limit;
@@ -435,6 +438,7 @@ const listBills = asyncHandler(async (request, response) => {
  * Full 360 Bill Detail with Allowed Actions engine.
  */
 const getBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const billId = normalizeId(request.params.billId);
   const bill = await Bill.findOne({
     $or: [{ billId }, { invoiceNumber: billId }],
@@ -475,6 +479,7 @@ const getBill = asyncHandler(async (request, response) => {
  * Create & finalise a bill from POS.
  */
 const createBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const {
     cafeId: rawCafeId,
     orderType,
@@ -799,6 +804,7 @@ const createBill = asyncHandler(async (request, response) => {
  * Audit-tracked receipt reprint.
  */
 const reprintBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const billId = normalizeId(request.params.billId);
   const { reason = 'Customer Request' } = request.body;
 
@@ -851,6 +857,7 @@ const reprintBill = asyncHandler(async (request, response) => {
  * Controlled post-sale void with mandatory reason and audit tracking.
  */
 const voidBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (request.auth.role === 'OWNER') {
     throw new ApiError(
       403,
@@ -928,6 +935,7 @@ const voidBill = asyncHandler(async (request, response) => {
  * Controlled refund orchestrated via canonical refundService.
  */
 const refundBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const billId = normalizeId(request.params.billId);
   const { refundType = 'FULL', amountPaisa, amount, reason, tender, idempotencyKey } = request.body;
 
@@ -964,6 +972,7 @@ const refundBill = asyncHandler(async (request, response) => {
  * Sales Tax & GST Source Register.
  */
 const getGstRegister = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const { date, startDate, endDate, cafeId } = request.query;
 
@@ -1061,6 +1070,7 @@ const getGstRegister = asyncHandler(async (request, response) => {
  * Operational comparison and EOD close readiness check.
  */
 const getReconciliationStatus = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const businessDate = request.query.date || getIstBusinessDate();
 
@@ -1142,6 +1152,7 @@ const getReconciliationStatus = asyncHandler(async (request, response) => {
  * Business-day billing close gate.
  */
 const closeBusinessDayBilling = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (request.auth.role === 'OWNER') {
     throw new ApiError(
       403,
@@ -1193,6 +1204,7 @@ const closeBusinessDayBilling = asyncHandler(async (request, response) => {
  * Aggregates Past Orders KPI metrics: Today, This Month, This Year, Current FY.
  */
 const getPastOrdersSummary = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const filter = { organisationId: orgId, status: { $in: ['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } };
   const effectiveCafe = resolveEffectiveCafeScope(request);
@@ -1321,6 +1333,7 @@ const getPastOrdersSummary = asyncHandler(async (request, response) => {
  * Returns daily aggregate sales matrix for the calendar view.
  */
 const getSalesCalendar = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const month = request.query.month || getIstBusinessDate().substring(0, 7); // YYYY-MM
 
@@ -1396,6 +1409,7 @@ const getSalesCalendar = asyncHandler(async (request, response) => {
  * Holds an open ticket.
  */
 const holdBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { billId, holdName } = request.body;
   if (!billId) {
     throw new ApiError(400, 'BILL_ID_REQUIRED', 'billId is required.');
@@ -1424,6 +1438,7 @@ const holdBill = asyncHandler(async (request, response) => {
  * Lists all open and held tickets.
  */
 const listOpenTickets = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const filter = { organisationId: orgId, status: 'OPEN' };
 
@@ -1455,6 +1470,7 @@ const listOpenTickets = asyncHandler(async (request, response) => {
  * Opens a new register session.
  */
 const openRegisterSession = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { cafeId: rawCafeId, registerId = 'REG-01', openingFloatPaisa = 0 } = request.body;
   const role = request.auth.role;
   let cafeId = normalizeId(rawCafeId);
@@ -1526,6 +1542,7 @@ const openRegisterSession = asyncHandler(async (request, response) => {
  * Records a cash drawer event (Cash In, Cash Out, Safe Drop, No Sale).
  */
 const recordCashEvent = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { registerSessionId, eventType, amountPaisa = 0, reason = '' } = request.body;
   if (!registerSessionId) {
     throw new ApiError(400, 'SESSION_ID_REQUIRED', 'registerSessionId is required.');
@@ -1586,6 +1603,7 @@ const recordCashEvent = asyncHandler(async (request, response) => {
  * Closes a register session with blind count and variance calculation.
  */
 const closeRegisterSession = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { registerSessionId, countedCashPaisa = 0, closingDeclarationNote = '' } = request.body;
   if (!registerSessionId) {
     throw new ApiError(400, 'SESSION_ID_REQUIRED', 'registerSessionId is required.');
@@ -1649,6 +1667,7 @@ const closeRegisterSession = asyncHandler(async (request, response) => {
  * Gets the current active register session for a cafe.
  */
 const getRegisterSession = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const role = request.auth.role;
   let cafeId = request.query.cafeId ? normalizeId(request.query.cafeId) : request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0] || 'ZC-0001';
@@ -1691,6 +1710,7 @@ const getRegisterSession = asyncHandler(async (request, response) => {
  * Processes split tender settlement for an open bill.
  */
 const splitBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { billId } = request.params;
   const { tenders } = request.body;
 
@@ -1744,6 +1764,7 @@ const splitBill = asyncHandler(async (request, response) => {
  * Ingests and reconciles batches of offline queued transactions (R02-09)
  */
 const syncOfflineBills = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const cafeId = resolveEffectiveCafeScope(request);
   const { transactions, deviceId } = request.body || {};
@@ -1774,6 +1795,7 @@ const syncOfflineBills = asyncHandler(async (request, response) => {
  * Official Canonical Tax Invoice PDF generation
  */
 const getBillPdf = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const cafeId = resolveEffectiveCafeScope(request);
   const { billId } = request.params;
