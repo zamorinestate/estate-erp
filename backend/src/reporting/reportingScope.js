@@ -15,12 +15,12 @@
  */
 
 const { resolveEffectiveCafeScope } = require('../utils/cafeScope');
+const { assertCanonicalReportingActor } = require('./reportingAuthority');
 
 
 /**
  * Canonical Role Authority Matrix for Zamorin Reporting:
  * - PRIMARY_MASTER: Organisation-wide portfolio authority across all reports including HIGHLY_CONFIDENTIAL.
- * - NORMAL_MASTER: Organisation-wide operational authority across standard reports; restricted from executive governance/passbook targets.
  * - OWNER: Bound strictly to assignedCafeIds portfolio; can view multiple assigned cafés.
  * - CAFE_ADMIN: Bound strictly to assignedCafeIds portfolio (supports multi-branch admins outside POS device binding); cross-café queries to unassigned cafés prohibited.
  * - STAFF: Zero general / enterprise report access; authorized solely for defined self-service personal reports.
@@ -32,14 +32,6 @@ const ROLE_AUTHORITY_MATRIX = {
     multiCafe: true,
     enterpriseReports: true,
     highlyConfidential: true,
-    selfServiceOnly: false,
-  },
-  NORMAL_MASTER: {
-    authorityType: 'NORMAL_MASTER',
-    scope: 'ORGANISATION_WIDE_OPERATIONAL',
-    multiCafe: true,
-    enterpriseReports: true,
-    highlyConfidential: false,
     selfServiceOnly: false,
   },
   OWNER: {
@@ -103,9 +95,7 @@ function resolveReportScope(req, queryParamsOrReportDef = {}, maybeReportDefinit
     throw err;
   }
 
-  const role = String(auth.role || '').toUpperCase();
-  const isPrimaryMaster = Boolean(auth.isPrimaryMaster || (role === 'MASTER' && auth.userId === 'MU-0001'));
-  const isNormalMaster = role === 'MASTER' && !isPrimaryMaster;
+  const { role, isPrimaryMaster } = assertCanonicalReportingActor(auth);
   const isOwner = role === 'OWNER';
   const isCafeAdmin = role === 'CAFE_ADMIN';
   const isStaff = role === 'STAFF';
@@ -230,26 +220,24 @@ function resolveReportScope(req, queryParamsOrReportDef = {}, maybeReportDefinit
     };
   }
 
-  // Primary Master / Normal Master scoping
-  if (isPrimaryMaster || isNormalMaster) {
-    const authorityType = isPrimaryMaster ? 'PRIMARY_MASTER' : 'NORMAL_MASTER';
+  // Primary Master scoping. Retired/non-primary MASTER records are rejected above.
+  if (isPrimaryMaster) {
     if (requestedCafeId) {
       return {
         organisationId,
         cafeScope: requestedCafeId,
         isOrgWide: false,
         resolvedCafeId: requestedCafeId,
-        authorityType,
+        authorityType: 'PRIMARY_MASTER',
         role,
       };
     }
-    // Default: organisation-wide
     return {
       organisationId,
       cafeScope: null,
       isOrgWide: true,
       resolvedCafeId: null,
-      authorityType,
+      authorityType: 'PRIMARY_MASTER',
       role,
     };
   }
