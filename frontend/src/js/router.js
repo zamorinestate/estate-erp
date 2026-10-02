@@ -134,25 +134,21 @@ export function hideNavProgressBar() {
 }
 
 export function getIsPrimaryMaster() {
-  // ⚠️ PRIMARY MASTER LOCK — identity-anchored.
-  // ONLY MU-0001 / pradeeshk331@gmail.com may ever be Primary Master.
-  // Fail-closed: any other MASTER account returns false.
   const user = state.auth?.user || state.user || {};
-  const userId = user.userId || user.id || user._id;
-  const isVerifiedIdentity =
-    (userId === "MU-0001" &&
-      String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com") ||
-    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+  const role = String(user.role || state.role || "").toLowerCase();
+  if (role !== ROLES.MASTER && role !== "master") return false;
 
-  if (!isVerifiedIdentity) return false;
-
-  // Identity verified — respect any explicit isPrimaryMaster flag
-  if (state.auth?.user?.isPrimaryMaster !== undefined) return Boolean(state.auth.user.isPrimaryMaster);
-  if (state.user?.isPrimaryMaster !== undefined) return Boolean(state.user.isPrimaryMaster);
-  if (state.isPrimaryMaster !== undefined) return Boolean(state.isPrimaryMaster);
-
-  // Verified identity with MASTER role: grant Primary Master by default
-  if (state.role === ROLES.MASTER || state.role === "master") return true;
+  // Fail closed: Primary-Master authority must come from explicit authenticated state.
+  // User IDs and email addresses are identity attributes, never authorization signals.
+  if (state.auth?.user?.isPrimaryMaster !== undefined) {
+    return state.auth.user.isPrimaryMaster === true;
+  }
+  if (state.user?.isPrimaryMaster !== undefined) {
+    return state.user.isPrimaryMaster === true;
+  }
+  if (state.isPrimaryMaster !== undefined) {
+    return state.isPrimaryMaster === true;
+  }
   return false;
 }
 
@@ -165,9 +161,7 @@ export function navigate(route) {
   // closing rule ("any action not explicitly marked defaults to no access").
   const isPrimary = getIsPrimaryMaster();
   const isVendor = state.role === ROLES.VENDOR || state.role === "vendor";
-  const isAllowed = isVendor
-    ? isRouteAllowed(state.role, route, false)
-    : (route === "notifications" || isRouteAllowed(state.role, route, isPrimary));
+  const isAllowed = isRouteAllowed(state.role, route, isVendor ? false : isPrimary);
 
   if (!isAllowed) {
     setState({ route: "__blocked__" });
