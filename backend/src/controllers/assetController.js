@@ -597,6 +597,11 @@ const toggleSafetyHold = asyncHandler(async (request, response) => {
 
 // 8. POST /api/v1/assets/:assetId/retire (Primary Master authorized for final capital retirement)
 const retireAsset = asyncHandler(async (request, response) => {
+  const isPrimary = request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true;
+  if (!isPrimary) {
+    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Only Primary Master holds authority for capital asset retirement and write-off.');
+  }
+
   const normAssetId = normalizeId(request.params.assetId);
   const { reason = 'End of Life', disposalMethod = 'Scrapped', notes = '' } = request.body || {};
 
@@ -606,12 +611,6 @@ const retireAsset = asyncHandler(async (request, response) => {
   });
 
   if (!asset) throw new ApiError(404, 'ASSET_NOT_FOUND', 'Asset not found.');
-
-  const isPrimary = request.auth.isPrimaryMaster === true;
-
-  if (!isPrimary && request.auth.role !== 'MASTER') {
-    throw new ApiError(403, 'PRIMARY_MASTER_AUTHORITY_REQUIRED', 'Only Primary Master holds authority for capital asset retirement and write-off.');
-  }
 
   asset.operationalStatus = 'RETIRED';
   asset.status = 'DISCARDED';
