@@ -10,6 +10,7 @@ import { apiGet, apiPost, apiPatch } from "../apiClient.js";
 import { showToast, openModal, confirmAction, renderCafeContextStrip, renderModuleErrorState } from "../components.js";
 import { state } from "../state.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeSubTab = "overview"; // 'overview' | 'assets' | 'maintenance' | 'work_orders' | 'inspections' | 'analytics'
 let cachedOverview = null;
@@ -77,11 +78,10 @@ export function renderAssets(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; margin:0; color:var(--ink);">Equipment &amp; Asset Management</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-003 ASSETS</span>
             ${
               isPrimary
                 ? `<span class="badge" style="background:rgba(201,154,92,0.2); color:#c99a5c; font-weight:800; font-size:11px; padding:4px 8px; border-radius:12px;">PRIMARY MASTER</span>`
-                : `<span class="badge" style="background:var(--surface-sunken); color:var(--muted); font-weight:700; font-size:11px; padding:4px 8px; border-radius:12px;">OPERATIONAL MASTER</span>`
+                : `<span class="badge" style="background:var(--surface-sunken); color:var(--muted); font-weight:700; font-size:11px; padding:4px 8px; border-radius:12px;">MANAGEMENT ACCESS</span>`
             }
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0;">
@@ -141,7 +141,7 @@ function renderActiveSubpanel() {
       title: "Reliability & Maintenance Analytics",
       icon: "📈",
       desc: "Mean Time Between Failures (MTBF), downtime and cost analytics.",
-      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-rel" type="button">Export Reliability Report</button>`
+      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-rel" type="button">Export Reliability Report (Excel)</button>`
     },
   };
 
@@ -782,7 +782,7 @@ export function wireAssets(root, subroute) {
     btn.addEventListener("click", () => openRecordInspectionModal(root));
   });
   root.querySelectorAll("#btn-child-export-rel").forEach((btn) => {
-    btn.addEventListener("click", () => exportAssetReliabilityCsv());
+    btn.addEventListener("click", () => exportAssetReliabilityExcel());
   });
 
   root.querySelectorAll(".update-wo-btn").forEach((btn) => {
@@ -880,7 +880,7 @@ function rerender(root) {
       btn.addEventListener("click", () => openRecordInspectionModal(root));
     });
     root.querySelectorAll("#btn-child-export-rel").forEach((btn) => {
-      btn.addEventListener("click", () => exportAssetReliabilityCsv());
+      btn.addEventListener("click", () => exportAssetReliabilityExcel());
     });
     root.querySelectorAll(".update-wo-btn").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -947,26 +947,33 @@ function rerender(root) {
   }
 }
 
-function exportAssetReliabilityCsv() {
-  const headers = ["Asset ID", "Asset Name", "Category", "Café ID", "Operational Status", "Condition", "Criticality"];
-  const rows = (cachedAssets || []).map((a) => [
-    a.assetId || "",
-    `"${(a.name || "").replace(/"/g, '""')}"`,
-    a.category || "",
-    a.cafeId || "",
-    a.operationalStatus || "",
-    a.condition || "",
-    a.criticality || ""
-  ]);
-  let csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `asset_reliability_report_${new Date().toISOString().split("T")[0]}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  showToast("Asset reliability report exported to CSV.", "info");
+function exportAssetReliabilityExcel() {
+  const rows = (cachedAssets || []).map((a) => ({
+    assetId: a.assetId || "",
+    name: a.name || "",
+    category: a.category || "",
+    cafeId: a.cafeId || "",
+    operationalStatus: a.operationalStatus || "",
+    condition: a.condition || "",
+    criticality: a.criticality || "",
+  }));
+
+  exportToXlsx({
+    filename: `asset_reliability_report_${new Date().toISOString().split("T")[0]}.xlsx`,
+    sheetName: "AssetReliability",
+    reportTitle: "Equipment & Asset Reliability Register",
+    columns: [
+      { key: "assetId", label: "Asset ID" },
+      { key: "name", label: "Asset Name" },
+      { key: "category", label: "Category" },
+      { key: "cafeId", label: "Café ID" },
+      { key: "operationalStatus", label: "Operational Status" },
+      { key: "condition", label: "Condition" },
+      { key: "criticality", label: "Criticality" },
+    ],
+    rows,
+  });
+  showToast("Asset reliability report Excel workbook downloaded ✓", "mint");
 }
 
 function wireAssetsEventListeners(root) {
@@ -990,7 +997,7 @@ function wireAssetsEventListeners(root) {
     btn.addEventListener("click", () => openRecordInspectionModal(root));
   });
   root.querySelectorAll("#btn-child-export-rel").forEach((btn) => {
-    btn.addEventListener("click", () => exportAssetReliabilityCsv());
+    btn.addEventListener("click", () => exportAssetReliabilityExcel());
   });
   root.querySelectorAll(".update-wo-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {

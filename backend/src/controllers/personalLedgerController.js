@@ -37,6 +37,7 @@ const {
   ApiError,
 } = require('../utils/ApiError');
 
+const { ZurfService } = require('../services/zurfService');
 const auditService = require('../services/auditService');
 const recordRequestAudit = (payload, options) => auditService.recordRequestAudit(payload, options);
 
@@ -1113,6 +1114,27 @@ const getReconciliation = asyncHandler(async (request, response) => {
 // ── GET /personal-ledger/export ──────────────────────────────────────────────
 const exportPersonalLedger = asyncHandler(async (request, response) => {
   verifyPersonalLedgerAccess(request);
+
+  const rawFormat = String(request.query.format || 'PDF').trim().toUpperCase();
+
+  if (rawFormat === 'CSV' || rawFormat.includes('CSV')) {
+    throw new ApiError(
+      400,
+      'UNSUPPORTED_EXPORT_FORMAT',
+      'CSV format is not supported for personal ledger exports. Canonical export formats are PDF and XLSX.'
+    );
+  }
+
+  const format = rawFormat === 'EXCEL' ? 'XLSX' : rawFormat;
+
+  if (format !== 'PDF' && format !== 'XLSX') {
+    throw new ApiError(
+      400,
+      'UNSUPPORTED_EXPORT_FORMAT',
+      `Unsupported export format: "${rawFormat}". Canonical export formats are PDF and XLSX.`
+    );
+  }
+
   const filter = buildScopedFilter(request);
 
   const allChronological = await PersonalLedger.find(filter)
@@ -1120,9 +1142,18 @@ const exportPersonalLedger = asyncHandler(async (request, response) => {
     .lean();
 
   let running = 0;
+  let totalCreditPaisa = 0;
+  let totalDebitPaisa = 0;
+
   const entriesWithRunning = allChronological.map((e) => {
     if (e.status === 'ACTIVE') {
-      running += e.entryType === 'CREDIT' ? e.amountPaisa : -e.amountPaisa;
+      if (e.entryType === 'CREDIT') {
+        running += e.amountPaisa;
+        totalCreditPaisa += e.amountPaisa;
+      } else {
+        running -= e.amountPaisa;
+        totalDebitPaisa += e.amountPaisa;
+      }
     }
     return {
       ...e,
@@ -1133,67 +1164,97 @@ const exportPersonalLedger = asyncHandler(async (request, response) => {
   });
   entriesWithRunning.reverse();
 
-  const format = String(request.query.format || 'CSV').toUpperCase();
-  if (format === 'JSON') {
-    return response.status(200).json({
-      data: entriesWithRunning,
-    });
-  }
+  const netBalancePaisa = totalCreditPaisa - totalDebitPaisa;
 
-  // Formula injection defense: escape leading =, +, -, @ with single quote
-  const sanitizeCell = (val) => {
-    if (val === null || val === undefined) return '""';
-    const str = String(val);
-    if (/^[=+\-@]/.test(str)) {
-      return `"'${str.replace(/"/g, '""')}"`;
-    }
-    return `"${str.replace(/"/g, '""')}"`;
-  };
 
-  const headers = [
-    'Voucher ID',
-    'Business Date',
-    'Category',
-    'Description',
-    'Payment Source',
-    'Entry Type',
-    'Amount (INR)',
-    'Amount (Paise)',
-    'Running Balance (INR)',
-    'Running Balance (Paise)',
-    'Economic Direction',
-    'Accounting Treatment',
-    'Finance Journal Ref',
-    'Workflow Status',
-    'Settlement Status',
-    'Record Status',
+
+
+
+  // Audit logging
+  await recordRequestAudit({
+    module: 'PERSONAL_LEDGER',
+    action: 'PERSONAL_LEDGER_EXPORT',
+    entityType: 'PERSONAL_LEDGER',
+    entityId: request.auth?.userId || 'SYSTEM',
+    metadata: {
+      format,
+      recordCount: entriesWithRunning.length,
+      scope: request.auth?.role,
+    },
+  }, { request }).catch(() => {});
+
+  const dateStr = getIstBusinessDate();
+  const columns = [
+    { key: 'businessDate', label: 'Date' },
+    { key: 'voucherNumber', label: 'Voucher #' },
+    { key: 'category', label: 'Category' },
+    { key: 'description', label: 'Description' },
+    { key: 'paymentSource', label: 'Source' },
+    { key: 'debit', label: 'Debit (₹)', align: 'right' },
+    { key: 'credit', label: 'Credit (₹)', align: 'right' },
+    { key: 'balance', label: 'Balance (₹)', align: 'right' },
   ];
 
-  const rows = entriesWithRunning.map((e) => [
-    sanitizeCell(e.voucherNumber || e.ledgerEntryId),
-    sanitizeCell(e.businessDate),
-    sanitizeCell(e.category),
-    sanitizeCell(e.description),
-    sanitizeCell(e.paymentSource),
-    sanitizeCell(e.entryType),
-    ((e.amountPaisa || 0) / 100).toFixed(2),
-    e.amountPaisa || 0,
-    ((e.runningBalancePaisa || 0) / 100).toFixed(2),
-    e.runningBalancePaisa || 0,
-    sanitizeCell(e.direction),
-    sanitizeCell(e.accountingTreatment),
-    sanitizeCell(e.financeJournalRef || 'Unposted'),
-    sanitizeCell(e.workflowStatus),
-    sanitizeCell(e.settlementStatus || 'UNSETTLED'),
-    sanitizeCell(e.status || 'ACTIVE'),
-  ]);
+  if (format === 'PDF') {
+    const kpiCards = [
+      { label: 'Total Credits', value: `₹${(totalCreditPaisa / 100).toFixed(2)}` },
+      { label: 'Total Debits', value: `₹${(totalDebitPaisa / 100).toFixed(2)}` },
+      { label: 'Net Balance', value: `₹${(netBalancePaisa / 100).toFixed(2)}` },
+      { label: 'Total Entries', value: String(entriesWithRunning.length) },
+    ];
 
-  const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
-  const filename = `Zamorin_Personal_SubLedger_${getIstBusinessDate()}.csv`;
+    const pdfRows = entriesWithRunning.map((e) => ({
+      businessDate: e.businessDate,
+      voucherNumber: e.voucherNumber || e.ledgerEntryId,
+      category: e.category,
+      description: e.description,
+      paymentSource: e.paymentSource || '—',
+      debit: e.entryType === 'DEBIT' ? `₹${(e.amountPaisa / 100).toFixed(2)}` : '—',
+      credit: e.entryType === 'CREDIT' ? `₹${(e.amountPaisa / 100).toFixed(2)}` : '—',
+      balance: `₹${((e.runningBalancePaisa || 0) / 100).toFixed(2)}`,
+    }));
 
-  response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    const pdf = await ZurfService.renderBinaryPdf({
+      reportTitle: 'PERSONAL LEDGER & OWNER ACCOUNT STATEMENT',
+      reportCode: 'ZURF-LEDGER-01',
+      scope: request.auth?.name ? `Account Holder: ${request.auth.name} (${request.auth.userId})` : 'Personal Account Portfolio',
+      period: `As of ${dateStr}`,
+      columns,
+      rows: pdfRows,
+      kpiCards,
+      sensitivityLevel: 'RESTRICTED',
+    });
+
+    const filename = `Zamorin_Personal_SubLedger_${dateStr}.pdf`;
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return response.status(200).send(pdf.buffer);
+  }
+
+  // format === 'XLSX'
+  const xlsxRows = entriesWithRunning.map((e) => ({
+    businessDate: e.businessDate,
+    voucherNumber: e.voucherNumber || e.ledgerEntryId,
+    category: e.category,
+    description: e.description,
+    paymentSource: e.paymentSource || '—',
+    debit: e.entryType === 'DEBIT' ? (e.amountPaisa / 100) : null,
+    credit: e.entryType === 'CREDIT' ? (e.amountPaisa / 100) : null,
+    balance: (e.runningBalancePaisa || 0) / 100,
+  }));
+
+  const xlsx = await ZurfService.renderXlsx({
+    sheetName: 'Personal Ledger',
+    reportTitle: 'Personal Ledger & Owner Account Statement',
+    columns,
+    rows: xlsxRows,
+    sensitivityLevel: 'RESTRICTED',
+  });
+
+  const filename = `Zamorin_Personal_SubLedger_${dateStr}.xlsx`;
+  response.setHeader('Content-Type', xlsx.mimeType);
   response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  return response.status(200).send(csv);
+  return response.status(200).send(xlsx.buffer);
 });
 
 module.exports = {

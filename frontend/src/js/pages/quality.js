@@ -9,6 +9,7 @@ import { showToast, skeleton, openModal, closeModal, confirmAction, renderCafeCo
 import { state } from '../state.js';
 import { ROLES } from '../navigation.js';
 import { navigate } from '../router.js';
+import { exportToXlsx } from '../utils/openXmlExport.js';
 
 let activeTab = 'overview';
 let cachedOverview = null;
@@ -331,7 +332,7 @@ async function renderActiveTab(root) {
         title: 'Quality History & Analytics',
         icon: '📈',
         desc: 'Historical compliance trends, defect Pareto analysis and export reports.',
-        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-quality" type="button">Export Report (CSV)</button>`
+        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-quality" type="button">Export Report (Excel)</button>`
       },
     };
 
@@ -1879,17 +1880,30 @@ function openRecordAuditModal(root) {
 }
 
 function exportQualityCsv() {
-  const rows = [
-    ['Checklist ID', 'Title', 'Cafe ID', 'Date', 'Inspector', 'Result', 'Action Required'],
-    ...cachedChecklists.map((c) => [c.checklistId, `"${c.title}"`, c.cafeId, c.inspectionDate, c.inspectedByUserId, c.overallResult, `"${c.actionRequired || 'None'}"`]),
-  ];
-  const csvContent = 'data:text/csv;charset=utf-8,' + rows.map((e) => e.join(',')).join('\n');
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement('a');
-  link.setAttribute('href', encodedUri);
-  link.setAttribute('download', `Zamorin_Quality_Report_${new Date().toISOString().slice(0, 10)}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  showToast('Quality compliance report exported as CSV!', 'success');
+  const rows = (cachedChecklists || []).map((c) => ({
+    checklistId: c.checklistId || "",
+    title: c.title || "",
+    cafeId: c.cafeId || "",
+    inspectionDate: c.inspectionDate || "",
+    inspectedBy: c.inspectedByUserId || "",
+    overallResult: c.overallResult || "",
+    actionRequired: c.actionRequired || "None",
+  }));
+
+  exportToXlsx({
+    filename: `Zamorin_Quality_Report_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    sheetName: "QualityCompliance",
+    reportTitle: "Quality & Food Safety Compliance Report",
+    columns: [
+      { key: "checklistId", label: "Checklist ID" },
+      { key: "title", label: "Title" },
+      { key: "cafeId", label: "Cafe ID" },
+      { key: "inspectionDate", label: "Date" },
+      { key: "inspectedBy", label: "Inspector" },
+      { key: "overallResult", label: "Result" },
+      { key: "actionRequired", label: "Action Required" },
+    ],
+    rows,
+  });
+  showToast("Quality compliance report exported as Excel workbook!", "success");
 }

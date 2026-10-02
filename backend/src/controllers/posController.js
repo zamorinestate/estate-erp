@@ -15,6 +15,8 @@ const { PosOrderService } = require('../services/posOrderService');
 const { PosReconciliationService } = require('../services/posReconciliationService');
 const { Bill } = require('../models/Bill');
 const { IdempotencyRecord } = require('../models/IdempotencyRecord');
+const { MenuItem } = require('../models/MenuItem');
+const { OutletOffering } = require('../models/OutletOffering');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { assertResourceCafeOwnership, resolveEffectiveCafeScope } = require('../utils/cafeScope');
@@ -404,6 +406,116 @@ const reviewOfflineOrder = asyncHandler(async (request, response) => {
   });
 });
 
+/**
+ * GET /api/v1/pos/catalog/:cafeId
+ * Canonical POS Menu Pipeline (§28)
+ * Menu/Product Master -> Cafe assignment -> availability/publication ->
+ * POS channel eligibility -> category mapping -> active status -> cafe scope -> price
+ */
+const getPosCatalog = asyncHandler(async (request, response) => {
+  const cafeId = normalizeId(request.params.cafeId);
+  if (!cafeId) {
+    throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required to fetch POS catalogue.');
+  }
+
+  assertCafeAccess(request, cafeId);
+
+  const organisationId = request.auth?.organisationId || 'ZAMORIN';
+
+  // 1. Fetch active menu items eligible for CAFE/SHARED concept
+  const rawItems = await MenuItem.find({
+    organisationId,
+    status: 'ACTIVE',
+    conceptEligibility: { $in: ['CAFE', 'SHARED'] },
+  }).sort({ category: 1, name: 1 }).lean();
+
+  const menuItems = Array.isArray(rawItems) ? rawItems : [];
+
+  // 2. Fetch outlet-specific offerings if any exist for this cafe
+  const rawOfferings = await OutletOffering.find({
+    organisationId,
+    outletId: cafeId,
+  }).lean();
+
+  const offerings = Array.isArray(rawOfferings) ? rawOfferings : [];
+  const offeringMap = new Map();
+  for (const off of offerings) {
+    offeringMap.set(normalizeId(off.menuItemId), off);
+  }
+
+  const hasOfferingsConfigured = offerings.length > 0;
+  const now = new Date();
+
+  // 3. Map to POS catalogue items
+  const catalogItems = [];
+
+  for (const item of menuItems) {
+    const itemId = normalizeId(item.menuItemId);
+    const offering = offeringMap.get(itemId);
+
+    // If the cafe has specific offerings configured, enforce cafe assignment & enablement
+    if (hasOfferingsConfigured) {
+      if (!offering) continue; // Not assigned to this cafe
+      if (offering.isEnabled === false) continue; // Explicitly disabled for cafe
+      if (offering.channels && offering.channels.pos === false) continue; // Disabled for POS channel
+    }
+
+    // Availability / Sold out check
+    let isAvailable = item.status === 'ACTIVE';
+    if (offering) {
+      if (offering.isAvailable === false) {
+        if (!offering.soldOutUntil || new Date(offering.soldOutUntil) > now) {
+          isAvailable = false;
+        }
+      }
+    }
+
+    // Authoritative pricing: local override if set, else item master price
+    const effectivePricePaisa = (offering && offering.localPricePaisaOverride != null)
+      ? offering.localPricePaisaOverride
+      : (item.currentPricePaisa ?? (item.pricePaisa ?? 0));
+
+    // Category mapping to POS UI categories
+    let posCategory = 'Savouries & Mains';
+    const cat = String(item.category || '').toUpperCase();
+    const nameLower = String(item.name || '').toLowerCase();
+
+    if (cat === 'COFFEE' || cat === 'TEA' || cat === 'BEVERAGES_OTHER') {
+      if (nameLower.includes('cold') || nameLower.includes('iced') || nameLower.includes('brew')) {
+        posCategory = 'Cold Brews';
+      } else {
+        posCategory = 'Hot Coffees';
+      }
+    } else if (cat === 'BAKERY') {
+      posCategory = 'Bakery & Viennoiserie';
+    } else if (cat === 'DESSERTS') {
+      posCategory = 'Desserts';
+    } else if (['SNACKS', 'STARTERS', 'SOUPS', 'SALADS', 'MAIN_COURSE', 'SIDES'].includes(cat)) {
+      posCategory = 'Savouries & Mains';
+    }
+
+    catalogItems.push({
+      id: item.menuItemId,
+      code: item.itemCode || item.plu || item.menuItemId,
+      name: item.name,
+      category: posCategory,
+      rawCategory: item.category,
+      price: Number((effectivePricePaisa / 100).toFixed(2)),
+      pricePaisa: effectivePricePaisa,
+      foodType: (item.dietaryTags || []).includes('NON_VEG') ? 'Non-Veg' : 'Veg',
+      hasModifiers: Array.isArray(item.variants) && item.variants.length > 0,
+      isAvailable,
+      description: item.description || '',
+    });
+  }
+
+  return response.status(200).json({
+    cafeId,
+    items: catalogItems,
+    total: catalogItems.length,
+  });
+});
+
 module.exports = {
   commitOrder,
   previewOrder,
@@ -417,6 +529,7 @@ module.exports = {
   syncOfflineOrders,
   getPendingOfflineReviews,
   reviewOfflineOrder,
+  getPosCatalog,
 };
 
 

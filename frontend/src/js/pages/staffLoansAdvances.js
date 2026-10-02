@@ -11,6 +11,7 @@ import { emptyState, skeleton, showToast } from "../components.js";
 import { icon } from "../icons.js";
 import { state } from "../state.js";
 import { setupModalA11y } from "../utils/modalA11y.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview"; // 'overview' | 'facilities' | 'repayments' | 'requests' | 'policy' | 'statement'
 let loadedData = null;
@@ -610,7 +611,7 @@ function renderStatementTab(data) {
         </div>`}
 
         <div class="flex justify-end gap-sm" style="margin-top:20px;">
-          <button class="btn btn-secondary" id="btn-export-loan-csv">Export CSV</button>
+          <button class="btn btn-secondary" id="btn-export-loan-xlsx">Export Excel</button>
           <button class="btn btn-primary" onclick="window.print()">${icon("printer", 14)} Print Statement</button>
         </div>
       </div>
@@ -753,11 +754,11 @@ export function wireStaffLoansAdvances(root) {
       if (res) res.textContent = money.format(emi);
     }
 
-    // Export CSV
-    const exportBtn = container.querySelector("#btn-export-loan-csv");
+    // Export Excel
+    const exportBtn = container.querySelector("#btn-export-loan-xlsx");
     if (exportBtn) {
       exportBtn.onclick = () => {
-        exportLoanCsv();
+        exportLoanExcel();
       };
     }
   }
@@ -1211,28 +1212,32 @@ function openDefermentModal(loanId, onDone) {
   });
 }
 
-// ── UTILITIES: EXPORT CSV ────────────────────────────────────────────────────
-function exportLoanCsv() {
+// ── UTILITIES: EXPORT EXCEL ──────────────────────────────────────────────────
+function exportLoanExcel() {
   const loans = loadedData?.loanAdvances || [];
-  const rows = [
-    "FacilityID,Type,Principal,Repaid,Outstanding,Status",
-    ...loans.map(l => [
-      l.loanAdvanceId || l.id,
-      l.requestType,
-      ((l.principalPaise || l.requestedAmountPaise || 0) / 100).toFixed(2),
-      ((l.totalRepaidPaise || 0) / 100).toFixed(2),
-      ((l.outstandingPrincipalPaise || 0) / 100).toFixed(2),
-      l.status,
-    ].join(",")),
-  ];
   if (loans.length === 0) { showToast("No loan records to export", "info"); return; }
-  const csvContent = "data:text/csv;charset=utf-8," + rows.join("\n");
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `Zamorin_Loans_Statement_${new Date().getFullYear()}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  showToast("Loans & Advances statement CSV downloaded ✓", "mint");
+  const rows = loans.map((l) => ({
+    id: l.loanAdvanceId || l.id,
+    type: l.requestType,
+    principal: ((l.principalPaise || l.requestedAmountPaise || 0) / 100),
+    repaid: ((l.totalRepaidPaise || 0) / 100),
+    outstanding: ((l.outstandingPrincipalPaise || 0) / 100),
+    status: l.status,
+  }));
+
+  exportToXlsx({
+    filename: `Zamorin_Loans_Statement_${new Date().getFullYear()}.xlsx`,
+    sheetName: "LoansAdvances",
+    reportTitle: "Staff Loans & Salary Advances Statement",
+    columns: [
+      { key: "id", label: "Facility ID" },
+      { key: "type", label: "Type" },
+      { key: "principal", label: "Principal (₹)", type: "currency" },
+      { key: "repaid", label: "Repaid (₹)", type: "currency" },
+      { key: "outstanding", label: "Outstanding (₹)", type: "currency" },
+      { key: "status", label: "Status" },
+    ],
+    rows,
+  });
+  showToast("Loans & Advances statement Excel workbook downloaded ✓", "mint");
 }

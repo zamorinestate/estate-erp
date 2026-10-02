@@ -105,8 +105,8 @@ export function renderVendorNotifications() {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button id="btn-export-notifications-csv" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
-            <span>📥</span> Export CSV
+          <button id="btn-export-notifications-xlsx" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
+            <span>📥</span> Export Excel
           </button>
           <button id="btn-refresh-notifications" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
             <span class="refresh-icon">🔄</span> Refresh
@@ -435,11 +435,11 @@ function setupEventListeners() {
     });
   }
 
-  // CSV Export Button
-  const btnExport = document.getElementById("btn-export-notifications-csv");
+  // Excel Export Button
+  const btnExport = document.getElementById("btn-export-notifications-xlsx");
   if (btnExport) {
     btnExport.addEventListener("click", () => {
-      exportNotificationsCsv();
+      exportNotificationsExcel();
     });
   }
 }
@@ -635,27 +635,15 @@ function renderPagination(pagination) {
   if (btnNext) btnNext.disabled = !pagination.hasNext;
 }
 
-async function exportNotificationsCsv() {
+async function exportNotificationsExcel() {
   try {
     const params = new URLSearchParams();
     if (currentSelectedCafe && currentSelectedCafe !== "ALL") {
       params.append("cafeId", currentSelectedCafe);
     }
-    const token = state.token || "";
-    const res = await fetch(`/api/v1/vendor/notifications/csv?${params.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Export failed with HTTP ${res.status}`);
-    }
-
-    const blob = await res.blob();
     const dateStr = new Date().toISOString().slice(0, 10);
-    downloadBlob(blob, `zamorin-vendor-notifications-${dateStr}.csv`);
+    await downloadBlob(`/api/v1/vendor/notifications/xlsx?${params.toString()}`, `zamorin-vendor-notifications-${dateStr}.xlsx`);
   } catch (err) {
-    alert(`CSV export failed: ${err.message}`);
+    alert(`Excel export failed: ${err.message}`);
   }
 }

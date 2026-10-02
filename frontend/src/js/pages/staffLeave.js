@@ -11,6 +11,7 @@ import { showToast } from "../components.js";
 import { icon } from "../icons.js";
 import { apiGet, apiPost } from "../apiClient.js";
 import { setupModalA11y } from "../utils/modalA11y.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "OVERVIEW"; // 'OVERVIEW' | 'CALENDAR' | 'REQUESTS' | 'BALANCES' | 'STATEMENT'
 let selectedDurationUnit = "FULL_DAY";
@@ -629,8 +630,8 @@ function renderStatementTab() {
         </div>
 
         <div class="flex justify-end gap-sm" style="margin-top:20px;">
-          <button class="btn btn-secondary" id="btn-export-leave-csv" type="button">
-            Export CSV
+          <button class="btn btn-secondary" id="btn-export-leave-xlsx" type="button">
+            Export Excel
           </button>
           <button class="btn btn-primary" id="btn-print-leave-statement" type="button">
             ${icon("printer", 14)} Print Full Statement
@@ -896,9 +897,9 @@ export function wireStaffLeave(root) {
       refreshTabContent();
     });
 
-    // Export CSV & Print Statement
-    container.querySelector("#btn-export-leave-csv")?.addEventListener("click", () => {
-      exportLeaveCsv();
+    // Export Excel & Print Statement
+    container.querySelector("#btn-export-leave-xlsx")?.addEventListener("click", () => {
+      exportLeaveExcel();
     });
     container.querySelector("#btn-print-leave-statement")?.addEventListener("click", () => {
       printLeaveStatement();
@@ -923,10 +924,10 @@ export function wireStaffLeave(root) {
 
   // Direct click delegation on root for reliable button clicks
   root.addEventListener("click", (e) => {
-    const csvBtn = e.target.closest("#btn-export-leave-csv");
-    if (csvBtn) {
+    const xlsxBtn = e.target.closest("#btn-export-leave-xlsx");
+    if (xlsxBtn) {
       e.preventDefault();
-      exportLeaveCsv();
+      exportLeaveExcel();
       return;
     }
     const printBtn = e.target.closest("#btn-print-leave-statement");
@@ -1112,37 +1113,34 @@ function openCancelLeaveModal(leaveId, onDone) {
   });
 }
 
-// ── EXPORT CSV UTILITY ───────────────────────────────────────────────────────
-function exportLeaveCsv() {
-  const rows = [
-    ["Request ID", "Leave Type", "Start Date", "End Date", "Days Charged", "Status", "Reason"].join(","),
-  ];
+// ── EXPORT EXCEL UTILITY ───────────────────────────────────────────────────────
+function exportLeaveExcel() {
+  const rows = cachedRequests.map((r) => ({
+    id: r.id || "",
+    type: r.type || "",
+    startDate: r.startDate || r.dates || "",
+    endDate: r.endDate || r.startDate || r.dates || "",
+    days: typeof r.days === "number" ? r.days : 1,
+    status: r.status || "",
+    reason: r.reason || "",
+  }));
 
-  if (cachedRequests.length === 0) {
-    rows.push("No leave requests found,,,,,,");
-  } else {
-    for (const r of cachedRequests) {
-      const escapedReason = `"${String(r.reason || '').replace(/"/g, '""')}"`;
-      rows.push([
-        r.id || "",
-        `"${String(r.type || '').replace(/"/g, '""')}"`,
-        r.startDate || r.dates || "",
-        r.endDate || r.startDate || r.dates || "",
-        r.days ?? 1,
-        r.status || "",
-        escapedReason,
-      ].join(","));
-    }
-  }
-
-  const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(rows.join("\n"));
-  const link = document.createElement("a");
-  link.setAttribute("href", csvContent);
-  link.setAttribute("download", `Zamorin_Leave_History_${new Date().toISOString().slice(0, 10)}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  showToast("Leave statement CSV downloaded ✓", "mint");
+  exportToXlsx({
+    filename: `Zamorin_Leave_History_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    sheetName: "LeaveHistory",
+    reportTitle: "Staff Personal Leave History",
+    columns: [
+      { key: "id", label: "Request ID" },
+      { key: "type", label: "Leave Type" },
+      { key: "startDate", label: "Start Date" },
+      { key: "endDate", label: "End Date" },
+      { key: "days", label: "Days Charged", type: "number" },
+      { key: "status", label: "Status" },
+      { key: "reason", label: "Reason" },
+    ],
+    rows,
+  });
+  showToast("Leave statement Excel workbook downloaded ✓", "mint");
 }
 
 function printLeaveStatement() {

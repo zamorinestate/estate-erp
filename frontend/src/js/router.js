@@ -95,6 +95,7 @@ import { renderVendorDocuments, initVendorDocuments } from "./pages/vendorDocume
 import { renderVendorReports, initVendorReports } from "./pages/vendorReports.js";
 import { renderVendorNotifications, initVendorNotifications } from "./pages/vendorNotifications.js";
 import { renderVendorProfile, initVendorProfile } from "./pages/vendorProfile.js";
+import { renderExportCentre, wireExportCentre } from "./pages/exportCentre.js";
 import { renderFlowbiteFooter } from "./flowbiteUtils.js";
 
 
@@ -356,6 +357,19 @@ async function renderPage() {
       "data-recovery": "trash",
       "admin": "admin",
       "system-administration": "admin",
+      "mailops": "mailops",
+      "communications": "mailops",
+      "health": "health",
+      "system-health": "health",
+      "risk": "risk",
+      "risk-audit": "risk",
+      "compliance": "compliance",
+      "governance": "governance",
+      "master-data": "master-data",
+      "bcdr": "bcdr",
+      "continuity": "bcdr",
+      "cyber": "privacy-cyber",
+      "privacy-cyber": "privacy-cyber",
     };
 
     const targetSection = sectionMap[sub] || (sub === "" ? "overview" : sub);
@@ -377,6 +391,71 @@ async function renderPage() {
         content.innerHTML = renderAdmin();
         await wireAdmin(content);
       }
+      return;
+    }
+
+    if (targetSection === "mailops") {
+      if (state.role !== ROLES.MASTER || !getIsPrimaryMaster()) {
+        content.innerHTML = renderNotAvailable();
+      } else {
+        content.innerHTML = renderMailOpsCommandCentre();
+        wireMailOpsCommandCentre(content);
+      }
+      return;
+    }
+
+    if (targetSection === "health") {
+      content.innerHTML = renderSystemHealthPage();
+      initSystemHealthPage();
+      return;
+    }
+
+    if (targetSection === "devices") {
+      setCafeDevicesActiveTab?.("overview");
+      content.innerHTML = renderCafeOperationsDevices("overview");
+      wireCafeOperationsDevices(content, "overview");
+      return;
+    }
+
+    if (targetSection === "risk") {
+      setOwnerRiskAuditSection?.("overview");
+      content.innerHTML = renderOwnerRiskAudit();
+      wireOwnerRiskAudit();
+      return;
+    }
+
+    if (targetSection === "compliance") {
+      setOwnerComplianceSection?.("overview");
+      content.innerHTML = renderOwnerCompliance();
+      wireOwnerCompliance();
+      return;
+    }
+
+    if (targetSection === "governance") {
+      setOwnerGovernanceDelegationSection?.("overview");
+      content.innerHTML = renderOwnerGovernanceDelegation();
+      initOwnerGovernanceDelegationEvents();
+      return;
+    }
+
+    if (targetSection === "master-data") {
+      setOwnerMasterDataSection?.("overview");
+      content.innerHTML = renderOwnerMasterData();
+      initOwnerMasterDataEvents();
+      return;
+    }
+
+    if (targetSection === "bcdr") {
+      setOwnerBcdrSection?.("overview");
+      content.innerHTML = renderOwnerBcdr();
+      initOwnerBcdrEvents();
+      return;
+    }
+
+    if (targetSection === "privacy-cyber") {
+      setOwnerPrivacyCyberSection?.("overview");
+      content.innerHTML = renderOwnerPrivacyCyber();
+      initOwnerPrivacyCyberEvents();
       return;
     }
 
@@ -488,8 +567,14 @@ async function renderPage() {
       break;
 
     case "pos":
-      content.innerHTML = renderPOS();
-      await wirePOS(content);
+      if (subroute === "dept-orders" || subroute === "department-orders") {
+        setDepartmentOrdersActiveTab?.("overview");
+        content.innerHTML = renderDepartmentOrders(subroute);
+        wireDepartmentOrders(content, subroute);
+      } else {
+        content.innerHTML = renderPOS();
+        await wirePOS(content);
+      }
       break;
 
     case "bills":
@@ -499,9 +584,15 @@ async function renderPage() {
       break;
 
     case "inventory":
-      setInventoryActiveTab?.(subroute || "overview");
-      content.innerHTML = renderInventory(subroute);
-      wireInventory(content, subroute);
+      if (subroute === "food-safety" || subroute === "safety" || subroute === "recall") {
+        setOwnerFoodSafetySection?.("overview");
+        content.innerHTML = renderOwnerFoodSafety();
+        wireOwnerFoodSafety();
+      } else {
+        setInventoryActiveTab?.(subroute || "overview");
+        content.innerHTML = renderInventory(subroute);
+        wireInventory(content, subroute);
+      }
       break;
 
     case "expenses":
@@ -511,9 +602,29 @@ async function renderPage() {
       break;
 
     case "finance":
-      if (state.role === ROLES.OWNER) {
-        content.innerHTML = renderOwnerFinanceSummary();
-        await wireOwnerFinanceSummary(content);
+      if (subroute === "bills" || subroute === "receipts") {
+        setBillsActiveTab?.("overview");
+        content.innerHTML = renderOwnerBills(subroute);
+        await wireOwnerBills(content, subroute);
+      } else if (subroute === "passbook" || subroute === "treasury") {
+        if (
+          (state.role === ROLES.MASTER && !getIsPrimaryMaster()) ||
+          (state.role !== ROLES.MASTER && state.role !== ROLES.OWNER)
+        ) {
+          content.innerHTML = renderNotAvailable();
+        } else {
+          content.innerHTML = renderPassbook(subroute);
+          await wirePassbook(content, subroute);
+        }
+      } else if (state.role === ROLES.OWNER) {
+        if (subroute === "planning" || subroute === "budget" || subroute === "capex") {
+          setOwnerPlanningSection?.("overview");
+          content.innerHTML = renderOwnerPlanning();
+          await wireOwnerPlanning(content);
+        } else {
+          content.innerHTML = renderOwnerFinanceSummary();
+          await wireOwnerFinanceSummary(content);
+        }
       } else {
         setFinanceActiveTab?.(subroute || "overview");
         content.innerHTML = renderFinance(subroute);
@@ -565,9 +676,15 @@ async function renderPage() {
       break;
 
     case "employees":
-      setEmployeesActiveTab?.(subroute || "overview");
-      content.innerHTML = renderEmployees(subroute);
-      wireEmployees(content, subroute);
+      if (subroute === "academy" || subroute === "training" || subroute === "sop") {
+        setOwnerAcademySection?.("overview");
+        content.innerHTML = renderOwnerAcademy();
+        initOwnerAcademyEvents();
+      } else {
+        setEmployeesActiveTab?.(subroute || "overview");
+        content.innerHTML = renderEmployees(subroute);
+        wireEmployees(content, subroute);
+      }
       break;
 
     case "employee-profile":
@@ -592,15 +709,44 @@ async function renderPage() {
       break;
 
     case "reports":
-      setReportsActiveTab?.(subroute || "overview");
-      content.innerHTML = renderReports(subroute);
-      wireReports(content, subroute);
+      if (subroute === "utilities" || subroute === "utilities-waste" || subroute === "energy") {
+        setOwnerUtilitiesWasteSection?.("overview");
+        content.innerHTML = renderOwnerUtilitiesWaste();
+        initOwnerUtilitiesWasteEvents();
+      } else {
+        setReportsActiveTab?.(subroute || "overview");
+        content.innerHTML = renderReports(subroute);
+        wireReports(content, subroute);
+      }
       break;
 
+    case "exports":
+    case "export-centre": {
+      const isPrimary = getIsPrimaryMaster();
+      const isOwner = state.role === ROLES.OWNER || state.role === "owner";
+      if (!isPrimary && !isOwner) {
+        content.innerHTML = renderNotAvailable();
+      } else {
+        content.innerHTML = renderExportCentre();
+        await wireExportCentre(content);
+      }
+      break;
+    }
+
     case "admin":
-      setAdminActiveTab?.(subroute || "overview");
-      content.innerHTML = renderAdmin(subroute);
-      await wireAdmin(content, subroute);
+      if (subroute === "assets" || subroute === "maintenance") {
+        setAssetsActiveTab?.("overview");
+        content.innerHTML = renderAssets(subroute);
+        wireAssets(content, subroute);
+      } else if (subroute === "quality" || subroute === "compliance") {
+        setQualityActiveTab?.("overview");
+        content.innerHTML = renderQuality(subroute);
+        wireQuality(content, subroute);
+      } else {
+        setAdminActiveTab?.(subroute || "overview");
+        content.innerHTML = renderAdmin(subroute);
+        await wireAdmin(content, subroute);
+      }
       break;
 
     case "org-identity":
@@ -712,9 +858,15 @@ async function renderPage() {
 
     case "owner-menu-pricing":
     case "menu-pricing":
-      setOwnerMenuPricingSection(subroute || "matrix");
-      content.innerHTML = renderOwnerMenuPricing();
-      initOwnerMenuPricingEvents();
+      if (subroute === "customers" || subroute === "customer-loyalty" || subroute === "loyalty") {
+        setOwnerCustomerLoyaltySection?.("analytics");
+        content.innerHTML = renderOwnerCustomerLoyalty();
+        initOwnerCustomerLoyaltyEvents();
+      } else {
+        setOwnerMenuPricingSection(subroute || "matrix");
+        content.innerHTML = renderOwnerMenuPricing();
+        initOwnerMenuPricingEvents();
+      }
       break;
 
     case "owner-customer-loyalty":
@@ -739,8 +891,14 @@ async function renderPage() {
       break;
 
     case "approvals":
-      content.innerHTML = renderTasks({ title: "Approvals Waiting on You" });
-      wireTasks(content);
+      if (subroute === "complaints" || subroute === "recovery") {
+        setOwnerComplaintsSection?.("overview");
+        content.innerHTML = renderOwnerComplaints();
+        initOwnerComplaintsEvents();
+      } else {
+        content.innerHTML = renderTasks({ title: "Action Centre" });
+        wireTasks(content);
+      }
       break;
 
     case "performance":
@@ -797,9 +955,15 @@ async function renderPage() {
       break;
 
     case "procurement":
-      setProcurementActiveTab?.(subroute || "overview");
-      content.innerHTML = renderProcurement(subroute);
-      wireProcurement(content, subroute);
+      if (subroute === "supplier-intelligence" || subroute === "intelligence") {
+        setOwnerSupplierSection?.("overview");
+        content.innerHTML = renderOwnerSupplierIntelligence();
+        initOwnerSupplierIntelligenceEvents();
+      } else {
+        setProcurementActiveTab?.(subroute || "overview");
+        content.innerHTML = renderProcurement(subroute);
+        wireProcurement(content, subroute);
+      }
       break;
 
     case "mailops":
@@ -808,9 +972,15 @@ async function renderPage() {
       break;
 
     case "menu":
-      setMenuActiveTab?.(subroute || "overview");
-      content.innerHTML = renderMenuManagement(subroute);
-      wireMenuManagement(content, subroute);
+      if (subroute === "customers" || subroute === "loyalty") {
+        setCustomersActiveTab?.("overview");
+        content.innerHTML = renderCustomers(subroute);
+        wireCustomers(content, subroute);
+      } else {
+        setMenuActiveTab?.(subroute || "overview");
+        content.innerHTML = renderMenuManagement(subroute);
+        wireMenuManagement(content, subroute);
+      }
       break;
 
     case "customers":

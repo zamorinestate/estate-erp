@@ -85,6 +85,7 @@ router.post('/reservations', createReservation);
 // Integrity & Analytics
 router.get('/integrity', runIntegrityAudit);
 router.get('/analytics', getAnalytics);
+router.get('/export', exportPassbookPdf);
 router.get('/export/pdf', exportPassbookPdf);
 
 module.exports = router;

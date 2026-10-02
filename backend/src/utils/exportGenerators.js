@@ -412,8 +412,8 @@ function generateXlsx({ sheetName = 'Report', reportTitle = 'Export', columns = 
         const rawVal = row[col.key];
 
         if (typeof rawVal === 'number' && !isNaN(rawVal)) {
-          // Check if it represents currency (e.g. key contains 'paisa', 'amount', 'total', 'price')
-          const isCurrency = /(?:paisa|amount|total|price|gross|net|cost)/i.test(col.key);
+          // Check if it represents currency (e.g. key contains 'paisa', 'amount', 'total', 'price', 'debit', 'credit', 'balance')
+          const isCurrency = /(?:paisa|amount|total|price|gross|net|cost|debit|credit|balance)/i.test(col.key);
           const styleId = isCurrency ? 3 : 2;
           const displayVal = col.key.toLowerCase().endsWith('paisa') ? (rawVal / 100) : rawVal;
           sheetXml += `<c r="${cellRef}" t="n" s="${styleId}"><v>${displayVal}</v></c>`;

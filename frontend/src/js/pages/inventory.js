@@ -8,6 +8,7 @@ import { apiGet, apiPost, apiPatch } from "../apiClient.js";
 import { state } from "../state.js";
 import { showToast, openModal, renderCafeContextStrip, renderChildHeader, renderModuleErrorState } from "../components.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview";
 let liveOverview = null;
@@ -88,7 +89,6 @@ export function renderInventory(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; color:var(--ink); margin:0;">Inventory &amp; Raw Material Stock</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-011 INV</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0;">Global item catalogue, per-café stock levels, replenishment PAR, batch lot FEFO, transfers, and food recall containment.</p>
         </div>
@@ -187,45 +187,69 @@ function renderOverviewContentHtml() {
   };
   const isCafeAdmin = state.user?.role === "CAFE_ADMIN";
 
-  const invTiles = [
+  // Conceptual Level 1: Daily Operations
+  const dailyTiles = [
     { id: "stock-by-cafe", icon: "📦", title: "Stock Levels", subtitle: "Multi-café on-hand, reserved & available balances", badge: `${kpis.totalActiveSkus || 0} SKUs`, badgeType: "accent" },
-    { id: "global-items", icon: "📋", title: "Global Item Master", subtitle: "Global item catalogue, UOM conversions & specs", badge: "Catalogue", badgeType: "" },
-    { id: "replenishment", icon: "📊", title: "Replenishment & PAR", subtitle: "Safety buffers, PAR thresholds & auto-order triggers", badge: `${kpis.lowStockCount || 0} Low`, badgeType: kpis.lowStockCount > 0 ? "warning" : "success" },
-    { id: "receipts", icon: "📥", title: "Receipts & Put-Away", subtitle: "Goods receipts from purchase orders & bin put-away", badge: "Live POs", badgeType: "" },
-    { id: "movements", icon: "📜", title: "Stock Ledger", subtitle: "Double-entry transaction audit & ledger logs", badge: "Ledger", badgeType: "" },
-    { id: "lots-expiry", icon: "⏳", title: "Lots & FEFO Expiry", subtitle: "Batch lot numbers, shelf life tracking & expiry alerts", badge: "FEFO", badgeType: "success" },
-    { id: "transfers", icon: "🚚", title: "Inter-Café Transfers", subtitle: "Transfer orders, transit dispatch & branch receipts", badge: `${kpis.inTransitQuantity || 0} In-Transit`, badgeType: "" },
-    { id: "reservations", icon: "🔒", title: "Reservations", subtitle: "Earmarked stock allocations & production hold", badge: "Active", badgeType: "" },
-    { id: "counts", icon: "⚖️", title: "Cycle Counts", subtitle: "Stocktakes, blind audits & variance reconciliation", badge: `${kpis.pendingCountsApproval || 0} Pending`, badgeType: "" },
+    { id: "replenishment", icon: "📊", title: "Low Stock / PAR", subtitle: "Safety buffers, PAR thresholds & auto-order triggers", badge: `${kpis.lowStockCount || 0} Low`, badgeType: kpis.lowStockCount > 0 ? "warning" : "success" },
+    { id: "receipts", icon: "📥", title: "Receiving & Put-Away", subtitle: "Goods receipts from purchase orders & bin put-away", badge: "Live POs", badgeType: "" },
     { id: "wastage", icon: "🗑️", title: "Wastage & Adjustments", subtitle: "Spoilage logs, preparation loss & damage write-offs", badge: "Logged", badgeType: "" },
+  ];
+
+  // Conceptual Level 2: Control & Governance
+  const controlTiles = [
+    { id: "movements", icon: "📜", title: "Stock Ledger", subtitle: "Double-entry transaction audit & ledger logs", badge: "Ledger", badgeType: "" },
+    { id: "counts", icon: "⚖️", title: "Stock Counts", subtitle: "Stocktakes, blind audits & variance reconciliation", badge: `${kpis.pendingCountsApproval || 0} Pending`, badgeType: "" },
+    { id: "transfers", icon: "🚚", title: "Inter-Café Transfers", subtitle: "Transfer orders, transit dispatch & branch receipts", badge: `${kpis.inTransitQuantity || 0} In-Transit`, badgeType: "" },
+    { id: "global-items", icon: "📋", title: "Global Item Master", subtitle: "Global item catalogue, UOM conversions & specs", badge: "Catalogue", badgeType: "" },
+  ];
+
+  // Conceptual Level 3: Advanced Intelligence & Traceability
+  const advancedTiles = [
+    { id: "lots-expiry", icon: "⏳", title: "Lots & FEFO Expiry", subtitle: "Batch lot numbers, shelf life tracking & expiry alerts", badge: "FEFO", badgeType: "success" },
+    { id: "reservations", icon: "🔒", title: "Reservations", subtitle: "Earmarked stock allocations & production hold", badge: "Active", badgeType: "" },
     { id: "consumption-variance", icon: "☕", title: "Recipe Variance", subtitle: "Theoretical POS depletion vs physical stock variance", badge: "COGS Mapped", badgeType: "success" },
+    ...(!isCafeAdmin ? [
+      { id: "recalls", icon: "🛡️", title: "Food Safety & Recall", subtitle: "Lot containment & food safety quarantine logs", badge: `${kpis.activeRecallsCount || 0} Recalls`, badgeType: kpis.activeRecallsCount > 0 ? "danger" : "success" },
+    ] : []),
     { id: "valuation", icon: "💰", title: "Valuation & Reports", subtitle: "Weighted average cost valuations & asset balance", badge: fmtInr(kpis.totalValuationPaisa), badgeType: "success" },
     ...(!isCafeAdmin ? [
-      { id: "recalls", icon: "🛡️", title: "Recall & Traceability", subtitle: "Lot containment & food safety quarantine logs", badge: `${kpis.activeRecallsCount || 0} Recalls`, badgeType: kpis.activeRecallsCount > 0 ? "danger" : "success" },
       { id: "integrity", icon: "🔒", title: "Inventory Integrity", subtitle: "Invariant verification & negative stock guards", badge: "Zero Violations", badgeType: "success" },
     ] : []),
   ];
 
-  return `
-    <div style="display:flex; flex-direction:column; gap:24px;">
-      <!-- Control Centre Button Hub Section -->
-      <div class="module-hub-section">
-        <h3 class="module-hub-section-title">Inventory &amp; Stock Workspaces</h3>
-        <div class="module-tile-grid">
-          ${invTiles.map((t) => `
-            <button class="module-hub-tile" data-inv-hub-tile="${t.id}" type="button">
-              <div class="module-tile-icon-box">${t.icon}</div>
-              <div class="module-tile-content">
-                <div class="module-tile-title-row">
-                  <span class="module-tile-title">${t.title}</span>
-                  ${t.badge ? `<span class="module-tile-badge ${t.badgeType}">${t.badge}</span>` : ""}
-                </div>
-                <div class="module-tile-sub">${t.subtitle}</div>
-              </div>
-            </button>
-          `).join("")}
-        </div>
+  const renderTileSection = (title, subtitle, tiles) => `
+    <div class="module-hub-section" style="margin-bottom: 20px;">
+      <div style="margin-bottom: 10px;">
+        <h3 class="module-hub-section-title" style="margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: 0.05em;">${title}</h3>
+        <p style="font-size: 12px; color: var(--muted); margin: 2px 0 0 0;">${subtitle}</p>
       </div>
+      <div class="module-tile-grid">
+        ${tiles.map((t) => `
+          <button class="module-hub-tile" data-inv-hub-tile="${t.id}" type="button">
+            <div class="module-tile-icon-box">${t.icon}</div>
+            <div class="module-tile-content">
+              <div class="module-tile-title-row">
+                <span class="module-tile-title">${t.title}</span>
+                ${t.badge ? `<span class="module-tile-badge ${t.badgeType}">${t.badge}</span>` : ""}
+              </div>
+              <div class="module-tile-sub">${t.subtitle}</div>
+            </div>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+
+  return `
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <!-- Conceptual Level 1: Daily Operations -->
+      ${renderTileSection("Daily Operations", "Fast-lane store stock takes, receiving, and replenishment alerts", dailyTiles)}
+
+      <!-- Conceptual Level 2: Control & Governance -->
+      ${renderTileSection("Control & Governance", "Material movement ledger, cycle counts, inter-store transfers, and master catalog", controlTiles)}
+
+      <!-- Conceptual Level 3: Advanced Intelligence & Traceability -->
+      ${renderTileSection("Advanced Intelligence & Traceability", "FEFO expiration tracking, batch lots, recipe variance, and quarantine controls", advancedTiles)}
 
       <!-- Top KPI Grid -->
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
@@ -987,9 +1011,9 @@ async function renderMovementsTab(wrap) {
         icon: "📜",
         backBtnId: "inv-back-to-hub-btn",
         actionsHtml: `
-          <button id="btn-export-movements-csv" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
+          <button id="btn-export-movements-xlsx" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-            Export Ledger (CSV)
+            Export Ledger (Excel)
           </button>
         `,
       })}
@@ -1152,18 +1176,27 @@ async function loadMovementsData(wrap) {
   `;
 
   // Wire export button
-  const exportBtn = wrap.querySelector("#btn-export-movements-csv");
+  const exportBtn = wrap.querySelector("#btn-export-movements-xlsx");
   if (exportBtn) {
     exportBtn.addEventListener("click", () => {
-      const csv = "Movement ID,Timestamp,Cafe ID,Item Code,Item Name,Transaction Type,Qty Change,Balance After,Reason\n" +
-        filtered.map((m) => `"${m.movementId}","${m.performedAt}","${m.cafeId}","${m.itemId}","${m.itemName || ''}","${m.movementType}",${m.quantityBase},${m.balanceAfterBase},"${(m.reason || '').replace(/"/g, '""')}"`).join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `stock_movements_ledger_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      showToast("Stock movements ledger CSV exported.", "success");
+      exportToXlsx({
+        filename: `stock_movements_ledger_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        sheetName: "Movements",
+        reportTitle: "Stock Movements Ledger",
+        columns: [
+          { key: "movementId", label: "Movement ID" },
+          { key: "performedAt", label: "Timestamp" },
+          { key: "cafeId", label: "Cafe ID" },
+          { key: "itemId", label: "Item Code" },
+          { key: "itemName", label: "Item Name" },
+          { key: "movementType", label: "Transaction Type" },
+          { key: "quantityBase", label: "Qty Change", type: "number" },
+          { key: "balanceAfterBase", label: "Balance After", type: "number" },
+          { key: "reason", label: "Reason" },
+        ],
+        rows: filtered,
+      });
+      showToast("Stock movements ledger Excel workbook exported.", "success");
     });
   }
 }
@@ -2061,9 +2094,9 @@ async function renderValuationTab(wrap) {
         icon: "💰",
         backBtnId: "inv-back-to-hub-btn",
         actionsHtml: `
-          <button id="btn-export-csv" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
+          <button id="btn-export-xlsx" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-            Export Valuation (CSV)
+            Export Valuation (Excel)
           </button>
         `,
       })}
@@ -2133,18 +2166,29 @@ async function loadValuationData(wrap) {
     </div>
   `;
 
-  const exportBtn = wrap.querySelector("#btn-export-csv");
+  const exportBtn = wrap.querySelector("#btn-export-xlsx");
   if (exportBtn) {
     exportBtn.addEventListener("click", () => {
-      const csv = "Café,SKU,Item Name,Category,On Hand,Unit Cost (₹),Total Value (₹)\n" +
-        rows.map((r) => `"${r.cafeId}","${r.sku}","${r.name}","${r.category}",${r.onHand},${(r.unitCostPaisa/100).toFixed(2)},${(r.totalValuePaisa/100).toFixed(2)}`).join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `inventory_valuation_${new Date().toISOString().slice(0,10)}.csv`;
-      a.click();
-      showToast("Valuation CSV exported.", "success");
+      exportToXlsx({
+        filename: `inventory_valuation_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        sheetName: "Valuation",
+        reportTitle: "Inventory Valuation Report",
+        columns: [
+          { key: "cafeId", label: "Café" },
+          { key: "sku", label: "SKU" },
+          { key: "name", label: "Item Name" },
+          { key: "category", label: "Category" },
+          { key: "onHand", label: "On Hand", type: "number" },
+          { key: "unitCostInr", label: "Unit Cost (₹)", type: "currency" },
+          { key: "totalValueInr", label: "Total Value (₹)", type: "currency" },
+        ],
+        rows: rows.map((r) => ({
+          ...r,
+          unitCostInr: r.unitCostPaisa / 100,
+          totalValueInr: r.totalValuePaisa / 100,
+        })),
+      });
+      showToast("Valuation Excel workbook exported.", "success");
     });
   }
 }

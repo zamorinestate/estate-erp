@@ -3,7 +3,6 @@
 //
 // Shared canonical POS engine supporting:
 //   - Primary Master (Full org scope, void authority)
-//   - Normal Master (Full org scope, void authority)
 //   - Cafe Operations / CAFE_ADMIN (Strict single-cafe scope, Operator Session attribution,
 //     no void authority, fixed device context)
 // =============================================================================
@@ -11,6 +10,7 @@ import { apiGet, apiPost } from "../apiClient.js";
 import { showToast, openModal, closeModal, confirmAction } from "../components.js";
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
+import { navigate } from "../router.js";
 import { generateInvoicePdf } from "../utils/invoicePdfGenerator.js";
 import { offlineManager, QUEUE_STATUSES } from "../utils/offlineManager.js";
 import { generateQR, buildUpiUri, initClipboard, initSpeedDial } from "../flowbiteUtils.js";
@@ -56,6 +56,24 @@ function getOperatorSession() {
 
 // Master menu catalogue (Loaded dynamically from database)
 let _menuCatalogue = [];
+let _isCatalogLoaded = false;
+let _lastLoadedCafeId = "";
+
+function loadCachedCatalog(cafeId) {
+  if (typeof localStorage !== "undefined" && cafeId) {
+    try {
+      const raw = localStorage.getItem(`zamorin_pos_catalog_${cafeId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) {
+          _menuCatalogue = parsed;
+          _isCatalogLoaded = true;
+          _lastLoadedCafeId = cafeId;
+        }
+      }
+    } catch {}
+  }
+}
 
 // POS State
 let cart = []; // Array of { lineId, item, qty, modifiers, notes }
@@ -271,6 +289,9 @@ function renderTerminalView() {
           </button>
           <button class="btn btn-sm btn-secondary" id="view-past-orders-btn" style="font-size:12px;padding:6px 12px;font-weight:700;min-height:32px;" type="button">
             📜 Past Orders
+          </button>
+          <button class="pos-service-mode-btn" id="pos-dept-orders-btn" style="padding:6px 12px;font-size:12px;" type="button" title="Open Department Orders">
+            🏢 Dept Orders
           </button>
           <button class="pos-service-mode-btn" id="toggle-density-btn" style="padding:6px 10px;font-size:12px;" title="Toggle Compact Mode" type="button">
             ${isCompactMode ? "🖼️ Visual" : "☷ Compact"}
@@ -928,6 +949,30 @@ export async function wirePOS(root) {
     // REC-13: Fetch pending offline sales count from IndexedDB
     const cafeId = resolvePosCafeId();
     _offlinePendingCount = await offlineManager.getPendingCount(cafeId);
+
+    // Dynamic POS menu catalogue pipeline (§28)
+    if (cafeId) {
+      if (!_isCatalogLoaded || _lastLoadedCafeId !== cafeId) {
+        loadCachedCatalog(cafeId);
+      }
+      try {
+        const catRes = await apiGet(`/pos/catalog/${encodeURIComponent(cafeId)}`);
+        const items = catRes?.items || catRes?.data || [];
+        if (Array.isArray(items) && items.length) {
+          _menuCatalogue = items;
+          _isCatalogLoaded = true;
+          _lastLoadedCafeId = cafeId;
+          if (typeof localStorage !== "undefined") {
+            try {
+              localStorage.setItem(`zamorin_pos_catalog_${cafeId}`, JSON.stringify(items));
+            } catch {}
+          }
+          refreshPOSView(root);
+        }
+      } catch (catErr) {
+        console.warn("[POS] Catalog load notice:", catErr.message);
+      }
+    }
   } catch (e) {
     console.warn("POS background data load notice:", e.message);
   }
@@ -1030,6 +1075,10 @@ function wirePOSEventListeners(root) {
       refreshPOSView(root);
     });
   }
+
+  root.querySelector("#pos-dept-orders-btn")?.addEventListener("click", () => {
+    navigate("dept-orders");
+  });
 
 
   root.querySelectorAll("[data-bump-ticket]").forEach((btn) => {
@@ -2634,8 +2683,12 @@ function refreshPOSView(root) {
   const activeId = document.activeElement?.id || null;
   const cursorStart = document.activeElement?.selectionStart;
   const cursorEnd = document.activeElement?.selectionEnd;
-  const content = root.querySelector(".pos-workspace, .past-orders-workspace, .pos-grid-layout") || root;
-  content.innerHTML = renderPOS();
+  const workspace = root.querySelector(".pos-workspace, .past-orders-workspace");
+  if (workspace) {
+    workspace.outerHTML = renderPOS();
+  } else {
+    root.innerHTML = renderPOS();
+  }
   wirePOSEventListeners(root);
   if (activeId) {
     const el = root.querySelector("#" + activeId);

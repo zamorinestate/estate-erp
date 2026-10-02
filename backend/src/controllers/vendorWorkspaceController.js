@@ -31,6 +31,7 @@ const { Notification } = require('../models/Notification');
 const { logSecurityEvent } = require('../services/securityLogger');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { generateXlsx } = require('../utils/exportGenerators');
 
 function getIstDateString(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -3081,6 +3082,136 @@ const downloadVendorStatementCsv = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/vendor/statement/xlsx
+ * VEN-SCR-006: Genuine OpenXML (.xlsx) Excel export for Vendor Account Statement
+ */
+const downloadVendorStatementXlsx = asyncHandler(async (req, res) => {
+  const { vendorId, organisationId } = req.auth;
+  const vendor = await Vendor.findOne({ organisationId, vendorId }).lean();
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', 'The requested vendor account was not found.');
+  }
+
+  const approvedCafes = (vendor.approvedCafeIds || []).map((id) => String(id).trim().toUpperCase());
+  const { cafeId, fromDate, toDate, entryType, search } = req.query;
+
+  let scopedCafeId = null;
+  if (cafeId && cafeId !== 'ALL' && cafeId !== 'ORGANISATION_WIDE') {
+    scopedCafeId = String(cafeId).trim().toUpperCase();
+    if (!approvedCafes.includes(scopedCafeId)) {
+      throw new ApiError(403, 'CROSS_CAFE_ACCESS_DENIED', 'Your vendor account is not authorized to access transactions for the requested café.');
+    }
+  }
+
+  const todayStr = getIstDateString();
+  const effectiveToDate = toDate && /^\d{4}-\d{2}-\d{2}$/.test(toDate) ? toDate : todayStr;
+  let effectiveFromDate = fromDate && /^\d{4}-\d{2}-\d{2}$/.test(fromDate) ? fromDate : null;
+  if (!effectiveFromDate) {
+    const d = new Date(effectiveToDate);
+    d.setDate(d.getDate() - 30);
+    effectiveFromDate = d.toISOString().slice(0, 10);
+  }
+
+  const baseFilter = {
+    organisationId,
+    vendorId,
+    isReversed: false,
+    entryDate: { $gte: effectiveFromDate, $lte: effectiveToDate },
+  };
+
+  if (scopedCafeId) {
+    baseFilter.$or = [{ cafeId: scopedCafeId }, { cafeId: 'ORGANISATION_WIDE' }];
+  }
+  if (entryType && entryType !== 'ALL') {
+    baseFilter.entryType = entryType;
+  }
+  if (search && search.trim()) {
+    const s = search.trim();
+    const rx = new RegExp(s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&'), 'i');
+    baseFilter.$and = [
+      {
+        $or: [
+          { referenceNumber: rx },
+          { ledgerEntryId: rx },
+          { purchaseOrderId: rx },
+          { supplierInvoiceNumber: rx },
+          { paymentId: rx },
+        ],
+      },
+    ];
+  }
+
+  const [entries, cafes] = await Promise.all([
+    VendorLedgerEntry.find(baseFilter).sort({ entryDate: 1, entryTimestamp: 1, _id: 1 }).limit(1000).lean(),
+    Cafe.find({ organisationId }).lean(),
+  ]);
+
+  const cafeMap = {};
+  for (const c of cafes) {
+    cafeMap[c.cafeId] = c.name || c.cafeName || c.cafeId;
+  }
+
+  const columns = [
+    { key: 'entryDate', label: 'Date' },
+    { key: 'ledgerEntryId', label: 'Entry ID' },
+    { key: 'reference', label: 'Reference' },
+    { key: 'entryType', label: 'Transaction Type' },
+    { key: 'purchaseOrderId', label: 'PO Reference' },
+    { key: 'supplierInvoiceNumber', label: 'Invoice Number' },
+    { key: 'paymentId', label: 'Payment ID' },
+    { key: 'cafe', label: 'Cafe' },
+    { key: 'debit', label: 'Debit (INR)', isNum: true },
+    { key: 'credit', label: 'Credit (INR)', isNum: true },
+    { key: 'balance', label: 'Running Balance (INR)', isNum: true },
+    { key: 'description', label: 'Description' },
+  ];
+
+  const rows = entries.map((e) => ({
+    entryDate: e.entryDate,
+    ledgerEntryId: e.ledgerEntryId,
+    reference: e.referenceNumber || e.ledgerEntryId,
+    entryType: e.entryType,
+    purchaseOrderId: e.purchaseOrderId || '—',
+    supplierInvoiceNumber: e.supplierInvoiceNumber || '—',
+    paymentId: e.paymentId || '—',
+    cafe: cafeMap[e.cafeId] || e.cafeId || 'Universal',
+    debit: Number(e.debitPaisa || 0) / 100,
+    credit: Number(e.creditPaisa || 0) / 100,
+    balance: Number(e.runningBalancePaisa || 0) / 100,
+    description: e.notes ? String(e.notes).replace(/USR-[A-Z0-9_-]+/gi, '[Authorized Officer]') : '',
+  }));
+
+  const xlsxResult = generateXlsx({
+    sheetName: 'Vendor Statement',
+    reportTitle: `Vendor Account Statement — ${vendor.vendorName || vendor.name || vendorId}`,
+    columns,
+    rows,
+    branding: {
+      period: `${effectiveFromDate} to ${effectiveToDate}`,
+      scope: scopedCafeId || 'All Approved Cafés',
+    },
+  });
+
+  logSecurityEvent({
+    correlationId: req.correlationId,
+    organisationId,
+    cafeId: scopedCafeId,
+    actorId: req.auth.userId,
+    action: 'VENDOR_STATEMENT_EXPORTED',
+    targetType: 'STATEMENT_XLSX',
+    targetId: vendorId,
+    outcome: 'SUCCESS',
+    severity: 'INFO',
+    metadata: { rowCount: entries.length },
+  });
+
+  const filename = `VendorStatement-${vendorId}-${effectiveFromDate}-to-${effectiveToDate}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.status(200).send(xlsxResult.buffer);
+});
+
+/**
  * GET /api/v1/vendor/statement/pdf
  * Generates official vector A4 Vendor Account Statement.
  */
@@ -3687,6 +3818,172 @@ const downloadVendorReceivablesCsv = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="VendorReceivables-${vendorId}-${todayStr}.csv"`);
   return res.status(200).send(csvContent);
+});
+
+/**
+ * GET /api/v1/vendor/receivables/xlsx
+ * VEN-SCR-007: Genuine OpenXML (.xlsx) Excel export for Vendor Receivables & Ageing
+ */
+const downloadVendorReceivablesXlsx = asyncHandler(async (req, res) => {
+  const { vendorId, organisationId } = req.auth;
+  const vendor = await Vendor.findOne({ organisationId, vendorId }).lean();
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', 'The requested vendor account was not found.');
+  }
+
+  const approvedCafes = (vendor.approvedCafeIds || []).map((id) => String(id).trim().toUpperCase());
+  const { cafeId, bucket, paymentStatus, search } = req.query;
+
+  let scopedCafeId = null;
+  if (cafeId && cafeId !== 'ALL') {
+    scopedCafeId = String(cafeId).trim().toUpperCase();
+    if (!approvedCafes.includes(scopedCafeId)) {
+      throw new ApiError(403, 'CROSS_CAFE_ACCESS_DENIED', 'Your vendor account is not authorized to access transactions for the requested café.');
+    }
+  }
+
+  const todayStr = getIstDateString();
+  const todayTime = new Date(todayStr).getTime();
+
+  const baseFilter = {
+    organisationId,
+    vendorId,
+    outstandingPayableAmountPaisa: { $gt: 0 },
+    paymentStatus: { $ne: 'PAID' },
+  };
+  if (scopedCafeId) {
+    baseFilter.cafeId = scopedCafeId;
+  } else if (approvedCafes.length > 0) {
+    baseFilter.cafeId = { $in: approvedCafes };
+  }
+
+  const [invoices, cafes] = await Promise.all([
+    APInvoice.find(baseFilter).lean(),
+    Cafe.find({ organisationId }).lean(),
+  ]);
+
+  const cafeMap = {};
+  for (const c of cafes) {
+    cafeMap[c.cafeId] = c.name || c.cafeName || c.cafeId;
+  }
+
+  let list = invoices.map((inv) => {
+    const outstanding = Number(inv.outstandingPayableAmountPaisa !== undefined ? inv.outstandingPayableAmountPaisa : (inv.outstandingPaisa || 0));
+    const claimed = Number(inv.supplierClaimedAmountPaisa || inv.totalPaisa || 0);
+    const approved = Number(inv.approvedPayableAmountPaisa || inv.totalPaisa || 0);
+    const held = Number(inv.heldDisputedAmountPaisa || 0);
+    const paid = Number(inv.paidPaisa || 0);
+    const appliedCredits = Number(inv.appliedAdvancePaisa || 0) + Number(inv.appliedCreditPaisa || 0);
+
+    let daysOverdue = 0;
+    let ageingBucket = 'NO_DUE_DATE';
+    if (inv.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(inv.dueDate)) {
+      const dueTime = new Date(inv.dueDate).getTime();
+      daysOverdue = Math.floor((todayTime - dueTime) / (1000 * 60 * 60 * 24));
+      if (daysOverdue <= 0) ageingBucket = 'CURRENT';
+      else if (daysOverdue <= 30) ageingBucket = '1_30';
+      else if (daysOverdue <= 60) ageingBucket = '31_60';
+      else if (daysOverdue <= 90) ageingBucket = '61_90';
+      else ageingBucket = '90_PLUS';
+    }
+
+    return {
+      supplierInvoiceNumber: inv.supplierInvoiceNumber || inv.invoiceId,
+      invoiceId: inv.invoiceId,
+      invoiceDate: inv.invoiceDate || 'N/A',
+      dueDate: inv.dueDate || 'Due date not available',
+      daysOverdue,
+      ageingBucket,
+      cafeName: cafeMap[inv.cafeId] || inv.cafeId,
+      poReferenceId: inv.poReferenceId || 'DIRECT_BILLING',
+      claimedPaisa: claimed,
+      approvedPaisa: approved,
+      heldPaisa: held,
+      paidPaisa: paid,
+      appliedCreditsPaisa: appliedCredits,
+      outstandingPaisa: outstanding,
+      paymentStatus: inv.paymentStatus || 'DUE',
+    };
+  });
+
+  if (bucket && bucket !== 'ALL') {
+    if (bucket === 'HELD') list = list.filter((r) => r.heldPaisa > 0 || r.paymentStatus === 'ON_HOLD');
+    else list = list.filter((r) => r.ageingBucket === bucket);
+  }
+  if (paymentStatus && paymentStatus !== 'ALL') {
+    list = list.filter((r) => r.paymentStatus === paymentStatus);
+  }
+  if (search && search.trim()) {
+    const s = search.trim().toLowerCase();
+    list = list.filter(
+      (r) =>
+        r.supplierInvoiceNumber.toLowerCase().includes(s) ||
+        r.invoiceId.toLowerCase().includes(s) ||
+        r.poReferenceId.toLowerCase().includes(s) ||
+        r.cafeName.toLowerCase().includes(s)
+    );
+  }
+
+  const columns = [
+    { key: 'supplierInvoiceNumber', label: 'Invoice Number' },
+    { key: 'invoiceDate', label: 'Invoice Date' },
+    { key: 'dueDate', label: 'Due Date' },
+    { key: 'daysOverdue', label: 'Days Overdue', isNum: true },
+    { key: 'ageingBucket', label: 'Ageing Bucket' },
+    { key: 'cafeName', label: 'Cafe' },
+    { key: 'poReferenceId', label: 'PO Reference' },
+    { key: 'claimedAmount', label: 'Claimed (INR)', isNum: true },
+    { key: 'approvedAmount', label: 'Approved (INR)', isNum: true },
+    { key: 'heldAmount', label: 'Held / Disputed (INR)', isNum: true },
+    { key: 'paidAmount', label: 'Paid (INR)', isNum: true },
+    { key: 'outstandingAmount', label: 'Outstanding (INR)', isNum: true },
+    { key: 'paymentStatus', label: 'Status' },
+  ];
+
+  const rows = list.map((r) => ({
+    supplierInvoiceNumber: r.supplierInvoiceNumber,
+    invoiceDate: r.invoiceDate,
+    dueDate: r.dueDate,
+    daysOverdue: r.daysOverdue,
+    ageingBucket: r.ageingBucket,
+    cafeName: r.cafeName,
+    poReferenceId: r.poReferenceId,
+    claimedAmount: r.claimedPaisa / 100,
+    approvedAmount: r.approvedPaisa / 100,
+    heldAmount: r.heldPaisa / 100,
+    paidAmount: r.paidPaisa / 100,
+    outstandingAmount: r.outstandingPaisa / 100,
+    paymentStatus: r.paymentStatus,
+  }));
+
+  const xlsxResult = generateXlsx({
+    sheetName: 'Receivables & Ageing',
+    reportTitle: `Vendor Outstanding Receivables — ${vendor.vendorName || vendor.name || vendorId}`,
+    columns,
+    rows,
+    branding: {
+      period: `As of ${todayStr}`,
+      scope: scopedCafeId || 'All Approved Cafés',
+    },
+  });
+
+  logSecurityEvent({
+    correlationId: req.correlationId,
+    organisationId,
+    cafeId: scopedCafeId,
+    actorId: req.auth.userId,
+    action: 'VENDOR_RECEIVABLES_EXPORTED',
+    targetType: 'RECEIVABLES_XLSX',
+    targetId: vendorId,
+    outcome: 'SUCCESS',
+    severity: 'INFO',
+    metadata: { rowCount: list.length },
+  });
+
+  const filename = `VendorReceivables-${vendorId}-${todayStr}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.status(200).send(xlsxResult.buffer);
 });
 
 /**
@@ -4544,6 +4841,120 @@ const downloadVendorAdjustmentsCsv = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/vendor/adjustments/xlsx
+ * Standard OpenXML Excel export for vendor adjustments.
+ */
+const downloadVendorAdjustmentsXlsx = asyncHandler(async (req, res) => {
+  const { vendorId, organisationId } = req.auth;
+  const vendor = await Vendor.findOne({ organisationId, vendorId }).lean();
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', 'The requested vendor account was not found.');
+  }
+
+  const approvedCafes = (vendor.approvedCafeIds || []).map((id) => String(id).trim().toUpperCase());
+  const { cafeId, type, status, search } = req.query;
+
+  let scopedCafeId = null;
+  if (cafeId && cafeId !== 'ALL') {
+    scopedCafeId = String(cafeId).trim().toUpperCase();
+    if (!approvedCafes.includes(scopedCafeId)) {
+      throw new ApiError(403, 'CROSS_CAFE_ACCESS_DENIED', 'Your vendor account is not authorized to access transactions for the requested café.');
+    }
+  }
+
+  const { adjustments: allAdjustments } = await fetchAndFormatVendorAdjustments({
+    organisationId,
+    vendorId,
+    scopedCafeId,
+    approvedCafes,
+  });
+
+  let filtered = allAdjustments;
+  if (type && type !== 'ALL') {
+    const t = String(type).trim().toUpperCase();
+    filtered = filtered.filter((adj) => adj.type === t);
+  }
+  if (status && status !== 'ALL') {
+    const s = String(status).trim().toUpperCase();
+    filtered = filtered.filter((adj) => adj.status === s);
+  }
+  if (search) {
+    const term = String(search).trim().toLowerCase();
+    filtered = filtered.filter(
+      (adj) =>
+        String(adj.reference || '').toLowerCase().includes(term) ||
+        String(adj.purchaseOrderId || '').toLowerCase().includes(term) ||
+        String(adj.grnId || '').toLowerCase().includes(term) ||
+        String(adj.supplierInvoiceNumber || '').toLowerCase().includes(term) ||
+        String(adj.reason || '').toLowerCase().includes(term) ||
+        String(adj.cafeName || '').toLowerCase().includes(term)
+    );
+  }
+
+  const todayStr = getIstDateString();
+  const columns = [
+    { key: 'reference', label: 'Reference' },
+    { key: 'type', label: 'Type' },
+    { key: 'date', label: 'Date' },
+    { key: 'cafeId', label: 'Cafe ID' },
+    { key: 'cafeName', label: 'Cafe Name' },
+    { key: 'purchaseOrderId', label: 'Purchase Order' },
+    { key: 'grnId', label: 'GRN' },
+    { key: 'supplierInvoiceNumber', label: 'Invoice Number' },
+    { key: 'amountInr', label: 'Amount (INR)', isNum: true },
+    { key: 'accountingDirection', label: 'Accounting Direction' },
+    { key: 'financialEffect', label: 'Financial Effect' },
+    { key: 'reason', label: 'Reason' },
+    { key: 'status', label: 'Status' },
+  ];
+
+  const rows = filtered.map((adj) => ({
+    reference: adj.reference || '',
+    type: adj.typeLabel || adj.type || '',
+    date: adj.date || '',
+    cafeId: adj.cafeId || '',
+    cafeName: adj.cafeName || '',
+    purchaseOrderId: adj.purchaseOrderId || 'N/A',
+    grnId: adj.grnId || 'N/A',
+    supplierInvoiceNumber: adj.supplierInvoiceNumber || 'N/A',
+    amountInr: typeof adj.amountPaisa === 'number' ? adj.amountPaisa / 100 : Number(adj.amount || 0),
+    accountingDirection: adj.accountingDirection || '',
+    financialEffect: adj.financialEffect || '',
+    reason: adj.reason || '',
+    status: adj.status || '',
+  }));
+
+  const xlsxResult = generateXlsx({
+    sheetName: 'Vendor Adjustments',
+    reportTitle: `Vendor Adjustments & Notes — ${vendor.vendorName || vendor.name || vendorId}`,
+    columns,
+    rows,
+    branding: {
+      period: `As of ${todayStr}`,
+      scope: scopedCafeId || 'All Approved Cafés',
+    },
+  });
+
+  logSecurityEvent({
+    correlationId: req.correlationId,
+    organisationId,
+    cafeId: scopedCafeId || null,
+    actorId: req.auth.userId,
+    action: 'VENDOR_ADJUSTMENTS_EXPORTED',
+    targetType: 'ADJUSTMENTS_XLSX',
+    targetId: vendorId,
+    outcome: 'SUCCESS',
+    severity: 'INFO',
+    metadata: { rowCount: filtered.length },
+  });
+
+  const filename = `VendorAdjustments-${vendorId}-${todayStr}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.status(200).send(xlsxResult.buffer);
+});
+
+/**
  * GET /api/v1/vendor/adjustments/:adjustmentId/pdf
  * Official A4 vector PDF document for a single adjustment record.
  */
@@ -5143,6 +5554,118 @@ const downloadVendorProductsCsv = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/vendor/products/xlsx
+ * Standard OpenXML Excel export for vendor products catalog.
+ */
+const downloadVendorProductsXlsx = asyncHandler(async (req, res) => {
+  const { vendorId, organisationId } = req.auth;
+  const vendor = await Vendor.findOne({ organisationId, vendorId }).lean();
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', 'The requested vendor account was not found.');
+  }
+
+  const approvedCafes = (vendor.approvedCafeIds || []).map((id) => String(id).trim().toUpperCase());
+  const { cafeId, category, status, search } = req.query;
+
+  let scopedCafeId = null;
+  if (cafeId && cafeId !== 'ALL') {
+    scopedCafeId = String(cafeId).trim().toUpperCase();
+    if (!approvedCafes.includes(scopedCafeId)) {
+      throw new ApiError(403, 'CROSS_CAFE_ACCESS_DENIED', 'Your vendor account is not authorized to access transactions for the requested café.');
+    }
+  }
+
+  const { products: allProducts } = await fetchAndFormatVendorProducts({
+    organisationId,
+    vendorId,
+    scopedCafeId,
+    approvedCafes,
+  });
+
+  let filtered = allProducts;
+  if (category && category !== 'ALL') {
+    const c = String(category).trim().toUpperCase();
+    filtered = filtered.filter((p) => String(p.category || '').toUpperCase() === c);
+  }
+  if (status && status !== 'ALL') {
+    const s = String(status).trim().toUpperCase();
+    filtered = filtered.filter((p) => String(p.status || '').toUpperCase() === s);
+  }
+  if (search) {
+    const term = String(search).trim().toLowerCase();
+    filtered = filtered.filter(
+      (p) =>
+        String(p.productName || '').toLowerCase().includes(term) ||
+        String(p.vendorSku || '').toLowerCase().includes(term) ||
+        String(p.itemId || '').toLowerCase().includes(term) ||
+        String(p.category || '').toLowerCase().includes(term)
+    );
+  }
+
+  const todayStr = getIstDateString();
+  const columns = [
+    { key: 'itemId', label: 'ERP Item Code' },
+    { key: 'vendorSku', label: 'Vendor SKU' },
+    { key: 'productName', label: 'Product Name' },
+    { key: 'category', label: 'Category' },
+    { key: 'brand', label: 'Brand' },
+    { key: 'uom', label: 'UOM' },
+    { key: 'packSize', label: 'Pack Size' },
+    { key: 'hsn', label: 'HSN/SAC' },
+    { key: 'gstRate', label: 'GST Rate (%)', isNum: true },
+    { key: 'purchaseRate', label: 'Approved Purchase Rate (INR)', isNum: true },
+    { key: 'moq', label: 'MOQ', isNum: true },
+    { key: 'leadTimeDays', label: 'Lead Time (Days)', isNum: true },
+    { key: 'status', label: 'Status' },
+  ];
+
+  const rows = filtered.map((p) => ({
+    itemId: p.itemId || '',
+    vendorSku: p.vendorSku || '',
+    productName: p.productName || '',
+    category: p.category || '',
+    brand: p.brand || '',
+    uom: p.uom || '',
+    packSize: p.packSize || '',
+    hsn: p.hsn || '',
+    gstRate: Number(p.gstRate || 0),
+    purchaseRate: typeof p.purchaseRatePaisa === 'number' ? p.purchaseRatePaisa / 100 : Number(p.purchaseRate || 0),
+    moq: Number(p.moq || 1),
+    leadTimeDays: Number(p.leadTimeDays || 0),
+    status: p.status || '',
+  }));
+
+  const xlsxResult = generateXlsx({
+    sheetName: 'Approved Products',
+    reportTitle: `Vendor Approved Products & Pricing — ${vendor.vendorName || vendor.name || vendorId}`,
+    columns,
+    rows,
+    branding: {
+      period: `As of ${todayStr}`,
+      scope: scopedCafeId || 'All Approved Cafés',
+    },
+  });
+
+  logSecurityEvent({
+    correlationId: req.correlationId,
+    organisationId,
+    cafeId: scopedCafeId || null,
+    actorId: req.auth.userId,
+    action: 'VENDOR_PRODUCTS_EXPORTED',
+    targetType: 'PRODUCTS_XLSX',
+    targetId: vendorId,
+    outcome: 'SUCCESS',
+    severity: 'INFO',
+    metadata: { rowCount: filtered.length },
+  });
+
+  const filename = `VendorProducts-${vendorId}-${todayStr}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.status(200).send(xlsxResult.buffer);
+});
+
+/**
  * GET /api/v1/vendor/products/:itemId/pdf
  * Official A4 vector PDF document for a single approved product price schedule.
  */
@@ -5739,6 +6262,115 @@ const downloadVendorDocumentsCsv = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/vendor/documents/xlsx
+ * Standard OpenXML Excel export for vendor commercial documents register.
+ */
+const downloadVendorDocumentsXlsx = asyncHandler(async (req, res) => {
+  const { vendorId, organisationId } = req.auth;
+  const vendor = await Vendor.findOne({ organisationId, vendorId }).lean();
+  if (!vendor) {
+    throw new ApiError(404, 'VENDOR_NOT_FOUND', 'The requested vendor account was not found.');
+  }
+
+  const approvedCafes = (vendor.approvedCafeIds || []).map((id) => String(id).trim().toUpperCase());
+  const { cafeId, type, status, fromDate, toDate, search } = req.query;
+
+  let scopedCafeId = null;
+  if (cafeId && cafeId !== 'ALL') {
+    scopedCafeId = String(cafeId).trim().toUpperCase();
+    if (!approvedCafes.includes(scopedCafeId)) {
+      throw new ApiError(403, 'CROSS_CAFE_ACCESS_DENIED', 'Your vendor account is not authorized to access transactions for the requested café.');
+    }
+  }
+
+  const { documents: allDocs } = await fetchAndFormatVendorDocuments({
+    organisationId,
+    vendorId,
+    scopedCafeId,
+    approvedCafes,
+  });
+
+  let filtered = allDocs;
+  if (type && type !== 'ALL') {
+    const t = String(type).trim().toUpperCase();
+    filtered = filtered.filter((d) => String(d.type || '').toUpperCase() === t);
+  }
+  if (status && status !== 'ALL') {
+    const s = String(status).trim().toUpperCase();
+    filtered = filtered.filter((d) => String(d.status || '').toUpperCase() === s);
+  }
+  if (fromDate && /^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    filtered = filtered.filter((d) => d.date >= fromDate);
+  }
+  if (toDate && /^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    filtered = filtered.filter((d) => d.date <= toDate);
+  }
+  if (search) {
+    const term = String(search).trim().toLowerCase();
+    filtered = filtered.filter(
+      (d) =>
+        String(d.documentNumber || '').toLowerCase().includes(term) ||
+        String(d.description || '').toLowerCase().includes(term) ||
+        String(d.cafeName || '').toLowerCase().includes(term)
+    );
+  }
+
+  const todayStr = getIstDateString();
+  const columns = [
+    { key: 'documentNumber', label: 'Document Number' },
+    { key: 'type', label: 'Type' },
+    { key: 'date', label: 'Date' },
+    { key: 'cafeId', label: 'Cafe ID' },
+    { key: 'cafeName', label: 'Cafe Name' },
+    { key: 'amountInr', label: 'Amount (INR)', isNum: true },
+    { key: 'status', label: 'Status' },
+    { key: 'mimeType', label: 'Format' },
+    { key: 'description', label: 'Description' },
+  ];
+
+  const rows = filtered.map((d) => ({
+    documentNumber: d.documentNumber || '',
+    type: d.typeLabel || d.type || '',
+    date: d.date || '',
+    cafeId: d.cafeId || '',
+    cafeName: d.cafeName || '',
+    amountInr: typeof d.amountPaisa === 'number' ? d.amountPaisa / 100 : Number(d.amount || 0),
+    status: d.status || '',
+    mimeType: d.mimeType || 'application/pdf',
+    description: d.description || '',
+  }));
+
+  const xlsxResult = generateXlsx({
+    sheetName: 'Documents Register',
+    reportTitle: `Vendor Commercial Documents — ${vendor.vendorName || vendor.name || vendorId}`,
+    columns,
+    rows,
+    branding: {
+      period: `As of ${todayStr}`,
+      scope: scopedCafeId || 'All Approved Cafés',
+    },
+  });
+
+  logSecurityEvent({
+    correlationId: req.correlationId,
+    organisationId,
+    cafeId: scopedCafeId || null,
+    actorId: req.auth.userId,
+    action: 'VENDOR_DOCUMENTS_EXPORTED',
+    targetType: 'DOCUMENTS_XLSX',
+    targetId: vendorId,
+    outcome: 'SUCCESS',
+    severity: 'INFO',
+    metadata: { rowCount: filtered.length },
+  });
+
+  const filename = `VendorDocuments-${vendorId}-${todayStr}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.status(200).send(xlsxResult.buffer);
+});
+
+/**
  * GET /api/v1/vendor/documents/:docId/download
  * Universal download dispatcher for any commercial document in the register.
  */
@@ -6137,6 +6769,114 @@ const downloadVendorNotificationsCsv = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   return res.status(200).send(csvContent);
+});
+
+/**
+ * GET /api/v1/vendor/notifications/xlsx
+ * VEN-SCR-012: Genuine OpenXML Excel Export for Vendor Notifications
+ */
+const downloadVendorNotificationsXlsx = asyncHandler(async (req, res) => {
+  const { vendorId, organisationId } = req.auth;
+  const approvedCafeIds = req.auth.approvedCafeIds || [];
+
+  const targetCafeId = req.query.cafeId ? String(req.query.cafeId).trim().toUpperCase() : null;
+  let scopedCafeId = null;
+  if (targetCafeId && targetCafeId !== 'ALL' && targetCafeId !== 'GLOBAL') {
+    scopedCafeId = targetCafeId;
+    if (!approvedCafeIds.includes(scopedCafeId)) {
+      throw new ApiError(403, 'CROSS_CAFE_ACCESS_DENIED', 'Your vendor account is not authorized to access notifications for the requested café.');
+    }
+  }
+
+  const baseRecipientFilter = {
+    organisationId,
+    recipientRole: 'VENDOR',
+    $or: [{ recipientUserId: req.auth.userId }, { recipientUserId: vendorId }],
+  };
+
+  let cafeFilter = {};
+  if (scopedCafeId) {
+    cafeFilter = { $or: [{ cafeId: scopedCafeId }, { cafeId: null }, { cafeId: '' }] };
+  } else {
+    cafeFilter = { $or: [{ cafeId: { $in: approvedCafeIds } }, { cafeId: null }, { cafeId: '' }, { cafeId: { $exists: false } }] };
+  }
+
+  const [notifications, cafes] = await Promise.all([
+    Notification.find({
+      ...baseRecipientFilter,
+      ...cafeFilter,
+    })
+      .sort({ createdAt: -1 })
+      .lean(),
+    Cafe.find({
+      organisationId,
+      cafeId: { $in: approvedCafeIds },
+    })
+      .select('cafeId name displayName')
+      .lean(),
+  ]);
+
+  const cafeMap = new Map();
+  for (const c of cafes) {
+    cafeMap.set(c.cafeId, c.displayName || c.name || c.cafeId);
+  }
+
+  const columns = [
+    { key: 'notificationId', label: 'Notification ID' },
+    { key: 'timestamp', label: 'Timestamp (IST)' },
+    { key: 'category', label: 'Category' },
+    { key: 'priority', label: 'Priority' },
+    { key: 'cafe', label: 'Café' },
+    { key: 'title', label: 'Title' },
+    { key: 'message', label: 'Message' },
+    { key: 'sourceEntityId', label: 'Related Entity' },
+    { key: 'status', label: 'Status' },
+  ];
+
+  const rows = notifications.map((n) => {
+    let msg = String(n.message || '');
+    msg = msg.replace(/\b(retailPrice|retailSellingPrice|grossMargin|profitMargin|margin|markup|costRate|internalNote)\b/gi, '[REDACTED]');
+    return {
+      notificationId: n.notificationId || '',
+      timestamp: n.createdAt ? new Date(n.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '',
+      category: n.category || 'COMMERCIAL',
+      priority: n.priority || 'NORMAL',
+      cafe: n.cafeId ? (cafeMap.get(n.cafeId) || n.cafeId) : 'All Cafés (Global)',
+      title: n.title || '',
+      message: msg,
+      sourceEntityId: n.sourceEntityId || 'N/A',
+      status: n.readAt ? 'READ' : 'UNREAD',
+    };
+  });
+
+  const todayStr = getIstDateString();
+  const xlsxResult = generateXlsx({
+    sheetName: 'Notifications Feed',
+    reportTitle: `Vendor Notifications & Audit Feed — ${vendorId}`,
+    columns,
+    rows,
+    branding: {
+      period: `As of ${todayStr}`,
+      scope: scopedCafeId || 'All Approved Cafés',
+    },
+  });
+
+  logSecurityEvent({
+    correlationId: req.correlationId,
+    organisationId,
+    actorId: req.auth.userId,
+    action: 'VENDOR_NOTIFICATIONS_XLSX_DOWNLOADED',
+    targetType: 'NOTIFICATIONS_XLSX',
+    targetId: vendorId,
+    outcome: 'SUCCESS',
+    severity: 'INFO',
+    metadata: { vendorId, rowCount: notifications.length },
+  });
+
+  const filename = `zamorin-vendor-notifications-${todayStr}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.status(200).send(xlsxResult.buffer);
 });
 
 /**
@@ -8082,6 +8822,95 @@ const downloadVendorReportsCsv = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/v1/vendor/reports/xlsx
+ * GET /api/v1/vendor/reports/:reportType/xlsx
+ * VEN-SCR-011: Genuine OpenXML Excel Export for Vendor Commercial Reports
+ */
+const downloadVendorReportsXlsx = asyncHandler(async (req, res) => {
+  const { vendorId, organisationId } = req.auth;
+  const approvedCafeIds = req.auth.approvedCafeIds || [];
+  const reqReportType = req.params.reportType || req.query.reportType;
+
+  if (!reqReportType) {
+    throw new ApiError(400, 'REPORT_TYPE_REQUIRED', 'Report type parameter is required for Excel export.');
+  }
+
+  const reportType = String(reqReportType).trim().toLowerCase();
+  const targetCafeId = req.query.cafeId ? String(req.query.cafeId).trim().toUpperCase() : null;
+
+  let scopedCafeId = null;
+  if (targetCafeId && targetCafeId !== 'ALL' && targetCafeId !== 'GLOBAL') {
+    scopedCafeId = targetCafeId;
+    if (!approvedCafeIds.includes(scopedCafeId)) {
+      throw new ApiError(403, 'CROSS_CAFE_ACCESS_DENIED', 'Your vendor account is not authorized to access reports for the requested café.');
+    }
+  }
+
+  const dateConstraints = resolveDateConstraints(req.query.dateRange, req.query.customStart, req.query.customEnd);
+  const searchQuery = req.query.search ? String(req.query.search).trim() : '';
+
+  const reportResult = await executeVendorReportQuery({
+    req,
+    vendorId,
+    organisationId,
+    approvedCafeIds,
+    reportType,
+    scopedCafeId,
+    dateConstraints,
+    searchQuery,
+    maxRows: 500,
+  });
+
+  const columns = reportResult.columns.map((c) => ({
+    key: c.key,
+    label: c.label,
+    isNum: typeof c.isNum === 'boolean' ? c.isNum : (c.format === 'currency' || c.format === 'number'),
+  }));
+
+  const rows = reportResult.rows.map((r) => {
+    const rowObj = {};
+    for (const col of reportResult.columns) {
+      const val = r[col.key];
+      if (col.format === 'currency' || col.isNum) {
+        rowObj[col.key] = typeof val === 'number' ? val : Number(val || 0);
+      } else {
+        rowObj[col.key] = val != null ? String(val) : '';
+      }
+    }
+    return rowObj;
+  });
+
+  const todayStr = getIstDateString();
+  const xlsxResult = generateXlsx({
+    sheetName: reportType.slice(0, 31),
+    reportTitle: `Vendor Commercial Report: ${reportResult.reportTitle}`,
+    columns,
+    rows,
+    branding: {
+      period: `As of ${todayStr}`,
+      scope: scopedCafeId || 'All Approved Cafés',
+    },
+  });
+
+  logSecurityEvent({
+    correlationId: req.correlationId,
+    organisationId,
+    actorId: req.auth.userId,
+    action: 'VENDOR_REPORT_XLSX_DOWNLOADED',
+    targetType: 'VENDOR_REPORT_XLSX',
+    targetId: reportType,
+    outcome: 'SUCCESS',
+    severity: 'INFO',
+    metadata: { vendorId, rowsCount: reportResult.rows.length },
+  });
+
+  const filename = `VendorReport-${reportType}-${vendorId}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.status(200).send(xlsxResult.buffer);
+});
+
+/**
  * GET /api/v1/vendor/reports/:reportType/pdf
  * VEN-SCR-011: Vector A4 PDF Download for Vendor Commercial Reports
  */
@@ -8814,26 +9643,33 @@ module.exports = {
   getVendorAccountStatement,
   downloadVendorStatementPdf,
   downloadVendorStatementCsv,
+  downloadVendorStatementXlsx,
   getVendorReceivables,
   downloadVendorReceivablesPdf,
   downloadVendorReceivablesCsv,
+  downloadVendorReceivablesXlsx,
   getVendorAdjustments,
   getVendorAdjustmentDetails,
   downloadVendorAdjustmentsCsv,
+  downloadVendorAdjustmentsXlsx,
   downloadVendorAdjustmentPdf,
   getVendorProducts,
   getVendorProductDetails,
   downloadVendorProductsCsv,
+  downloadVendorProductsXlsx,
   downloadVendorProductPdf,
   getVendorDocuments,
   downloadVendorDocumentsCsv,
+  downloadVendorDocumentsXlsx,
   downloadVendorDocumentUniversal,
   downloadVendorDocumentFile,
   getVendorReports,
   downloadVendorReportsCsv,
+  downloadVendorReportsXlsx,
   downloadVendorReportsPdf,
   getVendorNotifications,
   downloadVendorNotificationsCsv,
+  downloadVendorNotificationsXlsx,
   getVendorProfile,
   downloadVendorProfilePdf,
   sanitizeVendorIdentity,

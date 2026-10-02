@@ -70,8 +70,8 @@ export function renderVendorProducts() {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button id="btn-export-products-csv" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
-            <span>📥</span> Export CSV
+          <button id="btn-export-products-xlsx" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
+            <span>📥</span> Export Excel
           </button>
           <button id="btn-refresh-products" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
             <span class="refresh-icon">🔄</span> Refresh
@@ -395,7 +395,7 @@ export async function initVendorProducts() {
 }
 
 function wireEvents() {
-  const btnExportCsv = document.getElementById("btn-export-products-csv");
+  const btnExportXlsx = document.getElementById("btn-export-products-xlsx");
   const btnRefresh = document.getElementById("btn-refresh-products");
   const selectCafe = document.getElementById("select-cafe-scope");
   const inputSearch = document.getElementById("input-products-search");
@@ -403,7 +403,7 @@ function wireEvents() {
   const selectStatus = document.getElementById("select-product-status");
   const selectSort = document.getElementById("select-product-sort");
 
-  btnExportCsv?.addEventListener("click", handleExportCsv);
+  btnExportXlsx?.addEventListener("click", handleExportExcel);
   btnRefresh?.addEventListener("click", () => {
     loadVendorProducts();
   });
@@ -841,7 +841,7 @@ async function downloadProductRatePdf(itemId) {
   }
 }
 
-async function handleExportCsv() {
+async function handleExportExcel() {
   try {
     const queryParams = new URLSearchParams({
       cafeId: currentSelectedCafe,
@@ -852,18 +852,11 @@ async function handleExportCsv() {
       queryParams.append("search", currentSearchTerm);
     }
 
-    const blob = await downloadBlob(`/api/v1/vendor/products/csv?${queryParams.toString()}`);
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `VendorProducts-${currentSelectedCafe}-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    const filename = `VendorProducts-${currentSelectedCafe}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    await downloadBlob(`/api/v1/vendor/products/xlsx?${queryParams.toString()}`, filename);
   } catch (err) {
-    console.error("[VEN-SCR-009] Error exporting CSV:", err);
-    alert("Failed to export products CSV. Please retry.");
+    console.error("[VEN-SCR-009] Error exporting Excel:", err);
+    alert("Failed to export products Excel. Please retry.");
   }
 }
 

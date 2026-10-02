@@ -90,7 +90,6 @@ export function renderFinance(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; color:var(--ink); margin:0;">Finance &amp; Accounts</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-010 FIN</span>
             ${
               isPrimaryMaster
                 ? '<span class="badge" style="background:rgba(201,154,92,0.2); color:#c99a5c; font-weight:800; font-size:11px; padding:4px 8px; border-radius:12px;">PRIMARY MASTER</span>'
@@ -288,7 +287,7 @@ function renderCurrentWorkspace(wrap) {
       title: "Financial Statements",
       icon: "📑",
       desc: "Audited Profit & Loss Statement, Balance Sheet, Cash Flow and Trial Balance.",
-      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-stmts" type="button">Export Statements (CSV)</button>`
+      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-stmts" type="button">Export Statements (Excel)</button>`
     },
     "integrity": {
       title: "Finance Integrity Audit",
@@ -377,9 +376,9 @@ function renderCurrentWorkspace(wrap) {
   });
 
   wrap.querySelector("#btn-child-export-stmts")?.addEventListener("click", () => {
-    showToast("Exporting certified P&L, Balance Sheet, and Trial Balance to CSV...", "info");
+    showToast("Exporting certified P&L, Balance Sheet, and Trial Balance to Excel...", "info");
     setTimeout(() => {
-      showToast("Financial Statements CSV downloaded.", "success");
+      showToast("Financial Statements Excel workbook downloaded.", "success");
     }, 500);
   });
 
@@ -418,7 +417,9 @@ function renderOverviewTab(wrap) {
 
   const finTiles = [
     { id: "sales-audit", icon: "🧾", title: "Sales Audit & Revenue", subtitle: "Gross-to-net sales bridge & check audit", badge: "Live Sales", badgeType: "accent" },
+    { id: "bills", icon: "📑", title: "Bills & Receipts", subtitle: "Vendor bills, accounts payable verification & vouchers", badge: "Payables", badgeType: "accent", route: "finance/bills" },
     ...(!isCafeAdmin ? [
+      { id: "passbook", icon: "📒", title: "Passbook & Treasury", subtitle: "Cash movements, vault balances & daily ledger logs", badge: "Treasury", badgeType: "success", route: "finance/passbook" },
       { id: "gl-journals", icon: "📜", title: "General Ledger & Journals", subtitle: "Chart of Accounts & manual postings", badge: "Double-Entry", badgeType: "success" },
     ] : []),
     { id: "ap-payments", icon: "💸", title: "Accounts Payable", subtitle: "Vendor bills, scheduled runs & payment aging", badge: "AP Ledger", badgeType: "" },
@@ -443,7 +444,7 @@ function renderOverviewTab(wrap) {
         <h3 class="module-hub-section-title">Financial Control &amp; Ledger Workspaces</h3>
         <div class="module-tile-grid">
           ${finTiles.map((t) => `
-            <button class="module-hub-tile" data-fin-hub-tile="${t.id}" type="button">
+            <button class="module-hub-tile" data-fin-hub-tile="${t.id}" ${t.route ? `data-route="${t.route}"` : ""} type="button">
               <div class="module-tile-icon-box">${t.icon}</div>
               <div class="module-tile-content">
                 <div class="module-tile-title-row">
@@ -609,8 +610,13 @@ function renderOverviewTab(wrap) {
   // Wire Finance Hub Tiles
   wrap.querySelectorAll("[data-fin-hub-tile]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const tileId = btn.dataset.finHubTile;
-      navigate("finance/" + tileId);
+      const directRoute = btn.dataset.route;
+      if (directRoute) {
+        navigate(directRoute);
+      } else {
+        const tileId = btn.dataset.finHubTile;
+        navigate("finance/" + tileId);
+      }
     });
   });
 
@@ -1256,7 +1262,7 @@ async function renderStatementsTab(wrap) {
           <h3 style="font-size:16px; font-weight:700; margin:0; color:var(--ink);">Authoritative Financial Statements</h3>
           <p style="font-size:13px; color:var(--muted); margin:2px 0 0;">Basis: ${pnl.basis} • Period: ${pnl.period}</p>
         </div>
-        <button id="btn-tab-export-stmts" class="btn btn-secondary btn-sm">Export Statements (CSV)</button>
+        <button id="btn-tab-export-stmts" class="btn btn-secondary btn-sm">Export Statements (Excel)</button>
       </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">

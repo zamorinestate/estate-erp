@@ -21,6 +21,7 @@ const {
   syncOfflineOrders,
   getPendingOfflineReviews,
   reviewOfflineOrder,
+  getPosCatalog,
 } = require('../controllers/posController');
 
 const router = express.Router();
@@ -47,6 +48,7 @@ router.post('/orders/:billId/print', printOrder);
 router.post('/orders/:billId/reprint', reprintOrder);
 router.get('/orders/active/:cafeId', getActiveOrders);
 router.get('/orders/last/:cafeId', getLastCommittedBill);
+router.get('/catalog/:cafeId', getPosCatalog);
 
 // REC-04B: Transaction status & unknown-outcome recovery
 router.get('/orders/status/:transactionId', getOrderStatusByIdempotency);

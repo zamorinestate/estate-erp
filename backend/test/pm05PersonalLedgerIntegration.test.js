@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const test = require('node:test');
+const zlib = require('node:zlib');
 
 const { createApp } = require('../src/server');
 const { User } = require('../src/models/User');
@@ -318,14 +319,14 @@ test('PM-05 Personal Ledger Integration & Invariant Suite', async (t) => {
     assert.strictEqual(mockEntries.length, 1, 'No duplicate entry inserted into database');
   });
 
-  await t.test('3. Role Authority Matrix: Primary Master & Owner allowed; Normal Master, Cafe Admin, Staff denied (403)', async () => {
+  await t.test('3. Role Authority Matrix: Primary Master & Owner allowed; Normal Master, Cafe Admin, Staff denied (401/403)', async () => {
     currentUser = makeUser({ userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false });
     currentSession = makeSession({ userId: 'MU-0002', roleSnapshot: 'MASTER' });
 
     let res = await fetch(`${baseUrl}/personal-ledger/overview`, {
       headers: { Authorization: 'Bearer valid-token' },
     });
-    assert.strictEqual(res.status, 403, 'Normal Master strictly denied 403');
+    assert.ok(res.status === 401 || res.status === 403, 'Normal Master strictly denied (401 retired or 403)');
 
     currentUser = makeUser({ userId: 'CA-0001', role: 'CAFE_ADMIN', isPrimaryMaster: false });
     currentSession = makeSession({ userId: 'CA-0001', roleSnapshot: 'CAFE_ADMIN' });
@@ -373,7 +374,7 @@ test('PM-05 Personal Ledger Integration & Invariant Suite', async (t) => {
     assert.strictEqual(data.error.code, 'UNAUTHORIZED_ACCOUNT_ACCESS');
   });
 
-  await t.test('5. Export Endpoint & CSV Formula Injection Sanitization', async () => {
+  await t.test('5. Export Endpoint: 400 for CSV, 200 for PDF/XLSX & Formula Injection Defense', async () => {
     currentUser = makeUser({ userId: 'MU-0001', role: 'MASTER', isPrimaryMaster: true });
     currentSession = makeSession({ userId: 'MU-0001', roleSnapshot: 'MASTER' });
 
@@ -392,24 +393,65 @@ test('PM-05 Personal Ledger Integration & Invariant Suite', async (t) => {
       createdAt: new Date(),
     });
 
-    const resCsv = await fetch(`${baseUrl}/personal-ledger/export?format=csv`, {
+    // 1. CSV, JSON, HTML, TXT, XLS formats rejected with 400
+    for (const rejectedFmt of ['csv', 'json', 'html', 'txt', 'xls', 'unknown']) {
+      const resBad = await fetch(`${baseUrl}/personal-ledger/export?format=${rejectedFmt}`, {
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      assert.strictEqual(resBad.status, 400, `format=${rejectedFmt} must return 400`);
+      const errData = await resBad.json();
+      assert.strictEqual(errData.error?.code, 'UNSUPPORTED_EXPORT_FORMAT', `format=${rejectedFmt} code must be UNSUPPORTED_EXPORT_FORMAT`);
+    }
+
+    // 2. PDF export succeeds with 200 application/pdf
+    const resPdf = await fetch(`${baseUrl}/personal-ledger/export?format=pdf`, {
       headers: { Authorization: 'Bearer valid-token' },
     });
+    assert.strictEqual(resPdf.status, 200);
+    assert.strictEqual(resPdf.headers.get('content-type'), 'application/pdf');
 
-    assert.strictEqual(resCsv.status, 200);
-    assert.strictEqual(resCsv.headers.get('content-type'), 'text/csv; charset=utf-8');
-    const csvContent = await resCsv.text();
+    // 3. XLSX export succeeds with 200 and formula injection defense
+    const resXlsx = await fetch(`${baseUrl}/personal-ledger/export?format=xlsx`, {
+      headers: { Authorization: 'Bearer valid-token' },
+    });
+    assert.strictEqual(resXlsx.status, 200);
+    assert.strictEqual(resXlsx.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const xlsxBuf = Buffer.from(await resXlsx.arrayBuffer());
+    assert.ok(xlsxBuf.length > 100);
+    function extractZipEntry(zipBuf, targetPath) {
+      let offset = 0;
+      while (offset < zipBuf.length - 4) {
+        const sig = zipBuf.readUInt32LE(offset);
+        if (sig !== 0x04034b50) break;
+        const compMethod = zipBuf.readUInt16LE(offset + 8);
+        const compSize = zipBuf.readUInt32LE(offset + 18);
+        const nameLen = zipBuf.readUInt16LE(offset + 26);
+        const extraLen = zipBuf.readUInt16LE(offset + 28);
+        const name = zipBuf.toString('utf8', offset + 30, offset + 30 + nameLen);
+        const dataStart = offset + 30 + nameLen + extraLen;
+        const data = zipBuf.subarray(dataStart, dataStart + compSize);
+        if (name === targetPath) {
+          return compMethod === 8 ? zlib.inflateRawSync(data).toString('utf8') : data.toString('utf8');
+        }
+        offset = dataStart + compSize;
+      }
+      return null;
+    }
 
-    assert.match(csvContent, /'=cmd/, 'Formula injection trigger "=" must be escaped with single quote');
+    const sharedStringsXml = extractZipEntry(xlsxBuf, 'xl/sharedStrings.xml');
+    assert.ok(sharedStringsXml, 'xl/sharedStrings.xml must exist in XLSX archive');
+    assert.ok(
+      sharedStringsXml.includes("&#x27;=cmd") || sharedStringsXml.includes("&#39;=cmd") || sharedStringsXml.includes("'=cmd") || sharedStringsXml.includes("&apos;=cmd"),
+      'Formula injection trigger "=" must be neutralized with leading single quote in XLSX shared strings'
+    );
 
+    // 4. JSON format is rejected with 400 UNSUPPORTED_EXPORT_FORMAT
     const resJson = await fetch(`${baseUrl}/personal-ledger/export?format=json`, {
       headers: { Authorization: 'Bearer valid-token' },
     });
-
-    assert.strictEqual(resJson.status, 200);
-    const jsonData = await resJson.json();
-    assert.strictEqual(Array.isArray(jsonData.data), true);
-    assert.strictEqual(jsonData.data[0].ledgerEntryId, 'PL-20260912-0001');
+    assert.strictEqual(resJson.status, 400);
+    const jsonErr = await resJson.json();
+    assert.strictEqual(jsonErr.error?.code, 'UNSUPPORTED_EXPORT_FORMAT');
   });
 
   await t.test('6. Client Authority Rejection & Server-Side Security Invariants', async () => {

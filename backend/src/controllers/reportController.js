@@ -1938,10 +1938,35 @@ const runSensitivityAnalysis = asyncHandler(async (request, response) => {
   });
 });
 
+// Governed Canonical Report IDs backed by authentic domain-specific calculations
+const SUPPORTED_ZURF_REPORT_IDS = Object.freeze(new Set([
+  'daily-sales',
+  'pl-statement',
+  'cash-book-variance',
+  'inventory-valuation',
+  'procurement-spend',
+  'vendor-performance-intelligence',
+  'workforce-overview',
+  'attendance-exceptions',
+  'payroll-summary',
+  'customer-retention',
+  'pos-exceptions',
+  'service-speed',
+  'same-store-sales',
+  'multi-cafe-benchmark',
+  'portfolio',
+  'sales-forecast',
+  'order-workload-forecast',
+  'menu-demand-forecast',
+  'ingredient-requirement-forecast',
+  'whatif-scenario-studio',
+  'menu-engineering',
+]));
+
 // ─── 18. POST /api/v1/reports/export ──────────────────────────────────────────
 
 const generateZurfExport = asyncHandler(async (request, response) => {
-  const { reportId, format: rawFormat = 'PDF', scope, period, classification = 'INTERNAL' } = request.body || {};
+  const { reportId: rawReportIdInput, format: rawFormat = 'PDF', scope, period, classification = 'INTERNAL' } = request.body || {};
   const user = request.auth?.name || 'Primary Master';
   const format = String(rawFormat || 'PDF').trim().toUpperCase();
 
@@ -1968,6 +1993,17 @@ const generateZurfExport = asyncHandler(async (request, response) => {
     err.code = 'UNSUPPORTED_EXPORT_FORMAT';
     throw err;
   }
+
+  const rawReportId = request.body?.reportId;
+  const canonicalReportId = rawReportId ? String(rawReportId).trim().toLowerCase() : 'daily-sales';
+
+  if (!SUPPORTED_ZURF_REPORT_IDS.has(canonicalReportId)) {
+    const err = new Error(`Unsupported export report ID: "${rawReportId}". Governed exports require an authorized canonical report ID backed by dedicated data calculations.`);
+    err.statusCode = 400;
+    err.code = 'UNSUPPORTED_REPORT_ID';
+    throw err;
+  }
+  const reportId = canonicalReportId;
 
   const dateFilters = validateAndParseDateFilters(request);
   if (request.body?.cafeId && !dateFilters.cafeId) {
@@ -2041,8 +2077,6 @@ const generateZurfExport = asyncHandler(async (request, response) => {
     reportTitle = 'Operational Cash Movement Report';
   } else if (reportId === 'menu-engineering') {
     reportTitle = 'Menu Engineering & Contribution Intelligence';
-  } else if (reportId && reportId !== 'daily-sales') {
-    reportTitle = reportId.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
   }
 
   let sheets = null;
@@ -4015,4 +4049,5 @@ module.exports = {
   runScenarioSimulation,
   runSensitivityAnalysis,
   getTrustCentreOverview,
+  SUPPORTED_ZURF_REPORT_IDS,
 };

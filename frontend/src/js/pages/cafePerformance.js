@@ -11,6 +11,7 @@ import { state } from '../state.js';
 import { ROLES } from '../navigation.js';
 import { icon } from '../icons.js';
 import { openCafeCreateModal } from './cafeCreateModal.js';
+import { exportToXlsx } from '../utils/openXmlExport.js';
 
 // ─── Component State ──────────────────────────────────────────────────────────
 
@@ -119,7 +120,6 @@ export function renderPerformance() {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; color:var(--ink); margin:0;">Café Performance Control Centre</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">OWN-SCR-006</span>
             <span id="perf-ist-clock" style="font-family:var(--font-mono); font-size:12px; color:var(--muted);">${getIstClockString()}</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0 0;">
@@ -135,8 +135,8 @@ export function renderPerformance() {
             </button>
           ` : ''}
           ${canExport ? `
-            <button class="btn btn-secondary" id="perf-download-csv-btn" style="font-weight:700;" type="button">
-              📥 Export CSV
+            <button class="btn btn-secondary" id="perf-download-xlsx-btn" style="font-weight:700;" type="button">
+              📥 Export Excel
             </button>
             <button class="btn btn-secondary" id="perf-open-export-btn" style="font-weight:700;" type="button">
               📑 ZURF Pack
@@ -240,9 +240,8 @@ export function renderPerformance() {
           </p>
           <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;">
             <label class="form-label" style="font-size:12px;font-weight:700;color:var(--ink);">Export Format</label>
-            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;" id="perf-export-format-group">
-              <button class="btn btn-sm btn-outline active" data-export-format="CSV" style="font-weight:700;" type="button">CSV Dataset</button>
-              <button class="btn btn-sm btn-outline" data-export-format="PDF" style="font-weight:700;" type="button">PDF Report</button>
+            <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:8px;" id="perf-export-format-group">
+              <button class="btn btn-sm btn-outline active" data-export-format="PDF" style="font-weight:700;" type="button">PDF Report</button>
               <button class="btn btn-sm btn-outline" data-export-format="XLSX" style="font-weight:700;" type="button">Excel Workbook</button>
             </div>
             <div style="margin-top:8px;">
@@ -419,13 +418,13 @@ export async function wirePerformance(root) {
     });
   }
 
-  // Direct CSV Export button
-  const downloadCsvBtn = root.querySelector('#perf-download-csv-btn');
-  if (downloadCsvBtn) {
-    downloadCsvBtn.addEventListener('click', () => {
+  // Direct Excel Export button
+  const downloadXlsxBtn = root.querySelector('#perf-download-xlsx-btn');
+  if (downloadXlsxBtn) {
+    downloadXlsxBtn.addEventListener('click', () => {
       const cafes = getResolvedCafes();
       const totalSales = cafes.reduce((sum, c) => sum + Number(c.totalSalesPaisa ?? c.salesTodayPaisa ?? 0), 0);
-      downloadPerformanceCsv(cafes, totalSales);
+      downloadPerformanceExcel(cafes, totalSales);
     });
   }
 
@@ -442,13 +441,13 @@ export async function wirePerformance(root) {
   if (cancelExport) cancelExport.addEventListener('click', hideExportModal);
   if (confirmExport) {
     confirmExport.addEventListener('click', async () => {
-      const activeFormatBtn = exportModal.querySelector('#perf-export-format-group button.active') || exportModal.querySelector('[data-export-format="CSV"]');
-      const format = activeFormatBtn?.dataset.exportFormat || 'CSV';
+      const activeFormatBtn = exportModal.querySelector('#perf-export-format-group button.active') || exportModal.querySelector('[data-export-format="PDF"]');
+      const format = activeFormatBtn?.dataset.exportFormat || 'PDF';
 
-      if (format === 'CSV') {
+      if (format === 'XLSX') {
         const cafes = getResolvedCafes();
         const totalSales = cafes.reduce((sum, c) => sum + Number(c.totalSalesPaisa ?? c.salesTodayPaisa ?? 0), 0);
-        downloadPerformanceCsv(cafes, totalSales);
+        downloadPerformanceExcel(cafes, totalSales);
         hideExportModal();
         return;
       }
@@ -1244,9 +1243,9 @@ function renderTargetsTab(cafes, data) {
   `;
 }
 
-// ─── Real CSV Generator (RFC 4180) ───────────────────────────────────────────
+// ─── Real Excel Generator ─────────────────────────────────────────────────────
 
-function downloadPerformanceCsv(cafes, totalSalesPaisa) {
+function downloadPerformanceExcel(cafes, totalSalesPaisa) {
   const headers = [
     'Rank',
     'Cafe ID',
@@ -1277,42 +1276,52 @@ function downloadPerformanceCsv(cafes, totalSalesPaisa) {
     const labor = Number(c.labourPct ?? 20.0).toFixed(1);
     const splh = c.splhPaisa ? (c.splhPaisa / 100).toFixed(2) : '850.00';
 
-    return [
-      idx + 1,
-      `"${c.cafeId || ''}"`,
-      `"${(c.name || c.cafeName || '').replace(/"/g, '""')}"`,
-      `"${(c.city || '').replace(/"/g, '""')}"`,
-      (sales / 100).toFixed(2),
+    return {
+      rank: idx + 1,
+      cafeId: c.cafeId || '',
+      name: c.name || c.cafeName || '',
+      city: c.city || '',
+      sales: Number((sales / 100).toFixed(2)),
       share,
       bills,
-      (abv / 100).toFixed(2),
-      targetSales > 0 ? (targetSales / 100).toFixed(2) : 'N/A',
-      avtDiff !== null ? (avtDiff / 100).toFixed(2) : 'N/A',
+      abv: Number((abv / 100).toFixed(2)),
+      targetSales: targetSales > 0 ? Number((targetSales / 100).toFixed(2)) : 0,
+      avtDiff: avtDiff !== null ? Number((avtDiff / 100).toFixed(2)) : 0,
       avtPct,
       labor,
-      splh,
-      c.inventoryCritical || 0,
-      c.maintenanceOpen || 0,
-      `"${c.health || 'HEALTHY'}"`,
-    ];
+      splh: Number(Number(splh).toFixed(2)),
+      inventoryCritical: c.inventoryCritical || 0,
+      maintenanceOpen: c.maintenanceOpen || 0,
+      health: c.health || 'HEALTHY',
+    };
   });
 
-  const csvContent = [
-    headers.join(','),
-    ...rows.map(r => r.join(','))
-  ].join('\r\n');
-
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
   const today = new Date().toISOString().slice(0, 10);
-  link.download = `zamorin_cafe_performance_${today}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  showToast('Performance CSV downloaded successfully.', 'success');
+  exportToXlsx({
+    filename: `zamorin_cafe_performance_${today}.xlsx`,
+    sheetName: 'Performance',
+    reportTitle: 'Multi-Café Executive Performance Report',
+    columns: [
+      { key: 'rank', label: '#', type: 'number' },
+      { key: 'cafeId', label: 'Café ID' },
+      { key: 'name', label: 'Café Name' },
+      { key: 'city', label: 'City' },
+      { key: 'sales', label: 'Net Sales (₹)', type: 'currency' },
+      { key: 'share', label: 'Sales Share %' },
+      { key: 'bills', label: 'Completed Bills', type: 'number' },
+      { key: 'abv', label: 'ABV / Ticket (₹)', type: 'currency' },
+      { key: 'targetSales', label: 'Target (₹)', type: 'currency' },
+      { key: 'avtDiff', label: 'AvT Variance (₹)', type: 'currency' },
+      { key: 'avtPct', label: 'AvT Variance %' },
+      { key: 'labor', label: 'Labor %' },
+      { key: 'splh', label: 'SPLH (₹/hr)', type: 'currency' },
+      { key: 'inventoryCritical', label: 'Stock Critical', type: 'number' },
+      { key: 'maintenanceOpen', label: 'Maintenance Open', type: "number" },
+      { key: 'health', label: 'Health Status' },
+    ],
+    rows,
+  });
+  showToast('Performance Excel workbook downloaded successfully.', 'success');
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

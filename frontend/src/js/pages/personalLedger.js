@@ -4,7 +4,7 @@
 // =============================================================================
 
 import { showToast, openModal, confirmAction } from "../components.js";
-import { apiGet, apiPost } from "../apiClient.js";
+import { apiGet, apiPost, downloadFile } from "../apiClient.js";
 import { state } from "../state.js";
 
 let liveOverview = null;
@@ -368,7 +368,8 @@ function renderJournalTab(entries, isPrimaryMaster, isOwner) {
         </div>
 
         <div style="display: flex; gap: 8px;">
-          <button class="btn btn-secondary btn-sm" id="pl-export-journal-btn" type="button">📥 Export CSV</button>
+          <button class="btn btn-secondary btn-sm" id="pl-export-pdf-btn" type="button">📄 Export PDF</button>
+          <button class="btn btn-secondary btn-sm" id="pl-export-xlsx-btn" type="button">📗 Export Excel</button>
         </div>
       </div>
 
@@ -1271,98 +1272,21 @@ function sanitizeCsvCell(val) {
   return `"${str.replace(/"/g, '""')}"`;
 }
 
-function downloadJournalCsv(entries) {
-  const list = entries || [];
-  if (list.length === 0) {
-    showToast("No transactions available to export.", "warning");
-    return;
+async function downloadPersonalLedger(format = "PDF") {
+  const displayFmt = format === "XLSX" ? "Excel" : "PDF";
+  showToast(`Preparing Personal Ledger (${displayFmt})...`, "info");
+  try {
+    const ext = format === "XLSX" ? "xlsx" : "pdf";
+    const dateStr = new Date().toISOString().split("T")[0];
+    const filename = `Zamorin_Personal_SubLedger_${dateStr}.${ext}`;
+    await downloadFile({
+      url: `/api/v1/personal-ledger/export?format=${format}`,
+      filename,
+    });
+    showToast(`Personal Ledger (${displayFmt}) downloaded successfully.`, "success");
+  } catch (err) {
+    showToast(`Failed to export Personal Ledger: ${err.message || "Error"}`, "error");
   }
-  const headers = [
-    "Voucher ID",
-    "Business Date",
-    "Category",
-    "Description",
-    "Payment Source",
-    "Entry Type",
-    "Amount (INR)",
-    "Economic Direction",
-    "Accounting Treatment",
-    "Finance Journal Ref",
-    "Workflow Status",
-    "Settlement Status",
-    "Record Status",
-  ];
-
-  const rows = list.map((e) => [
-    sanitizeCsvCell(e.voucherNumber || e.ledgerEntryId),
-    sanitizeCsvCell(e.businessDate),
-    sanitizeCsvCell(formatCategoryName(e.category)),
-    sanitizeCsvCell(e.description),
-    sanitizeCsvCell(formatPaymentSource(e.paymentSource)),
-    sanitizeCsvCell(e.entryType),
-    ((e.amountPaisa || 0) / 100).toFixed(2),
-    sanitizeCsvCell(e.direction),
-    sanitizeCsvCell(formatTreatment(e.accountingTreatment)),
-    sanitizeCsvCell(e.financeJournalRef || "Unposted"),
-    sanitizeCsvCell(e.workflowStatus),
-    sanitizeCsvCell(e.settlementStatus || "UNSETTLED"),
-    sanitizeCsvCell(e.status || "ACTIVE"),
-  ]);
-
-  const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Personal_SubLedger_${new Date().toISOString().split("T")[0]}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  showToast("Personal Sub-Ledger CSV downloaded successfully.", "success");
-}
-
-function downloadDpt3Pack(entries) {
-  const loans = (entries || []).filter(
-    (e) => e.category === "DIRECTOR_LOAN_TO_COMPANY" || e.category === "FUNDS_ADVANCED_TO_COMPANY" || e.accountingTreatment === "OWNER_LOAN"
-  );
-  if (loans.length === 0) {
-    showToast("No director loans or funding records found for DPT-3 disclosure.", "info");
-    return;
-  }
-  const headers = [
-    "Voucher ID",
-    "Business Date",
-    "Account Holder",
-    "Category",
-    "Amount (INR)",
-    "Declaration Received",
-    "Source of Funds Verified",
-    "Deposit Rules Treatment",
-    "Finance Reference",
-  ];
-  const rows = loans.map((l) => [
-    sanitizeCsvCell(l.voucherNumber || l.ledgerEntryId),
-    sanitizeCsvCell(l.businessDate),
-    sanitizeCsvCell(l.accountHolderId),
-    sanitizeCsvCell(formatCategoryName(l.category)),
-    ((l.amountPaisa || 0) / 100).toFixed(2),
-    `"YES (Declaration Received)"`,
-    `"VERIFIED (Non-Borrowed Funds)"`,
-    `"EXEMPTED DEPOSIT (Rule 2(1)(c)(viii))"`,
-    sanitizeCsvCell(l.financeJournalRef || "Pending"),
-  ]);
-  const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_DPT3_Statutory_Disclosure_${new Date().toISOString().split("T")[0]}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  showToast("DPT-3 Statutory Disclosure Pack downloaded.", "success");
 }
 
 function openCertifiedBalanceCertificateModal(overview) {
@@ -1523,9 +1447,12 @@ function wireJournalActions(root) {
     });
   }
 
-  // Wire Export CSV
-  root.querySelector("#pl-export-journal-btn")?.addEventListener("click", () => {
-    downloadJournalCsv(liveEntries || SAMPLE_ENTRIES);
+  // Wire Export PDF & Excel
+  root.querySelector("#pl-export-pdf-btn")?.addEventListener("click", () => {
+    downloadPersonalLedger("PDF");
+  });
+  root.querySelector("#pl-export-xlsx-btn")?.addEventListener("click", () => {
+    downloadPersonalLedger("XLSX");
   });
 
   // Wire Table Actions
@@ -1605,9 +1532,6 @@ function wireJournalActions(root) {
   });
   root.querySelector("#pl-sign-period-btn")?.addEventListener("click", () => {
     openConfirmBalanceModal(root);
-  });
-  root.querySelector("#pl-btn-export-dpt3")?.addEventListener("click", () => {
-    downloadDpt3Pack(liveEntries || SAMPLE_ENTRIES);
   });
   root.querySelector("#pl-btn-export-audit-cert")?.addEventListener("click", () => {
     openCertifiedBalanceCertificateModal(liveOverview || SAMPLE_OVERVIEW);

@@ -23,6 +23,7 @@ import {
 } from "../../utils/cameraGeo.js";
 import { openAttendanceEvidenceViewer } from "./attendanceEvidenceViewer.js";
 import { CANONICAL_ZAMORIN_COMPANY_LOGO_SVG } from "../../utils/qrCodeGen.js";
+import { exportToXlsx } from "../../utils/openXmlExport.js";
 import { setupModalA11y } from "../../utils/modalA11y.js";
 
 let activeTab = "TODAY"; // 'TODAY' | 'ROSTER' | 'CALENDAR' | 'TIMECARD' | 'CORRECTIONS' | 'ATTESTATION'
@@ -625,8 +626,8 @@ function renderTimecardTab() {
               <option value="LATE">Late Arrivals</option>
               <option value="EXCEPTIONS">Exceptions Only</option>
             </select>
-            <button class="btn btn-xs btn-secondary" id="btn-export-csv">
-              CSV
+            <button class="btn btn-xs btn-secondary" id="btn-export-xlsx">
+              Excel
             </button>
             <button class="btn btn-xs btn-secondary" onclick="window.print()">
               ${icon("printer", 13)} Print Statement
@@ -1030,9 +1031,9 @@ export function wireStaffAttendance(root) {
       });
     });
 
-    // Export CSV trigger
-    container.querySelector("#btn-export-csv")?.addEventListener("click", () => {
-      exportAttendanceCsv();
+    // Export Excel trigger
+    container.querySelector("#btn-export-xlsx")?.addEventListener("click", () => {
+      exportAttendanceExcel();
     });
 
     // Calendar month pagination
@@ -2093,30 +2094,36 @@ function openDayDrilldownModal(dateStr, record) {
   });
 }
 
-// ── CSV EXPORT UTILITY ───────────────────────────────────────────────────────
-function exportAttendanceCsv() {
-  const header = "Date,Shift,CheckIn,CheckOut,WorkedHours,OvertimeHours,Status";
+// ── EXCEL EXPORT UTILITY ─────────────────────────────────────────────────────
+function exportAttendanceExcel() {
   const rows = cachedHistory.length > 0
-    ? cachedHistory.map(r => {
+    ? cachedHistory.map((r) => {
         const date = r.businessDate || "";
         const shift = r.shiftLabel || r.shift || "";
         const checkIn = r.checkInAt ? formatTimeStr(r.checkInAt) : "—";
         const checkOut = r.checkOutAt ? formatTimeStr(r.checkOutAt) : "—";
-        const workedHrs = r.totalWorkedMinutes > 0 ? (r.totalWorkedMinutes / 60).toFixed(2) : "0.00";
-        const otHrs = r.overtimeMinutes > 0 ? (r.overtimeMinutes / 60).toFixed(2) : "0.00";
-        const status = (r.status || "PRESENT").replace(/,/g, "");
-        return `${date},${shift},${checkIn},${checkOut},${workedHrs},${otHrs},${status}`;
+        const workedHrs = r.totalWorkedMinutes > 0 ? Number((r.totalWorkedMinutes / 60).toFixed(2)) : 0;
+        const otHrs = r.overtimeMinutes > 0 ? Number((r.overtimeMinutes / 60).toFixed(2)) : 0;
+        const status = r.status || "PRESENT";
+        return { date, shift, checkIn, checkOut, workedHrs, otHrs, status };
       })
-    : ["# No attendance records found for the selected period"];
+    : [];
 
-  const csvContent = "data:text/csv;charset=utf-8," + [header, ...rows].join("\n");
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
   const today = new Date().toISOString().slice(0, 10);
-  link.setAttribute("download", `Zamorin_My_Attendance_${today}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  showToast("Attendance CSV downloaded successfully ✓", "mint");
+  exportToXlsx({
+    filename: `Zamorin_My_Attendance_${today}.xlsx`,
+    sheetName: "Attendance",
+    reportTitle: "Staff Personal Attendance Register",
+    columns: [
+      { key: "date", label: "Date" },
+      { key: "shift", label: "Shift" },
+      { key: "checkIn", label: "Clock In" },
+      { key: "checkOut", label: "Clock Out" },
+      { key: "workedHrs", label: "Worked Hours", type: "number" },
+      { key: "otHrs", label: "Overtime Hours", type: "number" },
+      { key: "status", label: "Status" },
+    ],
+    rows,
+  });
+  showToast("Attendance Excel workbook downloaded successfully ✓", "mint");
 }

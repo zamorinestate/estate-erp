@@ -173,8 +173,8 @@ export function renderVendorReceivables() {
 
           <!-- Export & Print Actions -->
           <div class="flex items-center gap-2">
-            <button id="btn-export-csv" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
-              <span>📊</span> Export CSV
+            <button id="btn-export-xlsx" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
+              <span>📊</span> Export Excel
             </button>
             <button id="btn-download-pdf" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-rose-950/80 hover:bg-rose-900 active:scale-95 transition-all rounded-lg border border-rose-700/60 flex items-center gap-1.5 text-rose-200 shadow">
               <span>📄</span> Download PDF
@@ -476,10 +476,10 @@ function bindEventListeners() {
     });
   }
 
-  // Export CSV
-  const btnCsv = document.getElementById("btn-export-csv");
-  if (btnCsv) {
-    btnCsv.addEventListener("click", () => exportReceivablesCsv());
+  // Export Excel
+  const btnXlsx = document.getElementById("btn-export-xlsx");
+  if (btnXlsx) {
+    btnXlsx.addEventListener("click", () => exportReceivablesExcel());
   }
 
   // Download PDF
@@ -781,7 +781,7 @@ function showReceivableDetailModal(r) {
   modal.classList.remove("hidden");
 }
 
-async function exportReceivablesCsv() {
+async function exportReceivablesExcel() {
   try {
     const params = new URLSearchParams();
     if (currentSelectedCafe && currentSelectedCafe !== "ALL") params.append("cafeId", currentSelectedCafe);
@@ -789,9 +789,9 @@ async function exportReceivablesCsv() {
     if (currentSelectedPaymentStatus && currentSelectedPaymentStatus !== "ALL") params.append("paymentStatus", currentSelectedPaymentStatus);
     if (currentSearchTerm) params.append("search", currentSearchTerm);
 
-    await downloadBlob(`/api/v1/vendor/receivables/csv?${params.toString()}`, `VendorReceivables.csv`);
+    await downloadBlob(`/api/v1/vendor/receivables/xlsx?${params.toString()}`, `VendorReceivables.xlsx`);
   } catch (err) {
-    console.error("Failed to export receivables CSV:", err);
+    console.error("Failed to export receivables Excel:", err);
   }
 }
 

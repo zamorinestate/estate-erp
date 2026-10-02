@@ -64,9 +64,9 @@ export function renderVendorReports() {
           <p class="text-sm text-gray-400 mt-1">Cross-outlet transaction histories, statements, receivables ageing, and tax summaries.</p>
         </div>
         <div class="flex items-center gap-2.5 flex-wrap">
-          <button id="btn-vendor-reports-download-csv" class="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg border border-gray-700 flex items-center gap-2 transition-colors shadow-sm" title="Export current report to CSV">
+          <button id="btn-vendor-reports-download-xlsx" class="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg border border-gray-700 flex items-center gap-2 transition-colors shadow-sm" title="Export current report to Excel">
             <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <span>Download CSV</span>
+            <span>Download Excel</span>
           </button>
           <button id="btn-vendor-reports-download-pdf" class="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg border border-gray-700 flex items-center gap-2 transition-colors shadow-sm" title="Download authoritative PDF copy">
             <svg class="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
@@ -348,10 +348,10 @@ function wireEventListeners() {
     await loadReportData();
   });
 
-  // CSV Download Button
-  document.getElementById('btn-vendor-reports-download-csv')?.addEventListener('click', async () => {
+  // Excel Download Button
+  document.getElementById('btn-vendor-reports-download-xlsx')?.addEventListener('click', async () => {
     const q = buildQueryParams();
-    await downloadBlob(`/api/v1/vendor/reports/${currentReportType}/csv?${q}`, `VendorReport_${currentReportType}.csv`);
+    await downloadBlob(`/api/v1/vendor/reports/${currentReportType}/xlsx?${q}`, `VendorReport_${currentReportType}.xlsx`);
   });
 
   // PDF Download Button

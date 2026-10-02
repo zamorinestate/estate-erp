@@ -27,6 +27,16 @@ const ROLE_INITIALS = {
   [ROLES.VENDOR]: "VN",
 };
 
+export function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 const SIDEBAR_COLLAPSED_KEY = "zamorin-sidebar-collapsed";
 
 export function isSidebarCollapsed() {
@@ -653,6 +663,12 @@ export function renderTopbar({ scopeChip } = {}) {
           <button class="popover-menu-item" data-profile-action="my-employment">
             ${icon("payslip")} My Employment
           </button>
+          <button class="popover-menu-item" data-profile-action="staff-home">
+            ${icon("user")} Staff Self-Service
+          </button>
+          <button class="popover-menu-item" data-profile-action="appearance">
+            ${icon("sun")} Appearance &amp; Theme
+          </button>
           <button class="popover-menu-item" data-profile-action="settings">
             ${icon("settings")} Preferences &amp; Settings
           </button>
@@ -1038,6 +1054,11 @@ export function wireBell(root) {
           navigate(state.role === ROLES.STAFF ? "staff-settings" : "settings");
         } else if (action === "my-employment") {
           setSettingsActiveSection("employment");
+          navigate(state.role === ROLES.STAFF ? "staff-settings" : "settings");
+        } else if (action === "staff-home") {
+          navigate("staff-home");
+        } else if (action === "appearance") {
+          setSettingsActiveSection("appearance");
           navigate(state.role === ROLES.STAFF ? "staff-settings" : "settings");
         } else if (action === "security") {
           setSettingsActiveSection("security");

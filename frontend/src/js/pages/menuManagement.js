@@ -8,6 +8,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "../apiClient.js";
 import { state } from "../state.js";
 import { showToast, openModal, closeModal, renderModuleErrorState } from "../components.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview";
 let activeConcept = "ALL";
@@ -61,7 +62,6 @@ export function renderMenuManagement(subroute) {
         <div>
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
             <h1 class="page-title" style="font-size:26px; font-weight:700; color:var(--ink); margin:0;">Menu &amp; Recipe Management</h1>
-            <span class="badge" style="background:rgba(180,83,9,0.12); color:#b45309; font-weight:600; font-size:12px; padding:4px 10px; border-radius:12px;">SCR-013 MENU</span>
           </div>
           <p class="page-subtitle" style="font-size:14px; color:var(--muted); margin:4px 0 0;">
             Multi-Outlet Menu Master &bull; Recipe Formulation &bull; Pricing Precedence &bull; Layered Availability &bull; POS Sync
@@ -217,7 +217,7 @@ function renderCurrentWorkspace(wrap) {
       title: "Menu Engineering",
       icon: "📈",
       desc: "Stars, Plowhorses, Puzzles and Dogs profitability matrix and volume analytics.",
-      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-matrix" type="button">Export Matrix (CSV)</button>`
+      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-matrix" type="button">Export Matrix (Excel)</button>`
     },
   };
 
@@ -287,7 +287,7 @@ function renderCurrentWorkspace(wrap) {
     showToast("Menu integrity audit passed: 0 orphaned modifiers, 100% recipes costed.", "success");
   });
   wrap.querySelector("#btn-child-export-matrix")?.addEventListener("click", () => {
-    exportMenuMatrixCsv();
+    exportMenuMatrixExcel();
   });
 
   const inner = wrap.querySelector("#menu-submodule-inner-content");
@@ -315,6 +315,7 @@ function renderOverviewTab(wrap) {
 
   const menuTiles = [
     { id: "items", icon: "📋", title: "Global Item Master", subtitle: "Catalogue items, categories & dietary tags", badge: `${kpis.activeItems || 7} Items`, badgeType: "accent" },
+    { id: "customers", icon: "👥", title: "Customers & Loyalty", subtitle: "Guest directory, loyalty tier balances & store credit", badge: "Loyalty Hub", badgeType: "accent", route: "menu/customers" },
     { id: "menus", icon: "📅", title: "Menus & Schedules", subtitle: "Daypart menus, breakfast & dinner schedules", badge: "Active", badgeType: "" },
     { id: "recipes", icon: "🍳", title: "Recipes & BOM", subtitle: "Ingredient formulation, sub-recipes & COGS", badge: `${kpis.totalRecipes || 7} Recipes`, badgeType: "success" },
     { id: "modifiers", icon: "🔀", title: "Modifiers & Variants", subtitle: "Milk choices, size variations & syrups", badge: "Customisers", badgeType: "" },
@@ -335,7 +336,7 @@ function renderOverviewTab(wrap) {
         <h3 class="module-hub-section-title">Menu &amp; Recipe Engineering Workspaces</h3>
         <div class="module-tile-grid">
           ${menuTiles.map((t) => `
-            <button class="module-hub-tile" data-menu-hub-tile="${t.id}" type="button">
+            <button class="module-hub-tile" data-menu-hub-tile="${t.id}" ${t.route ? `data-route="${t.route}"` : ""} type="button">
               <div class="module-tile-icon-box">${t.icon}</div>
               <div class="module-tile-content">
                 <div class="module-tile-title-row">
@@ -417,7 +418,12 @@ function renderOverviewTab(wrap) {
   // Wire Menu Hub Tiles
   wrap.querySelectorAll("[data-menu-hub-tile]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      navigate("menu/" + btn.dataset.menuHubTile);
+      const directRoute = btn.dataset.route;
+      if (directRoute) {
+        navigate(directRoute);
+      } else {
+        navigate("menu/" + btn.dataset.menuHubTile);
+      }
     });
   });
 }
@@ -1077,7 +1083,7 @@ async function renderAnalyticsTab(wrap) {
           <h3 style="font-size:15.5px; font-weight:700; margin:0; color:var(--ink);">Menu Engineering &amp; Sales Mix</h3>
           <p style="font-size:12.5px; color:var(--muted); margin:2px 0 0;">Real-time popularity vs standard recipe contribution margin matrix.</p>
         </div>
-        <button id="btn-export-matrix" class="btn btn-sm btn-secondary">Export Matrix (CSV)</button>
+        <button id="btn-export-matrix" class="btn btn-sm btn-secondary">Export Matrix (Excel)</button>
       </div>
 
       <div style="overflow-x:auto;">
@@ -1118,7 +1124,7 @@ async function renderAnalyticsTab(wrap) {
   `;
 
   const exportBtn = wrap.querySelector("#btn-export-matrix");
-  if (exportBtn) exportBtn.addEventListener("click", exportMenuMatrixCsv);
+  if (exportBtn) exportBtn.addEventListener("click", exportMenuMatrixExcel);
 }
 
 // ── GLOBAL UI-001 MODALS ──────────────────────────────────────────────────────
@@ -1793,21 +1799,29 @@ function openAssignPackagingModal(wrap) {
   });
 }
 
-function exportMenuMatrixCsv() {
-  const headers = ["Item Code", "Item Name", "Category", "Selling Price", "Food Cost", "Gross Margin %", "Volume (30D)", "Matrix Classification"];
+function exportMenuMatrixExcel() {
   const rows = [
-    ["ITM-001", "Zamorin Special Filter Coffee", "Beverages", "80.00", "18.50", "76.8%", "1420", "STAR"],
-    ["ITM-002", "Malabar Banana Fritters (Pazham Pori)", "Bakery", "65.00", "14.20", "78.1%", "980", "STAR"],
-    ["ITM-003", "Cold Brew Tonic", "Beverages", "140.00", "32.00", "77.1%", "410", "PLOWHORSE"],
-    ["ITM-004", "Avocado Sourdough Toast", "Breakfast", "220.00", "78.00", "64.5%", "190", "PUZZLE"],
+    { code: "ITM-001", name: "Zamorin Special Filter Coffee", category: "Beverages", price: 80.00, cost: 18.50, margin: "76.8%", volume: 1420, classification: "STAR" },
+    { code: "ITM-002", name: "Malabar Banana Fritters (Pazham Pori)", category: "Bakery", price: 65.00, cost: 14.20, margin: "78.1%", volume: 980, classification: "STAR" },
+    { code: "ITM-003", name: "Cold Brew Tonic", category: "Beverages", price: 140.00, cost: 32.00, margin: "77.1%", volume: 410, classification: "PLOWHORSE" },
+    { code: "ITM-004", name: "Avocado Sourdough Toast", category: "Breakfast", price: 220.00, cost: 78.00, margin: "64.5%", volume: 190, classification: "PUZZLE" },
   ];
-  let csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `menu_engineering_matrix_${new Date().toISOString().split("T")[0]}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  showToast("Menu engineering matrix exported to CSV.", "info");
+
+  exportToXlsx({
+    filename: `menu_engineering_matrix_${new Date().toISOString().split("T")[0]}.xlsx`,
+    sheetName: "MenuMatrix",
+    reportTitle: "Menu Engineering Matrix & Profitability Report",
+    columns: [
+      { key: "code", label: "Item Code" },
+      { key: "name", label: "Item Name" },
+      { key: "category", label: "Category" },
+      { key: "price", label: "Selling Price (₹)", type: "currency" },
+      { key: "cost", label: "Food Cost (₹)", type: "currency" },
+      { key: "margin", label: "Gross Margin %" },
+      { key: "volume", label: "Volume (30D)", type: "number" },
+      { key: "classification", label: "Matrix Classification" },
+    ],
+    rows,
+  });
+  showToast("Menu engineering matrix Excel workbook downloaded ✓", "mint");
 }

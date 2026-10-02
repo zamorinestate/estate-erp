@@ -10,6 +10,7 @@ import { navigate } from "../router.js";
 import { exportCentreModal } from "../components/exportCentreModal.js";
 import { icon } from "../icons.js";
 import { debounce } from "../utils/perf.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeSubpanel = "overview";
 let liveOverview = null;
@@ -1013,9 +1014,9 @@ export async function wireEmployees(container = document, subroute) {
     updateDirectoryViewSmooth();
   });
 
-  // Export CSV
+  // Export Excel
   document.getElementById("export-directory-btn")?.addEventListener("click", () => {
-    exportDirectoryCSV();
+    exportDirectoryExcel();
   });
 
   // Fast Cafe drill-down
@@ -1236,35 +1237,34 @@ function confirmAndDeleteEmployee(userId, name) {
   });
 }
 
-function exportDirectoryCSV() {
+function exportDirectoryExcel() {
   const employees = liveEmployees.length > 0 ? liveEmployees : [];
   if (employees.length === 0) {
     showToast("No employee records to export.", "info");
     return;
   }
-  const headers = ["Employee ID", "Full Name", "Email", "Role", "Designation", "Department", "Primary Cafe", "Worker Type", "Status", "Joined"];
-  const rows = employees.map(e => [
-    e.userId,
-    `"${e.name || ''}"`,
-    e.email || '',
-    e.role || '',
-    `"${e.designation || ''}"`,
-    `"${e.department || ''}"`,
-    e.primaryCafeId || '',
-    e.workerType || '',
-    e.employmentStatus || '',
-    e.joiningDate ? String(e.joiningDate).split('T')[0] : '',
-  ]);
-  const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `Zamorin_Employee_Directory_${new Date().toISOString().split('T')[0]}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  showToast("Employee directory exported as CSV.", "success");
+  exportToXlsx({
+    filename: `Zamorin_Employee_Directory_${new Date().toISOString().split('T')[0]}.xlsx`,
+    sheetName: "Employees",
+    reportTitle: "Employee Directory & Staffing Register",
+    columns: [
+      { key: "userId", label: "Employee ID" },
+      { key: "name", label: "Full Name" },
+      { key: "email", label: "Email" },
+      { key: "role", label: "Role" },
+      { key: "designation", label: "Designation" },
+      { key: "department", label: "Department" },
+      { key: "primaryCafeId", label: "Primary Cafe" },
+      { key: "workerType", label: "Worker Type" },
+      { key: "employmentStatus", label: "Status" },
+      { key: "joinedDate", label: "Joined" },
+    ],
+    rows: employees.map((e) => ({
+      ...e,
+      joinedDate: e.joiningDate ? String(e.joiningDate).split('T')[0] : '',
+    })),
+  });
+  showToast("Employee directory exported as Excel workbook.", "success");
 }
 
 // ─── MODAL WIZARDS ────────────────────────────────────────────────────────────

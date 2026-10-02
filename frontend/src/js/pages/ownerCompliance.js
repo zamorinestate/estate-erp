@@ -28,12 +28,8 @@ export function renderOwnerCompliance() {
       <!-- Header -->
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;">
         <div>
-          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);border-radius:20px;font-size:11px;font-weight:700;color:#34d399;letter-spacing:0.5px;margin-bottom:8px;">
-            <span style="width:6px;height:6px;border-radius:50%;background:#10b981;"></span>
-            OWNER STRATEGIC EXPANSION · STAGE 04
-          </div>
           <h1 style="font-size:24px;font-weight:800;color:var(--text-primary,#fff);margin:0 0 4px 0;letter-spacing:-0.5px;">
-            Compliance, Licence, Contract & Insurance Governance
+            Compliance, Licence, Contract &amp; Insurance Governance
           </h1>
           <div style="font-size:13px;color:var(--text-muted,#94a3b8);">
             Enterprise Portfolio Governance · Perpetual FSSAI State · IRDAI Insurance Framework · Contract Lifecycle
