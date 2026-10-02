@@ -1,5 +1,7 @@
 'use strict';
 
+const { isPrimaryMasterAuth } = require('../reportingAuthority');
+
 /**
  * PM-02M — REPORTING PRODUCTIVITY CALCULATIONS
  *
@@ -190,7 +192,6 @@ function isVisualCompatible(visualType, aggregationType) {
  */
 const ROLE_VISIBILITY_CREATE_PERMISSIONS = {
   PRIMARY_MASTER: ['PERSONAL', 'SHARED_CAFE', 'SHARED_ORGANISATION'],
-  NORMAL_MASTER: ['PERSONAL', 'SHARED_CAFE', 'SHARED_ORGANISATION'],
   OWNER: ['PERSONAL', 'SHARED_CAFE'],
   CAFE_ADMIN: ['PERSONAL', 'SHARED_CAFE'],
   STAFF: ['PERSONAL'], // STAFF has no enterprise shared views (PERSONAL only)
@@ -440,9 +441,7 @@ function canEditSavedItem(doc, auth) {
   if (!auth || String(auth.role || '').toUpperCase() === 'STAFF') {
     return false; // STAFF cannot edit any enterprise saved view
   }
-  const isPrimaryMaster =
-    Boolean(auth.isPrimaryMaster) ||
-    (String(auth.role || '').toUpperCase() === 'MASTER' && auth.userId === 'MU-0001');
+  const isPrimaryMaster = isPrimaryMasterAuth(auth);
 
   // Owner of the document may always edit
   if (String(doc.ownerUserId).toUpperCase() === String(auth.userId).toUpperCase()) {
