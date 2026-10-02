@@ -43,8 +43,8 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
     isPrimaryMaster: true,
   };
 
-  const normalMasterUser = {
-    userId: 'US-MASTER-02',
+  const retiredMasterUser = {
+    userId: 'US-RETIRED-MASTER-02',
     organisationId: 'ORG-ZAMORIN',
     role: 'MASTER',
     isPrimaryMaster: false,
@@ -133,22 +133,30 @@ test('REC-02: Complete New Café / Restaurant Creation, Provisioning & Activatio
     assert.match(draftRes.cafe.cafeId, /^ZC-\d{4}$/);
     assert.equal(draftRes.cafe.lifecycleStage, 'DRAFT');
 
-    // 1.2 Normal Master allowed
-    const normalMasterDraft = await cafeService.createCafeDraft({
-      auth: normalMasterUser,
-      cafeData: {
-        name: 'Zamorin Wayanad Hills',
-        displayName: 'Wayanad Retreat',
-        cafeType: 'RESTAURANT',
-        city: 'Kalpetta',
-        state: 'Kerala',
-        stateCode: '32',
-        pincode: '673121',
-        phone: '+91 98470 54321',
-        email: 'wayanad@zamorin.cafe',
+    // 1.2 Retired non-primary MASTER is rejected at the service boundary.
+    await assert.rejects(
+      async () => {
+        await cafeService.createCafeDraft({
+          auth: retiredMasterUser,
+          cafeData: {
+            name: 'Zamorin Wayanad Hills',
+            displayName: 'Wayanad Retreat',
+            cafeType: 'RESTAURANT',
+            city: 'Kalpetta',
+            state: 'Kerala',
+            stateCode: '32',
+            pincode: '673121',
+            phone: '+91 98470 54321',
+            email: 'wayanad@zamorin.cafe',
+          },
+        });
       },
-    });
-    assert.ok(normalMasterDraft.cafe);
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.equal(err.code, 'CAFE_CREATION_DENIED');
+        return true;
+      }
+    );
 
     // 1.3 Owner rejected (403)
     await assert.rejects(

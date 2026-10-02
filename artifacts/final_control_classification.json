@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "generatedAt": "2026-09-17T00:32:01.498Z",
+    "generatedAt": "2026-10-02T12:52:00.000Z",
     "auditVersion": "2.1.0",
     "totalContracts": 1595,
     "arithmeticMatch": true
@@ -20,12 +20,6 @@
     "PRIMARY_MASTER": {
       "visibleWorking": 1468,
       "policyHidden": 0,
-      "blocked": 2,
-      "total": 1470
-    },
-    "NORMAL_MASTER": {
-      "visibleWorking": 1410,
-      "policyHidden": 58,
       "blocked": 2,
       "total": 1470
     },

@@ -177,14 +177,14 @@ function requireMasterCreationAuthority(auth) {
     throw new ApiError(401, 'UNAUTHENTICATED', 'Authentication required.');
   }
 
-  const role = auth.role.toUpperCase();
-  const isAllowed = role === 'MASTER';
+  const role = String(auth.role || '').toUpperCase();
+  const isAllowed = role === 'MASTER' && auth.isPrimaryMaster === true;
 
   if (!isAllowed) {
     throw new ApiError(
       403,
       'CAFE_CREATION_DENIED',
-      'Only Master governance authority may create or provision new cafés.'
+      'Only the Primary Master may create or provision new cafés.'
     );
   }
 }

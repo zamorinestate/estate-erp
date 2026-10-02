@@ -56,7 +56,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     await TrashEntry.deleteMany({});
 
     const req = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       query: {},
     };
     let sentData = null;
@@ -110,22 +110,22 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
       json(p) { holdResData = p; return this; },
     };
 
-    // Normal Master attempting placePreservationHold -> 403
-    const normalMasterHoldReq = {
-      auth: { userId: 'MU-0002', name: 'Normal Master', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
+    // retired non-primary MASTER attempting placePreservationHold -> 403
+    const retiredMasterHoldReq = {
+      auth: { userId: 'MU-0002', name: 'retired non-primary MASTER', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       params: { trashId: 'TRASH-202609-00001' },
       body: { reason: 'Unauthorized hold' },
     };
     await assert.rejects(
       async () => {
-        await trashController.placePreservationHold(normalMasterHoldReq, holdRes);
+        await trashController.placePreservationHold(retiredMasterHoldReq, holdRes);
       },
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.match(err.message, /Primary Master/i);
         return true;
       },
-      'Normal Master must be denied from placing preservation holds'
+      'retired non-primary MASTER must be denied from placing preservation holds'
     );
 
     await trashController.placePreservationHold(holdReq, holdRes);
@@ -186,22 +186,22 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     });
     await item.save();
 
-    // Normal Master attempting executeDispositionPurge -> 403
-    const normalMasterPurgeReq = {
+    // retired non-primary MASTER attempting executeDispositionPurge -> 403
+    const retiredMasterPurgeReq = {
       auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       params: { trashId: 'TRASH-202609-00002' },
     };
     const dummyPurgeRes = { status() { return this; }, json() { return this; } };
     await assert.rejects(
       async () => {
-        await trashController.executeDispositionPurge(normalMasterPurgeReq, dummyPurgeRes);
+        await trashController.executeDispositionPurge(retiredMasterPurgeReq, dummyPurgeRes);
       },
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.match(err.message, /Primary Master/i);
         return true;
       },
-      'Normal Master must be denied from executing disposition purge'
+      'retired non-primary MASTER must be denied from executing disposition purge'
     );
 
     const purgeReq = {
@@ -248,7 +248,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
 
     // Attempt role change on Primary Master
     const roleChangeReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { userId: primaryMaster.userId },
       body: { confirmed: true, proposedRole: 'STAFF', reason: 'Attempted demotion' },
     };
@@ -270,7 +270,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
 
     // Attempt archive on Primary Master
     const archiveReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { userId: primaryMaster.userId },
       body: { reason: 'Attempted archive' },
     };
@@ -292,8 +292,8 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     delete process.env.REQUIRE_MFA; // Default: TOTP not globally required
 
     const req = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
-      user: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
+      user: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
     };
     let sentData = null;
     const res = {
@@ -312,24 +312,28 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     if (prevEnv) process.env.REQUIRE_MFA = prevEnv;
   });
 
-  await t.test('PM-04 DOMAIN B: Cafe creation and mutation strictly requires Primary Master; Normal Master, OWNER and STAFF are denied', async () => {
+  await t.test('PM-04 DOMAIN B: Café creation and mutation strictly requires Primary Master; retired MASTER, OWNER and STAFF are denied', async () => {
     const dummyRes = {
       status() { return this; },
       json() { return this; },
     };
 
-    // 0. Normal Master can create cafe (proven by earlier frozen policy adminGovernance.test.js:309)
-    const normalMasterCreateReq = {
-      auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
-      body: { name: 'Dawn Roast — Normal Master Branch', cafeType: 'STANDARD_CAFE' },
+    // 0. Retired non-primary MASTER must fail closed on café creation.
+    const retiredMasterCreateReq = {
+      auth: { userId: 'MU-RETIRED-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
+      body: { name: 'Unauthorized Retired Master Branch', cafeType: 'STANDARD_CAFE' },
     };
-    let normalResData = null;
-    const normalRes = {
-      status(c) { assert.equal(c, 201); return this; },
-      json(d) { normalResData = d; return this; },
-    };
-    await cafeController.createCafe(normalMasterCreateReq, normalRes);
-    assert.equal(normalResData.success, true);
+    await assert.rejects(
+      async () => {
+        await cafeController.createCafe(retiredMasterCreateReq, dummyRes);
+      },
+      (err) => {
+        assert.equal(err.statusCode, 403);
+        assert.match(err.message, /Primary Master|CAFE_CREATION_DENIED|PRIMARY_MASTER_ACCESS_REQUIRED/i);
+        return true;
+      },
+      'Retired non-primary MASTER must be forbidden from creating a café'
+    );
 
     // 1. OWNER attempting createCafe -> 403
     const ownerCreateReq = {
@@ -414,7 +418,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     });
 
     const foreignCafeReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { cafeId: 'ZC-9999' },
     };
     const dummyRes = {
@@ -455,7 +459,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     await foreignTrash.save();
 
     const restoreReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       body: { trashId: 'TRASH-202609-00099' },
     };
     await assert.rejects(
@@ -489,7 +493,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     });
 
     const roleReq = {
-      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER' },
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
       params: { userId: 'AD-9001' },
       body: {
         confirmed: true,
@@ -513,9 +517,9 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
     assert.ok(updatedUser.permissionsVersion > 1, 'permissionsVersion must be incremented to invalidate permissions cache');
   });
 
-  await t.test('PM-04 DOMAIN D: Security policy mutation strictly requires Primary Master; Normal Master is denied', async () => {
-    // 1. Normal Master attempting updateSecurityPolicy -> 403 PRIMARY_MASTER_AUTHORITY_REQUIRED
-    const normalMasterReq = {
+  await t.test('PM-04 DOMAIN D: Security policy mutation strictly requires Primary Master; retired non-primary MASTER is denied', async () => {
+    // 1. retired non-primary MASTER attempting updateSecurityPolicy -> 403 PRIMARY_MASTER_AUTHORITY_REQUIRED
+    const retiredMasterReq = {
       auth: { userId: 'MU-0002', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: false },
       body: { passwordPolicy: 'Weak policy attempted' },
     };
@@ -523,14 +527,14 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
 
     await assert.rejects(
       async () => {
-        await settingsController.updateSecurityPolicy(normalMasterReq, dummyRes);
+        await settingsController.updateSecurityPolicy(retiredMasterReq, dummyRes);
       },
       (err) => {
         assert.equal(err.statusCode, 403);
         assert.match(err.message, /Primary Master/i);
         return true;
       },
-      'Normal Master must be denied from mutating security policy'
+      'retired non-primary MASTER must be denied from mutating security policy'
     );
 
     // 2. Primary Master updates policy successfully
@@ -606,6 +610,7 @@ test('PM-04 Administration & Trash Governance Suite', async (t) => {
       userId: 'MU-0001',
       organisationId: 'ORG-ZAMORIN',
       role: 'MASTER',
+      isPrimaryMaster: true,
       mfaEnabled: false,
     };
 

@@ -3,12 +3,11 @@
 // ZAMORIN CAFÉ ERP — MASTER REAL RUNTIME & POSTCONDITION AUDIT
 // scripts/audit_all_interactive_controls_runtime.mjs
 //
-// Zero-Dependency Real Runtime Execution Harness across all 5 Personas:
+// Zero-Dependency Real Runtime Execution Harness across all 4 supported Personas:
 // 1. Primary Master
-// 2. Normal Master
-// 3. Owner
-// 4. Cafe Operations (Admin)
-// 5. Staff
+// 2. Owner
+// 3. Cafe Operations (Admin)
+// 4. Staff
 // =============================================================================
 
 import { readFile } from 'fs/promises';
@@ -25,7 +24,6 @@ const FRONTEND_URL = 'http://localhost:3000';
 
 const PERSONAS = [
   { id: 'PRIMARY_MASTER', role: 'master', isPrimary: true, name: 'Zamorin Primary Master' },
-  { id: 'NORMAL_MASTER',  role: 'master', isPrimary: false, name: 'Zamorin Normal Master' },
   { id: 'OWNER',          role: 'owner',  isPrimary: false, name: 'Zamorin Owner' },
   { id: 'CAFE_ADMIN',     role: 'cafe_admin', isPrimary: false, name: 'Cafe Operations Lead' },
   { id: 'STAFF',          role: 'staff',  isPrimary: false, name: 'Normal Employee / Staff' },
@@ -321,9 +319,9 @@ async function runRuntimeAudit() {
   // TEST SUITE 7: SECURITY & IDOR AUTHORIZATION REJECTION
   // =========================================================================
   console.log('\n▶ SUITE 7: Security Role Denials & IDOR Resistance');
-  const normalMasterDenied = !isRouteAllowed('master', 'passbook', false);
+  const retiredMasterDenied = !isRouteAllowed('master', 'passbook', false);
   const staffDenied = !isRouteAllowed('staff', 'admin', false);
-  if (normalMasterDenied) auditStats.securityDenialsVerified++;
+  if (retiredMasterDenied) auditStats.securityDenialsVerified++;
   if (staffDenied) auditStats.securityDenialsVerified++;
   console.log(`  ✓ Security Denial Invariants Verified: ${auditStats.securityDenialsVerified}`);
 

@@ -32,7 +32,19 @@ function normalizeIdentifier(value) {
     : '';
 }
 
+function assertCanonicalMasterState(request) {
+  const role = request.auth?.role ? String(request.auth.role).toUpperCase() : '';
+  if (role === 'MASTER' && request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'RETIRED_MASTER_ACCOUNT_DENIED',
+      'Non-primary MASTER accounts are retired and cannot access café administration.'
+    );
+  }
+}
+
 function requireGovernanceRole(request) {
+  assertCanonicalMasterState(request);
   const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
   if (role !== 'MASTER' && role !== 'OWNER') {
     throw new ApiError(
@@ -44,17 +56,19 @@ function requireGovernanceRole(request) {
 }
 
 function requireMaster(request) {
+  assertCanonicalMasterState(request);
   const role = request.auth?.role ? request.auth.role.toUpperCase() : '';
-  if (role !== 'MASTER') {
+  if (role !== 'MASTER' || request.auth?.isPrimaryMaster !== true) {
     throw new ApiError(
       403,
-      'MASTER_ACCESS_REQUIRED',
-      'Only Master role may perform this operational café mutation.'
+      'PRIMARY_MASTER_ACCESS_REQUIRED',
+      'Only the Primary Master may perform this operational café mutation.'
     );
   }
 }
 
 function assertCafeAccess(request, cafeId) {
+  assertCanonicalMasterState(request);
   if (request.auth?.role === 'VENDOR') {
     throw new ApiError(
       403,
@@ -79,6 +93,7 @@ function assertCafeAccess(request, cafeId) {
 }
 
 function buildCafeFilter(request) {
+  assertCanonicalMasterState(request);
   const filter = {
     organisationId:
       request.auth.organisationId,

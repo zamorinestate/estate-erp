@@ -59,7 +59,7 @@ async function runGovernanceAudit() {
   const manifestPath = path.join(ROOT_DIR, 'artifacts/runtime_support_manifest.json');
   assert.ok(fs.existsSync(manifestPath), 'runtime_support_manifest.json must exist');
   const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  assert.strictEqual(manifestData.totalModules, 30, 'Must record 30 canonical module families');
+  assert.strictEqual(manifestData.totalModules, 29, 'Must record 29 canonical module families after retired secondary-Master dashboard removal');
   console.log(`  ✔ Manifest contains ${manifestData.totalModules} modules with supportStatus, businessStatus, productionStatus, userReviewStatus, retiredStatus.`);
 
   console.log('\n=============================================================================');

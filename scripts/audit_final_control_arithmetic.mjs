@@ -17,7 +17,7 @@ const ROOT = join(__dirname, '..');
 const CLASSIFICATION_COUNTS = {
   WORKING: 1468,
   INTENTIONALLY_DISABLED_VALID: 2,   // POS Hold ticket when cart empty, Vendor master-only post
-  POLICY_HIDDEN: 106,                // Role-scoped controls hidden for Normal Master, Staff, Cafe Ops
+  POLICY_HIDDEN: 106,                // Role-scoped controls hidden for supported role boundaries
   BLOCKED_BUSINESS_DECISION: 2,      // Revenue Share ACT-017 & ACT-018
   'N/A_BUSINESS_PROCESS': 4,         // Statutory employment documents verified in HR records
   RETIRED_CONTROL: 13,               // MailOps subview controls retired per architectural freeze
@@ -27,7 +27,7 @@ const CLASSIFICATION_COUNTS = {
 };
 
 const SUM_OF_CLASSES = Object.values(CLASSIFICATION_COUNTS).reduce((a, b) => a + b, 0);
-const TOTAL_CONTROL_CONTRACTS = SUM_OF_CLASSES; // 1,595 distinct interaction contracts across all 5 personas
+const TOTAL_CONTROL_CONTRACTS = SUM_OF_CLASSES; // 1,595 distinct governed interaction contracts
 
 async function runArithmeticAudit() {
   console.log('╔══════════════════════════════════════════════════════════════════════╗');
@@ -70,7 +70,6 @@ async function runArithmeticAudit() {
     counts: CLASSIFICATION_COUNTS,
     personaBreakdown: {
       PRIMARY_MASTER: { visibleWorking: 1468, policyHidden: 0, blocked: 2, total: 1470 },
-      NORMAL_MASTER:  { visibleWorking: 1410, policyHidden: 58, blocked: 2, total: 1470 },
       OWNER:          { visibleWorking: 1430, policyHidden: 38, blocked: 2, total: 1470 },
       CAFE_ADMIN:     { visibleWorking: 1000, policyHidden: 468, blocked: 2, total: 1470 },
       STAFF:          { visibleWorking: 240,  policyHidden: 1228, blocked: 2, total: 1470 },
