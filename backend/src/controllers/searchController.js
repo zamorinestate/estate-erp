@@ -22,6 +22,7 @@ const { Cafe } = require('../models/Cafe');
 
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 const { maskPhone, maskEmail } = require('../utils/dataClassifier');
 
 function escapeRegExp(text) {
@@ -29,6 +30,7 @@ function escapeRegExp(text) {
 }
 
 const performGlobalSearch = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const query = request.query.q || request.query.query;
   const qText = typeof query === 'string' ? query.trim() : '';
 
