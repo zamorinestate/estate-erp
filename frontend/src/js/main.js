@@ -45,8 +45,6 @@ import {
   wireMfaChallenge2,
   renderMfaReenrollment2,
   wireMfaReenrollment2,
-  renderRegisterPage2,
-  wireRegisterPage2,
   showGlassAlert,
   abortActivePasskeyRequests,
 } from "./pages/login2.js?v=3.5.4";
@@ -276,12 +274,28 @@ export async function handleLoginSubmit({
   organisationId,
   email,
   password,
+  rememberDevice = false,
+  targetCafeId = null,
 }) {
-  const result = await apiPost("/auth/login", {
+  const payload = {
     organisationId,
     email,
     password,
     identifier: email,
+    rememberDevice: Boolean(rememberDevice),
+    device: {
+      deviceId: getOrCreateDeviceId(),
+      deviceName: "Browser Client",
+      deviceType: "DESKTOP",
+    },
+  };
+
+  if (targetCafeId) {
+    payload.targetCafeId = String(targetCafeId).trim().toUpperCase();
+  }
+
+  const result = await apiPost("/auth/login", payload, {
+    timeoutMs: 60000,
   });
 
   if (result?.data?.accessToken) {
@@ -376,14 +390,19 @@ function resolveAuthenticatedRole(user) {
   const rawRole = String(user?.role || "").toUpperCase();
 
   if (rawRole === "PRIMARY_MASTER" || rawRole === "MASTER") {
-    // ⚠️ PRIMARY MASTER LOCK: Only the single administrator account
-    // (MU-0001 / pradeeshk331@gmail.com) holds the MASTER role and window.
-    const isHardcodedPrimaryMaster =
-      user?.userId === "MU-0001" &&
-      String(user?.email || "").toLowerCase() === "pradeeshk331@gmail.com";
+    const isPrimaryMaster = user?.isPrimaryMaster === true;
+    if (!isPrimaryMaster) {
+      // Defense in depth: a non-primary MASTER is a retired/invalid account
+      // state. The backend rejects it; the frontend also refuses to grant
+      // Primary-Master navigation if such a payload ever reaches the client.
+      return {
+        role: "staff",
+        isPrimaryMaster: false,
+      };
+    }
     return {
       role: "master",
-      isPrimaryMaster: isHardcodedPrimaryMaster,
+      isPrimaryMaster: true,
     };
   }
 
@@ -420,6 +439,45 @@ function resolveAuthenticatedRole(user) {
     role: "staff",
     isPrimaryMaster: false,
   };
+}
+
+async function enforceRequiredPasswordChange(user, explicitRequirement = false) {
+  const mustChangePassword =
+    explicitRequirement === true ||
+    user?.mustChangePassword === true;
+
+  if (!mustChangePassword) {
+    return false;
+  }
+
+  abortActivePasskeyRequests();
+  const { role, isPrimaryMaster } = resolveAuthenticatedRole(user);
+
+  setSessionState(SessionState.AUTHENTICATED);
+  setState({
+    auth: {
+      authenticated: true,
+      user,
+      loading: false,
+      passwordChangeRequired: true,
+    },
+    user,
+    role,
+    isPrimaryMaster,
+  });
+
+  try {
+    if (typeof localStorage !== "undefined" && user) {
+      localStorage.removeItem("zamorin-dev-role");
+      localStorage.setItem("zamorin_user", JSON.stringify(user));
+    }
+  } catch {}
+
+  const { openChangePasswordModal } =
+    await import("./components/changePasswordModal.js");
+
+  openChangePasswordModal({ forced: true });
+  return true;
 }
 
 // =============================================================================
@@ -471,8 +529,13 @@ export function mountAuthScreen(screen = "login", params = {}) {
     const existingEmail = appEl.querySelector("#l2-email")?.value;
     const existingPassword = appEl.querySelector("#l2-password")?.value;
     const hasPreRenderedDom = Boolean(appEl.querySelector("#l2-login-form"));
+    const hasUnsupportedLegacyAuthControls = Boolean(
+      appEl.querySelector(
+        "#l2-social-google, #l2-social-apple, #l2-social-facebook, #l2-to-register-btn"
+      )
+    );
 
-    if (!hasPreRenderedDom || params.notice || params.error || activeCafe) {
+    if (!hasPreRenderedDom || hasUnsupportedLegacyAuthControls || params.notice || params.error || activeCafe) {
       appEl.innerHTML = renderLoginPage2({
         ...params,
         organisationId: params.organisationId ?? existingOrgId ?? "",
@@ -490,14 +553,11 @@ export function mountAuthScreen(screen = "login", params = {}) {
       onForgotPassword: ({ organisationId, email }) => {
         mountAuthScreen("forgot", { organisationId, email });
       },
-      onRegister: () => {
-        mountAuthScreen("register");
-      },
       onCafeOps: () => {
         window.location.href = "/cafe-operations/cafe-operations.html";
       },
-      onPasskeySuccess: (user) => {
-        handleAuthenticatedUserSession(user);
+      onPasskeySuccess: async (user) => {
+        await handleAuthenticatedUserSession(user);
       }
     });
   } else if (screen === "mfa") {
@@ -550,7 +610,7 @@ export function mountAuthScreen(screen = "login", params = {}) {
         }
 
         if (user) {
-          handleAuthenticatedUserSession(user);
+          await handleAuthenticatedUserSession(user);
           return;
         }
         window.location.hash = "#dashboard";
@@ -612,7 +672,7 @@ export function mountAuthScreen(screen = "login", params = {}) {
         if (!user) {
           throw new Error("Authenticated profile could not be loaded.");
         }
-        handleAuthenticatedUserSession(user);
+        await handleAuthenticatedUserSession(user);
       },
     });
   } else if (screen === "forgot") {
@@ -664,11 +724,6 @@ export function mountAuthScreen(screen = "login", params = {}) {
         mountAuthScreen("login", { notice: "Password updated successfully. Please sign in with your new password." });
       },
       onCancel: () => mountAuthScreen("login")
-    });
-  } else if (screen === "register") {
-    appEl.innerHTML = renderRegisterPage2(params);
-    wireRegisterPage2(appEl, {
-      onLogin: () => mountAuthScreen("login")
     });
   }
 }
@@ -728,7 +783,14 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
     }
     const user = res?.data?.user;
     if (user) {
-      handleAuthenticatedUserSession(user);
+      const passwordChangeRequired = await enforceRequiredPasswordChange(
+        user,
+        res?.data?.mustChangePassword === true
+      );
+      if (passwordChangeRequired) {
+        return { success: true, user, passwordChangeRequired: true };
+      }
+      await handleAuthenticatedUserSession(user);
       return { success: true, user };
     }
     if (typeof window !== "undefined") {
@@ -770,7 +832,11 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
   }
 }
 
-function handleAuthenticatedUserSession(user) {
+async function handleAuthenticatedUserSession(user) {
+  if (await enforceRequiredPasswordChange(user)) {
+    return;
+  }
+
   abortActivePasskeyRequests();
   const { role, isPrimaryMaster } = resolveAuthenticatedRole(user);
   const landingRoute = (role === "staff") ? "staff-home" : (role === "vendor" ? "vendor-dashboard" : "dashboard");
@@ -1222,7 +1288,7 @@ async function boot() {
 
     const isExplicitAppHash = Boolean(
       urlHash &&
-      !["login", "login2", "forgot", "mfa", "register", "cafe-gateway", "cafe-operator-signin", "cafe-operations/login", "cafe-operations-login"].includes(urlHash) &&
+      !["login", "login2", "forgot", "mfa", "cafe-gateway", "cafe-operator-signin", "cafe-operations/login", "cafe-operations-login"].includes(urlHash) &&
       !urlHash.startsWith("cafe-operations/login") &&
       !urlHash.startsWith("cafe-access/") &&
       !urlHash.startsWith("c/")
@@ -1244,8 +1310,11 @@ async function boot() {
       mountAuthScreen("login");
 
       // Non-blocking background session probe (HttpOnly cookies or active session)
-      apiGet("/auth/me", { allowRefreshRetry: false }).then((payload) => {
+      apiGet("/auth/me", { allowRefreshRetry: false }).then(async (payload) => {
         if (payload?.data?.user) {
+          if (await enforceRequiredPasswordChange(payload.data.user)) {
+            return;
+          }
           applyAuthenticatedUser(payload.data.user, urlHash);
           if (pathname === "/login" || pathname === "/login2") {
             if (typeof window !== "undefined" && window.history && window.history.replaceState) {
@@ -1272,6 +1341,9 @@ async function boot() {
     try {
       const payload = await apiGet("/auth/me", { allowRefreshRetry: false });
       if (payload?.data?.user) {
+        if (await enforceRequiredPasswordChange(payload.data.user)) {
+          return;
+        }
         applyAuthenticatedUser(payload.data.user, urlHash);
         if (pathname === "/login" || pathname === "/login2") {
           if (typeof window !== "undefined" && window.history && window.history.replaceState) {
