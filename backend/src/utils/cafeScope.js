@@ -2,6 +2,30 @@
 
 const { ApiError } = require('./ApiError');
 
+
+/**
+ * Fails closed for the permanently retired non-primary MASTER account state.
+ * MASTER authority is valid only when explicitly attested with isPrimaryMaster === true.
+ *
+ * @param {Object} auth request.auth
+ * @returns {string} normalized role
+ */
+function assertCanonicalMasterState(auth) {
+  if (!auth || !auth.role) {
+    throw new ApiError(401, 'UNAUTHENTICATED', 'Authentication required.');
+  }
+
+  const role = String(auth.role).trim().toUpperCase();
+  if (role === 'MASTER' && auth.isPrimaryMaster !== true) {
+    throw new ApiError(
+      403,
+      'RETIRED_MASTER_ACCOUNT_DENIED',
+      'Non-primary MASTER accounts are retired and cannot exercise MASTER authority.'
+    );
+  }
+  return role;
+}
+
 /**
  * ZAMORIN CAFE ERP — CENTRAL TENANT & CAFE SCOPE RESOLVER
  *
@@ -280,6 +304,7 @@ function allowlistWritableFields(body, allowedFields = []) {
 }
 
 module.exports = {
+  assertCanonicalMasterState,
   resolveEffectiveCafeScope,
   assertResourceCafeOwnership,
   buildEffectiveCafeFilter,
