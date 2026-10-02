@@ -561,12 +561,44 @@ export function mountAuthScreen(screen = "login", params = {}) {
       }
     });
   } else if (screen === "mfa") {
+    const isSetup = Boolean(params.mfaSetupRequired);
+    const challengeToken = params.mfaChallengeToken || params.tempToken || "";
+    const rememberDevice = Boolean(params.rememberDevice);
+
+    if (isSetup && !params.mfaSetupPrepared) {
+      appEl.innerHTML = renderMfaChallenge2({
+        ...params,
+        setupLoading: true,
+      });
+
+      apiPost(
+        "/auth/mfa/setup",
+        { mfaSetupToken: challengeToken },
+        { timeoutMs: 60000 }
+      ).then((preparation) => {
+        mountAuthScreen("mfa", {
+          ...params,
+          mfaSetupPrepared: true,
+          manualEntrySecret:
+            preparation?.data?.manualEntrySecret || "",
+          otpauthUri:
+            preparation?.data?.otpauthUri || "",
+        });
+      }).catch((error) => {
+        mountAuthScreen("login", {
+          email: params.email || "",
+          error:
+            error?.userMessage ||
+            error?.message ||
+            "Unable to start multi-factor authentication setup. Please sign in again.",
+        });
+      });
+      return;
+    }
+
     const handleMfaSubmit = async ({ code, recoveryCode }) => {
       try {
-        const isSetup = Boolean(params.mfaSetupRequired);
         const endpoint = isSetup ? "/auth/mfa/confirm" : "/auth/mfa/verify";
-        const challengeToken = params.mfaChallengeToken || params.tempToken || "";
-        const rememberDevice = Boolean(params.rememberDevice);
         const payload = isSetup
           ? { mfaSetupToken: challengeToken, code, rememberDevice }
           : {
@@ -631,7 +663,11 @@ export function mountAuthScreen(screen = "login", params = {}) {
       }
     };
 
-    appEl.innerHTML = renderMfaChallenge2(params);
+    appEl.innerHTML = renderMfaChallenge2({
+      ...params,
+      manualEntrySecret: params.manualEntrySecret || "",
+      setupLoading: false,
+    });
     wireMfaChallenge2(appEl, {
       onSubmit: handleMfaSubmit,
       onBack: () => mountAuthScreen("login"),
@@ -1408,6 +1444,10 @@ if (typeof window !== "undefined") {
       mountAuthScreen("forgot");
     } else if (rawHash === "mfa") {
       mountAuthScreen("mfa");
+    } else if (rawHash === "register") {
+      mountAuthScreen("login", {
+        notice: "Self-registration is disabled. Contact Café Administration for account access.",
+      });
     } else if (rawHash === "cafe-gateway" || rawHash.startsWith("cafe-access/") || rawHash.startsWith("c/")) {
       const isCShort = rawHash.startsWith("c/");
       const isQr = isCShort || rawHash.startsWith("cafe-access/qr/");
