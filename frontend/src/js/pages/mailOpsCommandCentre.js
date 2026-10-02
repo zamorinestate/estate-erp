@@ -7,6 +7,7 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from "../apiClient.js";
 import { state } from "../state.js";
 import { showToast, openModal } from "../components.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview";
 let liveStatus = null;
@@ -955,13 +956,21 @@ async function renderReportsTab(wrap) {
     const exportBtn = wrap.querySelector("#btn-export-mailops-xlsx");
     if (exportBtn) {
       exportBtn.addEventListener("click", () => {
-        const content = `Metric,Value\nTotal Outbound,${summary.outboxTotal || 0}\nDelivery Success Rate,${summary.deliverySuccessRate || 100}%\nTotal Inbound,${summary.inboundTotal || 0}\nQuarantined Inbound,${summary.inboundQuarantined || 0}\n`;
-        const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `mailops_report_${new Date().toISOString().slice(0, 10)}.xlsx`;
-        a.click();
+        exportToXlsx({
+          filename: `mailops_report_${new Date().toISOString().slice(0, 10)}.xlsx`,
+          sheetName: "MailOpsReport",
+          reportTitle: "MailOps Communication Register & Summary",
+          columns: [
+            { key: "metric", label: "Metric" },
+            { key: "value", label: "Value" },
+          ],
+          rows: [
+            { metric: "Total Outbound", value: summary.outboxTotal || 0 },
+            { metric: "Delivery Success Rate", value: `${summary.deliverySuccessRate || 100}%` },
+            { metric: "Total Inbound", value: summary.inboundTotal || 0 },
+            { metric: "Quarantined Inbound", value: summary.inboundQuarantined || 0 },
+          ],
+        });
         showToast("Communication register exported as Excel workbook.", "success");
       });
     }

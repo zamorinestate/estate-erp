@@ -11,6 +11,7 @@ import { showToast } from "../components.js";
 import { icon } from "../icons.js";
 import { apiGet, apiPost } from "../apiClient.js";
 import { setupModalA11y } from "../utils/modalA11y.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "OVERVIEW"; // 'OVERVIEW' | 'CALENDAR' | 'REQUESTS' | 'BALANCES' | 'STATEMENT'
 let selectedDurationUnit = "FULL_DAY";
@@ -1114,37 +1115,31 @@ function openCancelLeaveModal(leaveId, onDone) {
 
 // ── EXPORT EXCEL UTILITY ───────────────────────────────────────────────────────
 function exportLeaveExcel() {
-  const rows = [
-    ["Request ID", "Leave Type", "Start Date", "End Date", "Days Charged", "Status", "Reason"].join(","),
-  ];
+  const rows = cachedRequests.map((r) => ({
+    id: r.id || "",
+    type: r.type || "",
+    startDate: r.startDate || r.dates || "",
+    endDate: r.endDate || r.startDate || r.dates || "",
+    days: typeof r.days === "number" ? r.days : 1,
+    status: r.status || "",
+    reason: r.reason || "",
+  }));
 
-  if (cachedRequests.length === 0) {
-    rows.push("No leave requests found,,,,,,");
-  } else {
-    for (const r of cachedRequests) {
-      const escapedReason = `"${String(r.reason || '').replace(/"/g, '""')}"`;
-      rows.push([
-        r.id || "",
-        `"${String(r.type || '').replace(/"/g, '""')}"`,
-        r.startDate || r.dates || "",
-        r.endDate || r.startDate || r.dates || "",
-        r.days ?? 1,
-        r.status || "",
-        escapedReason,
-      ].join(","));
-    }
-  }
-
-  const content = rows.join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Leave_History_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  exportToXlsx({
+    filename: `Zamorin_Leave_History_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    sheetName: "LeaveHistory",
+    reportTitle: "Staff Personal Leave History",
+    columns: [
+      { key: "id", label: "Request ID" },
+      { key: "type", label: "Leave Type" },
+      { key: "startDate", label: "Start Date" },
+      { key: "endDate", label: "End Date" },
+      { key: "days", label: "Days Charged", type: "number" },
+      { key: "status", label: "Status" },
+      { key: "reason", label: "Reason" },
+    ],
+    rows,
+  });
   showToast("Leave statement Excel workbook downloaded ✓", "mint");
 }
 

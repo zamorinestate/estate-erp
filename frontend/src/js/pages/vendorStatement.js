@@ -802,17 +802,8 @@ async function exportStatementExcel() {
     if (currentSelectedEntryType && currentSelectedEntryType !== "ALL") params.append("entryType", currentSelectedEntryType);
     if (currentSearchTerm) params.append("search", currentSearchTerm);
 
-    const blob = await downloadBlob(`/api/v1/vendor/statement/csv?${params.toString()}`);
-    const text = await blob.text();
-    const xlsxBlob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-    const url = window.URL.createObjectURL(xlsxBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `VendorStatement-${currentFromDate}-to-${currentToDate}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    const filename = `VendorStatement-${currentFromDate}-to-${currentToDate}.xlsx`;
+    await downloadBlob(`/api/v1/vendor/statement/xlsx?${params.toString()}`, filename);
   } catch (err) {
     console.error("Failed to download statement Excel:", err);
   }

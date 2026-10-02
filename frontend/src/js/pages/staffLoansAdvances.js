@@ -11,6 +11,7 @@ import { emptyState, skeleton, showToast } from "../components.js";
 import { icon } from "../icons.js";
 import { state } from "../state.js";
 import { setupModalA11y } from "../utils/modalA11y.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview"; // 'overview' | 'facilities' | 'repayments' | 'requests' | 'policy' | 'statement'
 let loadedData = null;
@@ -1214,27 +1215,29 @@ function openDefermentModal(loanId, onDone) {
 // ── UTILITIES: EXPORT EXCEL ──────────────────────────────────────────────────
 function exportLoanExcel() {
   const loans = loadedData?.loanAdvances || [];
-  const rows = [
-    "FacilityID,Type,Principal,Repaid,Outstanding,Status",
-    ...loans.map(l => [
-      l.loanAdvanceId || l.id,
-      l.requestType,
-      ((l.principalPaise || l.requestedAmountPaise || 0) / 100).toFixed(2),
-      ((l.totalRepaidPaise || 0) / 100).toFixed(2),
-      ((l.outstandingPrincipalPaise || 0) / 100).toFixed(2),
-      l.status,
-    ].join(",")),
-  ];
   if (loans.length === 0) { showToast("No loan records to export", "info"); return; }
-  const content = rows.join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Loans_Statement_${new Date().getFullYear()}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  const rows = loans.map((l) => ({
+    id: l.loanAdvanceId || l.id,
+    type: l.requestType,
+    principal: ((l.principalPaise || l.requestedAmountPaise || 0) / 100),
+    repaid: ((l.totalRepaidPaise || 0) / 100),
+    outstanding: ((l.outstandingPrincipalPaise || 0) / 100),
+    status: l.status,
+  }));
+
+  exportToXlsx({
+    filename: `Zamorin_Loans_Statement_${new Date().getFullYear()}.xlsx`,
+    sheetName: "LoansAdvances",
+    reportTitle: "Staff Loans & Salary Advances Statement",
+    columns: [
+      { key: "id", label: "Facility ID" },
+      { key: "type", label: "Type" },
+      { key: "principal", label: "Principal (₹)", type: "currency" },
+      { key: "repaid", label: "Repaid (₹)", type: "currency" },
+      { key: "outstanding", label: "Outstanding (₹)", type: "currency" },
+      { key: "status", label: "Status" },
+    ],
+    rows,
+  });
   showToast("Loans & Advances statement Excel workbook downloaded ✓", "mint");
 }

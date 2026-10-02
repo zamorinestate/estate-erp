@@ -393,13 +393,15 @@ test('PM-05 Personal Ledger Integration & Invariant Suite', async (t) => {
       createdAt: new Date(),
     });
 
-    // 1. CSV format rejected with 400
-    const resCsv = await fetch(`${baseUrl}/personal-ledger/export?format=csv`, {
-      headers: { Authorization: 'Bearer valid-token' },
-    });
-    assert.strictEqual(resCsv.status, 400);
-    const errData = await resCsv.json();
-    assert.strictEqual(errData.error?.code, 'UNSUPPORTED_EXPORT_FORMAT');
+    // 1. CSV, JSON, HTML, TXT, XLS formats rejected with 400
+    for (const rejectedFmt of ['csv', 'json', 'html', 'txt', 'xls', 'unknown']) {
+      const resBad = await fetch(`${baseUrl}/personal-ledger/export?format=${rejectedFmt}`, {
+        headers: { Authorization: 'Bearer valid-token' },
+      });
+      assert.strictEqual(resBad.status, 400, `format=${rejectedFmt} must return 400`);
+      const errData = await resBad.json();
+      assert.strictEqual(errData.error?.code, 'UNSUPPORTED_EXPORT_FORMAT', `format=${rejectedFmt} code must be UNSUPPORTED_EXPORT_FORMAT`);
+    }
 
     // 2. PDF export succeeds with 200 application/pdf
     const resPdf = await fetch(`${baseUrl}/personal-ledger/export?format=pdf`, {
@@ -443,14 +445,13 @@ test('PM-05 Personal Ledger Integration & Invariant Suite', async (t) => {
       'Formula injection trigger "=" must be neutralized with leading single quote in XLSX shared strings'
     );
 
-    // 4. JSON format returns 200
+    // 4. JSON format is rejected with 400 UNSUPPORTED_EXPORT_FORMAT
     const resJson = await fetch(`${baseUrl}/personal-ledger/export?format=json`, {
       headers: { Authorization: 'Bearer valid-token' },
     });
-    assert.strictEqual(resJson.status, 200);
-    const jsonData = await resJson.json();
-    assert.strictEqual(Array.isArray(jsonData.data), true);
-    assert.strictEqual(jsonData.data[0].ledgerEntryId, 'PL-20260912-0001');
+    assert.strictEqual(resJson.status, 400);
+    const jsonErr = await resJson.json();
+    assert.strictEqual(jsonErr.error?.code, 'UNSUPPORTED_EXPORT_FORMAT');
   });
 
   await t.test('6. Client Authority Rejection & Server-Side Security Invariants', async () => {

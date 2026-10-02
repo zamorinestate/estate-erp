@@ -226,6 +226,22 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
         return true;
       }
     );
+
+    // Verify Personal Ledger also rejects JSON format with 400 UNSUPPORTED_EXPORT_FORMAT
+    const reqJson = {
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
+      query: { format: 'JSON' },
+    };
+    await assert.rejects(
+      async () => {
+        await exportPersonalLedger(reqJson, res, next);
+      },
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'UNSUPPORTED_EXPORT_FORMAT');
+        return true;
+      }
+    );
   });
 
   await t.test('EXP-010: XLSX formula injection defense neutralizes leading spreadsheet trigger characters', () => {
@@ -252,7 +268,7 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
       return null;
     }
 
-    const testTriggers = ['=SUM(A1:A10)', '+cmd|"/C calc"!A0', '-2+3+cmd', '@SUM(1+1)'];
+    const testTriggers = ['=SUM(A1:A10)', '+cmd|"/C calc"!A0', '-2+3+cmd', '@SUM(1+1)', '\tcmd', '\rcmd', '\ncmd'];
     const rows = testTriggers.map((trig, idx) => ({ id: idx + 1, formulaText: trig }));
     const result = generateXlsx({
       columns: [{ key: 'id', label: 'ID' }, { key: 'formulaText', label: 'Formula' }],
@@ -276,12 +292,12 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
       const expectedNeutralized = `'${trig}`;
       assert.ok(
         sharedStringsXml.includes(xmlEscape(expectedNeutralized)),
-        `Formula trigger "${trig}" must be neutralized with leading single quote`
+        `Formula trigger "${JSON.stringify(trig)}" must be neutralized with leading single quote`
       );
     }
   });
 
-  await t.test('EXP-011: Repository guard verifies zero user-facing CSV exports while preserving operational CSV imports', () => {
+  await t.test('EXP-011: Repository guard verifies zero fake XLSX exports, zero user-facing CSV exports while preserving operational CSV imports', () => {
     const fs = require('node:fs');
     const jsDir = path.join(root, 'frontend/src/js');
 
@@ -312,9 +328,17 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
       if (/btn-export-.*-csv\b/i.test(content)) {
         violations.push(`${relPath}: contains CSV export button id`);
       }
+
+      // Check for fake XLSX anti-patterns (wrapping text/CSV in an XLSX blob)
+      if (/new\s+Blob\(\s*\[(?:content|rows|headers|csv)/i.test(content) && /spreadsheetml/i.test(content)) {
+        violations.push(`${relPath}: contains fake XLSX pattern: wrapping text/csv string array in spreadsheetml Blob`);
+      }
+      if (/new\s+Blob\(\s*\[.*\.join\(['",]\)/i.test(content) && /spreadsheetml/i.test(content)) {
+        violations.push(`${relPath}: contains fake XLSX pattern: wrapping array.join() in spreadsheetml Blob`);
+      }
     }
 
-    assert.deepEqual(violations, [], 'Found disallowed user-facing CSV export options in frontend:\n' + violations.join('\n'));
+    assert.deepEqual(violations, [], 'Found disallowed user-facing CSV or fake XLSX export options in frontend:\n' + violations.join('\n'));
 
     // Verify operational CSV/XLSX imports ARE preserved in passbook.js
     const passbookPath = path.join(root, 'frontend/src/js/pages/passbook.js');
@@ -324,4 +348,94 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
       'passbook.js must preserve operational CSV statement file upload (.csv)'
     );
   });
+
+  await t.test('EXP-012: Real XLSX Binary Inspection confirms OpenXML PKZIP structure, typed numeric cells, and formula defense across frontend & backend engines', async () => {
+    const { generateXlsx } = require('../src/utils/exportGenerators');
+    const { pathToFileURL } = require('node:url');
+
+    // 1. Inspect Backend generateXlsx output
+    const backendResult = generateXlsx({
+      reportTitle: 'Test Commercial Valuation',
+      columns: [
+        { key: 'item', label: 'Item Name' },
+        { key: 'quantity', label: 'Quantity', type: 'number' },
+        { key: 'unitPrice', label: 'Unit Price', type: 'currency' },
+        { key: 'total', label: 'Total Value', type: 'currency' },
+      ],
+      rows: [
+        { item: 'Estate Blend Beans', quantity: 15, unitPrice: 850.50, total: 12757.50 },
+        { item: '=MALICIOUS_CMD()', quantity: 1, unitPrice: 100, total: 100 },
+      ],
+    });
+
+    const buf = backendResult.buffer;
+    assert.ok(Buffer.isBuffer(buf), 'Backend generateXlsx must return a Buffer');
+    assert.equal(buf.readUInt32LE(0), 0x04034b50, 'Backend XLSX must begin with PK\\x03\\x04 zip signature (0x04034b50)');
+
+    function parseZip(zipBuf) {
+      const entries = new Map();
+      let offset = 0;
+      while (offset < zipBuf.length - 4) {
+        const sig = zipBuf.readUInt32LE(offset);
+        if (sig !== 0x04034b50) break;
+        const compMethod = zipBuf.readUInt16LE(offset + 8);
+        const compSize = zipBuf.readUInt32LE(offset + 18);
+        const nameLen = zipBuf.readUInt16LE(offset + 26);
+        const extraLen = zipBuf.readUInt16LE(offset + 28);
+        const name = zipBuf.toString('utf8', offset + 30, offset + 30 + nameLen);
+        const dataStart = offset + 30 + nameLen + extraLen;
+        const data = zipBuf.subarray(dataStart, dataStart + compSize);
+        const content = compMethod === 8 ? require('node:zlib').inflateRawSync(data).toString('utf8') : data.toString('utf8');
+        entries.set(name, content);
+        offset = dataStart + compSize;
+      }
+      return entries;
+    }
+
+    const backendEntries = parseZip(buf);
+    assert.ok(backendEntries.has('[Content_Types].xml'), 'Must contain [Content_Types].xml');
+    assert.ok(backendEntries.has('xl/workbook.xml'), 'Must contain xl/workbook.xml');
+    assert.ok(backendEntries.has('xl/worksheets/sheet1.xml'), 'Must contain xl/worksheets/sheet1.xml');
+    assert.ok(backendEntries.has('xl/sharedStrings.xml'), 'Must contain xl/sharedStrings.xml');
+
+    const sheet1Xml = backendEntries.get('xl/worksheets/sheet1.xml');
+    assert.match(sheet1Xml, /<c r="[A-Z0-9]+" t="n"/, 'Sheet1 must contain typed numeric cells (<c ... t="n")');
+
+    const sharedXml = backendEntries.get('xl/sharedStrings.xml');
+    assert.ok(sharedXml.includes('&apos;=MALICIOUS_CMD()') || sharedXml.includes('\'=MALICIOUS_CMD()'), 'Formula trigger must be neutralized in shared strings');
+
+    // 2. Inspect Frontend openXmlExport binary generator
+    const openXmlUrl = pathToFileURL(path.join(root, 'frontend/src/js/utils/openXmlExport.js')).href;
+    const { buildOpenXmlXlsxBinary } = await import(openXmlUrl);
+
+    const feBytes = buildOpenXmlXlsxBinary({
+      reportTitle: 'Frontend Client OpenXML Report',
+      columns: [
+        { key: 'name', label: 'Name' },
+        { key: 'amount', label: 'Amount', type: 'currency' },
+      ],
+      rows: [
+        { name: 'Cold Brew Special', amount: 320.00 },
+        { name: '+calc|A0', amount: 50.00 },
+      ],
+    });
+
+    assert.ok(feBytes instanceof Uint8Array, 'Frontend generator must return Uint8Array');
+    const feBuf = Buffer.from(feBytes);
+    assert.equal(feBuf.readUInt32LE(0), 0x04034b50, 'Frontend XLSX must begin with PK\\x03\\x04 zip signature (0x04034b50)');
+
+    const feEntries = parseZip(feBuf);
+    assert.ok(feEntries.has('[Content_Types].xml'), 'Frontend OpenXML must contain [Content_Types].xml');
+    assert.ok(feEntries.has('xl/workbook.xml'), 'Frontend OpenXML must contain xl/workbook.xml');
+    assert.ok(feEntries.has('xl/worksheets/sheet1.xml'), 'Frontend OpenXML must contain xl/worksheets/sheet1.xml (Metadata)');
+    assert.ok(feEntries.has('xl/worksheets/sheet2.xml'), 'Frontend OpenXML must contain xl/worksheets/sheet2.xml (Data)');
+    assert.ok(feEntries.has('xl/sharedStrings.xml'), 'Frontend OpenXML must contain xl/sharedStrings.xml');
+
+    const feDataXml = feEntries.get('xl/worksheets/sheet2.xml');
+    assert.match(feDataXml, /<c r="B2" t="n"/, 'Frontend OpenXML must write numeric cells as t="n"');
+
+    const feSharedXml = feEntries.get('xl/sharedStrings.xml');
+    assert.ok(feSharedXml.includes('&apos;+calc|A0') || feSharedXml.includes('\'+calc|A0'), 'Frontend OpenXML must neutralize formula triggers in shared strings');
+  });
 });
+

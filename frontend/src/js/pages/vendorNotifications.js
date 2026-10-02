@@ -641,21 +641,8 @@ async function exportNotificationsExcel() {
     if (currentSelectedCafe && currentSelectedCafe !== "ALL") {
       params.append("cafeId", currentSelectedCafe);
     }
-    const token = state.token || "";
-    const res = await fetch(`/api/v1/vendor/notifications/csv?${params.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Export failed with HTTP ${res.status}`);
-    }
-
-    const text = await res.text();
-    const blob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
     const dateStr = new Date().toISOString().slice(0, 10);
-    downloadBlob(blob, `zamorin-vendor-notifications-${dateStr}.xlsx`);
+    await downloadBlob(`/api/v1/vendor/notifications/xlsx?${params.toString()}`, `zamorin-vendor-notifications-${dateStr}.xlsx`);
   } catch (err) {
     alert(`Excel export failed: ${err.message}`);
   }

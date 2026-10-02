@@ -551,10 +551,8 @@ export async function initVendorAdjustments() {
           status: currentSelectedStatus,
           search: currentSearchTerm,
         });
-        const blob = await api.getBlob(`/api/v1/vendor/adjustments/csv?${queryParams.toString()}`);
-        const text = await blob.text();
-        const xlsxBlob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-        downloadBlob(xlsxBlob, `VendorAdjustments-${new Date().toISOString().slice(0, 10)}.xlsx`);
+        const filename = `VendorAdjustments-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        await downloadBlob(`/api/v1/vendor/adjustments/xlsx?${queryParams.toString()}`, filename);
       } catch (err) {
         console.error("Excel export failed:", err);
       }

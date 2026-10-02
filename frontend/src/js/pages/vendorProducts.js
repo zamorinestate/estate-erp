@@ -852,17 +852,8 @@ async function handleExportExcel() {
       queryParams.append("search", currentSearchTerm);
     }
 
-    const blob = await downloadBlob(`/api/v1/vendor/products/csv?${queryParams.toString()}`);
-    const text = await blob.text();
-    const xlsxBlob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-    const url = window.URL.createObjectURL(xlsxBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `VendorProducts-${currentSelectedCafe}-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    const filename = `VendorProducts-${currentSelectedCafe}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    await downloadBlob(`/api/v1/vendor/products/xlsx?${queryParams.toString()}`, filename);
   } catch (err) {
     console.error("[VEN-SCR-009] Error exporting Excel:", err);
     alert("Failed to export products Excel. Please retry.");

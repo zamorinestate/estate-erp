@@ -39,26 +39,33 @@ const {
   getVendorAccountStatement,
   downloadVendorStatementPdf,
   downloadVendorStatementCsv,
+  downloadVendorStatementXlsx,
   getVendorReceivables,
   downloadVendorReceivablesPdf,
   downloadVendorReceivablesCsv,
+  downloadVendorReceivablesXlsx,
   getVendorAdjustments,
   getVendorAdjustmentDetails,
   downloadVendorAdjustmentsCsv,
+  downloadVendorAdjustmentsXlsx,
   downloadVendorAdjustmentPdf,
   getVendorProducts,
   getVendorProductDetails,
   downloadVendorProductsCsv,
+  downloadVendorProductsXlsx,
   downloadVendorProductPdf,
   getVendorDocuments,
   downloadVendorDocumentsCsv,
+  downloadVendorDocumentsXlsx,
   downloadVendorDocumentUniversal,
   downloadVendorDocumentFile,
   getVendorReports,
   downloadVendorReportsCsv,
+  downloadVendorReportsXlsx,
   downloadVendorReportsPdf,
   getVendorNotifications,
   downloadVendorNotificationsCsv,
+  downloadVendorNotificationsXlsx,
   getVendorProfile,
   downloadVendorProfilePdf,
 } = require('../controllers/vendorWorkspaceController');
@@ -113,15 +120,18 @@ router.get('/payments/:paymentId', getVendorPaymentDetails);
 router.get('/statement', getVendorAccountStatement);
 router.get('/statement/pdf', downloadVendorStatementPdf);
 router.get('/statement/csv', downloadVendorStatementCsv);
+router.get('/statement/xlsx', downloadVendorStatementXlsx);
 
 // ── VEN-SCR-007: Outstanding Receivables & Ageing Register ─────────────────
 router.get('/receivables', getVendorReceivables);
 router.get('/receivables/pdf', downloadVendorReceivablesPdf);
 router.get('/receivables/csv', downloadVendorReceivablesCsv);
+router.get('/receivables/xlsx', downloadVendorReceivablesXlsx);
 
 // ── VEN-SCR-008: Returns, Debit Notes, Credit Notes & Adjustments ──────────
 router.get('/adjustments', getVendorAdjustments);
 router.get('/adjustments/csv', downloadVendorAdjustmentsCsv);
+router.get('/adjustments/xlsx', downloadVendorAdjustmentsXlsx);
 router.get('/adjustments/:adjustmentId/pdf', downloadVendorAdjustmentPdf);
 router.get('/adjustments/:adjustmentId', getVendorAdjustmentDetails);
 
@@ -129,24 +139,29 @@ router.get('/adjustments/:adjustmentId', getVendorAdjustmentDetails);
 router.get('/products', getVendorProducts);
 router.get('/pricing', getVendorProducts);
 router.get('/products/csv', downloadVendorProductsCsv);
+router.get('/products/xlsx', downloadVendorProductsXlsx);
 router.get('/products/:itemId/pdf', downloadVendorProductPdf);
 router.get('/products/:itemId', getVendorProductDetails);
 
 // ── VEN-SCR-010: Documents Centre Register & Downloads ─────────────────────
 router.get('/documents', getVendorDocuments);
 router.get('/documents/csv', downloadVendorDocumentsCsv);
+router.get('/documents/xlsx', downloadVendorDocumentsXlsx);
 router.get('/documents/:docId/download', downloadVendorDocumentUniversal);
 router.get('/documents/:documentId/file', downloadVendorDocumentFile);
 
 // ── VEN-SCR-011: Reports Centre & Multi-Report Export ──────────────────────
 router.get('/reports', getVendorReports);
 router.get('/reports/csv', downloadVendorReportsCsv);
+router.get('/reports/xlsx', downloadVendorReportsXlsx);
 router.get('/reports/:reportType/csv', downloadVendorReportsCsv);
+router.get('/reports/:reportType/xlsx', downloadVendorReportsXlsx);
 router.get('/reports/:reportType/pdf', downloadVendorReportsPdf);
 router.get('/reports/:reportType', getVendorReports);
 
 // ── VEN-SCR-012: Read-Only Notifications & Event Feed ────────────────────────
 router.get('/notifications/csv', downloadVendorNotificationsCsv);
+router.get('/notifications/xlsx', downloadVendorNotificationsXlsx);
 router.get('/notifications', getVendorNotifications);
 
 // ── VEN-SCR-013: Read-Only Vendor Profile & Compliance Card ─────────────────

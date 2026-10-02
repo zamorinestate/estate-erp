@@ -8,6 +8,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "../apiClient.js";
 import { state } from "../state.js";
 import { showToast, openModal, closeModal, renderModuleErrorState } from "../components.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview";
 let activeConcept = "ALL";
@@ -1799,22 +1800,28 @@ function openAssignPackagingModal(wrap) {
 }
 
 function exportMenuMatrixExcel() {
-  const headers = ["Item Code", "Item Name", "Category", "Selling Price", "Food Cost", "Gross Margin %", "Volume (30D)", "Matrix Classification"];
   const rows = [
-    ["ITM-001", "Zamorin Special Filter Coffee", "Beverages", "80.00", "18.50", "76.8%", "1420", "STAR"],
-    ["ITM-002", "Malabar Banana Fritters (Pazham Pori)", "Bakery", "65.00", "14.20", "78.1%", "980", "STAR"],
-    ["ITM-003", "Cold Brew Tonic", "Beverages", "140.00", "32.00", "77.1%", "410", "PLOWHORSE"],
-    ["ITM-004", "Avocado Sourdough Toast", "Breakfast", "220.00", "78.00", "64.5%", "190", "PUZZLE"],
+    { code: "ITM-001", name: "Zamorin Special Filter Coffee", category: "Beverages", price: 80.00, cost: 18.50, margin: "76.8%", volume: 1420, classification: "STAR" },
+    { code: "ITM-002", name: "Malabar Banana Fritters (Pazham Pori)", category: "Bakery", price: 65.00, cost: 14.20, margin: "78.1%", volume: 980, classification: "STAR" },
+    { code: "ITM-003", name: "Cold Brew Tonic", category: "Beverages", price: 140.00, cost: 32.00, margin: "77.1%", volume: 410, classification: "PLOWHORSE" },
+    { code: "ITM-004", name: "Avocado Sourdough Toast", category: "Breakfast", price: 220.00, cost: 78.00, margin: "64.5%", volume: 190, classification: "PUZZLE" },
   ];
-  const content = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `menu_engineering_matrix_${new Date().toISOString().split("T")[0]}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+
+  exportToXlsx({
+    filename: `menu_engineering_matrix_${new Date().toISOString().split("T")[0]}.xlsx`,
+    sheetName: "MenuMatrix",
+    reportTitle: "Menu Engineering Matrix & Profitability Report",
+    columns: [
+      { key: "code", label: "Item Code" },
+      { key: "name", label: "Item Name" },
+      { key: "category", label: "Category" },
+      { key: "price", label: "Selling Price (₹)", type: "currency" },
+      { key: "cost", label: "Food Cost (₹)", type: "currency" },
+      { key: "margin", label: "Gross Margin %" },
+      { key: "volume", label: "Volume (30D)", type: "number" },
+      { key: "classification", label: "Matrix Classification" },
+    ],
+    rows,
+  });
   showToast("Menu engineering matrix Excel workbook downloaded ✓", "mint");
 }

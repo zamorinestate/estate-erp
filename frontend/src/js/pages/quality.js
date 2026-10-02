@@ -9,6 +9,7 @@ import { showToast, skeleton, openModal, closeModal, confirmAction, renderCafeCo
 import { state } from '../state.js';
 import { ROLES } from '../navigation.js';
 import { navigate } from '../router.js';
+import { exportToXlsx } from '../utils/openXmlExport.js';
 
 let activeTab = 'overview';
 let cachedOverview = null;
@@ -1879,19 +1880,30 @@ function openRecordAuditModal(root) {
 }
 
 function exportQualityCsv() {
-  const rows = [
-    ['Checklist ID', 'Title', 'Cafe ID', 'Date', 'Inspector', 'Result', 'Action Required'],
-    ...cachedChecklists.map((c) => [c.checklistId, `"${c.title}"`, c.cafeId, c.inspectionDate, c.inspectedByUserId, c.overallResult, `"${c.actionRequired || 'None'}"`]),
-  ];
-  const content = rows.map((e) => e.join(',')).join('\n');
-  const blob = new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', `Zamorin_Quality_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  showToast('Quality compliance report exported as Excel workbook!', 'success');
+  const rows = (cachedChecklists || []).map((c) => ({
+    checklistId: c.checklistId || "",
+    title: c.title || "",
+    cafeId: c.cafeId || "",
+    inspectionDate: c.inspectionDate || "",
+    inspectedBy: c.inspectedByUserId || "",
+    overallResult: c.overallResult || "",
+    actionRequired: c.actionRequired || "None",
+  }));
+
+  exportToXlsx({
+    filename: `Zamorin_Quality_Report_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    sheetName: "QualityCompliance",
+    reportTitle: "Quality & Food Safety Compliance Report",
+    columns: [
+      { key: "checklistId", label: "Checklist ID" },
+      { key: "title", label: "Title" },
+      { key: "cafeId", label: "Cafe ID" },
+      { key: "inspectionDate", label: "Date" },
+      { key: "inspectedBy", label: "Inspector" },
+      { key: "overallResult", label: "Result" },
+      { key: "actionRequired", label: "Action Required" },
+    ],
+    rows,
+  });
+  showToast("Quality compliance report exported as Excel workbook!", "success");
 }

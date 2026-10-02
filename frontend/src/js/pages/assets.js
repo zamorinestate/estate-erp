@@ -10,6 +10,7 @@ import { apiGet, apiPost, apiPatch } from "../apiClient.js";
 import { showToast, openModal, confirmAction, renderCafeContextStrip, renderModuleErrorState } from "../components.js";
 import { state } from "../state.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeSubTab = "overview"; // 'overview' | 'assets' | 'maintenance' | 'work_orders' | 'inspections' | 'analytics'
 let cachedOverview = null;
@@ -947,26 +948,31 @@ function rerender(root) {
 }
 
 function exportAssetReliabilityExcel() {
-  const headers = ["Asset ID", "Asset Name", "Category", "Café ID", "Operational Status", "Condition", "Criticality"];
-  const rows = (cachedAssets || []).map((a) => [
-    a.assetId || "",
-    `"${(a.name || "").replace(/"/g, '""')}"`,
-    a.category || "",
-    a.cafeId || "",
-    a.operationalStatus || "",
-    a.condition || "",
-    a.criticality || ""
-  ]);
-  const content = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `asset_reliability_report_${new Date().toISOString().split("T")[0]}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  const rows = (cachedAssets || []).map((a) => ({
+    assetId: a.assetId || "",
+    name: a.name || "",
+    category: a.category || "",
+    cafeId: a.cafeId || "",
+    operationalStatus: a.operationalStatus || "",
+    condition: a.condition || "",
+    criticality: a.criticality || "",
+  }));
+
+  exportToXlsx({
+    filename: `asset_reliability_report_${new Date().toISOString().split("T")[0]}.xlsx`,
+    sheetName: "AssetReliability",
+    reportTitle: "Equipment & Asset Reliability Register",
+    columns: [
+      { key: "assetId", label: "Asset ID" },
+      { key: "name", label: "Asset Name" },
+      { key: "category", label: "Category" },
+      { key: "cafeId", label: "Café ID" },
+      { key: "operationalStatus", label: "Operational Status" },
+      { key: "condition", label: "Condition" },
+      { key: "criticality", label: "Criticality" },
+    ],
+    rows,
+  });
   showToast("Asset reliability report Excel workbook downloaded ✓", "mint");
 }
 

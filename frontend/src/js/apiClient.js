@@ -1197,7 +1197,9 @@ export async function downloadFile({
   signal,
 } = {}) {
   try {
-    const blob = await apiBlob(url, { signal });
+    const blob = (typeof Blob !== "undefined" && url instanceof Blob)
+      ? url
+      : await apiBlob(url, { signal });
 
     if (expectedMimeTypes.length > 0 && blob.type) {
       const match = expectedMimeTypes.some((mime) => blob.type.includes(mime));
@@ -1261,6 +1263,7 @@ export async function apiUpload(path, formData, { signal, headers = {} } = {}) {
 
 export const api = {
   get: apiGet,
+  getBlob: apiBlob,
   post: (path, body, options) => apiPost(path, body, options),
   put: (path, body, options) => apiPut(path, body, options),
   patch: (path, body, options) => apiPatch(path, body, options),

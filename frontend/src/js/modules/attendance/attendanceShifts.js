@@ -12,6 +12,7 @@ import { navigate } from "../../router.js";
 import { openAttendanceEvidenceViewer } from "./attendanceEvidenceViewer.js";
 import { generateQrSvg } from "../../utils/qrCodeGen.js";
 import { renderAttendanceQrScannerPage, wireAttendanceQrScannerPage, cleanupAttendanceQrScannerPage } from "../../pages/attendanceQrScannerPage.js";
+import { exportToXlsx } from "../../utils/openXmlExport.js";
 
 let activeSubTab = "overview"; // 'overview' | 'live' | 'roster' | 'calendar360' | 'exceptions' | 'policies' | 'closure' | 'analytics'
 let liveFilterStatus = "ALL"; // 'ALL' | 'NEEDS_ATTENTION' | 'PRESENT' | 'LATE' | 'MISSING_PUNCH' | 'ABSENT' | 'ON_LEAVE' | 'OVERTIME'
@@ -3164,22 +3165,42 @@ function exportRosterCsv() {
     : (selectedRosterCafe || state.currentCafeId || cachedCafes[0]?.cafeId || cachedCafes[0]?.code || "");
   const staffList = cafeRosterSchedules[activeCafeId] || Object.values(cafeRosterSchedules)[0] || [];
 
-  const headers = ["Employee ID", "Staff Name", "Role", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Total Hours"];
   const rows = staffList.map((s) => {
     const tot = calculateShiftHours(s.mon) + calculateShiftHours(s.tue) + calculateShiftHours(s.wed) + calculateShiftHours(s.thu) + calculateShiftHours(s.fri) + calculateShiftHours(s.sat) + calculateShiftHours(s.sun);
-    return [s.id, s.name, s.role, s.mon, s.tue, s.wed, s.thu, s.fri, s.sat, s.sun, tot.toFixed(1)];
+    return {
+      id: s.id,
+      name: s.name,
+      role: s.role,
+      mon: s.mon,
+      tue: s.tue,
+      wed: s.wed,
+      thu: s.thu,
+      fri: s.fri,
+      sat: s.sat,
+      sun: s.sun,
+      totalHours: Number(tot.toFixed(1)),
+    };
   });
 
-  const content = [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Shift_Roster_${activeCafeId}_Week.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  exportToXlsx({
+    filename: `Zamorin_Shift_Roster_${activeCafeId}_Week.xlsx`,
+    sheetName: "Roster",
+    reportTitle: `Weekly Shift Roster (${activeCafeId})`,
+    columns: [
+      { key: "id", label: "Employee ID" },
+      { key: "name", label: "Staff Name" },
+      { key: "role", label: "Role" },
+      { key: "mon", label: "Mon" },
+      { key: "tue", label: "Tue" },
+      { key: "wed", label: "Wed" },
+      { key: "thu", label: "Thu" },
+      { key: "fri", label: "Fri" },
+      { key: "sat", label: "Sat" },
+      { key: "sun", label: "Sun" },
+      { key: "totalHours", label: "Total Hours", type: "number" },
+    ],
+    rows,
+  });
   showToast("Weekly Shift Roster Excel exported successfully.", "success");
 }
 
@@ -3245,32 +3266,40 @@ function openCreateShiftRosterModal(root) {
 
 // Utility: Export Timesheets CSV
 function exportTimesheetsCsv() {
-  const headers = ["Employee ID", "Employee Name", "Role", "Café", "Date", "Shift", "Clock In", "Clock Out", "Total Hours", "Status"];
   const cafeId = state.currentCafeId || state.user?.assignedCafeIds?.[0] || "";
   const rows = cachedLiveAttendance.length > 0
-    ? cachedLiveAttendance.map(a => [
-        a.userId || a.employeeId || "",
-        a.name || a.employeeName || "",
-        a.role || "",
-        a.cafeId || cafeId,
-        a.date || new Date().toISOString().slice(0, 10),
-        a.shift || "Standard",
-        a.checkInAt || "—",
-        a.checkOutAt || "—",
-        ((a.regularMinutes || 0) / 60).toFixed(2),
-        a.status || "PRESENT"
-      ])
+    ? cachedLiveAttendance.map((a) => ({
+        userId: a.userId || a.employeeId || "",
+        name: a.name || a.employeeName || "",
+        role: a.role || "",
+        cafeId: a.cafeId || cafeId,
+        date: a.date || new Date().toISOString().slice(0, 10),
+        shift: a.shift || "Standard",
+        checkInAt: a.checkInAt || "—",
+        checkOutAt: a.checkOutAt || "—",
+        totalHours: Number(((a.regularMinutes || 0) / 60).toFixed(2)),
+        status: a.status || "PRESENT",
+      }))
     : [];
-  const content = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Attendance_Timesheets_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+
+  exportToXlsx({
+    filename: `Zamorin_Attendance_Timesheets_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    sheetName: "Timesheets",
+    reportTitle: "Attendance Timesheets Register",
+    columns: [
+      { key: "userId", label: "Employee ID" },
+      { key: "name", label: "Employee Name" },
+      { key: "role", label: "Role" },
+      { key: "cafeId", label: "Café" },
+      { key: "date", label: "Date" },
+      { key: "shift", label: "Shift" },
+      { key: "checkInAt", label: "Clock In" },
+      { key: "checkOutAt", label: "Clock Out" },
+      { key: "totalHours", label: "Total Hours", type: "number" },
+      { key: "status", label: "Status" },
+    ],
+    rows,
+  });
   showToast("Attendance Timesheets Excel exported successfully.", "success");
 }
 
@@ -3329,32 +3358,49 @@ function openCompliancePolicyModal(root) {
 
 // Utility: Export Workforce Analytics CSV
 function exportAnalyticsCsv() {
-  const headers = ["Outlet ID", "Outlet Name", "Staff Headcount", "Scheduled Hours", "Actual Hours", "On-Time Rate %", "Overtime Hours", "Manual Adjustments %", "Status"];
   const rows = cachedCafes.length > 0
-    ? cachedCafes.map((c, i) => [
-        c.cafeId || c.code || `ZC-000${i+1}`,
-        c.name || 'Outlet',
-        "12",
-        "2200.0",
-        "2210.0",
-        "96.8%",
-        "6.0",
-        "2.0%",
-        "EXCELLENT"
-      ])
+    ? cachedCafes.map((c, i) => ({
+        cafeId: c.cafeId || c.code || `ZC-000${i + 1}`,
+        name: c.name || "Outlet",
+        headcount: 12,
+        scheduledHours: 2200.0,
+        actualHours: 2210.0,
+        onTimeRate: "96.8%",
+        overtimeHours: 6.0,
+        manualAdjRate: "2.0%",
+        status: "EXCELLENT",
+      }))
     : [
-        [state.currentCafeId || "ZC-MAIN", state.currentCafeName || "Main Outlet", "12", "2200.0", "2210.0", "96.8%", "6.0", "2.0%", "EXCELLENT"]
+        {
+          cafeId: state.currentCafeId || "ZC-MAIN",
+          name: state.currentCafeName || "Main Outlet",
+          headcount: 12,
+          scheduledHours: 2200.0,
+          actualHours: 2210.0,
+          onTimeRate: "96.8%",
+          overtimeHours: 6.0,
+          manualAdjRate: "2.0%",
+          status: "EXCELLENT",
+        },
       ];
-  const content = [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Workforce_Analytics_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+
+  exportToXlsx({
+    filename: `Zamorin_Workforce_Analytics_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    sheetName: "Analytics",
+    reportTitle: "Workforce Attendance Analytics",
+    columns: [
+      { key: "cafeId", label: "Outlet ID" },
+      { key: "name", label: "Outlet Name" },
+      { key: "headcount", label: "Staff Headcount", type: "number" },
+      { key: "scheduledHours", label: "Scheduled Hours", type: "number" },
+      { key: "actualHours", label: "Actual Hours", type: "number" },
+      { key: "onTimeRate", label: "On-Time Rate %" },
+      { key: "overtimeHours", label: "Overtime Hours", type: "number" },
+      { key: "manualAdjRate", label: "Manual Adjustments %" },
+      { key: "status", label: "Status" },
+    ],
+    rows,
+  });
   showToast("Workforce Analytics Excel exported successfully.", "success");
 }
 

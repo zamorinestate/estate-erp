@@ -8,6 +8,7 @@ import { apiGet, apiPost, apiPatch } from "../apiClient.js";
 import { state } from "../state.js";
 import { showToast, openModal, renderCafeContextStrip, renderChildHeader, renderModuleErrorState } from "../components.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview";
 let liveOverview = null;
@@ -1178,14 +1179,23 @@ async function loadMovementsData(wrap) {
   const exportBtn = wrap.querySelector("#btn-export-movements-xlsx");
   if (exportBtn) {
     exportBtn.addEventListener("click", () => {
-      const csv = "Movement ID,Timestamp,Cafe ID,Item Code,Item Name,Transaction Type,Qty Change,Balance After,Reason\n" +
-        filtered.map((m) => `"${m.movementId}","${m.performedAt}","${m.cafeId}","${m.itemId}","${m.itemName || ''}","${m.movementType}",${m.quantityBase},${m.balanceAfterBase},"${(m.reason || '').replace(/"/g, '""')}"`).join("\n");
-      const blob = new Blob([csv], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `stock_movements_ledger_${new Date().toISOString().slice(0, 10)}.xlsx`;
-      a.click();
+      exportToXlsx({
+        filename: `stock_movements_ledger_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        sheetName: "Movements",
+        reportTitle: "Stock Movements Ledger",
+        columns: [
+          { key: "movementId", label: "Movement ID" },
+          { key: "performedAt", label: "Timestamp" },
+          { key: "cafeId", label: "Cafe ID" },
+          { key: "itemId", label: "Item Code" },
+          { key: "itemName", label: "Item Name" },
+          { key: "movementType", label: "Transaction Type" },
+          { key: "quantityBase", label: "Qty Change", type: "number" },
+          { key: "balanceAfterBase", label: "Balance After", type: "number" },
+          { key: "reason", label: "Reason" },
+        ],
+        rows: filtered,
+      });
       showToast("Stock movements ledger Excel workbook exported.", "success");
     });
   }
@@ -2159,14 +2169,25 @@ async function loadValuationData(wrap) {
   const exportBtn = wrap.querySelector("#btn-export-xlsx");
   if (exportBtn) {
     exportBtn.addEventListener("click", () => {
-      const csv = "Café,SKU,Item Name,Category,On Hand,Unit Cost (₹),Total Value (₹)\n" +
-        rows.map((r) => `"${r.cafeId}","${r.sku}","${r.name}","${r.category}",${r.onHand},${(r.unitCostPaisa/100).toFixed(2)},${(r.totalValuePaisa/100).toFixed(2)}`).join("\n");
-      const blob = new Blob([csv], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `inventory_valuation_${new Date().toISOString().slice(0,10)}.xlsx`;
-      a.click();
+      exportToXlsx({
+        filename: `inventory_valuation_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        sheetName: "Valuation",
+        reportTitle: "Inventory Valuation Report",
+        columns: [
+          { key: "cafeId", label: "Café" },
+          { key: "sku", label: "SKU" },
+          { key: "name", label: "Item Name" },
+          { key: "category", label: "Category" },
+          { key: "onHand", label: "On Hand", type: "number" },
+          { key: "unitCostInr", label: "Unit Cost (₹)", type: "currency" },
+          { key: "totalValueInr", label: "Total Value (₹)", type: "currency" },
+        ],
+        rows: rows.map((r) => ({
+          ...r,
+          unitCostInr: r.unitCostPaisa / 100,
+          totalValueInr: r.totalValuePaisa / 100,
+        })),
+      });
       showToast("Valuation Excel workbook exported.", "success");
     });
   }

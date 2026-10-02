@@ -351,17 +351,7 @@ function wireEventListeners() {
   // Excel Download Button
   document.getElementById('btn-vendor-reports-download-xlsx')?.addEventListener('click', async () => {
     const q = buildQueryParams();
-    const blob = await downloadBlob(`/api/v1/vendor/reports/${currentReportType}/csv?${q}`);
-    const text = await blob.text();
-    const xlsxBlob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-    const url = window.URL.createObjectURL(xlsxBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `VendorReport_${currentReportType}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    await downloadBlob(`/api/v1/vendor/reports/${currentReportType}/xlsx?${q}`, `VendorReport_${currentReportType}.xlsx`);
   });
 
   // PDF Download Button

@@ -1127,7 +1127,7 @@ const exportPersonalLedger = asyncHandler(async (request, response) => {
 
   const format = rawFormat === 'EXCEL' ? 'XLSX' : rawFormat;
 
-  if (format !== 'PDF' && format !== 'XLSX' && format !== 'JSON') {
+  if (format !== 'PDF' && format !== 'XLSX') {
     throw new ApiError(
       400,
       'UNSUPPORTED_EXPORT_FORMAT',
@@ -1166,19 +1166,9 @@ const exportPersonalLedger = asyncHandler(async (request, response) => {
 
   const netBalancePaisa = totalCreditPaisa - totalDebitPaisa;
 
-  if (format === 'JSON') {
-    return response.status(200).json({
-      data: entriesWithRunning,
-    });
-  }
 
-  if (format !== 'PDF' && format !== 'XLSX') {
-    throw new ApiError(
-      400,
-      'UNSUPPORTED_EXPORT_FORMAT',
-      `Unsupported export format: "${rawFormat}". Canonical export formats are PDF and XLSX.`
-    );
-  }
+
+
 
   // Audit logging
   await recordRequestAudit({

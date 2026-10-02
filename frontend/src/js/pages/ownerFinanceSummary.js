@@ -12,6 +12,7 @@ import { apiGet, apiPost } from "../apiClient.js";
 import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
 import { showToast, openModal } from "../components.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeTab = "overview";
 let selectedCafeFilter = "ALL";
@@ -1058,51 +1059,48 @@ function openHealthAuditModal(cafe) {
 }
 
 function downloadFinanceExcel(cafes = [], period = "THIS_MONTH") {
-  const headers = [
-    "Cafe ID",
-    "Cafe Name",
-    "Net Sales (INR)",
-    "Gross Sales (INR)",
-    "Discounts (INR)",
-    "Refunds (INR)",
-    "Operating Expenses (INR)",
-    "Expense Ratio (%)",
-    "Payroll Cost (INR)",
-    "Payroll Ratio (%)",
-    "Overtime Cost (INR)",
-    "Wastage Value (INR)",
-    "Drawer Variance (INR)",
-    "Drawer Status",
-    "Health",
-  ];
-  const rows = (cafes || []).map((c) => [
-    `"${c.cafeId}"`,
-    `"${c.cafeName || c.name || c.cafeId}"`,
-    (c.netSales || 0).toFixed(2),
-    (c.grossSales || 0).toFixed(2),
-    (c.discounts || 0).toFixed(2),
-    (c.refunds || 0).toFixed(2),
-    (c.expenses || 0).toFixed(2),
-    (c.expenseRatio || 0).toFixed(1),
-    (c.payrollCost || 0).toFixed(2),
-    (c.payrollRatio || 0).toFixed(1),
-    (c.overtimeCost || 0).toFixed(2),
-    (c.wastageValue || 0).toFixed(2),
-    (c.drawerVariance || 0).toFixed(2),
-    `"${c.drawerStatus || "RECONCILED"}"`,
-    `"${c.health || "HEALTHY"}"`,
-  ]);
+  const rows = (cafes || []).map((c) => ({
+    cafeId: c.cafeId || "",
+    cafeName: c.cafeName || c.name || c.cafeId || "",
+    netSales: Number((c.netSales || 0).toFixed(2)),
+    grossSales: Number((c.grossSales || 0).toFixed(2)),
+    discounts: Number((c.discounts || 0).toFixed(2)),
+    refunds: Number((c.refunds || 0).toFixed(2)),
+    expenses: Number((c.expenses || 0).toFixed(2)),
+    expenseRatio: (c.expenseRatio || 0).toFixed(1) + "%",
+    payrollCost: Number((c.payrollCost || 0).toFixed(2)),
+    payrollRatio: (c.payrollRatio || 0).toFixed(1) + "%",
+    overtimeCost: Number((c.overtimeCost || 0).toFixed(2)),
+    wastageValue: Number((c.wastageValue || 0).toFixed(2)),
+    drawerVariance: Number((c.drawerVariance || 0).toFixed(2)),
+    drawerStatus: c.drawerStatus || "RECONCILED",
+    health: c.health || "HEALTHY",
+  }));
 
-  const content = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Finance_Summary_${period}_${new Date().toISOString().split("T")[0]}.xlsx`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  exportToXlsx({
+    filename: `Zamorin_Finance_Summary_${period}_${new Date().toISOString().split("T")[0]}.xlsx`,
+    sheetName: "FinanceSummary",
+    reportTitle: `Owner Finance Summary (${period})`,
+    columns: [
+      { key: "cafeId", label: "Cafe ID" },
+      { key: "cafeName", label: "Cafe Name" },
+      { key: "netSales", label: "Net Sales (₹)", type: "currency" },
+      { key: "grossSales", label: "Gross Sales (₹)", type: "currency" },
+      { key: "discounts", label: "Discounts (₹)", type: "currency" },
+      { key: "refunds", label: "Refunds (₹)", type: "currency" },
+      { key: "expenses", label: "Operating Expenses (₹)", type: "currency" },
+      { key: "expenseRatio", label: "Expense Ratio (%)" },
+      { key: "payrollCost", label: "Payroll Cost (₹)", type: "currency" },
+      { key: "payrollRatio", label: "Payroll Ratio (%)" },
+      { key: "overtimeCost", label: "Overtime Cost (₹)", type: "currency" },
+      { key: "wastageValue", label: "Wastage Value (₹)", type: "currency" },
+      { key: "drawerVariance", label: "Drawer Variance (₹)", type: "currency" },
+      { key: "drawerStatus", label: "Drawer Status" },
+      { key: "health", label: "Health" },
+    ],
+    rows,
+  });
+  showToast("Finance summary Excel exported successfully ✓", "mint");
 }
 
 function openExportModal() {

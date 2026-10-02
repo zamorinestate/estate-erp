@@ -789,17 +789,7 @@ async function exportReceivablesExcel() {
     if (currentSelectedPaymentStatus && currentSelectedPaymentStatus !== "ALL") params.append("paymentStatus", currentSelectedPaymentStatus);
     if (currentSearchTerm) params.append("search", currentSearchTerm);
 
-    const blob = await downloadBlob(`/api/v1/vendor/receivables/csv?${params.toString()}`);
-    const text = await blob.text();
-    const xlsxBlob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-    const url = window.URL.createObjectURL(xlsxBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `VendorReceivables.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    await downloadBlob(`/api/v1/vendor/receivables/xlsx?${params.toString()}`, `VendorReceivables.xlsx`);
   } catch (err) {
     console.error("Failed to export receivables Excel:", err);
   }

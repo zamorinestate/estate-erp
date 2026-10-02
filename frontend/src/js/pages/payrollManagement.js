@@ -18,6 +18,7 @@ import {
 
 import { state } from "../state.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeRequest = null;
 let selectedStatus = "";
@@ -1299,16 +1300,27 @@ function wireEvents(root) {
 }
 
 function exportPayrollExcel(filename, headers, rows) {
-  const content = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  const columns = headers.map((h, idx) => ({
+    key: `col_${idx}`,
+    label: h,
+    type: (h.toLowerCase().includes('salary') || h.toLowerCase().includes('rate') || h.toLowerCase().includes('gross') || h.toLowerCase().includes('tds') || h.toLowerCase().includes('epf') || h.toLowerCase().includes('esi') || h.toLowerCase().includes('debit') || h.toLowerCase().includes('credit')) ? 'currency' : 'auto',
+  }));
+
+  const rowObjects = rows.map((r) => {
+    const obj = {};
+    headers.forEach((_, idx) => {
+      obj[`col_${idx}`] = Array.isArray(r) ? r[idx] : r[`col_${idx}`];
+    });
+    return obj;
+  });
+
+  exportToXlsx({
+    filename,
+    sheetName: "Payroll",
+    reportTitle: filename.replace(/_/g, " ").replace(".xlsx", "").toUpperCase(),
+    columns,
+    rows: rowObjects,
+  });
   showToast(`Exported ${filename} (Excel workbook)`, "mint");
 }
 

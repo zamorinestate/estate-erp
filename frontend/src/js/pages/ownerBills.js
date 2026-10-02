@@ -11,6 +11,7 @@ import { state } from "../state.js";
 import { ROLES } from "../navigation.js";
 import { showToast, openModal, renderFileUploadZone, wireFileUploadZone, openUniversalDocumentModal } from "../components.js";
 import { navigate } from "../router.js";
+import { exportToXlsx } from "../utils/openXmlExport.js";
 
 let activeSubTab = "overview"; // 'overview' | 'bills' | 'upload' | 'adjustments' | 'payments' | 'tax' | 'reconciliation' | 'reports'
 let selectedCafeFilter = "ALL";
@@ -1756,55 +1757,123 @@ function handleExportReport(exportType) {
   const dateStr = selectedBusinessDate || new Date().toISOString().split("T")[0];
   const bills = cachedBills.length > 0 ? cachedBills : DEFAULT_BILLS;
 
-  function triggerDownload(content, fileName, mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
   if (exportType === "sales-xlsx") {
-    const headers = "Invoice Number,Date,Time,Table,Cafe Outlet,Customer,Payment Method,Subtotal (INR),Tax (INR),Total (INR),Status\n";
-    const rows = bills.map((b) =>
-      `"${b.invoiceNumber || b.billId}","${b.businessDate}","${b.createdAt || '11:00 AM'}","${b.tableNumber || 'Takeaway'}","${CAFE_NAMES[b.cafeId] || b.cafeId}","${b.customerName || 'Walk-in'}","${b.paymentMethod}",${((b.subtotalPaisa || 0) / 100).toFixed(2)},${((b.taxPaisa || 0) / 100).toFixed(2)},${((b.totalPaisa || 0) / 100).toFixed(2)},"${b.status}"`
-    ).join("\n");
-    triggerDownload(headers + rows, `Zamorin_Daily_Sales_Summary_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    const rows = bills.map((b) => ({
+      invoiceNumber: b.invoiceNumber || b.billId || "",
+      date: b.businessDate || "",
+      time: b.createdAt || "11:00 AM",
+      table: b.tableNumber || "Takeaway",
+      cafe: CAFE_NAMES[b.cafeId] || b.cafeId || "",
+      customer: b.customerName || "Walk-in",
+      paymentMethod: b.paymentMethod || "",
+      subtotal: Number(((b.subtotalPaisa || 0) / 100).toFixed(2)),
+      tax: Number(((b.taxPaisa || 0) / 100).toFixed(2)),
+      total: Number(((b.totalPaisa || 0) / 100).toFixed(2)),
+      status: b.status || "",
+    }));
+
+    exportToXlsx({
+      filename: `Zamorin_Daily_Sales_Summary_${dateStr}.xlsx`,
+      sheetName: "DailySales",
+      reportTitle: "Daily Sales Summary Report",
+      columns: [
+        { key: "invoiceNumber", label: "Invoice Number" },
+        { key: "date", label: "Date" },
+        { key: "time", label: "Time" },
+        { key: "table", label: "Table" },
+        { key: "cafe", label: "Cafe Outlet" },
+        { key: "customer", label: "Customer" },
+        { key: "paymentMethod", label: "Payment Method" },
+        { key: "subtotal", label: "Subtotal (₹)", type: "currency" },
+        { key: "tax", label: "Tax (₹)", type: "currency" },
+        { key: "total", label: "Total (₹)", type: "currency" },
+        { key: "status", label: "Status" },
+      ],
+      rows,
+    });
     showToast("Daily Sales Summary (XLSX) exported successfully!", "success");
     return;
   }
 
   if (exportType === "gst-xlsx") {
-    const headers = "Invoice Number,Date,GSTIN,Cafe Outlet,HSN,Taxable Value (INR),CGST 2.5% (INR),SGST 2.5% (INR),Total GST (INR),Gross Invoice Value (INR)\n";
     const rows = bills.map((b) => {
       const taxable = (b.subtotalPaisa || 0) / 100;
       const cgst = (b.cgstPaisa || (b.taxPaisa ? b.taxPaisa / 2 : 0)) / 100;
       const sgst = (b.sgstPaisa || (b.taxPaisa ? b.taxPaisa / 2 : 0)) / 100;
       const totalTax = (b.taxPaisa || 0) / 100;
       const gross = (b.totalPaisa || 0) / 100;
-      return `"${b.invoiceNumber || b.billId}","${b.businessDate}","${b.gstRegistrationNumber || ''}","${CAFE_NAMES[b.cafeId] || b.cafeId}","996331",${taxable.toFixed(2)},${cgst.toFixed(2)},${sgst.toFixed(2)},${totalTax.toFixed(2)},${gross.toFixed(2)}`;
-    }).join("\n");
-    triggerDownload(headers + rows, `Zamorin_GST_Tax_Source_Register_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      return {
+        invoiceNumber: b.invoiceNumber || b.billId || "",
+        date: b.businessDate || "",
+        gstin: b.gstRegistrationNumber || "",
+        cafe: CAFE_NAMES[b.cafeId] || b.cafeId || "",
+        hsn: "996331",
+        taxable: Number(taxable.toFixed(2)),
+        cgst: Number(cgst.toFixed(2)),
+        sgst: Number(sgst.toFixed(2)),
+        totalTax: Number(totalTax.toFixed(2)),
+        gross: Number(gross.toFixed(2)),
+      };
+    });
+
+    exportToXlsx({
+      filename: `Zamorin_GST_Tax_Source_Register_${dateStr}.xlsx`,
+      sheetName: "GSTRegister",
+      reportTitle: "GST Tax Source Register (GSTR-1 Format)",
+      columns: [
+        { key: "invoiceNumber", label: "Invoice Number" },
+        { key: "date", label: "Date" },
+        { key: "gstin", label: "GSTIN" },
+        { key: "cafe", label: "Cafe Outlet" },
+        { key: "hsn", label: "HSN" },
+        { key: "taxable", label: "Taxable Value (₹)", type: "currency" },
+        { key: "cgst", label: "CGST 2.5% (₹)", type: "currency" },
+        { key: "sgst", label: "SGST 2.5% (₹)", type: "currency" },
+        { key: "totalTax", label: "Total GST (₹)", type: "currency" },
+        { key: "gross", label: "Gross Invoice Value (₹)", type: "currency" },
+      ],
+      rows,
+    });
     showToast("GST Tax Source Register (XLSX) exported successfully!", "success");
     return;
   }
 
   if (exportType === "reconciliation-xlsx") {
-    const headers = "Date,Cafe Outlet,Tender Channel,Expected System (INR),Physical Drawer / Gateway (INR),Variance (INR),Reconciliation Status\n";
-    const rows = "";
-    triggerDownload(headers + rows, `Zamorin_Tender_Reconciliation_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    exportToXlsx({
+      filename: `Zamorin_Tender_Reconciliation_${dateStr}.xlsx`,
+      sheetName: "Reconciliation",
+      reportTitle: "Daily Tender Reconciliation & Audit Register",
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "cafe", label: "Cafe Outlet" },
+        { key: "tenderChannel", label: "Tender Channel" },
+        { key: "expected", label: "Expected System (₹)", type: "currency" },
+        { key: "physical", label: "Physical Drawer / Gateway (₹)", type: "currency" },
+        { key: "variance", label: "Variance (₹)", type: "currency" },
+        { key: "status", label: "Reconciliation Status" },
+      ],
+      rows: [],
+    });
     showToast("Daily Tender Reconciliation Excel exported successfully!", "success");
     return;
   }
 
   if (exportType === "adjustments-xlsx") {
-    const headers = "Date,Invoice Ref,Adjustment Type,Reason / Narration,Authorized By,Amount (INR),Accounting Action\n";
-    const rows = "";
-    triggerDownload(headers + rows, `Zamorin_Adjustments_Voids_Audit_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    exportToXlsx({
+      filename: `Zamorin_Adjustments_Voids_Audit_${dateStr}.xlsx`,
+      sheetName: "Adjustments",
+      reportTitle: "Adjustments, Voids & Discrepancies Audit Register",
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "invoiceRef", label: "Invoice Ref" },
+        { key: "adjType", label: "Adjustment Type" },
+        { key: "reason", label: "Reason / Narration" },
+        { key: "authBy", label: "Authorized By" },
+        { key: "amount", label: "Amount (₹)", type: "currency" },
+        { key: "action", label: "Accounting Action" },
+      ],
+      rows: [],
+    });
     showToast("Adjustments & Voids Audit Excel exported successfully!", "success");
     return;
   }

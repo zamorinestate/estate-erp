@@ -11,6 +11,7 @@ import { state } from '../state.js';
 import { ROLES } from '../navigation.js';
 import { icon } from '../icons.js';
 import { openCafeCreateModal } from './cafeCreateModal.js';
+import { exportToXlsx } from '../utils/openXmlExport.js';
 
 // ─── Component State ──────────────────────────────────────────────────────────
 
@@ -1275,41 +1276,51 @@ function downloadPerformanceExcel(cafes, totalSalesPaisa) {
     const labor = Number(c.labourPct ?? 20.0).toFixed(1);
     const splh = c.splhPaisa ? (c.splhPaisa / 100).toFixed(2) : '850.00';
 
-    return [
-      idx + 1,
-      `"${c.cafeId || ''}"`,
-      `"${(c.name || c.cafeName || '').replace(/"/g, '""')}"`,
-      `"${(c.city || '').replace(/"/g, '""')}"`,
-      (sales / 100).toFixed(2),
+    return {
+      rank: idx + 1,
+      cafeId: c.cafeId || '',
+      name: c.name || c.cafeName || '',
+      city: c.city || '',
+      sales: Number((sales / 100).toFixed(2)),
       share,
       bills,
-      (abv / 100).toFixed(2),
-      targetSales > 0 ? (targetSales / 100).toFixed(2) : 'N/A',
-      avtDiff !== null ? (avtDiff / 100).toFixed(2) : 'N/A',
+      abv: Number((abv / 100).toFixed(2)),
+      targetSales: targetSales > 0 ? Number((targetSales / 100).toFixed(2)) : 0,
+      avtDiff: avtDiff !== null ? Number((avtDiff / 100).toFixed(2)) : 0,
       avtPct,
       labor,
-      splh,
-      c.inventoryCritical || 0,
-      c.maintenanceOpen || 0,
-      `"${c.health || 'HEALTHY'}"`,
-    ];
+      splh: Number(Number(splh).toFixed(2)),
+      inventoryCritical: c.inventoryCritical || 0,
+      maintenanceOpen: c.maintenanceOpen || 0,
+      health: c.health || 'HEALTHY',
+    };
   });
 
-  const content = [
-    headers.join(','),
-    ...rows.map(r => r.join(','))
-  ].join('\r\n');
-
-  const blob = new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
   const today = new Date().toISOString().slice(0, 10);
-  link.download = `zamorin_cafe_performance_${today}.xlsx`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  exportToXlsx({
+    filename: `zamorin_cafe_performance_${today}.xlsx`,
+    sheetName: 'Performance',
+    reportTitle: 'Multi-Café Executive Performance Report',
+    columns: [
+      { key: 'rank', label: '#', type: 'number' },
+      { key: 'cafeId', label: 'Café ID' },
+      { key: 'name', label: 'Café Name' },
+      { key: 'city', label: 'City' },
+      { key: 'sales', label: 'Net Sales (₹)', type: 'currency' },
+      { key: 'share', label: 'Sales Share %' },
+      { key: 'bills', label: 'Completed Bills', type: 'number' },
+      { key: 'abv', label: 'ABV / Ticket (₹)', type: 'currency' },
+      { key: 'targetSales', label: 'Target (₹)', type: 'currency' },
+      { key: 'avtDiff', label: 'AvT Variance (₹)', type: 'currency' },
+      { key: 'avtPct', label: 'AvT Variance %' },
+      { key: 'labor', label: 'Labor %' },
+      { key: 'splh', label: 'SPLH (₹/hr)', type: 'currency' },
+      { key: 'inventoryCritical', label: 'Stock Critical', type: 'number' },
+      { key: 'maintenanceOpen', label: 'Maintenance Open', type: "number" },
+      { key: 'health', label: 'Health Status' },
+    ],
+    rows,
+  });
   showToast('Performance Excel workbook downloaded successfully.', 'success');
 }
 
