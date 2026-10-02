@@ -1,10 +1,10 @@
 # Zamorin Café ERP — Current State & Change Register
 
-**Document Version:** 2.0.1  
+**Document Version:** 2.1.0  
 **Generated:** 2026-10-02  
 **Baseline Repository:** `zamorinestate/estate-erp`  
-**Active Branch:** `ui/clean-navigation-v1`  
-**Verified Implementation SHA:** `44309b243e2342f75648cef702cd6460a8c9424f` (final export-policy remediation baseline); **Live PR Head:** query PR #35 at review/merge time rather than self-pinning this documentation commit.  
+**Active Branch:** `main`  
+**Authoritative Software & Live Runtime SHA:** `9451c981ed8945b4a5f91ded509f98171dddeb32` (PR #36 merge; live on both Render staging and production).  
 **Release Governance Status:** Software Verification Pass; Commercial Cutover Gated by EXT-19 & Physical Hardware Gate REC-04E  
 
 ---
@@ -19,6 +19,7 @@ The application has completed comprehensive architectural, operational, and secu
 3. **Export Centre — PDF + XLSX Exclusively:** The Export Centre has been standardized strictly to authentic PDF and OpenXML XLSX (.xlsx) workbooks with formula-injection neutralization (`'`, `+`, `-`, `=`, `@` neutralization in shared strings). User-facing CSV has been eliminated across all operational export actions.
 4. **Authoritative POS Menu Pipeline:** Resolved the production defect where POS displayed no sale items. Implemented a canonical café-scoped POS catalog pipeline (`GET /api/v1/pos/catalog/:cafeId`) linking `MenuItem` master definitions to `OutletOffering` café assignments, pricing overrides, POS channel eligibility, and dynamic frontend caching in [posTill.js](frontend/src/js/pages/posTill.js).
 5. **Robust Attendance & Evidence Retention:** Hardened rotating cryptographic QR challenge generation, GPS geofencing, selfie photo capture, and private document storage. Committed attendance evidence is permanently protected against orphan purges through a non-destructive administrative review model.
+6. **Exact Vercel Origin Trust Boundary:** Backend CORS and cookie-authenticated CSRF protection now trust only the two explicit compatibility Vercel origins plus explicitly configured `ALLOWED_ORIGINS`; attacker-controlled `*.vercel.app` lookalikes are rejected.
 
 All 644 backend regression tests pass, all 730 frontend JavaScript modules parse without error, 36/36 system verification gates pass, and committed secret scanning detects 0 credentials.
 
@@ -28,12 +29,13 @@ All 644 backend regression tests pass, all 730 frontend JavaScript modules parse
 
 - **Canonical GitHub Repository:** `https://github.com/zamorinestate/estate-erp` (Organization: `zamorinestate`, Repository: `estate-erp`).
 - **Legacy Namespace Notice:** `zamorinestate-erp/estate-erp` is a GitHub redirect. The canonical repository and GitHub Actions use `zamorinestate/estate-erp`; both Render services still require an operational repository rebind from the legacy namespace.
-- **Default Production Branch:** `main` (Latest commit: `a3b3bd1f6171bb4cd501970e8d7c7ed083a87e2c` — *Merge PR #34: make Atlas helper fail closed in production*).
-- **Active Working Branch:** `ui/clean-navigation-v1` (PR #35).
-- **Verified Implementation SHA:** `44309b243e2342f75648cef702cd6460a8c9424f`. The live PR head must be read directly from PR #35 because documentation-only commits can advance the branch without changing the verified software implementation.
-- **Status of Active Pull Requests:**
-  - **PR #35 (`ui/clean-navigation-v1`):** Open. Contains clean navigation architecture, parent-workspace consolidation, Export Centre workspace, stored-XSS mitigations, universal OpenXML XLSX engine, elimination of user-facing CSV, and the canonical POS menu pipeline fix.
-  - **PR #16 (`hardware-acceptance`):** DRAFT / DO NOT MERGE WHOLESALE. Historical diverged branch. Software hardening was extracted into separate PRs. Hardware gate REC-04E remains pending real physical thermal printer hardware.
+- **Default Production Branch:** `main` (Latest authoritative software commit: `9451c981ed8945b4a5f91ded509f98171dddeb32` — *Merge PR #36: tighten Vercel origin trust boundary*).
+- **Active Working Branch:** `main`. Focused PR #35 and PR #36 have both been merged.
+- **Authoritative Live Runtime SHA:** `9451c981ed8945b4a5f91ded509f98171dddeb32`, deployed to both Render staging and production after exact-head CI passed.
+- **Status of Relevant Pull Requests:**
+  - **PR #35 (`ui/clean-navigation-v1`):** MERGED. Clean navigation, governed PDF/XLSX export architecture, stored-XSS mitigation, and POS catalogue pipeline are on `main`.
+  - **PR #36 (`fix/vercel-origin-trust-boundary`):** MERGED. Exact Vercel origin trust hardening is on `main`.
+  - **PR #16 (`fix/p0-workflow-integrity`):** DRAFT / DO NOT MERGE WHOLESALE. Historical diverged branch retained only for reconciliation/hardware acceptance work; REC-04E still requires real physical thermal printer evidence.
 
 ---
 
@@ -42,18 +44,19 @@ All 644 backend regression tests pass, all 730 frontend JavaScript modules parse
 | ID | Area / Requirement | Status | Implementation Location | Files Involved | Verification Tests |
 |---|---|---|---|---|---|
 | **CR-01** | **Normal Master Retirement** | COMPLETE_ON_MAIN | Backend middleware, auth service, frontend router | [authenticate.js](backend/src/middleware/authenticate.js), [authService.js](backend/src/services/authService.js), [navigation.js](frontend/src/js/navigation.js) | `normalMasterRetirementRegression.test.js`, `cleanNavigationSuite.test.js` |
-| **CR-02** | **Clean Navigation Architecture** | COMPLETE_IN_OPEN_PR (PR #35) | Navigation configuration & app shell | [navigation.js](frontend/src/js/navigation.js), [app.js](frontend/src/js/app.js) | `cleanNavigationSuite.test.js` (NAV-001–003) |
-| **CR-03** | **Parent-Workspace Consolidation** | COMPLETE_IN_OPEN_PR (PR #35) | Parent workspace hubs & route allowance | [navigation.js](frontend/src/js/navigation.js), [router.js](frontend/src/js/router.js) | `cleanNavigationSuite.test.js` (NAV-005–007) |
-| **CR-04** | **Export Centre: PDF + XLSX Only** | COMPLETE_IN_OPEN_PR (PR #35) | Export controllers, generator utilities, catalogue | [exportCentre.js](frontend/src/js/pages/exportCentre.js), [openXmlExport.js](frontend/src/js/utils/openXmlExport.js), [reportsExportController.js](backend/src/reporting/controllers/reportsExportController.js) | `exportDataIntegritySuite.test.js` (EXP-001–012) |
-| **CR-05** | **Export History Stored-XSS Mitigation** | COMPLETE_IN_OPEN_PR (PR #35) | Export history DOM renderer | [exportCentre.js](frontend/src/js/pages/exportCentre.js) | `exportHistoryXssSuite.test.js` |
-| **CR-06** | **Elimination of User-Facing CSV** | COMPLETE_IN_OPEN_PR (PR #35) | Contextual export buttons across 28 frontend pages | Attendance, Leave, Inventory, Payroll, Assets, Menu, Loans, Bills, Vendors | `exportDataIntegritySuite.test.js` (EXP-011) |
-| **CR-07** | **POS Menu / Sale Items Pipeline (§28)** | COMPLETE_IN_OPEN_PR (PR #35) | Backend POS controller & frontend POS till | [posController.js](backend/src/controllers/posController.js), [posRoutes.js](backend/src/routes/posRoutes.js), [posTill.js](frontend/src/js/pages/posTill.js) | `posCatalogPipeline.test.js` (POS-CAT-01–04) |
+| **CR-02** | **Clean Navigation Architecture** | COMPLETE_ON_MAIN | Navigation configuration & app shell | [navigation.js](frontend/src/js/navigation.js), [app.js](frontend/src/js/app.js) | `cleanNavigationSuite.test.js` (NAV-001–003) |
+| **CR-03** | **Parent-Workspace Consolidation** | COMPLETE_ON_MAIN | Parent workspace hubs & route allowance | [navigation.js](frontend/src/js/navigation.js), [router.js](frontend/src/js/router.js) | `cleanNavigationSuite.test.js` (NAV-005–007) |
+| **CR-04** | **Export Centre: PDF + XLSX Only** | COMPLETE_ON_MAIN | Export controllers, generator utilities, catalogue | [exportCentre.js](frontend/src/js/pages/exportCentre.js), [openXmlExport.js](frontend/src/js/utils/openXmlExport.js), [reportsExportController.js](backend/src/reporting/controllers/reportsExportController.js) | `exportDataIntegritySuite.test.js` (EXP-001–012) |
+| **CR-05** | **Export History Stored-XSS Mitigation** | COMPLETE_ON_MAIN | Export history DOM renderer | [exportCentre.js](frontend/src/js/pages/exportCentre.js) | `exportHistoryXssSuite.test.js` |
+| **CR-06** | **Elimination of User-Facing CSV** | COMPLETE_ON_MAIN | Contextual export buttons across 28 frontend pages | Attendance, Leave, Inventory, Payroll, Assets, Menu, Loans, Bills, Vendors | `exportDataIntegritySuite.test.js` (EXP-011) |
+| **CR-07** | **POS Menu / Sale Items Pipeline (§28)** | COMPLETE_ON_MAIN | Backend POS controller & frontend POS till | [posController.js](backend/src/controllers/posController.js), [posRoutes.js](backend/src/routes/posRoutes.js), [posTill.js](frontend/src/js/pages/posTill.js) | `posCatalogPipeline.test.js` (POS-CAT-01–04) |
 | **CR-08** | **Café Administration Action Wiring (§22)** | COMPLETE_ON_MAIN | Administration table delegation & address formatter | [administration.js](frontend/src/js/pages/administration.js), [addressFormatter.js](frontend/src/js/utils/addressFormatter.js) | `cafeAdministrationActionsWiring.test.js` (TC-1–13) |
 | **CR-09** | **Attendance QR + Geo + Selfie Verification** | COMPLETE_ON_MAIN | Attendance controllers, geofence utils, scanner | [attendanceController.js](backend/src/modules/attendance/attendanceController.js), [attendanceQrScannerPage.js](frontend/src/js/pages/attendanceQrScannerPage.js) | `attendanceSecurePresence.test.js`, `p0AttendanceRemediation.test.js` |
 | **CR-10** | **Attendance Evidence Retention & Non-Destructive Purge** | COMPLETE_ON_MAIN | Document reconciliation service | [documentReconciliationService.js](backend/src/services/documentReconciliationService.js) | `documentStorageDurability.test.js` |
 | **CR-11** | **Server-Authoritative POS Settlement** | COMPLETE_ON_MAIN | POS order service & bill model | [posOrderService.js](backend/src/services/posOrderService.js), [Bill.js](backend/src/models/Bill.js) | `posBillingTerminal.test.js`, `posOfflineFinancialSafety.test.js` |
 | **CR-12** | **Fail-Closed Production Bootstrap & Secrets** | COMPLETE_ON_MAIN | Config loaders & database connection scripts | [db.js](backend/src/config/db.js), [startAtlasServer.js](backend/src/scripts/startAtlasServer.js) | `bootstrapSecretFallbacks.test.js`, `startAtlasServerSafety.test.js` |
 | **CR-13** | **Vendor Procurement & Order Verification Freeze** | COMPLETE_ON_MAIN | Procurement controllers, GRN verification, StockMovement | [vendorOrderLifecycle.js](backend/src/controllers/vendorOrderLifecycle.js) | `e2e_vendor_freeze_gate.mjs`, `rec17VendorAccountsPayableLedger.test.js` |
+| **CR-14** | **Exact Vercel Origin Trust Boundary** | COMPLETE_ON_MAIN | Backend CORS + cookie-authenticated CSRF origin validation | [server.js](backend/src/server.js) | `ext10ProductionDomainTls.test.js` |
 
 ---
 
@@ -202,14 +205,15 @@ The Export Centre operates under a strict format policy: **PDF and OpenXML XLSX 
 - **MongoDB Atlas:** Cluster `zamorin-cluster` in AWS `AP_SOUTH_1` (Mumbai). MongoDB 8.0.x on Free Tier. Isolated runtime users for staging and production databases. IP access restricted.
 - **Render Production Service:** `zamorin-cafe-erp-backend` (Region: Singapore, Root: `backend`, Branch: `main`).
 - **Render Staging Service:** `zamorin-cafe-erp-staging` (Region: Singapore, Root: `backend`, Branch: `main`).
-  - *Infrastructure Finding:* Render dashboard settings currently list repository as `https://github.com/zamorinestate-erp/estate-erp`. A manual rebind in Render to `zamorinestate/estate-erp` is documented for operational execution.
-- **Vercel:** No authorized Vercel team/project is exposed by the connected Vercel session at this audit point. The repository intentionally has no hardcoded `.vercel/project.json` dependency; do not infer or fabricate a live Vercel project binding.
+  - *Live Runtime:* Staging deploy `dep-davouim7bikc73etbkgg` and production deploy `dep-davovgm7bikc73etejv0` are LIVE on `9451c981ed8945b4a5f91ded509f98171dddeb32` with zero error-level logs observed during the rollout.
+  - *Infrastructure Finding:* Render dashboard settings still list repository as `https://github.com/zamorinestate-erp/estate-erp`. Auto-deploy failed to fire after both PR #35 and PR #36 merges; manual deployments succeeded only through the GitHub redirect. Canonical repository rebind remains mandatory.
+- **Vercel:** The connected Vercel session exposes 0 authorized teams/projects. No duplicate project was created. Backend trust no longer relies on broad Vercel hostname matching; only explicit origins are accepted.
 
 ---
 
 ## K. CI & Verification Test Accounting
 
-Canonical software verification was independently audited on implementation SHA `44309b243e2342f75648cef702cd6460a8c9424f`. PR #35 must additionally have all required GitHub Actions green on its live head/merge ref immediately before merge; documentation-only commits do not waive exact-head CI.
+Latest security hardening was verified on exact PR #36 head `14c659214ec81e574ab238fe81fa985e0bb93f3e` before merge. Web/Backend, Android, Windows, Apple, canonical regression, master verification, deployment readiness, and deployment-invariant checks all completed successfully. The resulting merge SHA `9451c981ed8945b4a5f91ded509f98171dddeb32` is the current live runtime baseline.
 
 | Verification Suite | Checks Executed | Passed | Failed | Duration |
 |---|---|---|---|---|
@@ -236,8 +240,12 @@ Canonical software verification was independently audited on implementation SHA 
 2. **Infrastructure Action — Render Repository Rebind:**
    - Both Render services depend on GitHub's repository redirect.
    - Recommended procedure: In Render Web Dashboard -> Settings -> General -> Git Repository, update repository URL from `https://github.com/zamorinestate-erp/estate-erp` to `https://github.com/zamorinestate/estate-erp`. Do not recreate services or modify environment variables.
-3. **PR Merge Governance:**
-   - Merge PR #35 (`ui/clean-navigation-v1`) into `main` after review.
+3. **Infrastructure Action — Vercel Ownership/Project Authorization:**
+   - Connected Vercel access currently exposes 0 teams/projects. Authorize the existing team/project that owns the Zamorin frontend before any Vercel mutation. Do not create a duplicate project.
+4. **Security/Governance Action — Historical Atlas Administrator Retirement:**
+   - Runtime services already use database-scoped least-privilege users. The historical `zamorin_admin` credential must still be rotated/deleted through Atlas control-plane access that supports user mutation; the current connector cannot safely perform that deletion/rotation.
+5. **Commercial Cutover — EXT-19:**
+   - Commercial production authorization remains NO_GO until the external blocker register is closed. A live technical deployment is not equivalent to commercial certification.
 
 ---
 
@@ -259,3 +267,4 @@ Automated test suites continuously prevent retired behaviors from returning:
 - `posCatalogPipeline.test.js` verifies that POS menu items dynamically load with correct pricing and tenant/café isolation.
 - `scan_secrets.mjs` prevents credential commits to Git.
 - `master_system_verification.mjs` runs 36 system gates across all 28 business modules prior to release.
+- `ext10ProductionDomainTls.test.js` enforces exact Vercel origin trust and rejects lookalike Vercel domains, nonstandard ports, HTTP variants, suffix-confusion hosts, and path-bearing origin variants.
