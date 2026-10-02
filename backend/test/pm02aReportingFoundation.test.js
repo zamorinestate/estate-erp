@@ -345,6 +345,17 @@ test('PM-02A: Reporting Foundation & Architecture Test Suite', async (suite) => 
     assert.equal(scope.organisationId, 'ORG-REAL', 'Must use JWT organisationId and ignore query string');
   });
 
+  await suite.test('6.7 Reporting Scope: Retired non-primary MASTER fails closed', () => {
+    const retiredMaster = {
+      auth: { userId: 'MU-RETIRED', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' },
+      query: {},
+    };
+    assert.throws(
+      () => resolveReportScope(retiredMaster),
+      (err) => err.statusCode === 403 && err.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
+    );
+  });
+
   // ─── 7. DATA QUALITY & ACTUALITY TESTS ──────────────────────────────────────
 
   await suite.test('7.1 Data Quality: Status resolution (COMPLETE, PARTIAL, UNAVAILABLE)', () => {
@@ -605,7 +616,7 @@ test('PM-02A: Reporting Foundation & Architecture Test Suite', async (suite) => 
     assert.equal(measurableDq.completenessRatio, 0.8);
   });
 
-  await suite.test('9.9 Scope & Authority: Primary Master vs Normal Master vs Staff vs Cafe Admin', () => {
+  await suite.test('9.9 Scope & Authority: Primary Master vs retired MASTER vs Staff vs Cafe Admin', () => {
     // Register temporary test report with HIGHLY_CONFIDENTIAL classification
     ReportRegistry.registerReport({
       reportId: 'test-exec-audit',
@@ -620,15 +631,18 @@ test('PM-02A: Reporting Foundation & Architecture Test Suite', async (suite) => 
       const pmAuth = { userId: 'PM-01', role: 'MASTER', isPrimaryMaster: true, organisationId: 'ORG-ZAMORIN' };
       assert.doesNotThrow(() => ReportRegistry.assertReportAccess('test-exec-audit', pmAuth));
 
-      // Normal Master (MASTER without isPrimaryMaster) is denied HIGHLY_CONFIDENTIAL
-      const normalMasterAuth = { userId: 'NM-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' };
+      // Retired non-primary MASTER is denied before report classification evaluation
+      const retiredMasterAuth = { userId: 'NM-01', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-ZAMORIN' };
       assert.throws(
-        () => ReportRegistry.assertReportAccess('test-exec-audit', normalMasterAuth),
-        (err) => err.statusCode === 403 && err.code === 'PRIMARY_MASTER_REQUIRED'
+        () => ReportRegistry.assertReportAccess('test-exec-audit', retiredMasterAuth),
+        (err) => err.statusCode === 403 && err.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
       );
 
-      // Normal Master CAN access CONFIDENTIAL reports
-      assert.doesNotThrow(() => ReportRegistry.assertReportAccess('pl-statement', normalMasterAuth));
+      // Retired non-primary MASTER cannot access standard confidential reports either.
+      assert.throws(
+        () => ReportRegistry.assertReportAccess('pl-statement', retiredMasterAuth),
+        (err) => err.statusCode === 403 && err.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
+      );
     } finally {
       ReportRegistry.unregisterReport('test-exec-audit');
     }

@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertCanonicalReportingActor } = require('./reportingAuthority');
+
 /**
  * ZAMORIN CAFÉ ERP — FORECAST & SCENARIO INTELLIGENCE REGISTRY
  * Module: forecastRegistry.js
@@ -22,7 +24,7 @@ const UNIVERSAL_SQRT_H_INTERVAL_APPLIED_TO_ALL_MODELS = 0;
 const SEASONAL_NAIVE_INTERVAL_USES_NAIVE_SQRT_H_FORMULA = 0;
 const ARBITRARY_FORECAST_INTERVAL = 0;
 const FORECAST_SECONDARY_ROLE_TAXONOMY = 0;
-const NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0;
+const RETIRED_MASTER_FORECAST_BYPASS = 0;
 const HIDDEN_CAFE_FORECAST_LEAK = 0;
 const UNEXPLAINED_FROZEN_TEST_LOSS = 0;
 const INCOMPLETE_SUPPLY_VIEW_REPORTED_AS_CERTAIN_STOCKOUT = 0;
@@ -479,7 +481,7 @@ class ForecastRegistry {
       throw err;
     }
 
-    const role = String(auth.role || '').toUpperCase();
+    const { role } = assertCanonicalReportingActor(auth);
     if (role === 'STAFF') {
       const err = new Error('Staff role is not authorized to access enterprise forecasting reports.');
       err.statusCode = 403;
@@ -502,17 +504,6 @@ class ForecastRegistry {
       throw err;
     }
 
-    // Primary Master vs Normal Master governance
-    if (role === 'MASTER') {
-      const isPrimary = auth.isPrimaryMaster === true;
-      if (!isPrimary && auth.requirePrimaryMaster) {
-        const err = new Error('This forecasting capability requires Primary Master authority.');
-        err.statusCode = 403;
-        err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
-        throw err;
-      }
-    }
-
     return target;
   }
 
@@ -526,7 +517,7 @@ class ForecastRegistry {
    * @returns {string|object|null}
    */
   static resolveAuthorizedCafeScope(auth = {}, requestedCafeId = null) {
-    const role = String(auth.role || '').toUpperCase();
+    const { role } = assertCanonicalReportingActor(auth);
     if (role === 'STAFF') {
       const err = new Error('Staff role is not authorized to access enterprise forecasting reports.');
       err.statusCode = 403;
@@ -542,13 +533,6 @@ class ForecastRegistry {
     const assignedCafeIds = [...new Set(rawCafes.filter(Boolean).map((c) => String(c).trim().toUpperCase()))];
 
     if (role === 'MASTER') {
-      const isPrimary = auth.isPrimaryMaster === true;
-      if (!isPrimary && !requestedCafeId && assignedCafeIds.length === 0) {
-        const err = new Error('Enterprise portfolio forecasting requires Primary Master authority or an assigned café scope.');
-        err.statusCode = 403;
-        err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
-        throw err;
-      }
       return requestedCafeId || null;
     }
 
@@ -638,7 +622,7 @@ module.exports = {
   SEASONAL_NAIVE_INTERVAL_USES_NAIVE_SQRT_H_FORMULA,
   ARBITRARY_FORECAST_INTERVAL,
   FORECAST_SECONDARY_ROLE_TAXONOMY,
-  NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION,
+  RETIRED_MASTER_FORECAST_BYPASS,
   HIDDEN_CAFE_FORECAST_LEAK,
   UNEXPLAINED_FROZEN_TEST_LOSS,
   INCOMPLETE_SUPPLY_VIEW_REPORTED_AS_CERTAIN_STOCKOUT,

@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertCanonicalReportingActor } = require('../reportingAuthority');
+
 /**
  * ZAMORIN CAFÉ ERP — REPORTING CALCULATION ENGINE
  * Module: diagnosticCalculations.js
@@ -38,7 +40,7 @@ const { Attendance } = require('../../modules/attendance/Attendance');
 
 // Static Semantic Audit & Invariant Constants (PM-02J & PM-02J-R1)
 const CLIENT_ORGANISATION_AUTHORITY_IN_DIAGNOSTICS = 0;
-const NORMAL_MASTER_BYPASSES_DIAGNOSTIC_CLASSIFICATION = 0;
+const RETIRED_MASTER_REPORTING_BYPASS = 0;
 const DIAGNOSTIC_HIDDEN_CAFE_INFERENCE = 0;
 const DIAGNOSTIC_GROSS_TO_NET_FORMULA_DUPLICATION = 0;
 const ADDITIVE_DECOMPOSITION_RECONCILIATION_ERROR = 0;
@@ -543,8 +545,7 @@ async function calculateDiagnosticDecomposition({
 
   // 2. Scope & Tenant Derivation (Blocker J-R1-001, Sections 3, 5, 6, 7)
   const orgId = auth.organisationId || 'ORG-ZAMORIN-01';
-  const role = String(auth.role || '').toUpperCase();
-  const isPrimaryMaster = Boolean(auth.isPrimaryMaster || (role === 'MASTER' && auth.userId === 'MU-0001'));
+  const { role, isPrimaryMaster } = assertCanonicalReportingActor(auth);
 
   // Staff role denied
   if (role === 'STAFF') {
@@ -571,7 +572,7 @@ async function calculateDiagnosticDecomposition({
   }
 
   let authorizedCafes = null;
-  if (!isPrimaryMaster && role !== 'MASTER') {
+  if (!isPrimaryMaster) {
     authorizedCafes = assignedCafeIds;
   }
 
@@ -862,8 +863,7 @@ function calculateVarianceWaterfall({
 } = {}) {
   // Scoping check (Blocker J-R1-001)
   const orgId = auth.organisationId || 'ORG-ZAMORIN-01';
-  const role = String(auth.role || '').toUpperCase();
-  const isPrimaryMaster = Boolean(auth.isPrimaryMaster || (role === 'MASTER' && auth.userId === 'MU-0001'));
+  const { role, isPrimaryMaster } = assertCanonicalReportingActor(auth);
 
   const rawCafes = [
     ...(Array.isArray(auth.assignedCafeIds) ? auth.assignedCafeIds : (auth.assignedCafeIds ? [auth.assignedCafeIds] : [])),
@@ -884,7 +884,7 @@ function calculateVarianceWaterfall({
   let curBills = currentBills.filter(b => (!b.organisationId || b.organisationId === orgId));
   let priBills = priorBills.filter(b => (!b.organisationId || b.organisationId === orgId));
 
-  if (!isPrimaryMaster && role !== 'MASTER') {
+  if (!isPrimaryMaster) {
     curBills = curBills.filter((b) => assignedCafeIds.includes(b.cafeId));
     priBills = priBills.filter((b) => assignedCafeIds.includes(b.cafeId));
   }
@@ -1551,8 +1551,7 @@ function calculateSmallMultiples(groups = [], options = {}) {
 async function calculateDiagnosticExceptions({ preloadedExceptions = null, auth = {} } = {}) {
   // Scoping check (Blocker J-R1-001)
   const orgId = auth.organisationId || 'ORG-ZAMORIN-01';
-  const role = String(auth.role || '').toUpperCase();
-  const isPrimaryMaster = Boolean(auth.isPrimaryMaster || (role === 'MASTER' && auth.userId === 'MU-0001'));
+  const { role, isPrimaryMaster } = assertCanonicalReportingActor(auth);
 
   if (role === 'STAFF') {
     const err = new Error('Staff role denied access to enterprise diagnostic exceptions.');
@@ -1584,7 +1583,7 @@ async function calculateDiagnosticExceptions({ preloadedExceptions = null, auth 
     // In production, gather factual exceptions across domains
     // 1. Cash variances from RegisterSession
     const sessionQuery = { variancePaisa: { $ne: 0 }, organisationId: orgId };
-    if (!isPrimaryMaster && role !== 'MASTER') {
+    if (!isPrimaryMaster) {
       sessionQuery.cafeId = { $in: assignedCafeIds };
     }
     const sessions = await RegisterSession.find(sessionQuery).limit(50).lean();
@@ -1602,7 +1601,7 @@ async function calculateDiagnosticExceptions({ preloadedExceptions = null, auth 
 
     // 2. Attendance exceptions
     const attQuery = { 'exceptions.0': { $exists: true }, organisationId: orgId };
-    if (!isPrimaryMaster && role !== 'MASTER') {
+    if (!isPrimaryMaster) {
       attQuery.cafeId = { $in: assignedCafeIds };
     }
     const atts = await Attendance.find(attQuery).limit(50).lean();
@@ -1622,7 +1621,7 @@ async function calculateDiagnosticExceptions({ preloadedExceptions = null, auth 
   }
 
   // Filter exceptions by authorized scope
-  if (!isPrimaryMaster && role !== 'MASTER') {
+  if (!isPrimaryMaster) {
     exceptions = exceptions.filter((e) => assignedCafeIds.includes(e.cafeId));
   }
 
@@ -1653,7 +1652,7 @@ async function calculateDiagnosticExceptions({ preloadedExceptions = null, auth 
 module.exports = {
   // PM-02J-R1 Invariant Constants (Section 54)
   CLIENT_ORGANISATION_AUTHORITY_IN_DIAGNOSTICS,
-  NORMAL_MASTER_BYPASSES_DIAGNOSTIC_CLASSIFICATION,
+  RETIRED_MASTER_REPORTING_BYPASS,
   DIAGNOSTIC_HIDDEN_CAFE_INFERENCE,
   DIAGNOSTIC_GROSS_TO_NET_FORMULA_DUPLICATION,
   ADDITIVE_DECOMPOSITION_RECONCILIATION_ERROR,
