@@ -1,0 +1,146 @@
+{
+  "system": "Zamorin Café ERP",
+  "documentType": "DISASTER_RECOVERY_RUNBOOK",
+  "version": "1.0.0",
+  "lastAudited": "2026-10-02T12:00:00.000Z",
+  "safety": {
+    "automaticProductionRestoreAllowed": false,
+    "productionDataDestructiveDrillAllowed": false,
+    "restoreTargetPolicy": "ISOLATED_NON_PRODUCTION_TARGET_ONLY",
+    "secretsMayBeCommitted": false,
+    "zeroCostLogicalBackupIsEquivalentToPitr": false
+  },
+  "currentState": {
+    "authoritativeBranch": "main",
+    "database": {
+      "provider": "MongoDB Atlas",
+      "tier": "FREE",
+      "cloudBackup": "UNAVAILABLE_ON_CURRENT_TIER",
+      "pointInTimeRecovery": "UNAVAILABLE_ON_CURRENT_TIER",
+      "logicalBackup": "AVAILABLE_WITH_CONTROLLED_WRITE_QUIESCENCE",
+      "blockerIds": [
+        "EXT-01",
+        "EXT-03",
+        "EXT-05"
+      ]
+    },
+    "documentStorage": {
+      "provider": "MongoDB GridFS",
+      "localRenderDiskDependency": false,
+      "durabilityCoupledToAtlas": true
+    },
+    "backend": {
+      "provider": "Render",
+      "productionServiceId": "srv-dac38c6k1f9s73e1ks5g",
+      "stagingServiceId": "srv-dam1nc67bikc7380i4j0",
+      "runtimeStorageModel": "STATELESS_APP_WITH_GRIDFS_DOCUMENT_STORAGE"
+    },
+    "malwareScanning": {
+      "provider": "ClamAV",
+      "transport": "TCP_INSTREAM",
+      "liveDaemonStatus": "PENDING_PRIVATE_DEPLOYMENT",
+      "trackingIssue": 39,
+      "blockerId": "EXT-02"
+    }
+  },
+  "procedures": [
+    {
+      "id": "DR-10",
+      "name": "MongoDB Atlas data-loss recovery",
+      "entryCriteria": [
+        "CONFIRMED_DATA_LOSS",
+        "CONFIRMED_CORRUPTION",
+        "AUTHORIZED_DR_DECLARATION"
+      ],
+      "currentTierProcedure": [
+        "Quiesce application writes before any free-tier logical backup.",
+        "Confirm active GridFS uploads are zero.",
+        "Create mongodump outside the Git repository using scripts/backupMongoFreeTier.ps1.",
+        "Restore only into an isolated non-production target.",
+        "Run BackupRestoreVerificationService and GridFS integrity/SHA checks.",
+        "Do not overwrite production automatically."
+      ],
+      "commercialProductionGap": "Continuous cloud backup and PITR remain unavailable while Atlas is FREE."
+    },
+    {
+      "id": "DR-11",
+      "name": "Render backend recovery",
+      "entryCriteria": [
+        "BACKEND_UNAVAILABLE",
+        "REPEATED_HEALTH_FAILURE"
+      ],
+      "procedure": [
+        "Confirm Atlas availability independently.",
+        "Recover the stateless backend from the authoritative main branch.",
+        "Verify /health/ready and /api/v1/health.",
+        "Verify GridFS-backed documents remain independent of Render local filesystem."
+      ]
+    },
+    {
+      "id": "DR-12",
+      "name": "Frontend/Vercel recovery",
+      "entryCriteria": [
+        "FRONTEND_UNAVAILABLE",
+        "VERCEL_DEPLOYMENT_FAILURE"
+      ],
+      "procedure": [
+        "Rebuild the zero-build frontend from the authoritative main branch.",
+        "Verify router imports and frontend secret scan.",
+        "Use local PWA/offline shell only as a temporary continuity measure.",
+        "Commercial Vercel account/project authorization remains governed by EXT-10."
+      ]
+    },
+    {
+      "id": "DR-13",
+      "name": "GitHub release pipeline recovery",
+      "entryCriteria": [
+        "CI_UNAVAILABLE",
+        "GITHUB_OUTAGE"
+      ],
+      "procedure": [
+        "Do not bypass release governance while GitHub checks are unavailable.",
+        "Preserve the last known-good SHA and deployment IDs.",
+        "Resume normal protected-branch workflow when GitHub service recovers."
+      ]
+    },
+    {
+      "id": "DR-14",
+      "name": "ClamAV outage handling",
+      "entryCriteria": [
+        "SCANNER_UNAVAILABLE",
+        "STALE_SIGNATURE_DATABASE"
+      ],
+      "procedure": [
+        "Fail closed for new document promotion.",
+        "Keep unverified uploads quarantined and non-downloadable.",
+        "Do not send documents to public third-party scanners.",
+        "Resume reconciliation only after private scanner health and signature freshness recover."
+      ]
+    },
+    {
+      "id": "DR-15",
+      "name": "Email provider outage",
+      "entryCriteria": [
+        "SMTP_UNAVAILABLE",
+        "MAIL_QUEUE_FAILURE"
+      ],
+      "procedure": [
+        "Keep core ERP/POS transactions operational.",
+        "Queue/retry outbound notifications.",
+        "Preserve generic password-recovery responses to prevent account enumeration."
+      ]
+    }
+  ],
+  "externalBlockers": [
+    {
+      "id": "EXT-03",
+      "status": "BLOCKED",
+      "reason": "Continuous cloud backup and point-in-time recovery require a supported Atlas paid tier."
+    },
+    {
+      "id": "EXT-05",
+      "status": "BLOCKED",
+      "reason": "Independent secondary/offsite backup storage target and restore evidence are not configured."
+    }
+  ]
+}
