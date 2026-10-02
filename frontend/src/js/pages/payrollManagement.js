@@ -983,7 +983,7 @@ function renderActiveTabContent(userRole) {
     case "year_end":
       return renderSimpleTab("Year-End / YTD Accumulators", "Cumulative financial year 2026-27 gross-to-net totals.", "YTD Total Payroll: ₹96,50,000 (INR). Annual projections on track.");
     case "reports":
-      return renderSimpleTab("Reports & Certification Pack", "Download audit-ready payroll registers, bank schedules, and tax summaries.", "Reports ready for export: Payroll Register (CSV), NEFT Batch (TXT), Form 138 / Form 24Q (XML).");
+      return renderSimpleTab("Reports & Certification Pack", "Download audit-ready payroll registers, bank schedules, and tax summaries.", "Reports ready for export: Payroll Register (Excel/PDF), NEFT Batch (TXT), Form 138 / Form 24Q (XML).");
     case "audit":
       return renderAuditTab();
     default:
@@ -1267,7 +1267,7 @@ function wireEvents(root) {
       (s.baseSalary || 0).toFixed(2),
       (s.grossSalary || 0).toFixed(2),
     ]);
-    exportPayrollCsv("staff_compensation_master.csv", ["Employee ID", "Name", "Designation", "Base Salary", "Gross Rate"], staffRows);
+    exportPayrollExcel("staff_compensation_master.xlsx", ["Employee ID", "Name", "Designation", "Base Salary", "Gross Rate"], staffRows);
   });
   root.querySelector("#btn-child-run-gates")?.addEventListener("click", () => {
     showToast("10/10 automated quality gates passed with zero anomalies.", "mint");
@@ -1288,26 +1288,28 @@ function wireEvents(root) {
     showToast("EPF ECR & ESI monthly challans generated.", "mint");
   });
   root.querySelector("#btn-child-export-ytd")?.addEventListener("click", () => {
-    exportPayrollCsv("ytd_tax_accumulators.csv", ["Employee ID", "Name", "YTD Gross", "YTD TDS", "YTD EPF", "YTD ESI"], []);
+    exportPayrollExcel("ytd_tax_accumulators.xlsx", ["Employee ID", "Name", "YTD Gross", "YTD TDS", "YTD EPF", "YTD ESI"], []);
   });
   root.querySelector("#btn-child-export-reports")?.addEventListener("click", () => {
-    exportPayrollCsv("payroll_finance_jv.csv", ["Account Code", "Account Name", "Debit", "Credit"], []);
+    exportPayrollExcel("payroll_finance_jv.xlsx", ["Account Code", "Account Name", "Debit", "Credit"], []);
   });
   root.querySelector("#btn-child-download-audit")?.addEventListener("click", () => {
-    exportPayrollCsv("payroll_audit_trail.csv", ["Timestamp", "Run ID", "Event", "Actor", "Status"], []);
+    exportPayrollExcel("payroll_audit_trail.xlsx", ["Timestamp", "Run ID", "Event", "Actor", "Status"], []);
   });
 }
 
-function exportPayrollCsv(filename, headers, rows) {
-  let csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
+function exportPayrollExcel(filename, headers, rows) {
+  const content = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
+  link.setAttribute("href", url);
   link.setAttribute("download", filename);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast(`Exported ${filename}`, "mint");
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${filename} (Excel workbook)`, "mint");
 }
 
 // ─── RENDER MAIN VIEW ────────────────────────────────────────────────────────

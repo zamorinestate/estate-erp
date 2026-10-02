@@ -238,6 +238,26 @@ const exportPassbookPdf = asyncHandler(async (req, res) => {
   const org = req.auth.organisationId || 'ZAMORIN';
   const { accountId, period } = req.query;
 
+  const rawFormat = String(req.query.format || (req.headers.accept === 'application/pdf' ? 'PDF' : 'PDF')).trim().toUpperCase();
+
+  if (rawFormat === 'CSV' || rawFormat.includes('CSV')) {
+    throw new ApiError(
+      400,
+      'UNSUPPORTED_EXPORT_FORMAT',
+      'CSV format is not supported for passbook exports. Canonical export formats are PDF and XLSX.'
+    );
+  }
+
+  const format = rawFormat === 'EXCEL' ? 'XLSX' : rawFormat;
+
+  if (format !== 'PDF' && format !== 'XLSX') {
+    throw new ApiError(
+      400,
+      'UNSUPPORTED_EXPORT_FORMAT',
+      `Unsupported export format: "${rawFormat}". Canonical export formats are PDF and XLSX.`
+    );
+  }
+
   const account = accountId ? await PassbookAccount.findOne({ accountId, organisationId: org }).lean() : null;
   const txns = await PassbookTransaction.find({ organisationId: org, ...(accountId ? { accountId } : {}) })
     .sort({ postingDate: 1, postingSequence: 1 })
@@ -253,7 +273,30 @@ const exportPassbookPdf = asyncHandler(async (req, res) => {
     { key: 'balance', label: 'BALANCE (₹)', align: 'right' },
   ];
 
-  const rows = txns.map((t) => ({
+  if (format === 'XLSX') {
+    const xlsxRows = txns.map((t) => ({
+      postingDate: t.postingDate,
+      transactionId: t.transactionId,
+      narration: t.narration,
+      externalReference: t.externalReference || '—',
+      debit: t.direction === 'DEBIT' ? (t.amountPaisa / 100) : null,
+      credit: t.direction === 'CREDIT' ? (t.amountPaisa / 100) : null,
+      balance: t.runningBalancePaisa / 100,
+    }));
+
+    const xlsx = await ZurfService.renderXlsx({
+      sheetName: 'Passbook Statement',
+      reportTitle: account ? `Passbook Statement - ${account.accountName}` : 'Consolidated Treasury Passbook',
+      columns,
+      rows: xlsxRows,
+    });
+    res.setHeader('Content-Type', xlsx.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${xlsx.filename}"`);
+    return res.send(xlsx.buffer);
+  }
+
+  // format === 'PDF'
+  const pdfRows = txns.map((t) => ({
     postingDate: t.postingDate,
     transactionId: t.transactionId,
     narration: t.narration,
@@ -263,56 +306,17 @@ const exportPassbookPdf = asyncHandler(async (req, res) => {
     balance: `₹${(t.runningBalancePaisa / 100).toFixed(2)}`,
   }));
 
-  if (req.query.format === 'XLSX') {
-    const xlsx = await ZurfService.renderXlsx({
-      sheetName: 'Passbook Statement',
-      reportTitle: account ? `Passbook Statement - ${account.accountName}` : 'Consolidated Treasury Passbook',
-      columns,
-      rows,
-    });
-    res.setHeader('Content-Type', xlsx.mimeType);
-    res.setHeader('Content-Disposition', `attachment; filename="${xlsx.filename}"`);
-    return res.send(xlsx.buffer);
-  }
-
-  if (req.query.format === 'CSV') {
-    const csv = await ZurfService.renderCsv({
-      reportTitle: account ? `Passbook Statement - ${account.accountName}` : 'Consolidated Treasury Passbook',
-      columns,
-      rows,
-    });
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="passbook_${csv.runId}.csv"`);
-    return res.send(csv.csv);
-  }
-
-  if (req.query.format === 'PDF' || req.headers.accept === 'application/pdf') {
-    const pdf = await ZurfService.renderBinaryPdf({
-      reportTitle: account ? `PASSBOOK STATEMENT — ${account.accountName} (${account.maskedAccountNumber})` : 'CONSOLIDATED TREASURY PASSBOOK STATEMENT',
-      reportCode: 'ZURF-PB-01',
-      scope: account ? `Account: ${account.accountName}` : 'All Accounts — Global Portfolio',
-      period: period || 'August 2026',
-      columns,
-      rows,
-    });
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${pdf.filename}"`);
-    return res.send(pdf.buffer);
-  }
-
-  const html = await ZurfService.renderZurfHtml({
+  const pdf = await ZurfService.renderBinaryPdf({
     reportTitle: account ? `PASSBOOK STATEMENT — ${account.accountName} (${account.maskedAccountNumber})` : 'CONSOLIDATED TREASURY PASSBOOK STATEMENT',
+    reportCode: 'ZURF-PB-01',
     scope: account ? `Account: ${account.accountName}` : 'All Accounts — Global Portfolio',
-    period: period || 'August 2026',
-    classification: 'RESTRICTED',
-    generatedBy: req.auth.name || req.auth.role,
+    period: period || 'Current Period',
     columns,
-    rows,
-    notes: 'Official ZURF v1 Treasury Document. All transaction values are verified against authoritative ERP ledger records.',
+    rows: pdfRows,
   });
-
-  res.setHeader('Content-Type', 'text/html');
-  res.send(html);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${pdf.filename}"`);
+  return res.send(pdf.buffer);
 });
 
 module.exports = {

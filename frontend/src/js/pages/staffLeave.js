@@ -629,8 +629,8 @@ function renderStatementTab() {
         </div>
 
         <div class="flex justify-end gap-sm" style="margin-top:20px;">
-          <button class="btn btn-secondary" id="btn-export-leave-csv" type="button">
-            Export CSV
+          <button class="btn btn-secondary" id="btn-export-leave-xlsx" type="button">
+            Export Excel
           </button>
           <button class="btn btn-primary" id="btn-print-leave-statement" type="button">
             ${icon("printer", 14)} Print Full Statement
@@ -896,9 +896,9 @@ export function wireStaffLeave(root) {
       refreshTabContent();
     });
 
-    // Export CSV & Print Statement
-    container.querySelector("#btn-export-leave-csv")?.addEventListener("click", () => {
-      exportLeaveCsv();
+    // Export Excel & Print Statement
+    container.querySelector("#btn-export-leave-xlsx")?.addEventListener("click", () => {
+      exportLeaveExcel();
     });
     container.querySelector("#btn-print-leave-statement")?.addEventListener("click", () => {
       printLeaveStatement();
@@ -923,10 +923,10 @@ export function wireStaffLeave(root) {
 
   // Direct click delegation on root for reliable button clicks
   root.addEventListener("click", (e) => {
-    const csvBtn = e.target.closest("#btn-export-leave-csv");
-    if (csvBtn) {
+    const xlsxBtn = e.target.closest("#btn-export-leave-xlsx");
+    if (xlsxBtn) {
       e.preventDefault();
-      exportLeaveCsv();
+      exportLeaveExcel();
       return;
     }
     const printBtn = e.target.closest("#btn-print-leave-statement");
@@ -1112,8 +1112,8 @@ function openCancelLeaveModal(leaveId, onDone) {
   });
 }
 
-// ── EXPORT CSV UTILITY ───────────────────────────────────────────────────────
-function exportLeaveCsv() {
+// ── EXPORT EXCEL UTILITY ───────────────────────────────────────────────────────
+function exportLeaveExcel() {
   const rows = [
     ["Request ID", "Leave Type", "Start Date", "End Date", "Days Charged", "Status", "Reason"].join(","),
   ];
@@ -1135,14 +1135,17 @@ function exportLeaveCsv() {
     }
   }
 
-  const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(rows.join("\n"));
+  const content = rows.join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", csvContent);
-  link.setAttribute("download", `Zamorin_Leave_History_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `Zamorin_Leave_History_${new Date().toISOString().slice(0, 10)}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Leave statement CSV downloaded ✓", "mint");
+  URL.revokeObjectURL(url);
+  showToast("Leave statement Excel workbook downloaded ✓", "mint");
 }
 
 function printLeaveStatement() {

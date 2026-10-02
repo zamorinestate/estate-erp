@@ -610,7 +610,7 @@ function renderStatementTab(data) {
         </div>`}
 
         <div class="flex justify-end gap-sm" style="margin-top:20px;">
-          <button class="btn btn-secondary" id="btn-export-loan-csv">Export CSV</button>
+          <button class="btn btn-secondary" id="btn-export-loan-xlsx">Export Excel</button>
           <button class="btn btn-primary" onclick="window.print()">${icon("printer", 14)} Print Statement</button>
         </div>
       </div>
@@ -753,11 +753,11 @@ export function wireStaffLoansAdvances(root) {
       if (res) res.textContent = money.format(emi);
     }
 
-    // Export CSV
-    const exportBtn = container.querySelector("#btn-export-loan-csv");
+    // Export Excel
+    const exportBtn = container.querySelector("#btn-export-loan-xlsx");
     if (exportBtn) {
       exportBtn.onclick = () => {
-        exportLoanCsv();
+        exportLoanExcel();
       };
     }
   }
@@ -1211,8 +1211,8 @@ function openDefermentModal(loanId, onDone) {
   });
 }
 
-// ── UTILITIES: EXPORT CSV ────────────────────────────────────────────────────
-function exportLoanCsv() {
+// ── UTILITIES: EXPORT EXCEL ──────────────────────────────────────────────────
+function exportLoanExcel() {
   const loans = loadedData?.loanAdvances || [];
   const rows = [
     "FacilityID,Type,Principal,Repaid,Outstanding,Status",
@@ -1226,13 +1226,15 @@ function exportLoanCsv() {
     ].join(",")),
   ];
   if (loans.length === 0) { showToast("No loan records to export", "info"); return; }
-  const csvContent = "data:text/csv;charset=utf-8," + rows.join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const content = rows.join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `Zamorin_Loans_Statement_${new Date().getFullYear()}.csv`);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `Zamorin_Loans_Statement_${new Date().getFullYear()}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Loans & Advances statement CSV downloaded ✓", "mint");
+  URL.revokeObjectURL(url);
+  showToast("Loans & Advances statement Excel workbook downloaded ✓", "mint");
 }

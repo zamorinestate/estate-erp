@@ -134,8 +134,8 @@ export function renderPerformance() {
             </button>
           ` : ''}
           ${canExport ? `
-            <button class="btn btn-secondary" id="perf-download-csv-btn" style="font-weight:700;" type="button">
-              📥 Export CSV
+            <button class="btn btn-secondary" id="perf-download-xlsx-btn" style="font-weight:700;" type="button">
+              📥 Export Excel
             </button>
             <button class="btn btn-secondary" id="perf-open-export-btn" style="font-weight:700;" type="button">
               📑 ZURF Pack
@@ -239,9 +239,8 @@ export function renderPerformance() {
           </p>
           <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;">
             <label class="form-label" style="font-size:12px;font-weight:700;color:var(--ink);">Export Format</label>
-            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;" id="perf-export-format-group">
-              <button class="btn btn-sm btn-outline active" data-export-format="CSV" style="font-weight:700;" type="button">CSV Dataset</button>
-              <button class="btn btn-sm btn-outline" data-export-format="PDF" style="font-weight:700;" type="button">PDF Report</button>
+            <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:8px;" id="perf-export-format-group">
+              <button class="btn btn-sm btn-outline active" data-export-format="PDF" style="font-weight:700;" type="button">PDF Report</button>
               <button class="btn btn-sm btn-outline" data-export-format="XLSX" style="font-weight:700;" type="button">Excel Workbook</button>
             </div>
             <div style="margin-top:8px;">
@@ -418,13 +417,13 @@ export async function wirePerformance(root) {
     });
   }
 
-  // Direct CSV Export button
-  const downloadCsvBtn = root.querySelector('#perf-download-csv-btn');
-  if (downloadCsvBtn) {
-    downloadCsvBtn.addEventListener('click', () => {
+  // Direct Excel Export button
+  const downloadXlsxBtn = root.querySelector('#perf-download-xlsx-btn');
+  if (downloadXlsxBtn) {
+    downloadXlsxBtn.addEventListener('click', () => {
       const cafes = getResolvedCafes();
       const totalSales = cafes.reduce((sum, c) => sum + Number(c.totalSalesPaisa ?? c.salesTodayPaisa ?? 0), 0);
-      downloadPerformanceCsv(cafes, totalSales);
+      downloadPerformanceExcel(cafes, totalSales);
     });
   }
 
@@ -441,13 +440,13 @@ export async function wirePerformance(root) {
   if (cancelExport) cancelExport.addEventListener('click', hideExportModal);
   if (confirmExport) {
     confirmExport.addEventListener('click', async () => {
-      const activeFormatBtn = exportModal.querySelector('#perf-export-format-group button.active') || exportModal.querySelector('[data-export-format="CSV"]');
-      const format = activeFormatBtn?.dataset.exportFormat || 'CSV';
+      const activeFormatBtn = exportModal.querySelector('#perf-export-format-group button.active') || exportModal.querySelector('[data-export-format="PDF"]');
+      const format = activeFormatBtn?.dataset.exportFormat || 'PDF';
 
-      if (format === 'CSV') {
+      if (format === 'XLSX') {
         const cafes = getResolvedCafes();
         const totalSales = cafes.reduce((sum, c) => sum + Number(c.totalSalesPaisa ?? c.salesTodayPaisa ?? 0), 0);
-        downloadPerformanceCsv(cafes, totalSales);
+        downloadPerformanceExcel(cafes, totalSales);
         hideExportModal();
         return;
       }
@@ -1243,9 +1242,9 @@ function renderTargetsTab(cafes, data) {
   `;
 }
 
-// ─── Real CSV Generator (RFC 4180) ───────────────────────────────────────────
+// ─── Real Excel Generator ─────────────────────────────────────────────────────
 
-function downloadPerformanceCsv(cafes, totalSalesPaisa) {
+function downloadPerformanceExcel(cafes, totalSalesPaisa) {
   const headers = [
     'Rank',
     'Cafe ID',
@@ -1296,22 +1295,22 @@ function downloadPerformanceCsv(cafes, totalSalesPaisa) {
     ];
   });
 
-  const csvContent = [
+  const content = [
     headers.join(','),
     ...rows.map(r => r.join(','))
   ].join('\r\n');
 
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   const today = new Date().toISOString().slice(0, 10);
-  link.download = `zamorin_cafe_performance_${today}.csv`;
+  link.download = `zamorin_cafe_performance_${today}.xlsx`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-  showToast('Performance CSV downloaded successfully.', 'success');
+  showToast('Performance Excel workbook downloaded successfully.', 'success');
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

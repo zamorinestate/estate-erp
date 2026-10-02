@@ -325,7 +325,7 @@ function renderOverview() {
               </a>
               <a href="#passbook/exports" class="btn btn-secondary" style="display: flex; flex-direction: column; align-items: flex-start; padding: 10px 12px; text-decoration: none; text-align: left; height: auto;">
                 <strong style="font-size: 12.5px; color: var(--ink);">ZURF Exports</strong>
-                <span style="font-size: 11px; color: var(--muted);">PDF / CSV Statements</span>
+                <span style="font-size: 11px; color: var(--muted);">PDF / Excel Statements</span>
               </a>
               <a href="#passbook/unallocated" class="btn btn-secondary" style="display: flex; flex-direction: column; align-items: flex-start; padding: 10px 12px; text-decoration: none; text-align: left; height: auto;">
                 <strong style="font-size: 12.5px; color: var(--ink);">Unallocated Queue</strong>
@@ -1030,10 +1030,10 @@ function renderCorporateExports() {
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; padding:14px; border:1px solid var(--border); border-radius:8px;">
           <div>
-            <div style="font-weight:700; font-size:14px;">Transaction Ledger Feed (CSV / Excel)</div>
+            <div style="font-weight:700; font-size:14px;">Transaction Ledger Feed (Excel XLSX)</div>
             <div style="font-size:12px; color:var(--muted);">Detailed chronological journal with UTR tags and tax breakdowns.</div>
           </div>
-          <button class="btn btn-secondary btn-sm" id="pbk-btn-download-csv">Export CSV</button>
+          <button class="btn btn-secondary btn-sm" id="pbk-btn-download-xlsx">Export Excel</button>
         </div>
       </div>
     </div>
@@ -1330,17 +1330,17 @@ export async function wirePassbook() {
 
   document.getElementById("pbk-btn-download-pdf")?.addEventListener("click", () => {
     showToast("Generating certified Treasury PDF...", "info");
-    setTimeout(() => showToast("PDF Statement downloaded.", "success"), 500);
+    window.location.href = "/api/v1/passbook/export?format=PDF";
   });
 
-  document.getElementById("pbk-btn-download-csv")?.addEventListener("click", () => {
-    showToast("Exporting Treasury CSV ledger...", "info");
-    setTimeout(() => showToast("CSV Ledger downloaded.", "success"), 500);
+  document.getElementById("pbk-btn-download-xlsx")?.addEventListener("click", () => {
+    showToast("Exporting Treasury Excel workbook...", "info");
+    window.location.href = "/api/v1/passbook/export?format=XLSX";
   });
 
   document.getElementById("pbk-btn-export-daybook")?.addEventListener("click", () => {
-    showToast("Exporting Day Book CSV...", "info");
-    setTimeout(() => showToast("Day Book CSV downloaded.", "success"), 500);
+    showToast("Exporting Day Book Excel...", "info");
+    window.location.href = "/api/v1/passbook/export?format=XLSX";
   });
 
   document.getElementById("pbk-btn-save-cash-count")?.addEventListener("click", () => {

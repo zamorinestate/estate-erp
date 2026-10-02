@@ -79,7 +79,7 @@ export const EXPORT_CATALOGUE = [
     description: 'Chronological Director/Owner personal ledger with verified running balances, drawings, capital infusions, and settlements.',
     category: 'FINANCE',
     categoryLabel: 'Finance & Tax',
-    formats: ['CSV'],
+    formats: ['PDF', 'XLSX'],
     scopeType: 'ALL',
     sourceModule: 'Personal Ledger',
     endpoint: '/api/v1/personal-ledger/export',
@@ -94,10 +94,10 @@ export const EXPORT_CATALOGUE = [
     description: 'Institutional digital treasury passbook statement, banking receipts, UPI settlements, and verified reconciliation vouchers.',
     category: 'FINANCE',
     categoryLabel: 'Finance & Tax',
-    formats: ['PDF', 'CSV'],
+    formats: ['PDF', 'XLSX'],
     scopeType: 'ALL',
     sourceModule: 'Finance & Accounts',
-    endpoint: '/api/v1/passbook/export/pdf',
+    endpoint: '/api/v1/passbook/export',
     reportId: 'passbook-pdf',
     reportCode: 'ZURF-TREASURY-01',
     requiresDates: false,
@@ -293,6 +293,14 @@ let customEndDate = '';
 let recentExports = [];
 let isLoadingHistory = false;
 let activeDownloadId = null;
+
+// ── Direct Export URL Builder ────────────────────────────────────────────────
+export function buildDirectExportUrl(item, format) {
+  const normFormat = String(format || 'PDF').trim().toUpperCase() === 'EXCEL' ? 'XLSX' : String(format || 'PDF').trim().toUpperCase();
+  const endpoint = item.endpoint || '';
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}format=${encodeURIComponent(normFormat)}`;
+}
 
 // ── Render Function ──────────────────────────────────────────────────────────
 export function renderExportCentre() {
@@ -512,29 +520,35 @@ function renderCatalogueRows() {
         </td>
         <td style="padding: 14px 16px; vertical-align: middle;">
           <div style="display: flex; gap: 5px; flex-wrap: wrap;">
-            ${item.formats.map(fmt => `
-              <span style="font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${fmt === 'PDF' ? '#fee2e2' : fmt === 'XLSX' ? '#dcfce7' : '#e0e7ff'}; color: ${fmt === 'PDF' ? '#991b1b' : fmt === 'XLSX' ? '#166534' : '#3730a3'};">
-                ${fmt}
-              </span>
-            `).join('')}
+            ${item.formats.map(fmt => {
+              const displayLabel = fmt === 'XLSX' ? 'Excel' : fmt;
+              return `
+                <span style="font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${fmt === 'PDF' ? '#fee2e2' : '#dcfce7'}; color: ${fmt === 'PDF' ? '#991b1b' : '#166534'};">
+                  ${displayLabel}
+                </span>
+              `;
+            }).join('')}
           </div>
         </td>
         <td style="padding: 14px 18px; vertical-align: middle; text-align: right;">
           <div style="display: inline-flex; gap: 6px; justify-content: flex-end;">
-            ${item.formats.map(fmt => `
-              <button
-                class="btn btn-sm btn-action-download"
-                data-export-id="${item.id}"
-                data-format="${fmt}"
-                style="height: 32px; padding: 0 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg-surface, var(--bg-card)); color: var(--text);"
-                ${isDownloading ? 'disabled' : ''}
-                title="Download ${item.name} as ${fmt}"
-                type="button"
-              >
-                ${icon('download')}
-                <span>${fmt}</span>
-              </button>
-            `).join('')}
+            ${item.formats.map(fmt => {
+              const displayLabel = fmt === 'XLSX' ? 'Excel' : fmt;
+              return `
+                <button
+                  class="btn btn-sm btn-action-download"
+                  data-export-id="${item.id}"
+                  data-format="${fmt}"
+                  style="height: 32px; padding: 0 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg-surface, var(--bg-card)); color: var(--text);"
+                  ${isDownloading ? 'disabled' : ''}
+                  title="Download ${item.name} as ${displayLabel}"
+                  type="button"
+                >
+                  ${icon('download')}
+                  <span>${displayLabel}</span>
+                </button>
+              `;
+            }).join('')}
           </div>
         </td>
       </tr>
@@ -666,23 +680,22 @@ async function executeExportDownload(item, format, btn, container) {
   btn.innerHTML = `<span>Generating...</span>`;
   activeDownloadId = item.id;
 
-  showToast(`Preparing ${item.name} (${format})...`, 'info');
+  const displayFormat = format === 'XLSX' ? 'Excel' : format;
+  showToast(`Preparing ${item.name} (${displayFormat})...`, 'info');
 
   try {
     const dateStr = new Date().toISOString().split('T')[0];
-    const safeFilename = `${item.id}_${dateStr}.${format.toLowerCase()}`;
+    const ext = format.toUpperCase() === 'XLSX' ? 'xlsx' : 'pdf';
+    const safeFilename = `${item.id}_${dateStr}.${ext}`;
 
     // 1. Direct GET endpoints (Personal Ledger, Passbook)
     if (item.directDownload) {
-      let downloadUrl = item.endpoint;
-      if (item.id === 'personal-ledger') {
-        downloadUrl += `?format=${format}`;
-      }
+      const downloadUrl = buildDirectExportUrl(item, format);
       await downloadFile({
         url: downloadUrl,
         filename: safeFilename,
       });
-      showToast(`${item.name} (${format}) downloaded successfully!`, 'success');
+      showToast(`${item.name} (${displayFormat}) downloaded successfully!`, 'success');
       loadExportHistory(container);
       return;
     }
@@ -705,7 +718,7 @@ async function executeExportDownload(item, format, btn, container) {
         url: res.data.downloadUrl,
         filename: res.data.filename || safeFilename,
       });
-      showToast(`${item.name} (${format}) downloaded successfully!`, 'success');
+      showToast(`${item.name} (${displayFormat}) downloaded successfully!`, 'success');
     } else if (res?.data?.pdfBase64) {
       // Decode base64 PDF
       const byteCharacters = atob(res.data.pdfBase64);
@@ -716,7 +729,7 @@ async function executeExportDownload(item, format, btn, container) {
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'application/pdf' });
       triggerBlobDownload(blob, safeFilename);
-      showToast(`${item.name} downloaded successfully!`, 'success');
+      showToast(`${item.name} (${displayFormat}) downloaded successfully!`, 'success');
     } else if (res?.data?.xlsxBase64) {
       // Decode base64 XLSX
       const byteCharacters = atob(res.data.xlsxBase64);
@@ -727,7 +740,7 @@ async function executeExportDownload(item, format, btn, container) {
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       triggerBlobDownload(blob, safeFilename);
-      showToast(`${item.name} downloaded successfully!`, 'success');
+      showToast(`${item.name} (${displayFormat}) downloaded successfully!`, 'success');
     } else {
       showToast(`${item.name} export requested. Check recent activity below.`, 'success');
     }

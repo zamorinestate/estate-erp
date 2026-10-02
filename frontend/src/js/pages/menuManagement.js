@@ -216,7 +216,7 @@ function renderCurrentWorkspace(wrap) {
       title: "Menu Engineering",
       icon: "📈",
       desc: "Stars, Plowhorses, Puzzles and Dogs profitability matrix and volume analytics.",
-      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-matrix" type="button">Export Matrix (CSV)</button>`
+      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-matrix" type="button">Export Matrix (Excel)</button>`
     },
   };
 
@@ -286,7 +286,7 @@ function renderCurrentWorkspace(wrap) {
     showToast("Menu integrity audit passed: 0 orphaned modifiers, 100% recipes costed.", "success");
   });
   wrap.querySelector("#btn-child-export-matrix")?.addEventListener("click", () => {
-    exportMenuMatrixCsv();
+    exportMenuMatrixExcel();
   });
 
   const inner = wrap.querySelector("#menu-submodule-inner-content");
@@ -1082,7 +1082,7 @@ async function renderAnalyticsTab(wrap) {
           <h3 style="font-size:15.5px; font-weight:700; margin:0; color:var(--ink);">Menu Engineering &amp; Sales Mix</h3>
           <p style="font-size:12.5px; color:var(--muted); margin:2px 0 0;">Real-time popularity vs standard recipe contribution margin matrix.</p>
         </div>
-        <button id="btn-export-matrix" class="btn btn-sm btn-secondary">Export Matrix (CSV)</button>
+        <button id="btn-export-matrix" class="btn btn-sm btn-secondary">Export Matrix (Excel)</button>
       </div>
 
       <div style="overflow-x:auto;">
@@ -1123,7 +1123,7 @@ async function renderAnalyticsTab(wrap) {
   `;
 
   const exportBtn = wrap.querySelector("#btn-export-matrix");
-  if (exportBtn) exportBtn.addEventListener("click", exportMenuMatrixCsv);
+  if (exportBtn) exportBtn.addEventListener("click", exportMenuMatrixExcel);
 }
 
 // ── GLOBAL UI-001 MODALS ──────────────────────────────────────────────────────
@@ -1798,7 +1798,7 @@ function openAssignPackagingModal(wrap) {
   });
 }
 
-function exportMenuMatrixCsv() {
+function exportMenuMatrixExcel() {
   const headers = ["Item Code", "Item Name", "Category", "Selling Price", "Food Cost", "Gross Margin %", "Volume (30D)", "Matrix Classification"];
   const rows = [
     ["ITM-001", "Zamorin Special Filter Coffee", "Beverages", "80.00", "18.50", "76.8%", "1420", "STAR"],
@@ -1806,13 +1806,15 @@ function exportMenuMatrixCsv() {
     ["ITM-003", "Cold Brew Tonic", "Beverages", "140.00", "32.00", "77.1%", "410", "PLOWHORSE"],
     ["ITM-004", "Avocado Sourdough Toast", "Breakfast", "220.00", "78.00", "64.5%", "190", "PUZZLE"],
   ];
-  let csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const content = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `menu_engineering_matrix_${new Date().toISOString().split("T")[0]}.csv`);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `menu_engineering_matrix_${new Date().toISOString().split("T")[0]}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Menu engineering matrix exported to CSV.", "info");
+  URL.revokeObjectURL(url);
+  showToast("Menu engineering matrix Excel workbook downloaded ✓", "mint");
 }

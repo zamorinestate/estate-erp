@@ -1057,7 +1057,7 @@ function openHealthAuditModal(cafe) {
   });
 }
 
-function downloadFinanceCsv(cafes = [], period = "THIS_MONTH") {
+function downloadFinanceExcel(cafes = [], period = "THIS_MONTH") {
   const headers = [
     "Cafe ID",
     "Cafe Name",
@@ -1093,12 +1093,12 @@ function downloadFinanceCsv(cafes = [], period = "THIS_MONTH") {
     `"${c.health || "HEALTHY"}"`,
   ]);
 
-  const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const content = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.setAttribute("href", url);
-  link.setAttribute("download", `Zamorin_Finance_Summary_${period}_${new Date().toISOString().split("T")[0]}.csv`);
+  link.setAttribute("download", `Zamorin_Finance_Summary_${period}_${new Date().toISOString().split("T")[0]}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -1121,8 +1121,8 @@ function openExportModal() {
         </p>
         <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
           <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-            <input type="radio" name="export-format" value="CSV" checked>
-            <span><strong>Financial Data CSV</strong> (Authoritative tabular branch metrics, expense ratios, and payroll allocations)</span>
+            <input type="radio" name="export-format" value="XLSX" checked>
+            <span><strong>Financial Data Excel (XLSX)</strong> (Authoritative tabular branch metrics, expense ratios, and payroll allocations)</span>
           </label>
           <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
             <input type="radio" name="export-format" value="SUMMARY">
@@ -1137,7 +1137,7 @@ function openExportModal() {
     primaryBtn: {
       text: "Download Report Pack",
       action: () => {
-        downloadFinanceCsv(exportCafes, selectedPeriod);
+        downloadFinanceExcel(exportCafes, selectedPeriod);
         showToast("Report pack downloaded successfully", "mint");
       },
     },

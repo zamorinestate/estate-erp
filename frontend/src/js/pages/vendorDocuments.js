@@ -83,8 +83,8 @@ export function renderVendorDocuments() {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button id="btn-export-documents-csv" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
-            <span>📥</span> Export CSV
+          <button id="btn-export-documents-xlsx" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
+            <span>📥</span> Export Excel
           </button>
           <button id="btn-refresh-documents" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
             <span class="refresh-icon">🔄</span> Refresh
@@ -336,7 +336,7 @@ export async function initVendorDocuments() {
 }
 
 function wireEvents() {
-  const btnExportCsv = document.getElementById("btn-export-documents-csv");
+  const btnExportXlsx = document.getElementById("btn-export-documents-xlsx");
   const btnRefresh = document.getElementById("btn-refresh-documents");
   const selectCafe = document.getElementById("select-cafe-scope");
   const inputSearch = document.getElementById("input-documents-search");
@@ -344,7 +344,7 @@ function wireEvents() {
   const selectDateRange = document.getElementById("select-document-date-range");
   const selectSort = document.getElementById("select-document-sort");
 
-  btnExportCsv?.addEventListener("click", handleExportCsv);
+  btnExportXlsx?.addEventListener("click", handleExportExcel);
   btnRefresh?.addEventListener("click", () => {
     loadVendorDocuments();
   });
@@ -667,7 +667,7 @@ async function downloadDocumentFile(downloadUrl, filename = "document.pdf") {
   }
 }
 
-async function handleExportCsv() {
+async function handleExportExcel() {
   try {
     const queryParams = new URLSearchParams({
       cafeId: currentSelectedCafe,
@@ -679,17 +679,19 @@ async function handleExportCsv() {
     }
 
     const blob = await downloadBlob(`/api/v1/vendor/documents/csv?${queryParams.toString()}`);
-    const url = window.URL.createObjectURL(blob);
+    const text = await blob.text();
+    const xlsxBlob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+    const url = window.URL.createObjectURL(xlsxBlob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `VendorDocuments-${currentSelectedCafe}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `VendorDocuments-${currentSelectedCafe}-${new Date().toISOString().slice(0, 10)}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
   } catch (err) {
-    console.error("[VEN-SCR-010] Error exporting CSV:", err);
-    alert("Failed to export documents CSV. Please retry.");
+    console.error("[VEN-SCR-010] Error exporting Excel:", err);
+    alert("Failed to export documents Excel. Please retry.");
   }
 }
 

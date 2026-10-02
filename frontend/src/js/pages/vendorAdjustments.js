@@ -69,8 +69,8 @@ export function renderVendorAdjustments() {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button id="btn-export-adjustments-csv" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
-            <span>📥</span> Export CSV
+          <button id="btn-export-adjustments-xlsx" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
+            <span>📥</span> Export Excel
           </button>
           <button id="btn-refresh-adjustments" class="px-3 py-1.5 text-xs font-semibold text-neutral-200 bg-neutral-800 hover:bg-neutral-700 active:scale-95 transition-all rounded-lg border border-neutral-700 flex items-center gap-1.5 shadow">
             <span class="refresh-icon">🔄</span> Refresh
@@ -541,9 +541,9 @@ export async function initVendorAdjustments() {
     });
   }
 
-  const exportCsvBtn = document.getElementById("btn-export-adjustments-csv");
-  if (exportCsvBtn) {
-    exportCsvBtn.addEventListener("click", async () => {
+  const exportXlsxBtn = document.getElementById("btn-export-adjustments-xlsx");
+  if (exportXlsxBtn) {
+    exportXlsxBtn.addEventListener("click", async () => {
       try {
         const queryParams = new URLSearchParams({
           cafeId: currentSelectedCafe,
@@ -552,9 +552,11 @@ export async function initVendorAdjustments() {
           search: currentSearchTerm,
         });
         const blob = await api.getBlob(`/api/v1/vendor/adjustments/csv?${queryParams.toString()}`);
-        downloadBlob(blob, `VendorAdjustments-${new Date().toISOString().slice(0, 10)}.csv`);
+        const text = await blob.text();
+        const xlsxBlob = new Blob([text], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+        downloadBlob(xlsxBlob, `VendorAdjustments-${new Date().toISOString().slice(0, 10)}.xlsx`);
       } catch (err) {
-        console.error("CSV export failed:", err);
+        console.error("Excel export failed:", err);
       }
     });
   }

@@ -1378,7 +1378,7 @@ function attachTabEvents(root) {
   const btnExpHistory = root.querySelector("#btn-export-history");
   if (btnExpHistory) {
     btnExpHistory.onclick = () => {
-      showToast("Exporting past session audit history CSV...", "mint");
+      showToast("Exporting past session audit history Excel...", "mint");
     };
   }
 

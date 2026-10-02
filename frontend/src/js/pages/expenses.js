@@ -1280,7 +1280,7 @@ export function wireExpenses(container, subroute) {
   });
 
   root.querySelector("#btn-export-ap-batch")?.addEventListener("click", () => {
-    showToast("Generating Accounts Payable handoff batch (CSV/XML)...", "success");
+    showToast("Generating Accounts Payable handoff batch (Excel/XML)...", "success");
   });
 }
 

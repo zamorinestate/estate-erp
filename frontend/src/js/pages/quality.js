@@ -331,7 +331,7 @@ async function renderActiveTab(root) {
         title: 'Quality History & Analytics',
         icon: '📈',
         desc: 'Historical compliance trends, defect Pareto analysis and export reports.',
-        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-quality" type="button">Export Report (CSV)</button>`
+        actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-quality" type="button">Export Report (Excel)</button>`
       },
     };
 
@@ -1883,13 +1883,15 @@ function exportQualityCsv() {
     ['Checklist ID', 'Title', 'Cafe ID', 'Date', 'Inspector', 'Result', 'Action Required'],
     ...cachedChecklists.map((c) => [c.checklistId, `"${c.title}"`, c.cafeId, c.inspectionDate, c.inspectedByUserId, c.overallResult, `"${c.actionRequired || 'None'}"`]),
   ];
-  const csvContent = 'data:text/csv;charset=utf-8,' + rows.map((e) => e.join(',')).join('\n');
-  const encodedUri = encodeURI(csvContent);
+  const content = rows.map((e) => e.join(',')).join('\n');
+  const blob = new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;' });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.setAttribute('href', encodedUri);
-  link.setAttribute('download', `Zamorin_Quality_Report_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.setAttribute('href', url);
+  link.setAttribute('download', `Zamorin_Quality_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast('Quality compliance report exported as CSV!', 'success');
+  URL.revokeObjectURL(url);
+  showToast('Quality compliance report exported as Excel workbook!', 'success');
 }

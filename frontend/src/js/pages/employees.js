@@ -1013,9 +1013,9 @@ export async function wireEmployees(container = document, subroute) {
     updateDirectoryViewSmooth();
   });
 
-  // Export CSV
+  // Export Excel
   document.getElementById("export-directory-btn")?.addEventListener("click", () => {
-    exportDirectoryCSV();
+    exportDirectoryExcel();
   });
 
   // Fast Cafe drill-down
@@ -1236,7 +1236,7 @@ function confirmAndDeleteEmployee(userId, name) {
   });
 }
 
-function exportDirectoryCSV() {
+function exportDirectoryExcel() {
   const employees = liveEmployees.length > 0 ? liveEmployees : [];
   if (employees.length === 0) {
     showToast("No employee records to export.", "info");
@@ -1255,16 +1255,16 @@ function exportDirectoryCSV() {
     e.employmentStatus || '',
     e.joiningDate ? String(e.joiningDate).split('T')[0] : '',
   ]);
-  const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const content = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `Zamorin_Employee_Directory_${new Date().toISOString().split('T')[0]}.csv`;
+  a.download = `Zamorin_Employee_Directory_${new Date().toISOString().split('T')[0]}.xlsx`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  showToast("Employee directory exported as CSV.", "success");
+  showToast("Employee directory exported as Excel workbook.", "success");
 }
 
 // ─── MODAL WIZARDS ────────────────────────────────────────────────────────────

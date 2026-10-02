@@ -140,7 +140,7 @@ function renderActiveSubpanel() {
       title: "Reliability & Maintenance Analytics",
       icon: "📈",
       desc: "Mean Time Between Failures (MTBF), downtime and cost analytics.",
-      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-rel" type="button">Export Reliability Report</button>`
+      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-rel" type="button">Export Reliability Report (Excel)</button>`
     },
   };
 
@@ -781,7 +781,7 @@ export function wireAssets(root, subroute) {
     btn.addEventListener("click", () => openRecordInspectionModal(root));
   });
   root.querySelectorAll("#btn-child-export-rel").forEach((btn) => {
-    btn.addEventListener("click", () => exportAssetReliabilityCsv());
+    btn.addEventListener("click", () => exportAssetReliabilityExcel());
   });
 
   root.querySelectorAll(".update-wo-btn").forEach((btn) => {
@@ -879,7 +879,7 @@ function rerender(root) {
       btn.addEventListener("click", () => openRecordInspectionModal(root));
     });
     root.querySelectorAll("#btn-child-export-rel").forEach((btn) => {
-      btn.addEventListener("click", () => exportAssetReliabilityCsv());
+      btn.addEventListener("click", () => exportAssetReliabilityExcel());
     });
     root.querySelectorAll(".update-wo-btn").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -946,7 +946,7 @@ function rerender(root) {
   }
 }
 
-function exportAssetReliabilityCsv() {
+function exportAssetReliabilityExcel() {
   const headers = ["Asset ID", "Asset Name", "Category", "Café ID", "Operational Status", "Condition", "Criticality"];
   const rows = (cachedAssets || []).map((a) => [
     a.assetId || "",
@@ -957,15 +957,17 @@ function exportAssetReliabilityCsv() {
     a.condition || "",
     a.criticality || ""
   ]);
-  let csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const content = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `asset_reliability_report_${new Date().toISOString().split("T")[0]}.csv`);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `asset_reliability_report_${new Date().toISOString().split("T")[0]}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Asset reliability report exported to CSV.", "info");
+  URL.revokeObjectURL(url);
+  showToast("Asset reliability report Excel workbook downloaded ✓", "mint");
 }
 
 function wireAssetsEventListeners(root) {
@@ -989,7 +991,7 @@ function wireAssetsEventListeners(root) {
     btn.addEventListener("click", () => openRecordInspectionModal(root));
   });
   root.querySelectorAll("#btn-child-export-rel").forEach((btn) => {
-    btn.addEventListener("click", () => exportAssetReliabilityCsv());
+    btn.addEventListener("click", () => exportAssetReliabilityExcel());
   });
   root.querySelectorAll(".update-wo-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {

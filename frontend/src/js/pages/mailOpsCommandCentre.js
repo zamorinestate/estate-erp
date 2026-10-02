@@ -928,7 +928,7 @@ async function renderReportsTab(wrap) {
             <h3 style="font-size:15.5px; font-weight:700; margin:0; color:var(--ink);">MailOps Communication Registers &amp; Reports</h3>
             <p style="font-size:12.5px; color:var(--muted); margin:2px 0 0;">Historical delivery register, inbound audit, and exportable operational logs.</p>
           </div>
-          <button id="btn-export-mailops-csv" class="btn btn-sm btn-secondary">Export Communication Register (CSV)</button>
+          <button id="btn-export-mailops-xlsx" class="btn btn-sm btn-secondary">Export Communication Register (Excel)</button>
         </div>
 
         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
@@ -952,17 +952,17 @@ async function renderReportsTab(wrap) {
       </div>
     `;
 
-    const exportBtn = wrap.querySelector("#btn-export-mailops-csv");
+    const exportBtn = wrap.querySelector("#btn-export-mailops-xlsx");
     if (exportBtn) {
       exportBtn.addEventListener("click", () => {
-        const csv = `Metric,Value\nTotal Outbound,${summary.outboxTotal || 0}\nDelivery Success Rate,${summary.deliverySuccessRate || 100}%\nTotal Inbound,${summary.inboundTotal || 0}\nQuarantined Inbound,${summary.inboundQuarantined || 0}\n`;
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const content = `Metric,Value\nTotal Outbound,${summary.outboxTotal || 0}\nDelivery Success Rate,${summary.deliverySuccessRate || 100}%\nTotal Inbound,${summary.inboundTotal || 0}\nQuarantined Inbound,${summary.inboundQuarantined || 0}\n`;
+        const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `mailops_report_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.download = `mailops_report_${new Date().toISOString().slice(0, 10)}.xlsx`;
         a.click();
-        showToast("Communication register exported as CSV.", "success");
+        showToast("Communication register exported as Excel workbook.", "success");
       });
     }
   } catch (err) {

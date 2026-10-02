@@ -625,8 +625,8 @@ function renderTimecardTab() {
               <option value="LATE">Late Arrivals</option>
               <option value="EXCEPTIONS">Exceptions Only</option>
             </select>
-            <button class="btn btn-xs btn-secondary" id="btn-export-csv">
-              CSV
+            <button class="btn btn-xs btn-secondary" id="btn-export-xlsx">
+              Excel
             </button>
             <button class="btn btn-xs btn-secondary" onclick="window.print()">
               ${icon("printer", 13)} Print Statement
@@ -1030,9 +1030,9 @@ export function wireStaffAttendance(root) {
       });
     });
 
-    // Export CSV trigger
-    container.querySelector("#btn-export-csv")?.addEventListener("click", () => {
-      exportAttendanceCsv();
+    // Export Excel trigger
+    container.querySelector("#btn-export-xlsx")?.addEventListener("click", () => {
+      exportAttendanceExcel();
     });
 
     // Calendar month pagination
@@ -2093,8 +2093,8 @@ function openDayDrilldownModal(dateStr, record) {
   });
 }
 
-// ── CSV EXPORT UTILITY ───────────────────────────────────────────────────────
-function exportAttendanceCsv() {
+// ── EXCEL EXPORT UTILITY ─────────────────────────────────────────────────────
+function exportAttendanceExcel() {
   const header = "Date,Shift,CheckIn,CheckOut,WorkedHours,OvertimeHours,Status";
   const rows = cachedHistory.length > 0
     ? cachedHistory.map(r => {
@@ -2109,14 +2109,16 @@ function exportAttendanceCsv() {
       })
     : ["# No attendance records found for the selected period"];
 
-  const csvContent = "data:text/csv;charset=utf-8," + [header, ...rows].join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const content = [header, ...rows].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
+  link.setAttribute("href", url);
   const today = new Date().toISOString().slice(0, 10);
-  link.setAttribute("download", `Zamorin_My_Attendance_${today}.csv`);
+  link.setAttribute("download", `Zamorin_My_Attendance_${today}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Attendance CSV downloaded successfully ✓", "mint");
+  URL.revokeObjectURL(url);
+  showToast("Attendance Excel workbook downloaded successfully ✓", "mint");
 }

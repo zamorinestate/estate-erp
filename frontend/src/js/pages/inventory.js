@@ -1010,9 +1010,9 @@ async function renderMovementsTab(wrap) {
         icon: "📜",
         backBtnId: "inv-back-to-hub-btn",
         actionsHtml: `
-          <button id="btn-export-movements-csv" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
+          <button id="btn-export-movements-xlsx" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-            Export Ledger (CSV)
+            Export Ledger (Excel)
           </button>
         `,
       })}
@@ -1175,18 +1175,18 @@ async function loadMovementsData(wrap) {
   `;
 
   // Wire export button
-  const exportBtn = wrap.querySelector("#btn-export-movements-csv");
+  const exportBtn = wrap.querySelector("#btn-export-movements-xlsx");
   if (exportBtn) {
     exportBtn.addEventListener("click", () => {
       const csv = "Movement ID,Timestamp,Cafe ID,Item Code,Item Name,Transaction Type,Qty Change,Balance After,Reason\n" +
         filtered.map((m) => `"${m.movementId}","${m.performedAt}","${m.cafeId}","${m.itemId}","${m.itemName || ''}","${m.movementType}",${m.quantityBase},${m.balanceAfterBase},"${(m.reason || '').replace(/"/g, '""')}"`).join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const blob = new Blob([csv], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `stock_movements_ledger_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `stock_movements_ledger_${new Date().toISOString().slice(0, 10)}.xlsx`;
       a.click();
-      showToast("Stock movements ledger CSV exported.", "success");
+      showToast("Stock movements ledger Excel workbook exported.", "success");
     });
   }
 }
@@ -2084,9 +2084,9 @@ async function renderValuationTab(wrap) {
         icon: "💰",
         backBtnId: "inv-back-to-hub-btn",
         actionsHtml: `
-          <button id="btn-export-csv" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
+          <button id="btn-export-xlsx" class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:6px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-            Export Valuation (CSV)
+            Export Valuation (Excel)
           </button>
         `,
       })}
@@ -2156,18 +2156,18 @@ async function loadValuationData(wrap) {
     </div>
   `;
 
-  const exportBtn = wrap.querySelector("#btn-export-csv");
+  const exportBtn = wrap.querySelector("#btn-export-xlsx");
   if (exportBtn) {
     exportBtn.addEventListener("click", () => {
       const csv = "Café,SKU,Item Name,Category,On Hand,Unit Cost (₹),Total Value (₹)\n" +
         rows.map((r) => `"${r.cafeId}","${r.sku}","${r.name}","${r.category}",${r.onHand},${(r.unitCostPaisa/100).toFixed(2)},${(r.totalValuePaisa/100).toFixed(2)}`).join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const blob = new Blob([csv], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `inventory_valuation_${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `inventory_valuation_${new Date().toISOString().slice(0,10)}.xlsx`;
       a.click();
-      showToast("Valuation CSV exported.", "success");
+      showToast("Valuation Excel workbook exported.", "success");
     });
   }
 }

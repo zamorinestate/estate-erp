@@ -287,7 +287,7 @@ function renderCurrentWorkspace(wrap) {
       title: "Financial Statements",
       icon: "📑",
       desc: "Audited Profit & Loss Statement, Balance Sheet, Cash Flow and Trial Balance.",
-      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-stmts" type="button">Export Statements (CSV)</button>`
+      actionsHtml: `<button class="btn btn-sm btn-secondary" id="btn-child-export-stmts" type="button">Export Statements (Excel)</button>`
     },
     "integrity": {
       title: "Finance Integrity Audit",
@@ -376,9 +376,9 @@ function renderCurrentWorkspace(wrap) {
   });
 
   wrap.querySelector("#btn-child-export-stmts")?.addEventListener("click", () => {
-    showToast("Exporting certified P&L, Balance Sheet, and Trial Balance to CSV...", "info");
+    showToast("Exporting certified P&L, Balance Sheet, and Trial Balance to Excel...", "info");
     setTimeout(() => {
-      showToast("Financial Statements CSV downloaded.", "success");
+      showToast("Financial Statements Excel workbook downloaded.", "success");
     }, 500);
   });
 
@@ -1262,7 +1262,7 @@ async function renderStatementsTab(wrap) {
           <h3 style="font-size:16px; font-weight:700; margin:0; color:var(--ink);">Authoritative Financial Statements</h3>
           <p style="font-size:13px; color:var(--muted); margin:2px 0 0;">Basis: ${pnl.basis} • Period: ${pnl.period}</p>
         </div>
-        <button id="btn-tab-export-stmts" class="btn btn-secondary btn-sm">Export Statements (CSV)</button>
+        <button id="btn-tab-export-stmts" class="btn btn-secondary btn-sm">Export Statements (Excel)</button>
       </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">

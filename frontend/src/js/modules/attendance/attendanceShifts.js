@@ -224,7 +224,7 @@ function renderActiveSubpanel() {
       desc: "Average shift adherence, OT trends, absenteeism rates and peak hour staffing.",
       actionsHtml: `
         <button class="btn btn-secondary btn-sm" id="btn-analytics-attendance-qr-scanner" data-attendance-hub-tile="qrScanner" type="button" style="font-size:12px; font-weight:700; margin-right:8px;">📱 Attendance QR &amp; Scanner</button>
-        <button class="btn btn-ghost btn-sm" id="export-analytics-btn" type="button" style="font-size:12px;">📈 Export CSV</button>
+        <button class="btn btn-ghost btn-sm" id="export-analytics-btn" type="button" style="font-size:12px;">📈 Export Excel</button>
       `
     },
     qrScanner: {
@@ -1408,7 +1408,7 @@ function renderPoliciesSubpanel() {
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="color:var(--muted);">Third-Party Export Format</span>
-              <strong style="color:var(--ink);">PDF Statutory Proof &amp; CSV</strong>
+              <strong style="color:var(--ink);">PDF Statutory Proof &amp; Excel</strong>
             </div>
           </div>
         </div>
@@ -1716,7 +1716,7 @@ function renderAnalyticsSubpanel() {
             <p style="font-size:12px; color:var(--muted); margin:0;">Automated statistical anomaly detection across shifts</p>
           </div>
           <button class="btn btn-secondary btn-sm" id="export-analytics-btn" type="button" style="font-size:12px; font-weight:600;">
-            📊 Download Full Analytics CSV
+            📊 Download Full Analytics Excel
           </button>
         </div>
 
@@ -3170,15 +3170,17 @@ function exportRosterCsv() {
     return [s.id, s.name, s.role, s.mon, s.tue, s.wed, s.thu, s.fri, s.sat, s.sun, tot.toFixed(1)];
   });
 
-  const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const content = [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `Zamorin_Shift_Roster_${activeCafeId}_Week.csv`);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `Zamorin_Shift_Roster_${activeCafeId}_Week.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Weekly Shift Roster CSV exported successfully.", "success");
+  URL.revokeObjectURL(url);
+  showToast("Weekly Shift Roster Excel exported successfully.", "success");
 }
 
 // Modal: Create Weekly Shift Roster
@@ -3259,15 +3261,17 @@ function exportTimesheetsCsv() {
         a.status || "PRESENT"
       ])
     : [];
-  const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const content = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `Zamorin_Attendance_Timesheets_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `Zamorin_Attendance_Timesheets_${new Date().toISOString().slice(0, 10)}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Attendance Timesheets CSV exported successfully.", "success");
+  URL.revokeObjectURL(url);
+  showToast("Attendance Timesheets Excel exported successfully.", "success");
 }
 
 // Modal: Official Attendance & Statutory Compliance Certificate
@@ -3341,15 +3345,17 @@ function exportAnalyticsCsv() {
     : [
         [state.currentCafeId || "ZC-MAIN", state.currentCafeName || "Main Outlet", "12", "2200.0", "2210.0", "96.8%", "6.0", "2.0%", "EXCELLENT"]
       ];
-  const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
-  const encodedUri = encodeURI(csvContent);
+  const content = [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+  const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `Zamorin_Workforce_Analytics_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `Zamorin_Workforce_Analytics_${new Date().toISOString().slice(0, 10)}.xlsx`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast("Workforce Analytics CSV exported successfully.", "success");
+  URL.revokeObjectURL(url);
+  showToast("Workforce Analytics Excel exported successfully.", "success");
 }
 
 // =============================================================================

@@ -104,6 +104,7 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
 
     assert.ok(routerHasRoute(reportRoutes, 'POST', '/export'), 'reportRoutes must have POST /export');
     assert.ok(routerHasRoute(personalLedgerRoutes, 'GET', '/export'), 'personalLedgerRoutes must have GET /export');
+    assert.ok(routerHasRoute(passbookRoutes, 'GET', '/export'), 'passbookRoutes must have GET /export');
     assert.ok(routerHasRoute(passbookRoutes, 'GET', '/export/pdf'), 'passbookRoutes must have GET /export/pdf');
     assert.ok(routerHasRoute(exportRoutes, 'GET', '/history'), 'exportRoutes must have GET /history');
   });
@@ -163,20 +164,14 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
   });
 
   // ── 4. FORMAT SUPPORT INTEGRITY ────────────────────────────────────────────
-  await t.test('EXP-007: Advertised formats strictly align with backend generation capabilities', () => {
+  await t.test('EXP-007: All 18 catalogue entries strictly support PDF and XLSX, with zero CSV', () => {
     for (const item of EXPORT_CATALOGUE) {
-      if (item.endpoint === '/api/v1/reports/export') {
-        assert.deepEqual(
-          item.formats.slice().sort(),
-          ['PDF', 'XLSX'].sort(),
-          `Report export item "${item.id}" must only advertise PDF and XLSX`
-        );
-      } else if (item.id === 'personal-ledger') {
-        assert.deepEqual(item.formats, ['CSV'], 'personal-ledger must only advertise CSV');
-      } else if (item.id === 'passbook-pdf') {
-        assert.ok(item.formats.includes('PDF'), 'passbook must support PDF');
-        assert.ok(!item.formats.includes('XLSX'), 'passbook does not support XLSX');
-      }
+      assert.deepEqual(
+        item.formats.slice().sort(),
+        ['PDF', 'XLSX'].sort(),
+        `Catalogue item "${item.id}" must advertise exactly PDF and XLSX`
+      );
+      assert.ok(!item.formats.includes('CSV'), `Catalogue item "${item.id}" must NOT advertise CSV`);
     }
   });
 
@@ -196,6 +191,137 @@ test('Export Data Integrity & Canonical Mapping Suite (Blocker 1)', async (t) =>
         assert.equal(err.code, 'UNSUPPORTED_EXPORT_FORMAT');
         return true;
       }
+    );
+  });
+
+  await t.test('EXP-009: Personal Ledger and Passbook controllers reject CSV with 400 UNSUPPORTED_EXPORT_FORMAT', async () => {
+    const { exportPersonalLedger } = require('../src/controllers/personalLedgerController');
+    const { exportPassbookPdf } = require('../src/controllers/passbookController');
+
+    const reqCsv = {
+      auth: { userId: 'MU-0001', organisationId: 'ORG-ZAMORIN', role: 'MASTER', isPrimaryMaster: true },
+      query: { format: 'CSV' },
+    };
+    const res = { status() { return this; }, json() { return this; } };
+    const next = (err) => { if (err) throw err; };
+
+    await assert.rejects(
+      async () => {
+        await exportPersonalLedger(reqCsv, res, next);
+      },
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'UNSUPPORTED_EXPORT_FORMAT');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      async () => {
+        await exportPassbookPdf(reqCsv, res, next);
+      },
+      (err) => {
+        assert.equal(err.statusCode, 400);
+        assert.equal(err.code, 'UNSUPPORTED_EXPORT_FORMAT');
+        return true;
+      }
+    );
+  });
+
+  await t.test('EXP-010: XLSX formula injection defense neutralizes leading spreadsheet trigger characters', () => {
+    const { generateXlsx } = require('../src/utils/exportGenerators');
+    const zlib = require('node:zlib');
+
+    function extractZipEntry(zipBuf, targetPath) {
+      let offset = 0;
+      while (offset < zipBuf.length - 4) {
+        const sig = zipBuf.readUInt32LE(offset);
+        if (sig !== 0x04034b50) break;
+        const compMethod = zipBuf.readUInt16LE(offset + 8);
+        const compSize = zipBuf.readUInt32LE(offset + 18);
+        const nameLen = zipBuf.readUInt16LE(offset + 26);
+        const extraLen = zipBuf.readUInt16LE(offset + 28);
+        const name = zipBuf.toString('utf8', offset + 30, offset + 30 + nameLen);
+        const dataStart = offset + 30 + nameLen + extraLen;
+        const data = zipBuf.subarray(dataStart, dataStart + compSize);
+        if (name === targetPath) {
+          return compMethod === 8 ? zlib.inflateRawSync(data).toString('utf8') : data.toString('utf8');
+        }
+        offset = dataStart + compSize;
+      }
+      return null;
+    }
+
+    const testTriggers = ['=SUM(A1:A10)', '+cmd|"/C calc"!A0', '-2+3+cmd', '@SUM(1+1)'];
+    const rows = testTriggers.map((trig, idx) => ({ id: idx + 1, formulaText: trig }));
+    const result = generateXlsx({
+      columns: [{ key: 'id', label: 'ID' }, { key: 'formulaText', label: 'Formula' }],
+      rows,
+    });
+    const xlsxBuf = result.buffer;
+
+    const sharedStringsXml = extractZipEntry(xlsxBuf, 'xl/sharedStrings.xml');
+    assert.ok(sharedStringsXml, 'xl/sharedStrings.xml must exist in generated XLSX');
+
+    function xmlEscape(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    }
+
+    for (const trig of testTriggers) {
+      const expectedNeutralized = `'${trig}`;
+      assert.ok(
+        sharedStringsXml.includes(xmlEscape(expectedNeutralized)),
+        `Formula trigger "${trig}" must be neutralized with leading single quote`
+      );
+    }
+  });
+
+  await t.test('EXP-011: Repository guard verifies zero user-facing CSV exports while preserving operational CSV imports', () => {
+    const fs = require('node:fs');
+    const jsDir = path.join(root, 'frontend/src/js');
+
+    function scanFiles(dir, fileList = []) {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        const fullPath = path.join(dir, file);
+        if (fs.statSync(fullPath).isDirectory()) {
+          scanFiles(fullPath, fileList);
+        } else if (file.endsWith('.js')) {
+          fileList.push(fullPath);
+        }
+      }
+      return fileList;
+    }
+
+    const files = scanFiles(jsDir);
+    const violations = [];
+
+    for (const file of files) {
+      const content = fs.readFileSync(file, 'utf8');
+      const relPath = path.relative(root, file);
+
+      // Check for user-facing Export CSV / Download CSV buttons or text
+      if (/(?:Export|Download)\s+CSV\b/i.test(content)) {
+        violations.push(`${relPath}: contains user-facing "Export CSV" or "Download CSV"`);
+      }
+      if (/btn-export-.*-csv\b/i.test(content)) {
+        violations.push(`${relPath}: contains CSV export button id`);
+      }
+    }
+
+    assert.deepEqual(violations, [], 'Found disallowed user-facing CSV export options in frontend:\n' + violations.join('\n'));
+
+    // Verify operational CSV/XLSX imports ARE preserved in passbook.js
+    const passbookPath = path.join(root, 'frontend/src/js/pages/passbook.js');
+    const passbookContent = fs.readFileSync(passbookPath, 'utf8');
+    assert.ok(
+      passbookContent.includes('.csv'),
+      'passbook.js must preserve operational CSV statement file upload (.csv)'
     );
   });
 });

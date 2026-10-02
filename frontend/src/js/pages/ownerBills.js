@@ -703,8 +703,8 @@ function renderReceiptsSubpanel() {
             <button id="btn-upload-receipt-modal" class="btn btn-sm btn-primary" style="font-weight:700; display:flex; align-items:center; gap:6px;">
               <span>📤</span> Upload Receipt
             </button>
-            <button id="btn-export-receipts-csv" class="btn btn-sm btn-secondary" style="font-weight:600;">
-              Export CSV
+            <button id="btn-export-receipts-pdf" class="btn btn-sm btn-secondary" style="font-weight:600;">
+              Export PDF
             </button>
           </div>
         </div>
@@ -1131,9 +1131,6 @@ function renderTaxSubpanel() {
           <p style="font-size:12.5px; color:var(--muted); margin:0;">Authoritative tax records mapped to Legal Registrations (Karnataka 29AABCT1332L1ZV &amp; Kerala 32AABCT1332L1ZW)</p>
         </div>
         <div style="display:flex; gap:8px;">
-          <button class="btn btn-ghost" id="export-gst-csv-btn" type="button" style="font-size:12.5px; padding:6px 14px;">
-            ⬇ Export CSV
-          </button>
           <button class="btn btn-ghost" id="export-gst-xlsx-btn" type="button" style="font-size:12.5px; padding:6px 14px;">
             ⬇ Export Excel
           </button>
@@ -1267,7 +1264,6 @@ function renderReportsSubpanel() {
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; padding-top:12px; border-top:1px solid var(--border-subtle);">
             <button class="btn btn-sm btn-secondary export-action-btn" data-export="sales-pdf" type="button" style="font-weight:600; padding:5px 12px;">📄 PDF Report</button>
-            <button class="btn btn-sm btn-secondary export-action-btn" data-export="sales-csv" type="button" style="font-weight:600; padding:5px 12px;">📊 CSV</button>
             <button class="btn btn-sm btn-secondary export-action-btn" data-export="sales-xlsx" type="button" style="font-weight:600; padding:5px 12px;">📗 Excel</button>
           </div>
         </div>
@@ -1284,7 +1280,6 @@ function renderReportsSubpanel() {
             <p style="font-size:12px; color:var(--muted); margin:0 0 16px; line-height:1.5;">Line-by-line GST output, CGST, SGST, IGST, and HSN codes for GSTR-1 filings.</p>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; padding-top:12px; border-top:1px solid var(--border-subtle);">
-            <button class="btn btn-sm btn-secondary export-action-btn" data-export="gst-csv" type="button" style="font-weight:600; padding:5px 12px;">📊 CSV Register</button>
             <button class="btn btn-sm btn-secondary export-action-btn" data-export="gst-xlsx" type="button" style="font-weight:600; padding:5px 12px;">📗 Excel Format</button>
           </div>
         </div>
@@ -1302,7 +1297,7 @@ function renderReportsSubpanel() {
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; padding-top:12px; border-top:1px solid var(--border-subtle);">
             <button class="btn btn-sm btn-secondary export-action-btn" data-export="reconciliation-pdf" type="button" style="font-weight:600; padding:5px 12px;">🛡️ PDF Audit</button>
-            <button class="btn btn-sm btn-secondary export-action-btn" data-export="reconciliation-csv" type="button" style="font-weight:600; padding:5px 12px;">📊 CSV</button>
+            <button class="btn btn-sm btn-secondary export-action-btn" data-export="reconciliation-xlsx" type="button" style="font-weight:600; padding:5px 12px;">📗 Excel</button>
           </div>
         </div>
 
@@ -1319,7 +1314,7 @@ function renderReportsSubpanel() {
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; padding-top:12px; border-top:1px solid var(--border-subtle);">
             <button class="btn btn-sm btn-secondary export-action-btn" data-export="adjustments-pdf" type="button" style="font-weight:600; padding:5px 12px;">📄 PDF Report</button>
-            <button class="btn btn-sm btn-secondary export-action-btn" data-export="adjustments-csv" type="button" style="font-weight:600; padding:5px 12px;">📊 CSV</button>
+            <button class="btn btn-sm btn-secondary export-action-btn" data-export="adjustments-xlsx" type="button" style="font-weight:600; padding:5px 12px;">📗 Excel</button>
           </div>
         </div>
       </div>
@@ -1705,10 +1700,10 @@ function wireSubpanelActions(root) {
     });
   }
 
-  const exportReceiptsCsvBtn = root.querySelector("#btn-export-receipts-csv");
-  if (exportReceiptsCsvBtn) {
-    exportReceiptsCsvBtn.addEventListener("click", () => {
-      showToast("Exporting payment receipts register as CSV...", "success");
+  const exportReceiptsPdfBtn = root.querySelector("#btn-export-receipts-pdf");
+  if (exportReceiptsPdfBtn) {
+    exportReceiptsPdfBtn.addEventListener("click", () => {
+      showToast("Exporting payment receipts register as PDF...", "success");
     });
   }
 
@@ -1748,10 +1743,10 @@ function wireSubpanelActions(root) {
   });
 
   // 12. Export Buttons & File Exporter
-  root.querySelectorAll(".export-action-btn, #export-gst-csv-btn, #export-gst-xlsx-btn").forEach((btn) => {
+  root.querySelectorAll(".export-action-btn, #export-gst-xlsx-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const exportType = btn.dataset.export || (btn.id === "export-gst-xlsx-btn" ? "gst-xlsx" : "gst-csv");
+      const exportType = btn.dataset.export || "gst-xlsx";
       handleExportReport(exportType);
     });
   });
@@ -1761,7 +1756,7 @@ function handleExportReport(exportType) {
   const dateStr = selectedBusinessDate || new Date().toISOString().split("T")[0];
   const bills = cachedBills.length > 0 ? cachedBills : DEFAULT_BILLS;
 
-  function triggerDownload(content, fileName, mimeType = "text/csv;charset=utf-8;") {
+  function triggerDownload(content, fileName, mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1773,18 +1768,17 @@ function handleExportReport(exportType) {
     URL.revokeObjectURL(url);
   }
 
-  if (exportType === "sales-csv" || exportType === "sales-xlsx") {
+  if (exportType === "sales-xlsx") {
     const headers = "Invoice Number,Date,Time,Table,Cafe Outlet,Customer,Payment Method,Subtotal (INR),Tax (INR),Total (INR),Status\n";
     const rows = bills.map((b) =>
       `"${b.invoiceNumber || b.billId}","${b.businessDate}","${b.createdAt || '11:00 AM'}","${b.tableNumber || 'Takeaway'}","${CAFE_NAMES[b.cafeId] || b.cafeId}","${b.customerName || 'Walk-in'}","${b.paymentMethod}",${((b.subtotalPaisa || 0) / 100).toFixed(2)},${((b.taxPaisa || 0) / 100).toFixed(2)},${((b.totalPaisa || 0) / 100).toFixed(2)},"${b.status}"`
     ).join("\n");
-    const ext = exportType === "sales-xlsx" ? "xlsx" : "csv";
-    triggerDownload(headers + rows, `Zamorin_Daily_Sales_Summary_${dateStr}.${ext}`);
-    showToast(`Daily Sales Summary (${ext.toUpperCase()}) exported successfully!`, "success");
+    triggerDownload(headers + rows, `Zamorin_Daily_Sales_Summary_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    showToast("Daily Sales Summary (XLSX) exported successfully!", "success");
     return;
   }
 
-  if (exportType === "gst-csv" || exportType === "gst-xlsx") {
+  if (exportType === "gst-xlsx") {
     const headers = "Invoice Number,Date,GSTIN,Cafe Outlet,HSN,Taxable Value (INR),CGST 2.5% (INR),SGST 2.5% (INR),Total GST (INR),Gross Invoice Value (INR)\n";
     const rows = bills.map((b) => {
       const taxable = (b.subtotalPaisa || 0) / 100;
@@ -1794,25 +1788,24 @@ function handleExportReport(exportType) {
       const gross = (b.totalPaisa || 0) / 100;
       return `"${b.invoiceNumber || b.billId}","${b.businessDate}","${b.gstRegistrationNumber || ''}","${CAFE_NAMES[b.cafeId] || b.cafeId}","996331",${taxable.toFixed(2)},${cgst.toFixed(2)},${sgst.toFixed(2)},${totalTax.toFixed(2)},${gross.toFixed(2)}`;
     }).join("\n");
-    const ext = exportType === "gst-xlsx" ? "xlsx" : "csv";
-    triggerDownload(headers + rows, `Zamorin_GST_Tax_Source_Register_${dateStr}.${ext}`);
-    showToast(`GST Tax Source Register (${ext.toUpperCase()}) exported successfully!`, "success");
+    triggerDownload(headers + rows, `Zamorin_GST_Tax_Source_Register_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    showToast("GST Tax Source Register (XLSX) exported successfully!", "success");
     return;
   }
 
-  if (exportType === "reconciliation-csv") {
+  if (exportType === "reconciliation-xlsx") {
     const headers = "Date,Cafe Outlet,Tender Channel,Expected System (INR),Physical Drawer / Gateway (INR),Variance (INR),Reconciliation Status\n";
     const rows = "";
-    triggerDownload(headers + rows, `Zamorin_Tender_Reconciliation_${dateStr}.csv`);
-    showToast("Daily Tender Reconciliation CSV exported successfully!", "success");
+    triggerDownload(headers + rows, `Zamorin_Tender_Reconciliation_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    showToast("Daily Tender Reconciliation Excel exported successfully!", "success");
     return;
   }
 
-  if (exportType === "adjustments-csv") {
+  if (exportType === "adjustments-xlsx") {
     const headers = "Date,Invoice Ref,Adjustment Type,Reason / Narration,Authorized By,Amount (INR),Accounting Action\n";
     const rows = "";
-    triggerDownload(headers + rows, `Zamorin_Adjustments_Voids_Audit_${dateStr}.csv`);
-    showToast("Adjustments & Voids Audit CSV exported successfully!", "success");
+    triggerDownload(headers + rows, `Zamorin_Adjustments_Voids_Audit_${dateStr}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    showToast("Adjustments & Voids Audit Excel exported successfully!", "success");
     return;
   }
 

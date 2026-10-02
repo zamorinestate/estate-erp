@@ -394,7 +394,7 @@ async function renderActiveTab(root) {
   });
   content.querySelector('#btn-child-new-supp')?.addEventListener('click', () => openAddSupplierModal(root));
   content.querySelector('#btn-child-new-ret')?.addEventListener('click', () => openNewReturnModal(root));
-  content.querySelector('#btn-child-export-rep')?.addEventListener('click', () => exportSpendReportCsv());
+  content.querySelector('#btn-child-export-rep')?.addEventListener('click', () => exportSpendReport());
 
   const inner = content.querySelector('#proc-submodule-inner-content');
   if (activeTab === 'requisitions') {
@@ -3609,7 +3609,7 @@ function openNewReturnModal(root) {
   });
 }
 
-function exportSpendReportCsv() {
+function exportSpendReport() {
   navigate('reports/procurement-analytics');
   showToast('Opening certified Procurement Analytics report (PDF / XLSX only)...', 'info');
 }
