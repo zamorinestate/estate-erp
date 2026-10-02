@@ -13,6 +13,7 @@ const {
 const {
   ApiError,
 } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeIdentifier(value) {
   return typeof value === 'string'
@@ -21,11 +22,12 @@ function normalizeIdentifier(value) {
 }
 
 function requireMaster(request) {
-  if (request.auth.role !== 'MASTER') {
+  assertCanonicalMasterState(request.auth);
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
     throw new ApiError(
       403,
-      'MASTER_ACCESS_REQUIRED',
-      'Only the MASTER role may access the audit log.'
+      'PRIMARY_MASTER_REQUIRED',
+      'Only Primary Master may access the audit log.'
     );
   }
 }
@@ -73,36 +75,11 @@ function parseDate(value, fieldName) {
   return parsedDate;
 }
 
-/**
- * Modules whose audit events are restricted to Primary Master only.
- * Normal Master receives operational audit events but not these sensitive categories.
- */
-const SENSITIVE_AUDIT_MODULES = [
-  'PERSONAL_LEDGER',
-  'LOANS_ADVANCES',
-  'PAYROLL',
-  'MASTER_AUTHORITY',
-  'SECURITY',
-  'USER_GOVERNANCE',
-  'AUDIT_EXPORT',
-];
-
 function buildAuditFilter(request) {
   const filter = {
     organisationId:
       request.auth.organisationId,
   };
-
-  // Normal Master: exclude sensitive modules entirely.
-  const isNormalMaster =
-    request.auth.role === 'MASTER' &&
-    !request.auth.isPrimaryMaster;
-
-  if (isNormalMaster) {
-    filter.module = {
-      $nin: SENSITIVE_AUDIT_MODULES,
-    };
-  }
 
   const identifierFilters = {
     cafeId: request.query.cafeId,
@@ -123,15 +100,6 @@ function buildAuditFilter(request) {
       normalizeIdentifier(value);
 
     if (normalizedValue) {
-      // For Normal Master, silently ignore any module filter that tries
-      // to access sensitive modules to prevent probing.
-      if (
-        field === 'module' &&
-        isNormalMaster &&
-        SENSITIVE_AUDIT_MODULES.includes(normalizedValue)
-      ) {
-        return;
-      }
       filter[field] =
         normalizedValue;
     }
@@ -219,6 +187,7 @@ function buildAuditFilter(request) {
 
 const listAuditEvents = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     requireMaster(request);
 
     const page =
@@ -278,6 +247,7 @@ const listAuditEvents = asyncHandler(
 
 const getAuditEvent = asyncHandler(
   async (request, response) => {
+  assertCanonicalMasterState(request.auth);
     requireMaster(request);
 
     const auditEventId =
