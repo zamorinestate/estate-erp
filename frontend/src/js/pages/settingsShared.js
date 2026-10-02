@@ -297,13 +297,18 @@ function escHtml(v) {
     .replaceAll('"', "&quot;");
 }
 
+function isExplicitPrimaryMaster(user = state.auth?.user || state.user || {}) {
+  const role = String(user.role || state.role || "").toLowerCase();
+  return role === ROLES.MASTER && user.isPrimaryMaster === true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // UNIVERSAL SETTINGS SHELL COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 
 function renderSettingsShell(sectionId, innerContentHtml, options = {}) {
   const role = state.role || ROLES.MASTER;
-  const isMaster = role === ROLES.MASTER;
+  const isMaster = isExplicitPrimaryMaster();
   const isStaff = role === ROLES.STAFF;
   const staffAllowedIds = new Set([
     "profile",
@@ -491,7 +496,7 @@ function renderSettingsShell(sectionId, innerContentHtml, options = {}) {
 function renderOverview() {
   const role = state.role || ROLES.MASTER;
   const user = state.auth?.user || state.user || {};
-  const isMaster = role === ROLES.MASTER;
+  const isMaster = isExplicitPrimaryMaster(user);
   const isStaff = role === ROLES.STAFF;
 
   let categorizedSections;
@@ -580,11 +585,7 @@ function renderOverview() {
   }
 
   const displayName = user.preferredName || user.name || user.fullName || "Your Account";
-  const isUserPrimaryMaster = Boolean(
-    user.isPrimaryMaster ||
-    user.userId === "MU-0001" ||
-    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com"
-  );
+  const isUserPrimaryMaster = isExplicitPrimaryMaster(user);
   const userAccountRole = String(user.role || (isUserPrimaryMaster ? "MASTER" : role)).toUpperCase();
   const roleLabel = isUserPrimaryMaster
     ? "Primary Master"
@@ -975,16 +976,12 @@ function renderEmployment() {
 function renderAccess() {
   const user = state.auth?.user || state.user || {};
   const cafes = user.assignedCafeIds || [];
-  const isUserPrimaryMaster = Boolean(
-    user.isPrimaryMaster ||
-    user.userId === "MU-0001" ||
-    String(user.email || "").toLowerCase() === "pradeeshk331@gmail.com"
-  );
+  const isUserPrimaryMaster = isExplicitPrimaryMaster(user);
   const userAccountRole = String(user.role || (isUserPrimaryMaster ? "MASTER" : state.role || ROLES.STAFF)).toUpperCase();
   const roleLabels = {
     [ROLES.MASTER.toUpperCase()]: isUserPrimaryMaster
       ? "Primary Master — Full organisation administrative authority & system governance"
-      : "Master User — Full organisation administrative authority",
+      : "Retired MASTER — access unavailable",
     [ROLES.OWNER.toUpperCase()]: "Café Owner — Business, revenue and operational scope",
     [ROLES.CAFE_ADMIN.toUpperCase()]: "Café Administrator — Unit-level management scope",
     [ROLES.STAFF.toUpperCase()]: "Staff — Operational terminal and self-service scope",
@@ -1962,8 +1959,8 @@ function renderHelp() {
 function renderUpdatesSection() {
   const user = state.auth?.user || state.user || {};
   const role = state.role || ROLES.MASTER;
-  const isMaster = role === ROLES.MASTER;
-  const isPrimaryMaster = Boolean(user.isPrimaryMaster || (isMaster && user.isPrimary));
+  const isMaster = isExplicitPrimaryMaster(user);
+  const isPrimaryMaster = isMaster;
   const localVersion = localStorage.getItem("zamorin_app_version") || "v1.2.0";
 
   const data = _updatesData || {
