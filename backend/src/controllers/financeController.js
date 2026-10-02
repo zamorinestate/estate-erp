@@ -20,6 +20,7 @@ const { TaxInvoice } = require('../models/TaxInvoice');
 const gstTaxService = require('../services/gstTaxService');
 const zReportService = require('../services/zReportService');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 const { asyncHandler } = require('../utils/asyncHandler');
 
 function getIstBusinessDate(date = new Date()) {
@@ -103,6 +104,7 @@ function ensureCafeAccess(request, cafeId) {
 
 // 1. Overview Command Centre
 const getFinanceOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, role, assignedCafeIds } = request.auth;
   const { cafeId, period, date, startDate, endDate, from, to } = request.query;
 
@@ -541,6 +543,7 @@ const getFinanceOverview = asyncHandler(async (request, response) => {
 
 // 2. Sales Audit & Revenue Assurance
 const getSalesAudit = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { cafeId, date } = request.query;
 
@@ -561,6 +564,7 @@ const getSalesAudit = asyncHandler(async (request, response) => {
 });
 
 const clearStoreDay = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { storeDayId } = request.params;
   const { notes = '' } = request.body;
@@ -585,12 +589,14 @@ const clearStoreDay = asyncHandler(async (request, response) => {
 
 // 3. Chart of Accounts
 const listChartOfAccounts = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const accounts = await ChartOfAccount.find({ organisationId }).sort({ accountCode: 1 }).lean();
   return response.status(200).json({ accounts });
 });
 
 const createChartOfAccount = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
 
   if (request.auth.role !== 'MASTER' || !request.auth.isPrimaryMaster) {
@@ -624,6 +630,7 @@ const createChartOfAccount = asyncHandler(async (request, response) => {
 
 // 4. Journals & General Ledger
 const listJournals = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { status, periodId, cafeId } = request.query;
 
@@ -639,6 +646,7 @@ const listJournals = asyncHandler(async (request, response) => {
 });
 
 const getJournal = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { journalId } = request.params;
 
@@ -653,6 +661,7 @@ const getJournal = asyncHandler(async (request, response) => {
 });
 
 const createJournal = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { journalDate, periodId, description, cafeId, lines = [], journalType = 'MANUAL', sourceModule = 'MANUAL', sourceReferenceId = null } = request.body;
 
@@ -746,6 +755,7 @@ const createJournal = asyncHandler(async (request, response) => {
 });
 
 const postJournal = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { journalId } = request.params;
 
@@ -774,6 +784,7 @@ const postJournal = asyncHandler(async (request, response) => {
 });
 
 const reverseJournal = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { journalId } = request.params;
   const { reason } = request.body;
@@ -843,6 +854,7 @@ const reverseJournal = asyncHandler(async (request, response) => {
 
 // 5. Accounts Payable (AP)
 const listAPInvoices = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { paymentStatus, cafeId } = request.query;
 
@@ -857,6 +869,7 @@ const listAPInvoices = asyncHandler(async (request, response) => {
 });
 
 const createAPInvoice = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { vendorId, vendorName, supplierInvoiceNumber, invoiceDate, dueDate, amount, tax = 0, cafeId, poReferenceId = null, expenseReferenceId = null } = request.body;
 
@@ -915,12 +928,14 @@ const createAPInvoice = asyncHandler(async (request, response) => {
 
 // 6. Payment Proposals & Runs
 const listPaymentRuns = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const runs = await PaymentRun.find({ organisationId }).sort({ runDate: -1 }).lean();
   return response.status(200).json({ runs });
 });
 
 const createPaymentRun = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { bankAccountId, selectedInvoiceIds = [] } = request.body;
 
@@ -950,6 +965,7 @@ const createPaymentRun = asyncHandler(async (request, response) => {
 });
 
 const decidePaymentRun = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { paymentRunId } = request.params;
   const { decision } = request.body; // 'APPROVE' or 'REJECT'
@@ -983,6 +999,7 @@ const decidePaymentRun = asyncHandler(async (request, response) => {
 
 // 7. Accounts Receivable (AR) & Collections
 const listReceivables = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { cafeId } = request.query;
 
@@ -1006,6 +1023,7 @@ const listReceivables = asyncHandler(async (request, response) => {
 });
 
 const recordCustomerReceipt = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { receivableId, amount, paymentMethod = 'BANK_TRANSFER', referenceNumber } = request.body;
 
@@ -1028,12 +1046,14 @@ const recordCustomerReceipt = asyncHandler(async (request, response) => {
 
 // 8. Marketplace Settlements
 const listMarketplaceSettlements = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const settlements = await MarketplaceSettlement.find({ organisationId }).sort({ periodEnd: -1 }).lean();
   return response.status(200).json({ settlements });
 });
 
 const reconcileMarketplaceSettlement = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { settlementId } = request.params;
   const { bankMatchReference } = request.body;
@@ -1052,6 +1072,7 @@ const reconcileMarketplaceSettlement = asyncHandler(async (request, response) =>
 
 // 9. Cash & Bank Accounts
 const listBankAccounts = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const accounts = await BankAccount.find({ organisationId }).lean();
   return response.status(200).json({ accounts });
@@ -1059,6 +1080,7 @@ const listBankAccounts = asyncHandler(async (request, response) => {
 
 // 10. Budgets & Allocations
 const getBudgetsAndAllocations = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const budgets = [
     { category: 'COFFEE_RAW_BEANS', monthlyBudgetPaisa: 50000000, committedPaisa: 38000000, actualPaisa: 32000000, variancePaisa: 18000000 },
     { category: 'DAIRY_AND_MILK', monthlyBudgetPaisa: 25000000, committedPaisa: 21000000, actualPaisa: 19500000, variancePaisa: 5500000 },
@@ -1071,6 +1093,7 @@ const getBudgetsAndAllocations = asyncHandler(async (request, response) => {
 
 // 11. Tax & Statutory Review (GST & TDS)
 const getTaxReview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   return response.status(200).json({
     gstr1Readiness: { status: 'READY', outwardTaxablePaisa: 126000000, cgstPaisa: 3150000, sgstPaisa: 3150000, totalTaxPaisa: 6300000 },
     gstr2bReconciliation: { totalInwardInvoices: 48, matchedCount: 46, mismatchCount: 2, itcEligiblePaisa: 4200000 },
@@ -1080,6 +1103,7 @@ const getTaxReview = asyncHandler(async (request, response) => {
 
 // 12. Period Close Workflow
 const getPeriodCloseStatus = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const currentPeriod = await FinancialPeriod.findOne({ organisationId, status: 'OPEN' }).lean();
 
@@ -1103,6 +1127,7 @@ const getPeriodCloseStatus = asyncHandler(async (request, response) => {
 });
 
 const closeFinancialPeriod = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { periodId } = request.params;
   const { signOffNotes = '' } = request.body;
@@ -1125,6 +1150,7 @@ const closeFinancialPeriod = asyncHandler(async (request, response) => {
 });
 
 const reopenFinancialPeriod = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const { periodId } = request.params;
   const { reason } = request.body;
@@ -1155,6 +1181,7 @@ const reopenFinancialPeriod = asyncHandler(async (request, response) => {
 
 // 13. Financial Statements
 const getFinancialStatements = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const pnl = {
     period: 'August 2026 (MTD)',
     basis: 'Posted Accounting Ledger',
@@ -1203,6 +1230,7 @@ const getFinancialStatements = asyncHandler(async (request, response) => {
 
 // 14. Finance Integrity Engine (18-point automated audit)
 const getFinanceIntegrity = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
 
   const journals = await Journal.find({ organisationId }).lean();
@@ -1302,6 +1330,7 @@ const getFinanceIntegrity = asyncHandler(async (request, response) => {
  * Generate Authoritative CBIC Statutory GST Tax Invoice
  */
 const generateGstTaxInvoice = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const {
     cafeId,
@@ -1352,6 +1381,7 @@ const generateGstTaxInvoice = asyncHandler(async (request, response) => {
  * Render and stream official CBIC GST Tax Invoice PDF
  */
 const downloadGstInvoicePdf = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const invoiceIdentifier = request.params.id;
 
@@ -1388,6 +1418,7 @@ const downloadGstInvoicePdf = asyncHandler(async (request, response) => {
  * Generate GSTR-1 outward tax return summary
  */
 const getGstr1Report = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { cafeId } = request.params;
   const { from, to } = request.query;
@@ -1415,6 +1446,7 @@ const getGstr1Report = asyncHandler(async (request, response) => {
  * Commit Daily Till Settlement & Z-Report
  */
 const commitZReport = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const {
     cafeId,
