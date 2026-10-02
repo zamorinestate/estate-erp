@@ -1,5 +1,6 @@
 'use strict';
 
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
 require('dotenv').config();
 
 const express = require('express');
@@ -304,9 +305,14 @@ function createApp(environment) {
       correlationId: request.correlationId || null,
     });
 
+  const liveHeadHandler = (_request, response) => response.status(200).end();
+
   app.get('/health/live', livenessHandler);
   app.get('/api/health/live', livenessHandler);
   app.get('/api/v1/health/live', livenessHandler);
+  app.head('/health/live', liveHeadHandler);
+  app.head('/api/health/live', liveHeadHandler);
+  app.head('/api/v1/health/live', liveHeadHandler);
 
   const healthHandler = (request, response) =>
     response.status(200).json({
@@ -323,6 +329,10 @@ function createApp(environment) {
 
   app.get('/api/health', healthHandler);
   app.get('/health', healthHandler);
+  app.get('/api/v1/health', healthHandler);
+  app.head('/api/health', liveHeadHandler);
+  app.head('/health', liveHeadHandler);
+  app.head('/api/v1/health', liveHeadHandler);
 
   const readinessHandler = async (request, response) => {
     const database = getDatabaseState();

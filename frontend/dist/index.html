@@ -16,7 +16,7 @@
   <script>
     // Immediate non-blocking background wake-up ping for Render backend during cold starts
     try {
-      fetch('https://zamorin-cafe-erp-backend.onrender.com/api/v1/health', {
+      fetch('https://zamorin-cafe-erp-backend.onrender.com/api/v1/health/live', {
         method: 'GET',
         cache: 'no-store',
         credentials: 'omit',

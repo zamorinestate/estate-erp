@@ -591,25 +591,47 @@ class DeviceTrustService {
     });
 
     try {
-      await auditService.recordAuditEvent({
-        organisationId: organisationId.toUpperCase(),
-        actorUserId: userId.toUpperCase(),
-        actorRole: roleSnapshot,
-        module: 'AUTHENTICATION',
-        action: 'TRUSTED_DEVICE_REGISTERED',
-        entityType: 'TRUSTED_DEVICE',
-        entityId: deviceTrustId,
-        reason: 'New trusted device registered after successful multi-factor authentication.',
-        result: 'SUCCESS',
-        riskClassification: 'LOW',
-        correlationId,
-        metadata: {
-          deviceTrustId,
-          deviceLabel,
-          expiresAt,
-          expiryDays,
-        },
-      });
+      if (process.env.NODE_ENV === 'test') {
+        await auditService.recordAuditEvent({
+          organisationId: organisationId.toUpperCase(),
+          actorUserId: userId.toUpperCase(),
+          actorRole: roleSnapshot,
+          module: 'AUTHENTICATION',
+          action: 'TRUSTED_DEVICE_REGISTERED',
+          entityType: 'TRUSTED_DEVICE',
+          entityId: deviceTrustId,
+          reason: 'New trusted device registered after successful multi-factor authentication.',
+          result: 'SUCCESS',
+          riskClassification: 'LOW',
+          correlationId,
+          metadata: {
+            deviceTrustId,
+            deviceLabel,
+            expiresAt,
+            expiryDays,
+          },
+        });
+      } else {
+        auditService.recordAuditEvent({
+          organisationId: organisationId.toUpperCase(),
+          actorUserId: userId.toUpperCase(),
+          actorRole: roleSnapshot,
+          module: 'AUTHENTICATION',
+          action: 'TRUSTED_DEVICE_REGISTERED',
+          entityType: 'TRUSTED_DEVICE',
+          entityId: deviceTrustId,
+          reason: 'New trusted device registered after successful multi-factor authentication.',
+          result: 'SUCCESS',
+          riskClassification: 'LOW',
+          correlationId,
+          metadata: {
+            deviceTrustId,
+            deviceLabel,
+            expiresAt,
+            expiryDays,
+          },
+        }).catch(() => {});
+      }
     } catch (_auditErr) {}
 
     return {

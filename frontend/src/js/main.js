@@ -496,14 +496,14 @@ export function triggerBackendWarmup() {
   try {
     const apiBase = window.ZAMORIN_API_BASE_URL || "/api/v1";
     // Non-blocking fetch with ZERO credentials to wake up backend during cold starts
-    fetch(`${apiBase}/health`, {
+    fetch(`${apiBase}/health/live`, {
       method: "GET",
       cache: "no-store",
       credentials: "omit",
     }).catch(() => {});
 
     // Also trigger direct Render backend wake-up to eliminate cold-start wait
-    fetch("https://zamorin-cafe-erp-backend.onrender.com/api/v1/health", {
+    fetch("https://zamorin-cafe-erp-backend.onrender.com/api/v1/health/live", {
       method: "GET",
       cache: "no-store",
       credentials: "omit",
@@ -566,6 +566,22 @@ export function mountAuthScreen(screen = "login", params = {}) {
         await handleAuthenticatedUserSession(user);
       }
     });
+
+    // Input-focus socket & TLS pre-warming: keeps the HTTP/2 connection open and warm while user types
+    const emailEl = appEl.querySelector("#l2-email");
+    const pwdEl = appEl.querySelector("#l2-password");
+    if (emailEl || pwdEl) {
+      let focusWarmDone = false;
+      const warmOnFocus = () => {
+        if (focusWarmDone) return;
+        focusWarmDone = true;
+        try {
+          fetch("/api/v1/health/live", { method: "HEAD", cache: "no-store" }).catch(() => {});
+        } catch {}
+      };
+      emailEl?.addEventListener("focus", warmOnFocus, { once: true });
+      pwdEl?.addEventListener("focus", warmOnFocus, { once: true });
+    }
   } else if (screen === "mfa") {
     const isSetup = Boolean(params.mfaSetupRequired);
     const challengeToken = params.mfaChallengeToken || params.tempToken || "";

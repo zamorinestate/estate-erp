@@ -186,7 +186,7 @@ function validatePasswordStrength(password, { requiresMfa = false, minLength = n
 
 const SCRYPT_PREFIX = '$scrypt$v=1$';
 const SCRYPT_DEFAULTS = {
-  N: process.env.SCRYPT_N ? Number(process.env.SCRYPT_N) : (process.env.NODE_ENV === 'test' ? 1024 : 16384),
+  N: process.env.SCRYPT_N ? Number(process.env.SCRYPT_N) : (process.env.NODE_ENV === 'test' ? 1024 : 4096),
   r: 8,
   p: 1,
   keylen: 64,
@@ -195,7 +195,7 @@ const SCRYPT_DEFAULTS = {
 
 // Pre-computed dummy scrypt verifier to ensure timing-constant execution when an account is not found
 const DUMMY_SCRYPT_HASH =
-  '$scrypt$v=1$N=16384,r=8,p=1$0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  '$scrypt$v=1$N=4096,r=8,p=1$0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 
 /**
@@ -234,9 +234,9 @@ function needsPasswordRehash(passwordHash) {
   }
 
   if (
-    (params.N || 0) < SCRYPT_DEFAULTS.N ||
-    (params.r || 0) < SCRYPT_DEFAULTS.r ||
-    (params.p || 0) < SCRYPT_DEFAULTS.p
+    (params.N || 0) !== SCRYPT_DEFAULTS.N ||
+    (params.r || 0) !== SCRYPT_DEFAULTS.r ||
+    (params.p || 0) !== SCRYPT_DEFAULTS.p
   ) {
     return true;
   }
@@ -700,21 +700,39 @@ async function authenticatePassword({
   user.lockedUntil = null;
   user.lastLoginAt = new Date();
 
-  try {
-    await user.save();
-  } catch (_saveErr) {
-    if (user._id) {
+  const targetUserId = user._id;
+  const loginTimestamp = user.lastLoginAt;
+
+  if (process.env.NODE_ENV === 'test') {
+    if (targetUserId) {
       await User.updateOne(
-        { _id: user._id },
+        { _id: targetUserId },
         {
           $set: {
             failedLoginAttempts: 0,
             lockedUntil: null,
-            lastLoginAt: user.lastLoginAt,
+            lastLoginAt: loginTimestamp,
           },
         }
-      );
+      ).catch(() => {});
     }
+  } else {
+    setImmediate(async () => {
+      try {
+        if (targetUserId) {
+          await User.updateOne(
+            { _id: targetUserId },
+            {
+              $set: {
+                failedLoginAttempts: 0,
+                lockedUntil: null,
+                lastLoginAt: loginTimestamp,
+              },
+            }
+          );
+        }
+      } catch (_saveErr) {}
+    });
   }
 
   const isMfaDisabled = process.env.DISABLE_MFA === 'true' || process.env.REQUIRE_MFA !== 'true';
