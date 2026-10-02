@@ -5,11 +5,11 @@
  * REC-17B — FINAL BACKEND REGRESSION & ACCOUNTS-DEPARTMENT AUTHORITY RECONCILIATION
  *
  * Covers:
- * 01. PO Approval Matrix: Primary Master (ALLOW) and Normal Master (ALLOW)
+ * 01. PO Approval Matrix: Primary Master (ALLOW); retired non-primary MASTER (DENY)
  * 02. PO Approval Separation of Duties: PO approval does NOT grant payment authority
- * 03. Payment & AP Authority Matrix: Master (ALLOW), Owner (DENY write), Staff (DENY)
- * 04. Accounts Model B Reconciliation: Master is functional owner of payment release
- * 05. Personal Ledger Invariant: Primary Master + Owner ALLOW; Normal Master, Admin, Staff DENY
+ * 03. Payment & AP Authority Matrix: Primary Master (ALLOW), retired non-primary MASTER / Owner / Staff (DENY write)
+ * 04. Accounts Model B Reconciliation: Primary Master is functional owner of payment release
+ * 05. Personal Ledger Invariant: Primary Master + Owner ALLOW; retired non-primary MASTER, Admin, Staff DENY
  * 06. Full Cash/Bank Smoke Test: ₹1,000 payable -> ₹500 payment -> ₹500 outstanding
  * 07. Canonical CashTransaction Posting: Exactly once per disbursement, zero duplication
  * 08. Complete Settlement to Zero: Second ₹500 payment -> status PAID, ₹0 outstanding
@@ -38,7 +38,7 @@ const procurementController = require('../src/controllers/procurementController'
 const ORG_ID = 'ORG-REC17B-TEST';
 const CAFE_ID = 'CAFE-REC17B-01';
 const USER_PRIMARY_MASTER = 'USER-PM-01';
-const USER_NORMAL_MASTER = 'USER-NM-01';
+const USER_RETIRED_MASTER = 'USER-NM-01';
 const USER_OWNER = 'USER-OWN-01';
 const USER_CAFE_ADMIN = 'USER-ADM-01';
 const USER_STAFF = 'USER-STF-01';
@@ -174,7 +174,7 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
 
     const req = {
       auth: {
-        userId: USER_NORMAL_MASTER,
+        userId: USER_RETIRED_MASTER,
         role: 'MASTER',
         isPrimaryMaster: false,
         organisationId: ORG_ID,
@@ -314,10 +314,10 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
       paymentStatus: 'UNPAID',
     });
 
-    // Normal Master records payment
-    const nmPayReq = {
+    // retired non-primary MASTER records payment
+    const retiredPayReq = {
       auth: {
-        userId: USER_NORMAL_MASTER,
+        userId: USER_RETIRED_MASTER,
         role: 'MASTER',
         isPrimaryMaster: false,
         organisationId: ORG_ID,
@@ -328,13 +328,13 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
         paymentAmountPaisa: 25000,
         allocations: [{ invoiceId: 'INV-PM-0001', amountPaisa: 25000 }],
         paymentMethod: 'BANK_TRANSFER',
-        reference: 'UTR-NM-001',
-        idempotencyKey: 'IDEM-NM-PAY-001',
+        reference: 'UTR-RETIRED-001',
+        idempotencyKey: 'IDEM-RETIRED-PAY-001',
       },
     };
-    const resNm = createMockResponse();
+    const retiredRes = createMockResponse();
     await assert.rejects(
-      async () => invokeController(vendorLedgerController.recordPayment, nmPayReq, resNm),
+      async () => invokeController(vendorLedgerController.recordPayment, retiredPayReq, retiredRes),
       (err) => {
         assert.strictEqual(err.statusCode, 403);
         assert.strictEqual(err.code, 'RETIRED_MASTER_ACCOUNT_DENIED');
@@ -373,10 +373,10 @@ describe('REC-17B — Backend Regression & Authority Reconciliation Suite', () =
   });
 
   // 06. PERSONAL LEDGER INVARIANT: ABSOLUTE VERIFICATION
-  it('06. Personal Ledger Invariant: Primary Master + Owner ALLOW; Normal Master, Admin, Staff DENY', () => {
+  it('06. Personal Ledger Invariant: Primary Master + Owner ALLOW; retired non-primary MASTER, Admin, Staff DENY', () => {
     assert.strictEqual(canAccessPersonalLedger('MASTER', true), true, 'Primary Master must be ALLOWED');
     assert.strictEqual(canAccessPersonalLedger('OWNER', false), true, 'Owner must be ALLOWED');
-    assert.strictEqual(canAccessPersonalLedger('MASTER', false), false, 'Normal Master must be DENIED');
+    assert.strictEqual(canAccessPersonalLedger('MASTER', false), false, 'retired non-primary MASTER must be DENIED');
     assert.strictEqual(canAccessPersonalLedger('CAFE_ADMIN', false), false, 'Cafe Admin must be DENIED');
     assert.strictEqual(canAccessPersonalLedger('STAFF', false), false, 'Staff must be DENIED');
   });
