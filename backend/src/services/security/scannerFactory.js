@@ -64,13 +64,46 @@ function createMalwareScanningProvider(options = {}) {
  */
 async function getScannerRuntimeStatus() {
   const isProduction = process.env.NODE_ENV === 'production';
-  const hasUrl = Boolean(process.env.MALWARE_SCANNER_URL);
+  const providerName = String(
+    process.env.DOCUMENT_MALWARE_SCANNER_PROVIDER ||
+    (isProduction ? 'clamav' : 'mock')
+  ).trim().toLowerCase();
+
+  const hasHttpUrl = Boolean(String(process.env.MALWARE_SCANNER_URL || '').trim());
+  const hasTcpHost = Boolean(String(process.env.CLAMAV_HOST || '').trim());
+  const tcpProviderRequested = providerName === 'clamav_tcp' || providerName === 'clamav_instream';
+  const httpProviderRequested = providerName === 'clamav_http' || providerName === 'http';
+  const mockRequested = providerName === 'mock';
+
+  let activeProviderType = 'TEST_MOCK_ENGINE';
+  let configured = hasHttpUrl || hasTcpHost;
+
+  if (isProduction) {
+    if (mockRequested) {
+      configured = false;
+      activeProviderType = 'PROD_MOCK_SCANNER_DISALLOWED';
+    } else if (tcpProviderRequested || (!hasHttpUrl && hasTcpHost)) {
+      configured = hasTcpHost;
+      activeProviderType = hasTcpHost ? 'CLAMAV_TCP_INSTREAM' : 'CLAMAV_TCP_UNCONFIGURED';
+    } else if (httpProviderRequested || hasHttpUrl) {
+      configured = hasHttpUrl;
+      activeProviderType = hasHttpUrl ? 'PRODUCTION_HTTP_ENGINE' : 'PRODUCTION_HTTP_UNCONFIGURED';
+    } else {
+      configured = false;
+      activeProviderType = 'PRODUCTION_SCANNER_UNCONFIGURED';
+    }
+  } else if (tcpProviderRequested || hasTcpHost) {
+    activeProviderType = hasTcpHost ? 'CLAMAV_TCP_INSTREAM' : 'CLAMAV_TCP_UNCONFIGURED';
+  } else if (httpProviderRequested || hasHttpUrl) {
+    activeProviderType = hasHttpUrl ? 'PRODUCTION_HTTP_ENGINE' : 'PRODUCTION_HTTP_UNCONFIGURED';
+  }
 
   return {
     PRODUCTION_SCANNER_ADAPTER_IMPLEMENTED: true,
-    LIVE_PRODUCTION_MALWARE_SCANNER_CONFIGURED: isProduction ? hasUrl : (hasUrl ? true : 'EXTERNAL_PENDING'),
+    LIVE_PRODUCTION_MALWARE_SCANNER_CONFIGURED: isProduction ? configured : (configured ? true : 'EXTERNAL_PENDING'),
     MOCK_SCANNER_ALLOWED_IN_PRODUCTION: false,
-    ACTIVE_PROVIDER_TYPE: isProduction ? 'PRODUCTION_HTTP_ENGINE' : 'TEST_MOCK_ENGINE',
+    ACTIVE_PROVIDER_TYPE: activeProviderType,
+    CONFIGURED_TRANSPORT: hasTcpHost ? 'TCP' : (hasHttpUrl ? 'HTTP' : 'NONE'),
   };
 }
 
