@@ -92,6 +92,7 @@ const {
 const {
   ApiError,
 } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 const {
   recordRequestAudit,
@@ -382,6 +383,7 @@ async function withPoLock(poId, fn) {
  * List purchase orders with filters (cafeId, vendorId, status, date range).
  */
 const listOrders = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const page = parsePositiveInteger(request.query.page, 1, 1000);
   const limit = parsePositiveInteger(request.query.limit, 25, 100);
   const skip = (page - 1) * limit;
@@ -441,6 +443,7 @@ const listOrders = asyncHandler(async (request, response) => {
  * Get single PO detail.
  */
 const getOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   if (!purchaseOrderId) {
     throw new ApiError(400, 'INVALID_ID', 'Valid purchaseOrderId is required.');
@@ -469,6 +472,7 @@ const getOrder = asyncHandler(async (request, response) => {
  * Create a new Purchase Order (starts in DRAFT status).
  */
 const createOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (!request.body || typeof request.body !== 'object') {
     throw new ApiError(400, 'INVALID_PAYLOAD', 'Request body must be an object.');
   }
@@ -704,6 +708,7 @@ const createOrder = asyncHandler(async (request, response) => {
  * Move DRAFT → SUBMITTED.
  */
 const submitOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const order = await PurchaseOrder.findOne({
     purchaseOrderId,
@@ -750,8 +755,12 @@ const submitOrder = asyncHandler(async (request, response) => {
  * Move SUBMITTED → APPROVED.
  */
 const approveOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (request.auth?.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to approve purchase orders.');
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Primary Master has authority to approve purchase orders.');
+  }
+  if (request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'Only Primary Master has authority to approve purchase orders.');
   }
 
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
@@ -817,6 +826,7 @@ const approveOrder = asyncHandler(async (request, response) => {
  * Move APPROVED → ORDERED (sent to vendor).
  */
 const orderSent = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
 
   const runOrderSent = async (session) => {
@@ -887,6 +897,7 @@ const orderSent = asyncHandler(async (request, response) => {
  *   4. Update PO status to PARTIALLY_RECEIVED or RECEIVED.
  */
 const receiveOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawDeliveries = request.body.deliveries || (request.body.receivedItems
     ? request.body.receivedItems.map((r) => ({
@@ -1297,6 +1308,7 @@ const receiveOrder = asyncHandler(async (request, response) => {
  * If edited after approval, resets approval state and mandates Master re-approval.
  */
 const editOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const { lineItems, expectedDeliveryDate, terms, notes, reason } = request.body;
 
@@ -1465,6 +1477,7 @@ const editOrder = asyncHandler(async (request, response) => {
  * Receive & verify delivery, submit vendor bill/receipt, auto-post to inventory, notify Master for approval.
  */
 const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const order = await PurchaseOrder.findOne({
     purchaseOrderId,
@@ -1798,12 +1811,16 @@ const verifyDeliveryAndSubmitBill = asyncHandler(async (request, response) => {
 
 /**
  * POST /procurement/orders/:purchaseOrderId/master-approve
- * Master verifies and approves the order, discrepancy notes, and attached bills.
+ * Primary Master verifies and approves the order, discrepancy notes, and attached bills.
  * Finalizes the order process.
  */
 const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (request.auth?.role !== 'MASTER') {
-    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to approve purchase orders.');
+    throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Primary Master has authority to approve purchase orders.');
+  }
+  if (request.auth?.isPrimaryMaster !== true) {
+    throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'Only Primary Master has authority to approve purchase orders.');
   }
 
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
@@ -1823,7 +1840,7 @@ const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
   order.masterApproval = {
     approvedAt: new Date(),
     approvedByUserId: request.auth.userId,
-    approvalNotes: String(notes || 'Approved by Master with attached vendor bill verified').trim(),
+    approvalNotes: String(notes || 'Approved by Primary Master with attached vendor bill verified').trim(),
   };
 
   // Recalculate fulfillment
@@ -1918,6 +1935,7 @@ const masterApproveOrderAndBill = asyncHandler(async (request, response) => {
  * Stream the attached vendor bill/receipt file so Master can download it to hand over to accounts.
  */
 const downloadOrderReceiptBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const attachmentId = request.params.attachmentId ? normalizeId(request.params.attachmentId) : null;
 
@@ -1974,6 +1992,7 @@ const downloadOrderReceiptBill = asyncHandler(async (request, response) => {
  * Cancel PO (DRAFT, SUBMITTED, or APPROVED). Requires reason.
  */
 const cancelOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const { reason } = request.body;
 
@@ -2027,6 +2046,7 @@ const cancelOrder = asyncHandler(async (request, response) => {
  * Returns 4 headline KPIs, Action Centre, and category summaries.
  */
 const getProcurementOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const filter = { organisationId: orgId };
 
@@ -2082,6 +2102,7 @@ const getProcurementOverview = asyncHandler(async (request, response) => {
  * Guided Buying catalogue with authorized contract rates, preferred suppliers, and pack/UOM conversions.
  */
 const getCatalogue = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const effectiveCafe = resolveEffectiveCafeScope(request);
   const { category, search, cafeId: queryCafeId } = request.query;
@@ -2184,6 +2205,7 @@ const getCatalogue = asyncHandler(async (request, response) => {
  * List purchase requisitions / internal demand.
  */
 const listPurchaseRequisitions = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const effectiveCafe = resolveEffectiveCafeScope(request);
   const { cafeId, status } = request.query;
@@ -2217,6 +2239,7 @@ const listPurchaseRequisitions = asyncHandler(async (request, response) => {
  * Create a new purchase requisition.
  */
 const createPurchaseRequisition = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (request.body && request.body.body) {
     throw new ApiError(400, 'MALFORMED_REQUEST_BODY', 'Malformed request body detected: nested body wrapper is not permitted.');
   }
@@ -2285,6 +2308,7 @@ const createPurchaseRequisition = asyncHandler(async (request, response) => {
  * Convert an approved purchase requisition into an active Draft Purchase Order.
  */
 const convertRequisitionToPo = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const requisitionId = normalizeId(request.params.requisitionId);
   const { vendorId: rawVendorId, expectedDeliveryDate, terms = '', notes = '' } = request.body || {};
 
@@ -2498,6 +2522,7 @@ const convertRequisitionToPo = asyncHandler(async (request, response) => {
  * List RFQs and supplier quotes.
  */
 const listRfqs = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   return response.status(200).json({
     success: true,
     data: {
@@ -2512,6 +2537,7 @@ const listRfqs = asyncHandler(async (request, response) => {
  * Create a new RFQ.
  */
 const createRfq = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { title, deadline, invitedVendorIds = [], notes = '' } = request.body || {};
   if (!title) {
     throw new ApiError(400, 'VALIDATION_ERROR', 'RFQ title is required.');
@@ -2551,6 +2577,7 @@ const createRfq = asyncHandler(async (request, response) => {
  * List Advance Shipping Notices.
  */
 const listAsns = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const effectiveCafe = resolveEffectiveCafeScope(request);
   const { purchaseOrderId, vendorId, cafeId, status } = request.query;
@@ -2587,6 +2614,7 @@ const listAsns = asyncHandler(async (request, response) => {
  * Get detail of a specific ASN.
  */
 const getAsn = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const asnNumber = normalizeId(request.params.asnNumber);
   const asn = await AdvanceShippingNotice.findOne({
     asnNumber,
@@ -2610,6 +2638,7 @@ const getAsn = asyncHandler(async (request, response) => {
  * Create a new Advance Shipping Notice against an authorized PO.
  */
 const createAsn = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const {
     purchaseOrderId: rawPoId,
@@ -2852,6 +2881,7 @@ const createAsn = asyncHandler(async (request, response) => {
  * Transition ASN status (e.g. IN_TRANSIT, ARRIVED).
  */
 const updateAsnStatus = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const asnNumber = normalizeId(request.params.asnNumber);
   const { status, notes = '' } = request.body;
   if (!status || !ASN_STATUSES.includes(status.toUpperCase())) {
@@ -2896,6 +2926,7 @@ const updateAsnStatus = asyncHandler(async (request, response) => {
  * Cancel an Advance Shipping Notice before physical receipt.
  */
 const cancelAsn = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const asnNumber = normalizeId(request.params.asnNumber);
   const { reason = '' } = request.body;
 
@@ -2982,6 +3013,7 @@ const cancelAsn = asyncHandler(async (request, response) => {
  * List Goods Receipt Notes.
  */
 const listGoodsReceipts = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const effectiveCafe = resolveEffectiveCafeScope(request);
   const { cafeId, purchaseOrderId } = request.query;
@@ -3048,6 +3080,7 @@ const listGoodsReceipts = asyncHandler(async (request, response) => {
  * Create a formal Goods Receipt Note with inspection checks, lot tracking, and quarantine isolation.
  */
 const createGoodsReceipt = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const {
     purchaseOrderId: rawPoId,
     asnNumber: rawAsnNumber,
@@ -3596,6 +3629,7 @@ const createGoodsReceipt = asyncHandler(async (request, response) => {
  * 3-Way matching summary between PO, GRN, and Invoices.
  */
 const getMatchingSummary = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orgId = request.auth.organisationId;
   const effectiveCafe = resolveEffectiveCafeScope(request);
 
@@ -3654,6 +3688,7 @@ const getMatchingSummary = asyncHandler(async (request, response) => {
  * 16-point procurement integrity audit.
  */
 const getProcurementIntegrity = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const checks = [
     { id: 'PRC-01', name: 'Integer Paise Invariant', passed: true, detail: 'All PO, line, and invoice amounts stored as integer paise.' },
     { id: 'PRC-02', name: '4-Role RBAC Enforcement', passed: true, detail: 'MASTER/OWNER/CAFE_ADMIN authorized; STAFF strictly denied (403).' },
@@ -3690,6 +3725,7 @@ const getProcurementIntegrity = asyncHandler(async (request, response) => {
  * List documents attached to a purchase order.
  */
 const getOrderDocuments = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.auth = request.auth || request.user || {};
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
   const po = await PurchaseOrder.findOne({
@@ -3757,6 +3793,7 @@ const getOrderDocuments = asyncHandler(async (request, response) => {
  * to a purchase order with full metadata validation and 3-way match reconciliation.
  */
 const attachOrderDocument = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.auth = request.auth || request.user || {};
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
   const po = await PurchaseOrder.findOne({
@@ -3925,6 +3962,7 @@ const attachOrderDocument = asyncHandler(async (request, response) => {
  * Inline stream with Content-Disposition inline for browser viewing.
  */
 const previewOrderDocument = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.auth = request.auth || request.user || {};
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
   const documentId = normalizeId(request.params.documentId || request.params.docId);
@@ -3994,6 +4032,7 @@ const previewOrderDocument = asyncHandler(async (request, response) => {
  * Binary download with Content-Disposition attachment, X-Export-Id, and SHA-256 verification.
  */
 const downloadOrderDocument = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.auth = request.auth || request.user || {};
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
   const documentId = normalizeId(request.params.documentId || request.params.docId);
@@ -4073,6 +4112,7 @@ const downloadOrderDocument = asyncHandler(async (request, response) => {
  * Replaces a procurement document with an updated version, preserving audit history.
  */
 const replaceOrderDocumentVersion = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.auth = request.auth || request.user || {};
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
   const documentId = normalizeId(request.params.documentId || request.params.docId);
@@ -4138,6 +4178,7 @@ const replaceOrderDocumentVersion = asyncHandler(async (request, response) => {
  * Archives an attachment from the active PO view, preserving audit history and retention policy.
  */
 const archiveOrderDocument = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.auth = request.auth || request.user || {};
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
   const documentId = normalizeId(request.params.documentId || request.params.docId);
@@ -4189,6 +4230,7 @@ const archiveOrderDocument = asyncHandler(async (request, response) => {
  * Returns three-way matching reconciliation summary.
  */
 const getPoDocumentMatchingStatus = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.auth = request.auth || request.user || {};
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId || request.params.id);
   const po = await PurchaseOrder.findOne({
@@ -4220,6 +4262,7 @@ const getPoDocumentMatchingStatus = asyncHandler(async (request, response) => {
 });
 
 const getSupplierContextualIntelligence = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const vendorId = String(request.params.vendorId || '').trim().toUpperCase();
 
@@ -4315,6 +4358,7 @@ const getSupplierContextualIntelligence = asyncHandler(async (request, response)
  * Record pre-delivery vendor confirmation (quantities, expected date, ref).
  */
 const vendorConfirmOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const { confirmations = [], confirmationReference = '', confirmationDate } = request.body;
 
@@ -4428,6 +4472,7 @@ const vendorConfirmOrder = asyncHandler(async (request, response) => {
  * POST /orders/:purchaseOrderId/lines/:lineId/backorder
  */
 const backorderLine = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawLineId = String(request.params.lineId || '').trim();
   const { backorderedQty, expectedDeliveryDate, confirmationRef = '', note = '' } = request.body;
@@ -4499,6 +4544,7 @@ const backorderLine = asyncHandler(async (request, response) => {
  * POST /orders/:purchaseOrderId/lines/:lineId/vendor-unavailable
  */
 const vendorUnavailableLine = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawLineId = String(request.params.lineId || '').trim();
   const { unavailableQty, reason = 'OUT_OF_STOCK', note = '' } = request.body;
@@ -4568,6 +4614,7 @@ const vendorUnavailableLine = asyncHandler(async (request, response) => {
  * POST /orders/:purchaseOrderId/lines/:lineId/close-short
  */
 const closeShortLine = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawLineId = String(request.params.lineId || '').trim();
   const { quantity, reason = 'Supplier short supply', note = '', isVendorFault = true } = request.body;
@@ -4637,6 +4684,7 @@ const closeShortLine = asyncHandler(async (request, response) => {
  * POST /orders/:purchaseOrderId/lines/:lineId/cancel-line
  */
 const cancelLine = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawLineId = String(request.params.lineId || '').trim();
   const { cancelledQty, reason = 'Buyer cancelled', note = '' } = request.body;
@@ -4705,6 +4753,7 @@ const cancelLine = asyncHandler(async (request, response) => {
  * POST /orders/:purchaseOrderId/lines/:lineId/substitute/propose
  */
 const proposeSubstitution = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawLineId = String(request.params.lineId || '').trim();
   const {
@@ -4794,6 +4843,7 @@ const proposeSubstitution = asyncHandler(async (request, response) => {
  * POST /orders/:purchaseOrderId/lines/:lineId/substitute/decide
  */
 const decideSubstitution = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawLineId = String(request.params.lineId || '').trim();
   const { decision, reason = '' } = request.body;
@@ -4860,6 +4910,7 @@ const decideSubstitution = asyncHandler(async (request, response) => {
  * POST /orders/:purchaseOrderId/lines/:lineId/source-elsewhere
  */
 const sourceElsewhere = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
   const rawLineId = String(request.params.lineId || '').trim();
   const { replacementVendorId, shortageQty, notes = '' } = request.body;
@@ -4993,6 +5044,7 @@ const sourceElsewhere = asyncHandler(async (request, response) => {
  * Calculates canonical vendor performance metrics (Fill rate, Backorder rate, Short-supply rate, On-time delivery).
  */
 const getVendorFulfillmentAnalytics = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const vendorId = normalizeId(request.params.vendorId);
 
@@ -5098,6 +5150,7 @@ const getVendorFulfillmentAnalytics = asyncHandler(async (request, response) => 
  * and dispatches to Accounts Payable Queue.
  */
 const sendToAccounts = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertProcurementMutationAccess(request);
   const { organisationId } = request.auth;
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
