@@ -25,6 +25,8 @@ const {
   ApiError,
 } = require('../utils/ApiError');
 
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
+
 const { executeTransactionWithRetry } = require('../utils/transactionHelper');
 
 const {
@@ -85,11 +87,12 @@ function normalizeCafeIds(value) {
 }
 
 function requireMaster(request) {
-  if (request.auth.role !== 'MASTER') {
+  assertCanonicalMasterState(request.auth);
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
     throw new ApiError(
       403,
       'MASTER_ACCESS_REQUIRED',
-      'Only the MASTER role may perform this action.'
+      'Only the Primary MASTER role may perform this action.'
     );
   }
 }
@@ -256,8 +259,9 @@ function ensureUserIsAccessible(
   request,
   user
 ) {
+  assertCanonicalMasterState(request.auth);
   if (
-    request.auth.role === 'MASTER' ||
+    (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster === true) ||
     request.auth.role === 'OWNER'
   ) {
     return;
@@ -290,6 +294,7 @@ function ensureUserIsAccessible(
 
 const listUsers = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     if (request.auth.role === 'VENDOR') {
       throw new ApiError(
         403,
@@ -319,6 +324,7 @@ const listUsers = asyncHandler(
 
 const getUser = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     if (request.auth.role === 'VENDOR') {
       throw new ApiError(
         403,

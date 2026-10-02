@@ -36,6 +36,7 @@ const auditService = require('../services/auditService');
 const ApiError = require('../utils/ApiError');
 const { redisClientFactory } = require('../services/redisClientFactory');
 const { documentStorageAdapter } = require('../services/documentStorageAdapter');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 // â”€â”€ 23 top-level language definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LANGUAGE_CATALOGUE = [
@@ -334,7 +335,7 @@ async function submitProfileChangeRequest(req, res) {
       });
     }
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', isPrimaryMaster: true, accountStatus: 'ACTIVE' }).select('userId email').lean();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     for (const m of masterUsers) {
       const notifId = `NT-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -804,7 +805,9 @@ async function resetMyPreferences(req, res) {
  * isAdmin context returns all with QA status for management.
  */
 async function getLanguageCatalogue(req, res) {
-  const isMaster = req.user.role === 'MASTER';
+  const user = req.user || req.auth || {};
+  assertCanonicalMasterState(user);
+  const isMaster = user.role === 'MASTER' && user.isPrimaryMaster === true;
 
   // Normal users only see production-ready languages for selection
   // (English is always available as default/fallback)
@@ -1270,6 +1273,7 @@ async function listMySupportTickets(req, res) {
  */
 async function listManageSupportTickets(req, res) {
   const user = req.user || req.auth || {};
+  assertCanonicalMasterState(user);
   const { userId, organisationId, role, assignedCafeIds = [], primaryCafeId } = user;
 
   if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
@@ -1347,6 +1351,7 @@ async function listManageSupportTickets(req, res) {
  */
 async function getManageSupportTicket(req, res) {
   const user = req.user || req.auth || {};
+  assertCanonicalMasterState(user);
   const { userId, organisationId, role, assignedCafeIds = [], primaryCafeId } = user;
 
   if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
@@ -1388,6 +1393,7 @@ async function getManageSupportTicket(req, res) {
  */
 async function updateManageSupportTicket(req, res) {
   const user = req.user || req.auth || {};
+  assertCanonicalMasterState(user);
   const { userId, organisationId, role, assignedCafeIds = [], primaryCafeId } = user;
 
   if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
@@ -1532,6 +1538,7 @@ async function updateManageSupportTicket(req, res) {
  */
 async function addSupportTicketReply(req, res) {
   const user = req.user || req.auth || {};
+  assertCanonicalMasterState(user);
   const { userId, organisationId, role, assignedCafeIds = [], primaryCafeId } = user;
 
   if (!['MASTER', 'OWNER', 'CAFE_ADMIN'].includes(role)) {
@@ -1880,7 +1887,7 @@ async function updateSecurityPolicy(req, res) {
     const { recordAuditEvent } = require('../services/auditService');
     await recordAuditEvent({
       organisationId: auth.organisationId || 'ORG-ZAMORIN',
-      actorUserId: auth.userId || 'MU-0001',
+      actorUserId: auth.userId || 'SYSTEM',
       actorRole: auth.role,
       module: 'SECURITY_POLICY',
       action: 'SECURITY_POLICY_UPDATED',

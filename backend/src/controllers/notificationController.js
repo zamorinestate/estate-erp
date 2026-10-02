@@ -14,6 +14,8 @@ const {
   ApiError,
 } = require('../utils/ApiError');
 
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
+
 function normalizeIdentifier(value) {
   return typeof value === 'string'
     ? value.trim().toUpperCase()
@@ -42,6 +44,7 @@ function parsePositiveInteger(
 }
 
 function buildNotificationFilter(request) {
+  assertCanonicalMasterState(request.auth);
   const filter = {
     organisationId: request.auth.organisationId,
   };
@@ -49,7 +52,6 @@ function buildNotificationFilter(request) {
   if (request.auth.role === 'MASTER') {
     filter.$or = [
       { recipientUserId: request.auth.userId },
-      { recipientUserId: 'MU-0001' },
       { recipientRole: 'MASTER' },
     ];
   } else {
@@ -125,6 +127,7 @@ function buildNotificationFilter(request) {
 async function findUserNotification(
   request
 ) {
+  assertCanonicalMasterState(request.auth);
   const notificationId =
     normalizeIdentifier(
       request.params.notificationId
@@ -169,6 +172,7 @@ async function findUserNotification(
 
 const listNotifications = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     const page =
       parsePositiveInteger(
         request.query.page,
@@ -244,6 +248,7 @@ const listNotifications = asyncHandler(
 
 const getNotification = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     const notification =
       await findUserNotification(
         request
@@ -268,6 +273,7 @@ const getNotification = asyncHandler(
 
 const markNotificationRead = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     const notification =
       await findUserNotification(
         request
@@ -293,6 +299,7 @@ const markNotificationRead = asyncHandler(
 
 const markNotificationUnread = asyncHandler(
   async (request, response) => {
+    assertCanonicalMasterState(request.auth);
     const notification = await findUserNotification(request);
     await notification.markUnread();
 
@@ -308,6 +315,7 @@ const markNotificationUnread = asyncHandler(
 const markAllNotificationsRead =
   asyncHandler(
     async (request, response) => {
+      assertCanonicalMasterState(request.auth);
       const now = new Date();
 
       const result =
@@ -351,6 +359,7 @@ const markAllNotificationsRead =
 const acknowledgeNotification =
   asyncHandler(
     async (request, response) => {
+      assertCanonicalMasterState(request.auth);
       const notification =
         await findUserNotification(
           request
@@ -388,6 +397,7 @@ const acknowledgeNotification =
 const archiveNotification =
   asyncHandler(
     async (request, response) => {
+      assertCanonicalMasterState(request.auth);
       const notification =
         await findUserNotification(
           request

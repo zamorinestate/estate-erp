@@ -22,7 +22,7 @@ const {
   ApiError,
 } = require('../utils/ApiError');
 
-const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { resolveEffectiveCafeScope, assertResourceCafeOwnership, assertCanonicalMasterState } = require('../utils/cafeScope');
 const auditService = require('../services/auditService');
 
 const PAYMENT_METHODS = [
@@ -91,12 +91,13 @@ function ensureCafeAccess(
   request,
   cafeId
 ) {
+  assertCanonicalMasterState(request.auth);
   if (!cafeId) return;
   const cleanCafe = cafeId.trim().toUpperCase();
   const role = request?.auth?.role;
   const rawWorkspace = request?.headers?.['x-workspace'] || request?.auth?.workspaceMode || '';
   const workspaceMode = String(rawWorkspace).trim().toUpperCase();
-  if (role === 'MASTER' && workspaceMode !== 'CAFE_OPERATIONS') return;
+  if (role === 'MASTER' && request?.auth?.isPrimaryMaster === true && workspaceMode !== 'CAFE_OPERATIONS') return;
   if (role === 'OWNER') {
     const assignedCafeIds = (request?.auth?.assignedCafeIds || []).map((c) => String(c).trim().toUpperCase());
     if (assignedCafeIds.length === 0 || !assignedCafeIds.includes(cleanCafe)) {
@@ -119,6 +120,7 @@ function ensureCafeAccess(
 }
 
 function requireCashEntryRole(request) {
+  assertCanonicalMasterState(request.auth);
   if (
     ![
       'MASTER',
@@ -134,11 +136,12 @@ function requireCashEntryRole(request) {
 }
 
 function requireMaster(request) {
-  if (request.auth.role !== 'MASTER') {
+  assertCanonicalMasterState(request.auth);
+  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
     throw new ApiError(
       403,
       'MASTER_ACCESS_REQUIRED',
-      'Only the MASTER role may reverse cash transactions.'
+      'Only the Primary MASTER role may reverse cash transactions.'
     );
   }
 }
@@ -212,6 +215,7 @@ function resolveDirection(
 }
 
 function buildCashFilter(request) {
+  assertCanonicalMasterState(request.auth);
   const filter = {
     organisationId:
       request.auth.organisationId,
@@ -349,6 +353,7 @@ function buildCashFilter(request) {
 const listCashTransactions =
   asyncHandler(
     async (request, response) => {
+      assertCanonicalMasterState(request.auth);
       const page =
         parsePositiveInteger(
           request.query.page,
@@ -407,6 +412,7 @@ const listCashTransactions =
 const getCashTransaction =
   asyncHandler(
     async (request, response) => {
+      assertCanonicalMasterState(request.auth);
       const cashTransactionId =
         normalizeIdentifier(
           request.params.cashTransactionId

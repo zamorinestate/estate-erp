@@ -21,11 +21,13 @@ const { MenuPublication } = require('../models/MenuPublication');
 const { MenuService } = require('../services/MenuService');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function assertOutletAccess(request, outletId) {
+  assertCanonicalMasterState(request.auth);
   if (!outletId) return;
-  const { role, assignedCafeIds } = request.auth;
-  if (role === 'MASTER' || role === 'OWNER') return;
+  const { role, assignedCafeIds, isPrimaryMaster } = request.auth;
+  if ((role === 'MASTER' && isPrimaryMaster === true) || role === 'OWNER') return;
   const normOutlet = outletId.trim().toUpperCase();
   const allowed = (assignedCafeIds || []).map((id) => id.trim().toUpperCase());
   if (!allowed.includes(normOutlet)) {
@@ -34,14 +36,16 @@ function assertOutletAccess(request, outletId) {
 }
 
 function requirePrimaryMaster(request) {
+  assertCanonicalMasterState(request.auth);
   const { role, isPrimaryMaster } = request.auth;
-  if (role !== 'MASTER' || !isPrimaryMaster) {
+  if (role !== 'MASTER' || isPrimaryMaster !== true) {
     throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'This action requires Primary MASTER governance.');
   }
 }
 
 // ── 1. Overview & Command Centre ─────────────────────────────────────────────
 const getMenuOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { outletId, concept } = request.query;
 
@@ -85,6 +89,7 @@ const getMenuOverview = asyncHandler(async (request, response) => {
 
 // ── 2. Global Menu Item Master ───────────────────────────────────────────────
 const listMenuItems = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { concept, category, search, status = 'ACTIVE', limit = 100, page = 1 } = request.query;
 

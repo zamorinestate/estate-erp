@@ -583,7 +583,7 @@ describe('REC-17A — Final Closure & Authoritative AP Verification Suite', () =
     );
 
     const req = {
-      auth: { organisationId: ORG_ID, userId: USER_PRIMARY_MASTER, role: 'MASTER', assignedCafeIds: ['GLOBAL'] },
+      auth: { organisationId: ORG_ID, userId: USER_PRIMARY_MASTER, role: 'MASTER', isPrimaryMaster: true, assignedCafeIds: ['GLOBAL'] },
       params: { purchaseOrderId: po.purchaseOrderId },
       body: { notes: 'Physical receipt and verified invoice packet transmitted to AP' },
     };

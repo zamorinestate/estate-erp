@@ -10,9 +10,11 @@ const { SequenceCounter } = require('../models/SequenceCounter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { recordRequestAudit } = require('../services/auditService');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 // 1. Employee: Submit Shift Change Request
 const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId, name } = request.auth;
   const {
     requestedDate,
@@ -92,9 +94,8 @@ const createSelfShiftChangeRequest = asyncHandler(async (request, response) => {
       status: 'PENDING',
     });
 
-    const masterUsers = await User.find({ organisationId, role: 'MASTER', accountStatus: 'ACTIVE' }).select('userId email').lean();
+    const masterUsers = await User.find({ organisationId, role: 'MASTER', isPrimaryMaster: true, accountStatus: 'ACTIVE' }).select('userId email').lean();
     const recipientIds = new Set(masterUsers.map((m) => m.userId));
-    recipientIds.add('MU-0001');
 
     const notifDateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     for (const masterId of recipientIds) {

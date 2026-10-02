@@ -26,6 +26,7 @@ const { ZurfService } = require('../services/zurfService');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { executeTransactionWithRetry } = require('../utils/transactionHelper');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 // Global emergency disposition pause state
 let _globalDispositionPaused = false;
@@ -95,6 +96,7 @@ async function ensureDefaultRetentionPolicies(organisationId) {
 
 const listTrashItems = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
+  assertCanonicalMasterState(auth);
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
   const role = auth.role || 'MASTER';
   const assignedCafeIds = auth.assignedCafeIds || [];
@@ -113,7 +115,7 @@ const listTrashItems = asyncHandler(async (request, response) => {
   const query = { organisationId: orgId };
 
   // Role café scope constraint
-  if (role !== 'MASTER') {
+  if (role !== 'MASTER' || auth.isPrimaryMaster !== true) {
     if (assignedCafeIds.length > 0) {
       query.$or = [{ cafeId: { $in: assignedCafeIds } }, { cafeId: 'GLOBAL' }];
     } else {
@@ -297,7 +299,7 @@ const previewRestoreItem = asyncHandler(async (request, response) => {
 const restoreTrashItem = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const { trashId } = request.body;
 
   if (!trashId) {
@@ -386,7 +388,7 @@ const restoreTrashItem = asyncHandler(async (request, response) => {
 const bulkRestoreTrashItems = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const { trashIds } = request.body;
 
   if (!Array.isArray(trashIds) || trashIds.length === 0) {
@@ -433,10 +435,11 @@ const bulkRestoreTrashItems = asyncHandler(async (request, response) => {
 });
 
 function assertPrimaryMaster(auth, actionName = 'perform this action') {
+  assertCanonicalMasterState(auth);
   const isPrimary = Boolean(
     auth &&
     auth.role === 'MASTER' &&
-    (auth.isPrimaryMaster === true || (auth.isPrimaryMaster !== false && auth.userId === 'MU-0001'))
+    auth.isPrimaryMaster === true
   );
   if (!isPrimary) {
     throw new ApiError(
@@ -455,7 +458,7 @@ const placePreservationHold = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
   assertPrimaryMaster(auth, 'place a preservation hold');
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const userName = auth.name || 'Primary Master';
   const { trashId } = request.params;
   const { reason, scope = 'RECORD', reviewDate } = request.body;
@@ -521,7 +524,7 @@ const releasePreservationHold = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
   assertPrimaryMaster(auth, 'release a preservation hold');
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const { trashId, holdId } = request.params;
   const { releaseReason } = request.body;
 
@@ -581,7 +584,7 @@ const releasePreservationHold = asyncHandler(async (request, response) => {
 const submitDispositionRequest = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const { trashId } = request.params;
   const { justification } = request.body;
 
@@ -626,7 +629,7 @@ const submitDispositionRequest = asyncHandler(async (request, response) => {
 const approveDisposition = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const { trashId } = request.params;
 
   const item = await TrashEntry.findOne({
@@ -658,7 +661,7 @@ const executeDispositionPurge = asyncHandler(async (request, response) => {
   const auth = request.auth || request.user || {};
   assertPrimaryMaster(auth, 'execute permanent disposition purge');
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const { trashId } = request.params;
 
   const item = await TrashEntry.findOne({
@@ -822,7 +825,7 @@ const toggleEmergencyDispositionPause = asyncHandler(async (request, response) =
   const auth = request.auth || request.user || {};
   assertPrimaryMaster(auth, 'pause emergency disposition');
   const orgId = auth.organisationId || 'ORG-ZAMORIN';
-  const userId = auth.userId || 'MU-0001';
+  const userId = auth.userId || 'SYSTEM';
   const { pause, reason } = request.body;
 
   _globalDispositionPaused = Boolean(pause);

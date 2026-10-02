@@ -24,10 +24,12 @@ const {
 } = require('../services/revenueShareCalculationService');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function getOwnerAuthorizedCafes(request) {
-  const { role, assignedCafeIds, cafeId } = request.auth;
-  if (role === 'MASTER') return null;
+  assertCanonicalMasterState(request?.auth);
+  const { role, assignedCafeIds, cafeId, isPrimaryMaster } = request?.auth || {};
+  if (role === 'MASTER' && isPrimaryMaster === true) return null;
   const rawCafes = (assignedCafeIds && assignedCafeIds.length > 0)
     ? assignedCafeIds
     : (cafeId ? [cafeId] : (Array.isArray(assignedCafeIds) && assignedCafeIds.length === 0 ? [] : null));
@@ -182,12 +184,14 @@ const getOutletById = asyncHandler(async (request, response) => {
 // ── 3. Operators Master ─────────────────────────────────────────────────────
 
 const listOperators = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId } = request.auth;
   const operators = await RevenueShareOperator.find({ organisationId }).sort({ legalName: 1 }).lean();
   return response.status(200).json({ success: true, data: { operators } });
 });
 
 const createOperator = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, userId } = request.auth;
   const { legalName, tradeName, brandCategory, gstin, panNumber, contacts, bankDetails, notes } = request.body;
 
@@ -221,6 +225,7 @@ const createOperator = asyncHandler(async (request, response) => {
 });
 
 const getOperatorById = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId } = request.auth;
   const { id } = request.params;
 
@@ -358,12 +363,14 @@ const getAgreementById = asyncHandler(async (request, response) => {
 // ── 5. Rate Rules ───────────────────────────────────────────────────────────
 
 const listRateRules = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId } = request.auth;
   const rateRules = await RevenueShareRateRule.find({ organisationId }).sort({ effectiveFrom: -1 }).lean();
   return response.status(200).json({ success: true, data: { rateRules } });
 });
 
 const createRateRule = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request?.auth);
   const { organisationId, userId } = request.auth;
   const {
     agreementId,

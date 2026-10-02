@@ -10,22 +10,25 @@ const { SequenceCounter } = require('../models/SequenceCounter');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { recordRequestAudit } = require('../services/auditService');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeIdentifier(v) {
   return typeof v === 'string' ? v.trim().toUpperCase() : '';
 }
 
 function requireHolidayAccess(request) {
+  assertCanonicalMasterState(request.auth);
   if (!['MASTER', 'OWNER'].includes(request.auth.role)) {
     throw new ApiError(403, 'PERMISSION_DENIED', 'Only Master or Owner can manage holidays.');
   }
-  if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster) {
+  if (request.auth.role === 'MASTER' && request.auth.isPrimaryMaster !== true) {
     throw new ApiError(403, 'PRIMARY_MASTER_REQUIRED', 'Only Primary Master can manage holidays.');
   }
 }
 
 // GET /api/v1/holidays
 const listHolidays = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const filter = { organisationId, isActive: true };
 
@@ -51,6 +54,7 @@ const listHolidays = asyncHandler(async (request, response) => {
 
 // GET /api/v1/holidays/:holidayId
 const getHoliday = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const holidayId = normalizeIdentifier(request.params.holidayId);
   const holiday = await HolidayCalendar.findOne({
     organisationId: request.auth.organisationId,

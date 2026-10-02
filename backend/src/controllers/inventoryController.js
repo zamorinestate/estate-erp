@@ -17,9 +17,10 @@ const RecallTraceService = require('../services/recallTraceService');
 const { ApiError } = require('../utils/ApiError');
 const { asyncHandler } = require('../utils/asyncHandler');
 
-const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { resolveEffectiveCafeScope, assertResourceCafeOwnership, assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function assertCafeAccess(request, cafeId) {
+  assertCanonicalMasterState(request.auth);
   if (!cafeId) return;
   const isCafeOps = request?.auth?.workspaceMode === 'CAFE_OPERATIONS' ||
     request?.headers?.['x-workspace-mode'] === 'CAFE_OPERATIONS' ||
@@ -34,7 +35,7 @@ function assertCafeAccess(request, cafeId) {
     );
   }
   const role = request?.auth?.role;
-  if (role === 'MASTER' || role === 'OWNER') return;
+  if ((role === 'MASTER' && request?.auth?.isPrimaryMaster === true) || role === 'OWNER') return;
   if (effectiveCafe && effectiveCafe !== cafeId.trim().toUpperCase()) {
     throw new ApiError(
       403,
@@ -46,6 +47,7 @@ function assertCafeAccess(request, cafeId) {
 
 // 1. Overview Command Centre & Multi-Café Heatmap
 const getInventoryOverview = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const effectiveCafe = resolveEffectiveCafeScope(request);
   const requestedCafe = request.query.cafeId;
@@ -135,6 +137,7 @@ const getInventoryOverview = asyncHandler(async (request, response) => {
 
 // 2. Global Item Master
 const listGlobalItems = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { category, search, status } = request.query;
 
@@ -154,6 +157,7 @@ const listGlobalItems = asyncHandler(async (request, response) => {
 });
 
 const getItem = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId } = request.auth;
   const { itemId } = request.params;
 
