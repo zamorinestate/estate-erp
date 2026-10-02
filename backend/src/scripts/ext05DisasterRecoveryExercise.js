@@ -142,8 +142,8 @@ class EXT05DisasterRecoveryOrchestrator {
       },
       database: {
         engine: 'MongoDB Atlas',
-        tier: 'FREE (Shared M0)',
-        limits: '512 MB storage, shared CPU/RAM',
+        tier: 'FREE',
+        limits: 'Shared free-tier capacity; no commercial PITR/SLA certification',
         cloudBackup: 'NOT_AVAILABLE',
         pitr: 'NOT_AVAILABLE',
         automatedFailoverExercise: 'NOT_AVAILABLE_USER_CONTROLLED',
@@ -155,7 +155,7 @@ class EXT05DisasterRecoveryOrchestrator {
       },
       repository: {
         provider: 'GitHub',
-        defaultBranch: 'owner-strategic-batch-03',
+        defaultBranch: 'main',
       },
       secretsManagement: {
         provider: 'Render Environment Variables (sync: false)',
@@ -163,7 +163,7 @@ class EXT05DisasterRecoveryOrchestrator {
       },
       malwareScanner: {
         provider: 'ClamAV INSTREAM socket',
-        deploymentStatus: 'BLOCKED_LIVE_SCANNER (Local socket verified, cloud deployment pending)',
+        deploymentStatus: 'APPLICATION_READY_LIVE_PRIVATE_DAEMON_PENDING (GitHub issue #39)',
       },
       emailProvider: {
         provider: 'External SMTP (Nodemailer)',
@@ -795,20 +795,20 @@ class EXT05DisasterRecoveryOrchestrator {
    */
   verifyPostRecoverySecurityInvariants() {
     // 1. Personal Ledger permanent policy:
-    // PRIMARY MASTER = ALLOW, OWNER = ALLOW, NORMAL MASTER = DENY, CAFE ADMIN = DENY, STAFF = DENY
+    // PRIMARY MASTER = ALLOW, OWNER = ALLOW, CAFE ADMIN = DENY, STAFF = DENY.
+    // Retired Normal Master is deliberately absent.
     const personalLedgerPolicy = {
       PRIMARY_MASTER: 'ALLOW',
       OWNER: 'ALLOW',
-      NORMAL_MASTER: 'DENY',
       CAFE_ADMIN: 'DENY',
       STAFF: 'DENY',
     };
 
     // 2. PO Approval permanent policy:
-    // PRIMARY MASTER = ALLOW, NORMAL MASTER = ALLOW, OWNER = DENY, CAFE ADMIN = DENY, STAFF = DENY
+    // PRIMARY MASTER = ALLOW; Owner, Cafe Admin, and Staff = DENY.
+    // Retired Normal Master is deliberately absent.
     const poApprovalPolicy = {
       PRIMARY_MASTER: 'ALLOW',
-      NORMAL_MASTER: 'ALLOW',
       OWNER: 'DENY',
       CAFE_ADMIN: 'DENY',
       STAFF: 'DENY',
