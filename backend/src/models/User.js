@@ -1516,11 +1516,6 @@ userSchema.methods.toJSON = function safeUserJSON() {
   return user;
 };
 
-userSchema.index({ organisationId: 1, primaryCafeId: 1, status: 1 });
-userSchema.index({ organisationId: 1, role: 1, status: 1 });
-userSchema.index({ organisationId: 1, employeeId: 1 });
-userSchema.index({ organisationId: 1, status: 1, name: 1 });
-
 const User =
   mongoose.models.User || mongoose.model('User', userSchema);
 

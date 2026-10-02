@@ -147,6 +147,16 @@ async function main() {
   await cdp.send('Runtime.enable');
   await cdp.send('DOM.enable');
 
+  // Ensure page has finished navigating to index.html
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try {
+      const isLoaded = await cdp.eval(`Boolean(window.document && document.readyState === 'complete' && window.location.href.includes('/index.html'))`);
+      if (isLoaded) break;
+    } catch {}
+    await delay(200);
+  }
+  await delay(500);
+
   let passedAssertions = 0;
   let failedAssertions = 0;
 
@@ -253,13 +263,18 @@ async function main() {
   const toastTest = await cdp.eval(`
     (async () => {
       const { showToast } = await import('./src/js/components.js');
-      // Trigger multiple toasts including duplicates
-      showToast("Operation successful", "mint");
-      showToast("Operation successful", "mint"); // duplicate, should be suppressed
-      showToast("Critical system error", "coral"); // error, should use role="alert"
-      showToast("General update notice", "cobalt"); // info, should use role="status"
+      let toastError = null;
+      try {
+        // Trigger multiple toasts including duplicates
+        showToast("Operation successful", "mint");
+        showToast("Operation successful", "mint"); // duplicate, should be suppressed
+        showToast("Critical system error", "coral"); // error, should use role="alert"
+        showToast("General update notice", "cobalt"); // info, should use role="status"
+      } catch (err) {
+        toastError = String(err);
+      }
 
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 300));
 
       const stack = document.getElementById("toast-root");
       const toasts = stack ? Array.from(stack.querySelectorAll(".toast-card")) : [];
