@@ -20,6 +20,7 @@ const { OutletOffering } = require('../models/OutletOffering');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { assertResourceCafeOwnership, resolveEffectiveCafeScope } = require('../utils/cafeScope');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -50,6 +51,7 @@ function assertCafeAccess(request, cafeId) {
  * Executes Save, Print, or Save & Print pipeline.
  */
 const commitOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { action = 'SAVE_AND_PRINT', ...orderPayload } = request.body || {};
   const cafeId = normalizeId(orderPayload.cafeId || request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0]);
 
@@ -79,6 +81,7 @@ const commitOrder = asyncHandler(async (request, response) => {
  * Returns computed taxes, totals, and receipt HTML markup without persisting to DB.
  */
 const previewOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const orderPayload = request.body || {};
   const cafeId = normalizeId(orderPayload.cafeId || request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0]);
 
@@ -95,6 +98,7 @@ const previewOrder = asyncHandler(async (request, response) => {
  * Generates thermal print buffer for an existing committed bill.
  */
 const printOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const billId = normalizeId(request.params.billId);
   const result = await PosOrderService.printCommittedBill(billId, request.auth);
   return response.status(200).json(result);
@@ -105,6 +109,7 @@ const printOrder = asyncHandler(async (request, response) => {
  * Generates an authorized reprint with copy counter and watermark.
  */
 const reprintOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const billId = normalizeId(request.params.billId);
   const { reason = 'Customer Request' } = request.body || {};
   const result = await PosOrderService.reprintBill(billId, request.auth, reason);
@@ -116,6 +121,7 @@ const reprintOrder = asyncHandler(async (request, response) => {
  * Retrieves active/open bills/tickets for a café.
  */
 const getActiveOrders = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const cafeId = normalizeId(request.params.cafeId);
   assertCafeAccess(request, cafeId);
 
@@ -137,6 +143,7 @@ const getActiveOrders = asyncHandler(async (request, response) => {
  * Retrieves the most recent finalized bill for a café, enabling browser-refresh resilient reprint (CTL-05).
  */
 const getLastCommittedBill = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const cafeId = normalizeId(request.params.cafeId || request.query.cafeId || request.auth.primaryCafeId || request.auth.assignedCafeIds?.[0]);
   if (!cafeId) {
     throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required to retrieve the last receipt.');
@@ -168,6 +175,7 @@ const getLastCommittedBill = asyncHandler(async (request, response) => {
  * Safe recovery after unknown network outcomes without relying on "Reprint Last".
  */
 const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const transactionId = String(request.params.transactionId || '').trim();
   if (!transactionId) {
     throw new ApiError(400, 'TRANSACTION_ID_REQUIRED', 'transactionId (idempotencyKey or saleAttemptId) is required.');
@@ -254,6 +262,7 @@ const getOrderStatusByIdempotency = asyncHandler(async (request, response) => {
  * REC-04B: Lists pending and manual-review reconciliation jobs for operational visibility.
  */
 const getPendingReconciliations = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const role = (request.auth?.role || '').toUpperCase();
   if (role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to view reconciliation queues.');
@@ -272,6 +281,7 @@ const getPendingReconciliations = asyncHandler(async (request, response) => {
  * REC-04B: Explicitly retries a reconciliation job with exactly-once safety.
  */
 const retryReconciliation = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const role = (request.auth?.role || '').toUpperCase();
   if (role === 'STAFF') {
     throw new ApiError(403, 'AUTHORIZATION_DENIED', 'Staff users are not authorized to retry reconciliation jobs.');
@@ -286,6 +296,7 @@ const retryReconciliation = asyncHandler(async (request, response) => {
  * REC-13: Replays queued offline POS transactions through the canonical PosOrderService pipeline.
  */
 const syncOfflineOrders = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const { organisationId, userId } = request.auth;
   const cafeId = normalizeId(request.body?.cafeId || request.query?.cafeId || request.auth?.primaryCafeId || '');
   const { transactions, deviceId, operatorSessionId } = request.body || {};
@@ -319,6 +330,7 @@ const syncOfflineOrders = asyncHandler(async (request, response) => {
  * OWNER and STAFF are strictly barred (Segregation of Duties).
  */
 const getPendingOfflineReviews = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const role = (request.auth?.role || '').toUpperCase();
   if (role === 'OWNER') {
     throw new ApiError(
@@ -366,6 +378,7 @@ const getPendingOfflineReviews = asyncHandler(async (request, response) => {
  * OWNER and STAFF are strictly barred (Segregation of Duties).
  */
 const reviewOfflineOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const role = (request.auth?.role || '').toUpperCase();
   if (role === 'OWNER') {
     throw new ApiError(
@@ -413,6 +426,7 @@ const reviewOfflineOrder = asyncHandler(async (request, response) => {
  * POS channel eligibility -> category mapping -> active status -> cafe scope -> price
  */
 const getPosCatalog = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const cafeId = normalizeId(request.params.cafeId);
   if (!cafeId) {
     throw new ApiError(400, 'CAFE_ID_REQUIRED', 'cafeId is required to fetch POS catalogue.');
