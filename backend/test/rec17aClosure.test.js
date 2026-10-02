@@ -16,7 +16,7 @@
  * 09. Summary Rebuild & Drift Recovery: rebuildVendorFinancialSummary repairs deliberate drift from subledger entries
  * 10. Accounts Department Handoff: sendToAccounts creates complete matched packet & APInvoice
  * 11. Role Matrix: Master full authority, Owner read-only (403 on payment release/reversal), Staff denied (403)
- * 12. Personal Ledger Invariant: Primary Master + Owner ALLOW; Normal Master, Admin, Staff DENY
+ * 12. Personal Ledger Invariant: Primary Master + Owner ALLOW; retired non-primary MASTER, Admin, Staff DENY
  * 13. Global Control Count Expansion: Exact 1,595 controls with 100% verified arithmetic
  * 14. Zero Kitchen Display System (KDS): Zero KDS files, models, or endpoints
  * =============================================================================
@@ -42,7 +42,7 @@ const procurementController = require('../src/controllers/procurementController'
 const ORG_ID = 'ORG-REC17A-TEST';
 const CAFE_ID = 'CAFE-REC17A-01';
 const USER_PRIMARY_MASTER = 'USER-PM-01';
-const USER_NORMAL_MASTER = 'USER-NM-01';
+const USER_RETIRED_MASTER = 'USER-NM-01';
 const USER_OWNER = 'USER-OWN-01';
 const USER_STAFF = 'USER-STF-01';
 
@@ -583,7 +583,7 @@ describe('REC-17A — Final Closure & Authoritative AP Verification Suite', () =
     );
 
     const req = {
-      auth: { organisationId: ORG_ID, userId: USER_PRIMARY_MASTER, role: 'MASTER', assignedCafeIds: ['GLOBAL'] },
+      auth: { organisationId: ORG_ID, userId: USER_PRIMARY_MASTER, role: 'MASTER', isPrimaryMaster: true, assignedCafeIds: ['GLOBAL'] },
       params: { purchaseOrderId: po.purchaseOrderId },
       body: { notes: 'Physical receipt and verified invoice packet transmitted to AP' },
     };
@@ -651,7 +651,7 @@ describe('REC-17A — Final Closure & Authoritative AP Verification Suite', () =
   });
 
   // 11. PERSONAL LEDGER INVARIANT
-  it('11. Personal Ledger Invariant: Primary Master + Owner ALLOW; Normal Master, Admin, Staff DENY', async () => {
+  it('11. Personal Ledger Invariant: Primary Master + Owner ALLOW; retired non-primary MASTER, Admin, Staff DENY', async () => {
     // Assert known Personal Ledger access matrix:
     const canAccessPersonalLedger = (role, isPrimaryMaster) => {
       if (role === 'OWNER') return true;
@@ -661,7 +661,7 @@ describe('REC-17A — Final Closure & Authoritative AP Verification Suite', () =
 
     assert.strictEqual(canAccessPersonalLedger('MASTER', true), true, 'Primary Master must be allowed');
     assert.strictEqual(canAccessPersonalLedger('OWNER', false), true, 'Owner must be allowed');
-    assert.strictEqual(canAccessPersonalLedger('MASTER', false), false, 'Normal Master must be denied');
+    assert.strictEqual(canAccessPersonalLedger('MASTER', false), false, 'retired non-primary MASTER must be denied');
     assert.strictEqual(canAccessPersonalLedger('CAFE_ADMIN', false), false, 'Cafe Admin must be denied');
     assert.strictEqual(canAccessPersonalLedger('STAFF', false), false, 'Staff must be denied');
   });
