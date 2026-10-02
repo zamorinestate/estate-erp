@@ -244,7 +244,7 @@ function createApp(environment) {
           styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           imgSrc: ["'self'", "data:", "https://images.unsplash.com"],
-          connectSrc: ["'self'", "https://zamorin-cafe-erp.vercel.app", "http://localhost:3000", "http://localhost:4000", "http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"],
+          connectSrc: ["'self'", "https://zamorin-cafe-erp.vercel.app", "https://zamorin-cafe-erp-backend.onrender.com", "http://localhost:3000", "http://localhost:4000", "http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"],
         },
       },
       frameguard: { action: 'deny' },

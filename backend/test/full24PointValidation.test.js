@@ -146,11 +146,11 @@ test('24-POINT PRODUCTION-EQUIVALENCE VALIDATION SUITE', async (t) => {
     // MFA-Enabled User
     await User.create({
       organisationId: TEST_ORG,
-      userId: 'MU-0002',
+      userId: 'OW-0002',
       name: 'MFA Enforced Officer',
       email: 'mfa@zamorin.com',
       passwordHash: dummyPassword,
-      role: 'MASTER',
+      role: 'OWNER',
       accountStatus: 'ACTIVE',
       status: 'ACTIVE',
       isPrimaryMaster: false,

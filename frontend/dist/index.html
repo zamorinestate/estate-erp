@@ -10,8 +10,20 @@
   <link rel="icon" type="image/svg+xml" href="/src/assets/zamorin-app-icon-vector.svg" />
   <link rel="apple-touch-icon" href="/src/assets/zamorin-app-icon-1024.png" />
   <link rel="manifest" href="/manifest.json" />
+  <link rel="preconnect" href="https://zamorin-cafe-erp-backend.onrender.com" crossorigin />
+  <link rel="dns-prefetch" href="https://zamorin-cafe-erp-backend.onrender.com" />
 
   <script>
+    // Immediate non-blocking background wake-up ping for Render backend during cold starts
+    try {
+      fetch('https://zamorin-cafe-erp-backend.onrender.com/api/v1/health', {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'omit',
+        mode: 'no-cors'
+      }).catch(function() {});
+    } catch (e) {}
+
     // Text direction (LTR/RTL) initialization to avoid FOUC
     try {
       const savedDir = localStorage.getItem('zamorin-dir') || 'ltr';

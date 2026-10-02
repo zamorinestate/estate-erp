@@ -1186,23 +1186,33 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
 
       const submitBtn = container.querySelector("#l2-submit-btn");
       isSubmitting = true;
-      let progressTimer = null;
+      const progressTimers = [];
 
       if (submitBtn) {
         submitBtn.disabled = true;
         submitBtn.textContent = "Connecting securely...";
-        progressTimer = setTimeout(() => {
+        progressTimers.push(setTimeout(() => {
           if (isSubmitting && submitBtn) {
             submitBtn.textContent = "Authenticating...";
           }
-        }, 2200);
+        }, 2200));
+        progressTimers.push(setTimeout(() => {
+          if (isSubmitting && submitBtn) {
+            submitBtn.textContent = "Waking secure server...";
+          }
+        }, 8000));
+        progressTimers.push(setTimeout(() => {
+          if (isSubmitting && submitBtn) {
+            submitBtn.textContent = "Verifying credentials...";
+          }
+        }, 20000));
       }
 
       try {
         const targetCafeId = container.querySelector("#login-view")?.dataset?.targetCafeId || null;
         await onSubmit({ organisationId, email, password, rememberDevice, targetCafeId });
       } catch (err) {
-        if (progressTimer) clearTimeout(progressTimer);
+        progressTimers.forEach(clearTimeout);
         isSubmitting = false;
         if (submitBtn) {
           submitBtn.disabled = false;
@@ -1228,7 +1238,7 @@ export function wireLoginPage2(container, { onSubmit, onForgotPassword, onRegist
           errorEl.style.display = "block";
         }
       } finally {
-        if (progressTimer) clearTimeout(progressTimer);
+        progressTimers.forEach(clearTimeout);
         isSubmitting = false;
       }
     });
@@ -2031,7 +2041,11 @@ export function wireMfaChallenge2(container, { onSubmit, onBack } = {}) {
   const focusCurrentInput = () => {
     setTimeout(() => {
       try {
-        (useRecoveryCode ? recoveryInput : codeInput)?.focus();
+        if (useRecoveryCode) {
+          recoveryInput?.focus();
+        } else if (codeInput) {
+          codeInput.focus();
+        }
       } catch {}
     }, 50);
   };

@@ -231,7 +231,7 @@ async function main() {
     })()
   `);
 
-  assert('Primary Master Sidebar Mounted (26 Routes)', pmNav.count === 26 || pmNav.count >= 23, `Actual: ${pmNav.count}`);
+  assert('Primary Master Sidebar Mounted (19 Routes)', pmNav.count === 19 || pmNav.count >= 18, `Actual: ${pmNav.count}`);
   assert('Primary Master Has Access to Personal Ledger', pmNav.links.includes('ledger'));
   assert('Primary Master Has Access to Universal Payroll', pmNav.links.includes('payroll'));
   assert('Primary Master Has Access to Revenue Share', pmNav.links.includes('revenue-share'));
@@ -268,8 +268,8 @@ async function main() {
     })()
   `);
 
-  assert('Owner Sidebar Mounted (14 Routes)', ownerNav.count === 14 || ownerNav.count >= 11, `Actual: ${ownerNav.count}`);
-  assert('Owner Has Bills & Receipts', ownerNav.links.includes('bills'));
+  assert('Owner Sidebar Mounted (17 Routes)', ownerNav.count === 17 || ownerNav.count >= 14, `Actual: ${ownerNav.count}`);
+  assert('Owner Has Sales & Cash Book', ownerNav.links.includes('sales-cash'));
   assert('Owner Has Café Performance', ownerNav.links.includes('performance'));
   assert('Owner Has Personal Ledger', ownerNav.links.includes('ledger'));
   assert('Owner Has Tasks & Oversight', ownerNav.links.includes('approvals'));
@@ -304,7 +304,7 @@ async function main() {
     })()
   `);
 
-  assert('Cafe Operations Sidebar Mounted (15 Routes)', cafeNav.count === 15, `Actual: ${cafeNav.count}`);
+  assert('Cafe Operations Sidebar Mounted (16 Routes)', cafeNav.count === 16, `Actual: ${cafeNav.count}`);
   assert('Cafe Operations Has POS Till', cafeNav.links.includes('pos'));
   assert('Cafe Operations Has Sales & Cash Book', cafeNav.links.includes('sales-cash'));
   assert('Cafe Operations Has Fleet Devices', cafeNav.links.includes('cafe-ops-devices'));

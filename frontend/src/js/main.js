@@ -495,14 +495,20 @@ export function triggerBackendWarmup() {
 
   try {
     const apiBase = window.ZAMORIN_API_BASE_URL || "/api/v1";
-    // Non-blocking fetch with ZERO credentials to wake up Render backend during cold starts
+    // Non-blocking fetch with ZERO credentials to wake up backend during cold starts
     fetch(`${apiBase}/health`, {
       method: "GET",
       cache: "no-store",
       credentials: "omit",
-    }).catch(() => {
-      // Non-blocking: warm-up failure does not affect the UI or user typing
-    });
+    }).catch(() => {});
+
+    // Also trigger direct Render backend wake-up to eliminate cold-start wait
+    fetch("https://zamorin-cafe-erp-backend.onrender.com/api/v1/health", {
+      method: "GET",
+      cache: "no-store",
+      credentials: "omit",
+      mode: "no-cors",
+    }).catch(() => {});
   } catch {}
 }
 
@@ -782,11 +788,31 @@ async function handleCompleteLoginFlow({ organisationId, email, password, rememb
       loginPayload.targetCafeId = String(targetCafeId).trim().toUpperCase();
     }
 
-    const res = await apiPost(
-      "/auth/login",
-      loginPayload,
-      { timeoutMs: 60000 }
-    );
+    let res;
+    try {
+      res = await apiPost(
+        "/auth/login",
+        loginPayload,
+        { timeoutMs: 95000 }
+      );
+    } catch (primaryLoginErr) {
+      if (
+        primaryLoginErr?.isTimeoutError ||
+        primaryLoginErr?.code === "REQUEST_TIMEOUT" ||
+        primaryLoginErr?.code === "NETWORK_UNAVAILABLE" ||
+        primaryLoginErr?.status === 502 ||
+        primaryLoginErr?.status === 504
+      ) {
+        // Cold-start auto-retry: first request triggered spin-up, retry succeeds immediately
+        res = await apiPost(
+          "/auth/login",
+          loginPayload,
+          { timeoutMs: 95000 }
+        );
+      } else {
+        throw primaryLoginErr;
+      }
+    }
 
     // Check if MFA is required (200/202 responses with challenge tokens)
     const isMfa = Boolean(

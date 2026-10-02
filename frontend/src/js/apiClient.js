@@ -7,6 +7,7 @@
 import { state } from "./state.js";
 
 const VERCEL_API_BASE_URL = "https://zamorin-cafe-erp.vercel.app/api/v1";
+export const DIRECT_BACKEND_URL = "https://zamorin-cafe-erp-backend.onrender.com/api/v1";
 
 const DEFAULT_API_BASE_URL =
   typeof globalThis.location !== "undefined" &&
@@ -527,7 +528,7 @@ export function setCanonicalDeviceId(id) {
   }
 }
 
-export const AUTH_REQUEST_TIMEOUT_MS = 60000;
+export const AUTH_REQUEST_TIMEOUT_MS = 95000;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
 export class ApiClientError extends Error {
@@ -869,8 +870,45 @@ export async function performRequest(
         signal: timeoutCtrl.signal,
       }
     );
+    // If proxy rewrite times out (502/504) on an auth route during a cloud cold-start, seamlessly fall back to direct backend
+    if ((res.status === 502 || res.status === 504) && isAuthRoute && API_BASE_URL !== DIRECT_BACKEND_URL) {
+      try {
+        const directRes = await fetch(
+          `${DIRECT_BACKEND_URL}${normalizedPath}`,
+          {
+            method,
+            credentials: "include",
+            cache: "no-store",
+            headers: requestHeaders,
+            body: shouldStringify ? JSON.stringify(finalBody) : finalBody,
+            signal: timeoutCtrl.signal,
+          }
+        );
+        return directRes;
+      } catch {}
+    }
     return res;
   } catch (netErr) {
+    // If primary endpoint failed or timed out during auth cold start, attempt direct cloud fallback
+    if (isAuthRoute && API_BASE_URL !== DIRECT_BACKEND_URL && !signal?.aborted) {
+      try {
+        const directTimeoutCtrl = new AbortController();
+        const directTimeoutId = setTimeout(() => directTimeoutCtrl.abort(), effectiveTimeoutMs);
+        const directRes = await fetch(
+          `${DIRECT_BACKEND_URL}${normalizedPath}`,
+          {
+            method,
+            credentials: "include",
+            cache: "no-store",
+            headers: requestHeaders,
+            body: shouldStringify ? JSON.stringify(finalBody) : finalBody,
+            signal: directTimeoutCtrl.signal,
+          }
+        );
+        clearTimeout(directTimeoutId);
+        return directRes;
+      } catch {}
+    }
     if (didTimeout) {
       throw new ApiClientError({
         status: 0,
