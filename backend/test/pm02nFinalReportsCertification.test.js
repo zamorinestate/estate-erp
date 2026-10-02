@@ -11,7 +11,7 @@
  * 2. 25-Category Canonical Taxonomy: Strict equality, no drift, live vs reserved.
  * 3. 21 Base Reports Catalogue: Role access, classification, endpoints, formats.
  * 4. Cross-Org & Multi-Tenant Isolation: Zero foreign observation, zero data leakage.
- * 5. Role Hierarchy & Authority Matrix: Primary Master, Normal Master, Owner, CAFE_ADMIN, STAFF.
+ * 5. Role Hierarchy & Authority Matrix: Primary Master, Owner, CAFE_ADMIN, STAFF; retired non-primary MASTER fails closed.
  * 6. Owner Assigned-Café Scope: Authorized subset only, empty assigned fails closed.
  * 7. Staff Enterprise Reporting Denial: Denied custom reports, packs, trust centre, exports.
  * 8. Client Spoofing & IDOR Resistance: Client organisationId/role/café ignored.
@@ -132,7 +132,7 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
       OWNER_REPORTS_CROSS_CAFE_LEAK: 0,
       CAFE_ADMIN_REPORTS_CROSS_CAFE_LEAK: 0,
       STAFF_ENTERPRISE_REPORT_ACCESS: 0,
-      NORMAL_MASTER_PRIMARY_MASTER_PRIVILEGE_BYPASS: 0,
+      RETIRED_MASTER_REPORTING_BYPASS: 0,
       REPORTS_CROSS_ORG_LEAK: 0,
       REPORTS_IDOR_BYPASS: 0,
       REPORTS_CLIENT_AUTHORITY_SPOOF: 0,
@@ -216,10 +216,17 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
       assert.deepStrictEqual(scope, ['ZC-001', 'ZC-002']);
     });
 
-    it('3.2 Normal Master obeys report classification (CONFIDENTIAL/INTERNAL only)', () => {
-      const report = CANONICAL_REPORTS['daily-sales'];
-      assert.ok(report.supportedRoles.includes('MASTER'));
-      assert.strictEqual(report.classification, 'INTERNAL');
+    it('3.2 Retired non-primary MASTER is denied even for standard INTERNAL reports', () => {
+      const retiredAuth = {
+        userId: 'MU-RETIRED-002',
+        role: 'MASTER',
+        isPrimaryMaster: false,
+        organisationId: 'ORG-01',
+      };
+      assert.throws(
+        () => ReportRegistry.assertReportAccess('daily-sales', retiredAuth),
+        (err) => err.statusCode === 403 && err.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
+      );
     });
 
     it('3.3 Owner scope is strictly restricted to assignedCafeIds', () => {
@@ -695,15 +702,17 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
       assert.strictEqual(rep.category, 'TASKS_APPROVALS');
     });
 
-    it('12.11 Role authority ledger distinguishes Primary Master vs Normal Master', () => {
+    it('12.11 Role authority ledger recognizes only explicitly attested Primary Master for MASTER reporting', () => {
       const primaryAuth = { userId: 'MU-0001', role: 'MASTER', isPrimaryMaster: true, organisationId: 'ORG-01' };
-      const normalAuth = { userId: 'MU-0002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-01' };
+      const retiredAuth = { userId: 'MU-RETIRED-002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-01' };
 
       const pScope = resolveReportScope({ auth: primaryAuth, query: {} }, {});
       assert.strictEqual(pScope.authorityType, 'PRIMARY_MASTER');
 
-      const nScope = resolveReportScope({ auth: normalAuth, query: {} }, {});
-      assert.strictEqual(nScope.authorityType, 'NORMAL_MASTER');
+      assert.throws(
+        () => resolveReportScope({ auth: retiredAuth, query: {} }, {}),
+        (err) => err.statusCode === 403 && err.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
+      );
     });
 
     it('12.12 Invariant-count reconciliation: exactly 32 verified PM-02N invariants', () => {
@@ -920,18 +929,19 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
       assert.deepStrictEqual([...dbRoles].sort(), expectedRoles.sort());
       assert.deepStrictEqual([...USER_ROLES].sort(), expectedRoles.sort());
       assert.strictEqual(dbRoles.includes('PRIMARY_MASTER'), false);
-      assert.strictEqual(dbRoles.includes('NORMAL_MASTER'), false);
     });
 
-    it('13.8 Derived Master classification: PRIMARY_MASTER and NORMAL_MASTER are runtime classifications', () => {
+    it('13.8 MASTER reporting classification is Primary-Master-only; non-primary MASTER fails closed', () => {
       const primaryAuth = { userId: 'MU-001', role: 'MASTER', isPrimaryMaster: true, organisationId: 'ORG-01' };
-      const normalAuth = { userId: 'MU-002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-01' };
+      const retiredAuth = { userId: 'MU-RETIRED-002', role: 'MASTER', isPrimaryMaster: false, organisationId: 'ORG-01' };
 
       const pScope = resolveReportScope({ auth: primaryAuth, query: {} }, {});
       assert.strictEqual(pScope.authorityType, 'PRIMARY_MASTER');
 
-      const nScope = resolveReportScope({ auth: normalAuth, query: {} }, {});
-      assert.strictEqual(nScope.authorityType, 'NORMAL_MASTER');
+      assert.throws(
+        () => resolveReportScope({ auth: retiredAuth, query: {} }, {}),
+        (err) => err.statusCode === 403 && err.code === 'RETIRED_MASTER_ACCOUNT_DENIED'
+      );
     });
 
     it('13.9 Trust-status source audit equality: exactly 6 canonical trust tokens', () => {
@@ -976,7 +986,7 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
         OWNER_REPORTS_CROSS_CAFE_LEAK: 0,
         CAFE_ADMIN_REPORTS_CROSS_CAFE_LEAK: 0,
         STAFF_ENTERPRISE_REPORT_ACCESS: 0,
-        NORMAL_MASTER_PRIMARY_MASTER_PRIVILEGE_BYPASS: 0,
+        RETIRED_MASTER_REPORTING_BYPASS: 0,
         REPORTS_CROSS_ORG_LEAK: 0,
         REPORTS_IDOR_BYPASS: 0,
         REPORTS_CLIENT_AUTHORITY_SPOOF: 0,
@@ -1001,7 +1011,7 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
         PM02N_SECOND_COMPARISON_TAXONOMY: 0,
         PM02N_OMITS_CANONICAL_SCHEDULED_PICKUP: 0,
         PM02N_CREATES_PRIMARY_MASTER_DATABASE_ROLE: 0,
-        PM02N_CREATES_NORMAL_MASTER_DATABASE_ROLE: 0,
+        PM02N_CREATES_SECOND_MASTER_DATABASE_ROLE: 0,
         PM02N_TRUST_STATUS_LEDGER_DIFFERS_FROM_FROZEN_SOURCE: 0,
         UNINVENTORIED_VISIBLE_REPORT_CONTROL: 0,
       };
@@ -1385,7 +1395,7 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
         OWNER_REPORTS_CROSS_CAFE_LEAK: 0,
         CAFE_ADMIN_REPORTS_CROSS_CAFE_LEAK: 0,
         STAFF_ENTERPRISE_REPORT_ACCESS: 0,
-        NORMAL_MASTER_PRIMARY_MASTER_PRIVILEGE_BYPASS: 0,
+        RETIRED_MASTER_REPORTING_BYPASS: 0,
         REPORTS_CROSS_ORG_LEAK: 0,
         REPORTS_IDOR_BYPASS: 0,
         REPORTS_CLIENT_AUTHORITY_SPOOF: 0,
@@ -1410,7 +1420,7 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
         PM02N_SECOND_COMPARISON_TAXONOMY: 0,
         PM02N_OMITS_CANONICAL_SCHEDULED_PICKUP: 0,
         PM02N_CREATES_PRIMARY_MASTER_DATABASE_ROLE: 0,
-        PM02N_CREATES_NORMAL_MASTER_DATABASE_ROLE: 0,
+        PM02N_CREATES_SECOND_MASTER_DATABASE_ROLE: 0,
         PM02N_TRUST_STATUS_LEDGER_DIFFERS_FROM_FROZEN_SOURCE: 0,
         UNINVENTORIED_VISIBLE_REPORT_CONTROL: 0,
 
@@ -1454,11 +1464,9 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
       assert.strictEqual(PM02N_FINAL_PERSISTENT_ROLE_LEDGER_DIFFERS_FROM_USER_SCHEMA, 0);
     });
 
-    it('15.2 Primary/Normal Master derived classifications: boolean flags on User, NOT database roles', () => {
+    it('15.2 Primary Master is an explicit boolean invariant on MASTER; no secondary Master database role exists', () => {
       const { USER_ROLES, User } = require('../src/models/User');
       assert.strictEqual(USER_ROLES.includes('PRIMARY_MASTER'), false);
-      assert.strictEqual(USER_ROLES.includes('NORMAL_MASTER'), false);
-      assert.strictEqual(USER_ROLES.includes('SECONDARY_MASTER'), false);
       assert.strictEqual(USER_ROLES.includes('SUPER_ADMIN'), false);
 
       const isPrimaryField = User.schema.path('isPrimaryMaster');
@@ -1466,9 +1474,9 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
       assert.strictEqual(isPrimaryField.instance, 'Boolean');
 
       const PRIMARY_MASTER_PERSISTED_AS_DATABASE_ROLE = 0;
-      const NORMAL_MASTER_PERSISTED_AS_DATABASE_ROLE = 0;
+      const SECOND_MASTER_DATABASE_ROLE_EXISTS = 0;
       assert.strictEqual(PRIMARY_MASTER_PERSISTED_AS_DATABASE_ROLE, 0);
-      assert.strictEqual(NORMAL_MASTER_PERSISTED_AS_DATABASE_ROLE, 0);
+      assert.strictEqual(SECOND_MASTER_DATABASE_ROLE_EXISTS, 0);
     });
 
     it('15.3 Complete DimensionRegistry strict equality: exactly 23 registered dimensions', () => {
@@ -1716,7 +1724,7 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
       assert.strictEqual(ACKNOWLEDGEMENT_CHECK_USES_FAKE_PRIMARY_MASTER_ROLE, 0);
     });
 
-    it('16.4 Normal Master acknowledgement denied (403 PRIMARY_MASTER_AUTHORITY_REQUIRED)', async () => {
+    it('16.4 Retired non-primary MASTER acknowledgement denied (403 PRIMARY_MASTER_AUTHORITY_REQUIRED)', async () => {
       const { acknowledgeReconciliationIssue } = require('../src/controllers/reportController');
       let nmErr = null;
       const reqNM = {
@@ -1728,17 +1736,17 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
         },
         body: {
           issueId: 'DQ-ISSUE-COGS-TEST-NM',
-          note: 'Attempt by Normal Master',
+          note: 'Attempt by retired non-primary MASTER',
         },
       };
       await acknowledgeReconciliationIssue(reqNM, {}, (err) => {
         nmErr = err;
       });
-      assert.ok(nmErr, 'Normal Master must be rejected');
+      assert.ok(nmErr, 'Retired non-primary MASTER must be rejected');
       assert.strictEqual(nmErr.statusCode, 403);
       assert.strictEqual(nmErr.code, 'PRIMARY_MASTER_AUTHORITY_REQUIRED');
-      const NORMAL_MASTER_CAN_ACKNOWLEDGE_RECONCILIATION = 0;
-      assert.strictEqual(NORMAL_MASTER_CAN_ACKNOWLEDGE_RECONCILIATION, 0);
+      const RETIRED_MASTER_CAN_ACKNOWLEDGE_RECONCILIATION = 0;
+      assert.strictEqual(RETIRED_MASTER_CAN_ACKNOWLEDGE_RECONCILIATION, 0);
     });
 
     it('16.5 Owner acknowledgement denied (403 PRIMARY_MASTER_AUTHORITY_REQUIRED)', async () => {
@@ -1934,7 +1942,7 @@ describe('PM-02N: Final Reports & Analytics End-to-End Certification Suite', () 
         RELEASE_CERTIFICATION_MISTAKEN_FOR_DATA_TRUST_CERTIFICATION: 0,
         ARBITRARY_DATA_TRUST_COMPOSITE_SCORE: 0,
         ACKNOWLEDGEMENT_CHECK_USES_FAKE_PRIMARY_MASTER_ROLE: 0,
-        NORMAL_MASTER_CAN_ACKNOWLEDGE_RECONCILIATION: 0,
+        RETIRED_MASTER_CAN_ACKNOWLEDGE_RECONCILIATION: 0,
         OWNER_CAN_ACKNOWLEDGE_RECONCILIATION: 0,
         CAFE_ADMIN_CAN_ACKNOWLEDGE_RECONCILIATION: 0,
         STAFF_CAN_ACKNOWLEDGE_RECONCILIATION: 0,
