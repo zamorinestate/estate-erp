@@ -17,6 +17,7 @@ const { Vendor } = require('../models/Vendor');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 function normalizeId(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -84,6 +85,7 @@ function assertCafeAccess(request, cafeId) {
  * GET /api/v1/finance/vendor-ledger/vendors/:vendorId
  */
 const getVendorLedger = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'READ');
   const { organisationId } = request.auth;
   const vendorId = normalizeId(request.params.vendorId);
@@ -113,6 +115,7 @@ const getVendorLedger = asyncHandler(async (request, response) => {
  * GET /api/v1/finance/vendor-ledger/vendors/:vendorId/statement
  */
 const getVendorStatement = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'READ');
   const { organisationId } = request.auth;
   const vendorId = normalizeId(request.params.vendorId);
@@ -170,6 +173,7 @@ const getVendorStatement = asyncHandler(async (request, response) => {
  * POST /api/v1/finance/vendor-ledger/vendors/:vendorId/opening-balance
  */
 const setOpeningBalance = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'WRITE');
   if (request.auth.role !== 'MASTER') {
     throw new ApiError(403, 'FORBIDDEN_ROLE', 'Only Master has authority to set vendor opening balances.');
@@ -201,6 +205,7 @@ const setOpeningBalance = asyncHandler(async (request, response) => {
  * Hand off finalized PO/GRN to Accounts Payable.
  */
 const postBillFromPo = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'WRITE');
   const { organisationId } = request.auth;
   const purchaseOrderId = normalizeId(request.params.purchaseOrderId);
@@ -240,6 +245,7 @@ const postBillFromPo = asyncHandler(async (request, response) => {
  * Accounts Payable work queue with canonical review buckets.
  */
 const getApQueue = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'READ');
   const { organisationId } = request.auth;
   const { cafeId, status } = request.query;
@@ -282,6 +288,7 @@ const getApQueue = asyncHandler(async (request, response) => {
  * Record full or partial vendor payment with allocation.
  */
 const recordPayment = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'PAYMENT');
   const { organisationId } = request.auth;
   const {
@@ -321,6 +328,7 @@ const recordPayment = asyncHandler(async (request, response) => {
  * POST /api/v1/finance/vendor-ledger/payments/:paymentId/reverse
  */
 const reversePayment = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'REVERSAL');
   const { organisationId } = request.auth;
   const paymentId = normalizeId(request.params.paymentId);
@@ -344,6 +352,7 @@ const reversePayment = asyncHandler(async (request, response) => {
  * POST /api/v1/finance/vendor-ledger/advances
  */
 const recordAdvance = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'PAYMENT');
   const { organisationId } = request.auth;
   const { vendorId, amountPaisa, cafeId, paymentMethod, reference, notes, idempotencyKey } = request.body;
@@ -371,6 +380,7 @@ const recordAdvance = asyncHandler(async (request, response) => {
  * POST /api/v1/finance/vendor-ledger/advances/apply
  */
 const applyAdvance = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'PAYMENT');
   const { organisationId } = request.auth;
   const { vendorId, invoiceId, amountToApplyPaisa, notes } = request.body;
@@ -395,6 +405,7 @@ const applyAdvance = asyncHandler(async (request, response) => {
  * POST /api/v1/finance/vendor-ledger/credits/apply
  */
 const applyCreditNote = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'WRITE');
   const { organisationId } = request.auth;
   const { vendorId, invoiceId, creditNoteId, amountPaisa, reason } = request.body;
@@ -420,6 +431,7 @@ const applyCreditNote = asyncHandler(async (request, response) => {
  * POST /api/v1/finance/vendor-ledger/bills/:invoiceId/holds/release
  */
 const releasePaymentHold = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'PAYMENT');
   const { organisationId } = request.auth;
   const invoiceId = normalizeId(request.params.invoiceId);
@@ -444,6 +456,7 @@ const releasePaymentHold = asyncHandler(async (request, response) => {
  * GET /api/v1/finance/vendor-ledger/reports/aging
  */
 const getApAgingReport = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'READ');
   const { organisationId } = request.auth;
   const { cafeId, asOfDate } = request.query;
@@ -467,6 +480,7 @@ const getApAgingReport = asyncHandler(async (request, response) => {
  * GET /api/v1/finance/vendor-ledger/reports/gst-180-days
  */
 const getGstMonitoringReport = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'READ');
   const { organisationId } = request.auth;
   const { asOfDate } = request.query;
@@ -487,6 +501,7 @@ const getGstMonitoringReport = asyncHandler(async (request, response) => {
  * POST /api/v1/finance/vendor-ledger/vendors/:vendorId/rebuild-summary
  */
 const rebuildVendorSummary = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   assertFinanceRoleAccess(request, 'WRITE');
   const { organisationId } = request.auth;
   const vendorId = normalizeId(request.params.vendorId);
