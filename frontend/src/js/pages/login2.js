@@ -1928,6 +1928,8 @@ export function wireRegisterPage2(container, { onLogin, onSubmit } = {}) {
 export function renderMfaChallenge2({
   email = "",
   mfaSetupRequired = false,
+  manualEntrySecret = "",
+  setupLoading = false,
 } = {}) {
   const recoveryToggle = mfaSetupRequired
     ? ""
@@ -1955,6 +1957,17 @@ export function renderMfaChallenge2({
               : `Enter the 6-digit verification code from your Authenticator app${email ? ` for <strong>${email}</strong>` : ""}.`}
           </p>
         </div>
+
+        ${mfaSetupRequired ? `
+          <div class="l2-notice-banner" style="margin-bottom:12px;">
+            ${setupLoading
+              ? "Preparing your Authenticator setup…"
+              : `Add this account to your Authenticator app, then enter the generated 6-digit code.
+                 <div style="margin-top:10px; font-family:monospace; font-weight:800; letter-spacing:2px; word-break:break-all;">
+                   ${escHtml(manualEntrySecret)}
+                 </div>`}
+          </div>
+        ` : ""}
 
         <div id="l2-mfa-error" class="l2-error-banner" style="display:none;"></div>
 
