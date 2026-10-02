@@ -78,6 +78,7 @@ const {
 const {
   ApiError,
 } = require('../utils/ApiError');
+const { assertCanonicalMasterState } = require('../utils/cafeScope');
 
 const {
   recordRequestAudit,
@@ -161,6 +162,7 @@ async function safeAudit(request, { action, entityType = 'VENDOR', entityId, bef
 // ── 1. Supplier Master & Directory ──────────────────────────────────────────
 
 const listVendors = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const page = parsePositiveInteger(request.query.page, 1, 1000);
   const limit = parsePositiveInteger(request.query.limit, 25, 100);
   const skip = (page - 1) * limit;
@@ -225,6 +227,7 @@ const listVendors = asyncHandler(async (request, response) => {
 });
 
 const getVendor = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const vendorId = normalizeId(request.params.vendorId);
   if (!vendorId) {
     throw new ApiError(400, 'INVALID_ID', 'A valid vendor ID is required.');
@@ -251,6 +254,7 @@ const getVendor = asyncHandler(async (request, response) => {
 });
 
 const getVendor360 = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const vendorId = normalizeId(request.params.vendorId);
   if (!vendorId) {
     throw new ApiError(400, 'INVALID_ID', 'A valid vendor ID is required.');
@@ -331,6 +335,7 @@ const getVendor360 = asyncHandler(async (request, response) => {
 // ── 2. Onboarding & Duplicate Detection ──────────────────────────────────────
 
 const createVendor = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const {
     name,
     tradeName,
@@ -440,6 +445,7 @@ const createVendor = asyncHandler(async (request, response) => {
 });
 
 const updateVendor = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const vendorId = normalizeId(request.params.vendorId);
   const vendor = await Vendor.findOne({ vendorId, organisationId: request.auth.organisationId });
   if (!vendor) {
@@ -478,6 +484,7 @@ const updateVendor = asyncHandler(async (request, response) => {
 });
 
 const changeVendorStatus = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const vendorId = normalizeId(request.params.vendorId);
   const { status, reason = '' } = request.body;
 
@@ -556,6 +563,7 @@ const changeVendorStatus = asyncHandler(async (request, response) => {
 // ── 3. Exact PO Order Placement & Timeline ──────────────────────────────────
 
 const placeVendorOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.poId);
   const po = await PurchaseOrder.findOne({
     purchaseOrderId,
@@ -612,6 +620,7 @@ const placeVendorOrder = asyncHandler(async (request, response) => {
 });
 
 const acknowledgeVendorOrder = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.poId);
   const { status = 'ACCEPTED', confirmedDeliveryDate = null, proposedChanges = null } = request.body;
 
@@ -657,6 +666,7 @@ const acknowledgeVendorOrder = asyncHandler(async (request, response) => {
 // ── 4. Goods Receiving (GRN) & Physical Receipt ─────────────────────────────
 
 const recordGoodsReceipt = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.poId);
   const { deliveryNoteNumber = '', items = [], notes = '' } = request.body;
 
@@ -751,6 +761,7 @@ const recordGoodsReceipt = asyncHandler(async (request, response) => {
 // ── 5. Supplier Invoice Capture & Duplicate Detection ────────────────────────
 
 const captureSupplierInvoice = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.poId);
   const {
     invoiceNumber,
@@ -940,6 +951,7 @@ const captureSupplierInvoice = asyncHandler(async (request, response) => {
 // ── 6. Three-Way Matching (PO vs. GRN vs. Invoice) ──────────────────────────
 
 const computeThreeWayMatch = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const purchaseOrderId = normalizeId(request.params.poId);
   const po = await PurchaseOrder.findOne({
     purchaseOrderId,
@@ -1020,6 +1032,7 @@ const computeThreeWayMatch = asyncHandler(async (request, response) => {
 // ── 7. MASTER Approval & Atomic Exactly-Once Inventory Posting (P1 Absolute) ──
 
 const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   // P1 Mandatory Guard: Server-authoritative MASTER check
   if (request.auth.role !== 'MASTER') {
     throw new ApiError(
@@ -1280,6 +1293,7 @@ const masterApproveInvoiceAndPostInventory = asyncHandler(async (request, respon
 });
 
 const retryFailedInventoryPosting = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (request.auth.role !== 'MASTER') {
     throw new ApiError(403, 'FORBIDDEN', 'Only MASTER role may retry failed stock postings.');
   }
@@ -1309,6 +1323,7 @@ const retryFailedInventoryPosting = asyncHandler(async (request, response) => {
 // ── 8. High-Risk Master Data Fraud Controls (Maker-Checker Bank Changes) ─────
 
 const submitBankChangeRequest = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const vendorId = normalizeId(request.params.vendorId);
   const {
     accountHolderName,
@@ -1366,6 +1381,7 @@ const submitBankChangeRequest = asyncHandler(async (request, response) => {
 });
 
 const approveBankChangeRequest = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   if (request.auth.role !== 'MASTER') {
     throw new ApiError(403, 'FORBIDDEN', 'Only MASTER role may approve high-risk bank detail changes.');
   }
@@ -1475,6 +1491,7 @@ const approveBankChangeRequest = asyncHandler(async (request, response) => {
 });
 
 const rejectBankChangeRequest = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   request.body = { ...request.body, decision: 'REJECT' };
   return approveBankChangeRequest(request, response);
 });
@@ -1482,6 +1499,7 @@ const rejectBankChangeRequest = asyncHandler(async (request, response) => {
 // ── 9. Scoped Supplier Holds ────────────────────────────────────────────────
 
 const placeVendorHold = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const vendorId = normalizeId(request.params.vendorId);
   const { holdType, scope = 'ORGANISATION', targetEntityId = null, reason, reviewDate = null } = request.body;
 
@@ -1518,6 +1536,7 @@ const placeVendorHold = asyncHandler(async (request, response) => {
 });
 
 const releaseVendorHold = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const vendorId = normalizeId(request.params.vendorId);
   const holdId = normalizeId(request.params.holdId);
   const { releaseReason = '' } = request.body;
@@ -1549,6 +1568,7 @@ const releaseVendorHold = asyncHandler(async (request, response) => {
 // ── 10. Performance & Supply Continuity Analytics ───────────────────────────
 
 const getSupplierPerformance = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const filter = { organisationId: request.auth.organisationId, status: 'ACTIVE' };
   const vendors = await Vendor.find(filter).select('vendorId name category performanceMetrics reliabilityRating').lean();
 
@@ -1572,6 +1592,7 @@ const getSupplierPerformance = asyncHandler(async (request, response) => {
 });
 
 const getSupplyContinuity = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const [items, vendors] = await Promise.all([
     GlobalInventoryItem.find({ organisationId: request.auth.organisationId }).select('itemId name category isCritical').lean(),
     Vendor.find({ organisationId: request.auth.organisationId, status: 'ACTIVE' }).select('vendorId name itemCatalogue').lean(),
@@ -1620,6 +1641,7 @@ const getSupplyContinuity = asyncHandler(async (request, response) => {
 // ── 11. ZURF v1 Compliance PDF Export ───────────────────────────────────────
 
 const getVendorZurfPdf = asyncHandler(async (request, response) => {
+  assertCanonicalMasterState(request.auth);
   const runId = `RUN-ZURF-VND-${Date.now().toString(36).toUpperCase()}`;
   const now = new Date().toISOString();
 
