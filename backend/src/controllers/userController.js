@@ -87,11 +87,11 @@ function normalizeCafeIds(value) {
 
 function requireMaster(request) {
   assertCanonicalMasterState(request.auth);
-  if (request.auth.role !== 'MASTER' || request.auth.isPrimaryMaster !== true) {
+  if (request.auth.role !== 'MASTER') {
     throw new ApiError(
       403,
-      'PRIMARY_MASTER_REQUIRED',
-      'Only Primary Master may perform this action.'
+      'MASTER_ACCESS_REQUIRED',
+      'Only the MASTER role may perform this action.'
     );
   }
 }
