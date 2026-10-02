@@ -23,6 +23,7 @@ const { ZurfService, COMPANY_CONFIG, getCompanyConfig } = require('../services/z
 const { asyncHandler } = require('../utils/asyncHandler');
 const { ApiError } = require('../utils/ApiError');
 const { resolveEffectiveCafeScope, assertResourceCafeOwnership } = require('../utils/cafeScope');
+const { assertCanonicalReportingActor } = require('../reporting/reportingAuthority');
 
 // Canonical Reporting Foundation & Shared Calculation Services
 const {
@@ -223,7 +224,8 @@ function validateAndParseDateFilters(request) {
 }
 
 function buildBaseFilter(request, dateFilters) {
-  const { role, organisationId } = request.auth;
+  const { role, isPrimaryMaster } = assertCanonicalReportingActor(request.auth);
+  const { organisationId } = request.auth;
 
   if (role === 'STAFF') {
     throw new ApiError(403, 'ROLE_NOT_ALLOWED', 'Staff users cannot access management analytics.');
@@ -242,7 +244,7 @@ function buildBaseFilter(request, dateFilters) {
 
   const filter = { organisationId: organisationId || 'ORG-ZAMORIN-01' };
 
-  if (role === 'MASTER') {
+  if (isPrimaryMaster) {
     if (dateFilters.cafeId) {
       filter.cafeId = dateFilters.cafeId;
     }
@@ -366,8 +368,7 @@ const getAnalyticsOverview = asyncHandler(async (request, response) => {
 const getReportCatalogue = asyncHandler(async (request, response) => {
   buildBaseFilter(request, validateAndParseDateFilters(request));
 
-  const userRole = String(request.auth?.role || '').toUpperCase();
-  const isPrimaryMaster = Boolean(request.auth?.isPrimaryMaster || (userRole === 'MASTER' && request.auth?.userId === 'MU-0001'));
+  const { role: userRole, isPrimaryMaster } = assertCanonicalReportingActor(request.auth);
 
   let catalogue = [];
   let categoryList = [];
@@ -1759,14 +1760,6 @@ const runForecast = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
-  if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
-    const err = new Error('Enterprise portfolio forecasting requires Primary Master authority or an assigned café scope.');
-    err.statusCode = 403;
-    err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
-    throw err;
-  }
-
   const horizon = parseInt(request.query?.horizon, 10) || 7;
   const frequency = String(request.query?.frequency || 'DAILY').toUpperCase().trim();
   const method = String(request.query?.method || 'AUTO').toUpperCase().trim();
@@ -1851,14 +1844,6 @@ const runScenarioSimulation = asyncHandler(async (request, response) => {
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
 
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
-  if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
-    const err = new Error('Enterprise What-If Scenario Studio requires Primary Master authority or an assigned café scope.');
-    err.statusCode = 403;
-    err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
-    throw err;
-  }
-
   const horizon = parseInt(request.body?.horizon || request.query?.horizon, 10) || 7;
   const method = String(request.body?.method || request.query?.method || 'AUTO').toUpperCase().trim();
   const assumptions = request.body?.assumptions || {};
@@ -1896,14 +1881,6 @@ const runSensitivityAnalysis = asyncHandler(async (request, response) => {
 
   const dateFilters = validateAndParseDateFilters(request);
   const baseFilter = buildBaseFilter(request, dateFilters);
-
-  // Normal Master authority constraint (NORMAL_MASTER_BYPASSES_FORECAST_CLASSIFICATION = 0)
-  if (request.auth.role === 'MASTER' && !request.auth.isPrimaryMaster && !baseFilter.cafeId) {
-    const err = new Error('Enterprise What-If Scenario Studio requires Primary Master authority or an assigned café scope.');
-    err.statusCode = 403;
-    err.code = 'PRIMARY_MASTER_AUTHORITY_REQUIRED';
-    throw err;
-  }
 
   const salesSteps = Array.isArray(request.body?.salesSteps) ? request.body.salesSteps : [-10, -5, 0, 5, 10];
   const payrollSteps = Array.isArray(request.body?.payrollSteps) ? request.body.payrollSteps : [-5, 0, 5, 10];
