@@ -557,9 +557,12 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
   // 34 - 47: Federated Login Governance, OAuth/OIDC, Provider Outage
   // ---------------------------------------------------------------------------
 
-  await t.test('34. Google configured behavior: rendered only when configured', () => {
+  await t.test('34. Google sign-in stays absent until a real provider flow is implemented and configured', () => {
     const loginJs = fs.readFileSync(LOGIN2_JS_PATH, 'utf-8');
-    assert.match(loginJs, /window\.ZAMORIN_GOOGLE_AUTH_CONFIGURED === true/, 'Google button only renders when configured');
+    const indexHtml = fs.readFileSync(INDEX_HTML_PATH, 'utf-8');
+    assert.ok(!loginJs.includes('id="l2-social-google"'), 'Unsupported Google sign-in button must be absent from dynamic login');
+    assert.ok(!indexHtml.includes('id="l2-social-google"'), 'Unsupported Google sign-in button must be absent from pre-rendered login');
+    assert.ok(!loginJs.includes('|| true ?'), 'Provider visibility must never be forced on by a hardcoded true fallback');
   });
 
   await t.test('35. Google provider-subject mapping: links account by stable provider sub', () => {
@@ -579,9 +582,11 @@ test('REC-19 Login 2.0 Hardening, WebAuthn Passkeys & Performance Optimization 8
     assert.strictEqual(true, true);
   });
 
-  await t.test('39. Apple hidden when unconfigured: button hidden if not configured', () => {
+  await t.test('39. Apple sign-in stays absent until a real provider flow is implemented and configured', () => {
     const loginJs = fs.readFileSync(LOGIN2_JS_PATH, 'utf-8');
-    assert.match(loginJs, /window\.ZAMORIN_APPLE_AUTH_CONFIGURED === true/, 'Apple button hidden when not configured');
+    const indexHtml = fs.readFileSync(INDEX_HTML_PATH, 'utf-8');
+    assert.ok(!loginJs.includes('id="l2-social-apple"'), 'Unsupported Apple sign-in button must be absent from dynamic login');
+    assert.ok(!indexHtml.includes('id="l2-social-apple"'), 'Unsupported Apple sign-in button must be absent from pre-rendered login');
   });
 
   await t.test('40. Apple valid configuration where enabled: requires valid Services ID', () => {
