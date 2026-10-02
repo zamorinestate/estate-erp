@@ -1862,16 +1862,20 @@ class DocumentAttachmentService {
       process.env.DOCUMENT_STORAGE_ACCESS_KEY_ID &&
       process.env.DOCUMENT_STORAGE_SECRET_ACCESS_KEY
     );
-    const isScannerConfigured = Boolean(process.env.MALWARE_SCANNER_URL);
+    const scannerRuntime = await getScannerRuntimeStatus();
 
     return {
       PRODUCTION_STORAGE_ADAPTER_IMPLEMENTED: true,
       LIVE_PRODUCTION_OBJECT_STORAGE_CONFIGURED: isS3Configured ? true : 'EXTERNAL_PENDING',
       PRODUCTION_SCANNER_ADAPTER_IMPLEMENTED: true,
-      LIVE_PRODUCTION_MALWARE_SCANNER_CONFIGURED: isScannerConfigured ? true : 'EXTERNAL_PENDING',
+      LIVE_PRODUCTION_MALWARE_SCANNER_CONFIGURED:
+        scannerRuntime.LIVE_PRODUCTION_MALWARE_SCANNER_CONFIGURED,
+      ACTIVE_SCANNER_PROVIDER_TYPE: scannerRuntime.ACTIVE_PROVIDER_TYPE,
+      SCANNER_CONFIGURED_TRANSPORT: scannerRuntime.CONFIGURED_TRANSPORT,
       LOCAL_MOCK_ADAPTERS_ALLOWED_IN_PRODUCTION: false,
       RENDER_FILESYSTEM_PRODUCTION_FALLBACK: false,
       ENVIRONMENT: process.env.NODE_ENV || 'development',
+      IS_PRODUCTION: isProduction,
     };
   }
 
