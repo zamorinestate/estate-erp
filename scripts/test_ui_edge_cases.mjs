@@ -190,6 +190,9 @@ async function runEdgeCaseAudit() {
 
   // AC-UI-EDGE-001: Forced Colors / Windows High Contrast Mode
   await checkAC("AC-UI-EDGE-001", "Forced-colors emulation preserves all controls & text", async () => {
+    await cdp.waitForSelector('.card, .kpi-card, .dashboard-card', 6000);
+    await delay(300);
+
     await cdp.send('Emulation.setEmulatedMedia', {
       features: [{ name: 'forced-colors', value: 'active' }]
     });
@@ -198,7 +201,7 @@ async function runEdgeCaseAudit() {
       const btn = document.querySelector('.btn-primary') || document.querySelector('.btn');
       const input = document.querySelector('.input, .form-input, input');
       const navLink = document.querySelector('.nav-link.active') || document.querySelector('.nav-link');
-      const card = document.querySelector('.card, .kpi-card');
+      const card = Array.from(document.querySelectorAll('.card, .kpi-card, .dashboard-card')).find(c => c.offsetWidth > 0) || document.querySelector('.card, .kpi-card');
 
       const isBtnVisible = btn ? btn.offsetWidth > 0 : true;
       const isInputVisible = input ? input.offsetWidth > 0 : true;
@@ -214,7 +217,7 @@ async function runEdgeCaseAudit() {
     await cdp.send('Emulation.setEmulatedMedia', { features: [] });
 
     if (!res.isBtnVisible || !res.isNavVisible || !res.isCardVisible) {
-      throw new Error("Essential UI components vanished under forced-colors mode");
+      throw new Error(`Essential UI components vanished under forced-colors mode: ${JSON.stringify(res)}`);
     }
   });
 

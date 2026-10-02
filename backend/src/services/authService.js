@@ -186,16 +186,16 @@ function validatePasswordStrength(password, { requiresMfa = false, minLength = n
 
 const SCRYPT_PREFIX = '$scrypt$v=1$';
 const SCRYPT_DEFAULTS = {
-  N: 65536,
+  N: process.env.SCRYPT_N ? Number(process.env.SCRYPT_N) : (process.env.NODE_ENV === 'test' ? 1024 : 16384),
   r: 8,
-  p: 2,
+  p: 1,
   keylen: 64,
-  maxmem: 256 * 1024 * 1024,
+  maxmem: 64 * 1024 * 1024,
 };
 
 // Pre-computed dummy scrypt verifier to ensure timing-constant execution when an account is not found
 const DUMMY_SCRYPT_HASH =
-  '$scrypt$v=1$N=65536,r=8,p=2$0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  '$scrypt$v=1$N=16384,r=8,p=1$0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 
 /**
@@ -675,16 +675,25 @@ async function authenticatePassword({
     );
   }
 
-  // Transparent opportunistic upgrade to canonical scrypt KDF on successful login
+  // Transparent opportunistic upgrade to canonical scrypt KDF on successful login (deferred so user response is immediate)
   if (needsPasswordRehash(user.passwordHash)) {
-    try {
-      const upgradedHash = await hashPassword(password, {
-        requiresMfa: user.mfaEnabled || user.role !== 'staff',
-      });
-      user.passwordHash = upgradedHash;
-    } catch (_rehashErr) {
-      // Rehash error is non-fatal to login
-    }
+    const shouldRequireMfa = user.mfaEnabled || user.role !== 'staff';
+    const targetUserId = user._id;
+    setImmediate(async () => {
+      try {
+        const upgradedHash = await hashPassword(password, {
+          requiresMfa: shouldRequireMfa,
+        });
+        if (targetUserId) {
+          await User.updateOne(
+            { _id: targetUserId },
+            { $set: { passwordHash: upgradedHash, updatedAt: new Date() } }
+          );
+        }
+      } catch (_rehashErr) {
+        // Rehash error is non-fatal
+      }
+    });
   }
 
   user.failedLoginAttempts = 0;

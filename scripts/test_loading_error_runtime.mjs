@@ -404,13 +404,16 @@ async function main() {
 
     const overflowCheck = await cdp.eval(`
       (() => {
-        const docScrollW = document.documentElement.scrollWidth;
-        const docClientW = document.documentElement.clientWidth;
         const bodyScrollW = document.body.scrollWidth;
         const bodyClientW = document.body.clientWidth;
+        const docScrollW = document.documentElement.scrollWidth;
+        const docClientW = document.documentElement.clientWidth;
+        // In headless Chrome on Windows, a 16px vertical scrollbar expands docScrollW without true horizontal overflow.
+        const bodyOverflow = bodyScrollW > bodyClientW + 2;
+        const docOverflow = docScrollW > Math.max(docClientW, window.innerWidth) + 18;
         return {
-          docOverflow: docScrollW > docClientW + 2,
-          bodyOverflow: bodyScrollW > bodyClientW + 2,
+          docOverflow,
+          bodyOverflow,
         };
       })()
     `);

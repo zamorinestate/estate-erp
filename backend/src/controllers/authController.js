@@ -181,7 +181,7 @@ function getCookieOptions() {
   return {
     httpOnly: true,
     secure: isProductionLike || sameSite === 'none',
-    sameSite,
+    sameSite: sameSite,
     path: '/',
   };
 }

@@ -137,11 +137,11 @@ test('Login Page 2.0 Integration & 24-Point Production-Equivalence Suite', async
 
     await User.create({
       organisationId: TEST_ORG,
-      userId: 'MU-0002',
+      userId: 'OW-0002',
       name: 'Secured Officer',
       email: 'mfa.user@zamorin.com',
       passwordHash,
-      role: 'MASTER',
+      role: 'OWNER',
       accountStatus: 'ACTIVE',
       status: 'ACTIVE',
       isPrimaryMaster: false,

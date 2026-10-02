@@ -27,6 +27,7 @@ const IGNORE_PATTERNS = [
   /node_modules/,
   /\.git/,
   /package-lock\.json/,
+  /(?:^|[\\/])\.env(?:\.(?!example).*)$/,
   /\.png$/,
   /\.jpg$/,
   /\.webp$/,

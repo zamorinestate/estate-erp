@@ -25,7 +25,7 @@ const server = http.createServer(async (req, res) => {
   // Reverse proxy /api/* requests to local backend with seamless cloud fallback
   if (parsedUrl.pathname.startsWith("/api/")) {
     const primaryHost = process.env.BACKEND_URL || "http://127.0.0.1:4000";
-    const cloudHost = "https://zamorin-cafe-erp.vercel.app";
+    const cloudHost = process.env.CLOUD_BACKEND_URL || "https://zamorin-cafe-erp-backend.onrender.com";
 
     try {
       const headers = { ...req.headers };
@@ -50,10 +50,9 @@ const server = http.createServer(async (req, res) => {
           headers,
           body: bodyData,
           redirect: "manual",
-          signal: AbortSignal.timeout(10000)
+          signal: AbortSignal.timeout(1500)
         });
       } catch (localErr) {
-        console.error('[proxy-local-err]', localErr.message);
         // Fallback to cloud backend if local backend on port 4000 is not running
         if (primaryHost.includes("localhost") || primaryHost.includes("127.0.0.1")) {
           proxyRes = await fetch(`${cloudHost}${parsedUrl.pathname}${parsedUrl.search}`, {
@@ -61,7 +60,7 @@ const server = http.createServer(async (req, res) => {
             headers,
             body: bodyData,
             redirect: "manual",
-            signal: AbortSignal.timeout(15000)
+            signal: AbortSignal.timeout(95000)
           });
         } else {
           throw localErr;

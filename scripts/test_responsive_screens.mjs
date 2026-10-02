@@ -254,7 +254,8 @@ async function main() {
             const pageScrollW = pageContent ? pageContent.scrollWidth : 0;
             const pageClientW = pageContent ? pageContent.clientWidth : 0;
 
-            const hasDocOverflow = docScrollW > docClientW + 2;
+            // In Windows Chrome, a vertical scrollbar (16px) expands docScrollW without true horizontal overflow
+            const hasDocOverflow = docScrollW > Math.max(docClientW, window.innerWidth) + 18;
             const hasBodyOverflow = bodyScrollW > bodyClientW + 2;
 
             // Check if navigation toggle exists for mobile/tablet

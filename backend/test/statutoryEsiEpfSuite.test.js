@@ -1145,9 +1145,18 @@ test('STATUTORY AUDIT — GST-DB-01 to GST-DB-07 Multi-Series Real Database Inde
   const orgId = 'ORG-ZAMORIN-STATUTORY';
   const fy = '2026-27';
 
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const testDbDir = path.join(__dirname, '../.tmp_mongo_gst');
+  fs.mkdirSync(testDbDir, { recursive: true });
+
   let mongoServer;
   try {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryServer.create({
+      instance: {
+        dbPath: testDbDir,
+      },
+    });
     const uri = mongoServer.getUri();
     await mongoose.connect(uri);
 
@@ -1500,6 +1509,13 @@ test('STATUTORY AUDIT — GST-DB-01 to GST-DB-07 Multi-Series Real Database Inde
     }
     if (mongoServer) {
       await mongoServer.stop();
+    }
+    try {
+      if (fs.existsSync(testDbDir)) {
+        fs.rmSync(testDbDir, { recursive: true, force: true });
+      }
+    } catch {
+      // ignore cleanup errors
     }
   }
 });
