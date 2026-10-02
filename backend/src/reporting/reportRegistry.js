@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertCanonicalReportingActor } = require('./reportingAuthority');
+
 /**
  * ZAMORIN CAFÉ ERP — REPORTING FOUNDATION
  * Module: reportRegistry.js
@@ -992,8 +994,7 @@ class ReportRegistry {
       throw err;
     }
 
-    const role = String(auth.role || '').toUpperCase();
-    const isPrimaryMaster = Boolean(auth.isPrimaryMaster || (role === 'MASTER' && auth.userId === 'MU-0001'));
+    const { role, isPrimaryMaster } = assertCanonicalReportingActor(auth);
 
     // Check classification: HIGHLY_CONFIDENTIAL requires PRIMARY_MASTER
     if (report.classification === 'HIGHLY_CONFIDENTIAL' && !isPrimaryMaster) {
@@ -1021,7 +1022,7 @@ class ReportRegistry {
 
     // Permission check if permissions array is present on auth
     if (report.requiredPermission && Array.isArray(auth.permissions) && auth.permissions.length > 0) {
-      if (!isPrimaryMaster && role !== 'MASTER' && !auth.permissions.includes(report.requiredPermission)) {
+      if (!isPrimaryMaster && !auth.permissions.includes(report.requiredPermission)) {
         const err = new Error(`Missing required permission "${report.requiredPermission}" for report "${reportId}".`);
         err.statusCode = 403;
         err.code = 'PERMISSION_DENIED';
