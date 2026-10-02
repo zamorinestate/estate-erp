@@ -1,8 +1,8 @@
 {
   "system": "Zamorin Café ERP",
   "documentType": "THIRD_PARTY_DEPENDENCY_REGISTER",
-  "version": "1.0.0",
-  "lastAudited": "2026-09-13T06:00:00.000Z",
+  "version": "1.1.0",
+  "lastAudited": "2026-10-02T12:00:00.000Z",
   "dependencies": [
     {
       "serviceId": "DEP-01",
@@ -13,29 +13,29 @@
       "credentialsOwner": "Primary Master",
       "failureImpact": "CRITICAL: Frontend SPA interface becomes inaccessible.",
       "fallbackStrategy": "Direct backup static file server (Caddy / Nginx) or local PWA offline shell cache.",
-      "recoveryProcedure": "DR-12 runbook in ZAMORIN_DISASTER_RECOVERY_RUNBOOK.md"
+      "recoveryProcedure": "config/disasterRecoveryRunbook.json#DR-12"
     },
     {
       "serviceId": "DEP-02",
       "name": "Render Cloud Services",
-      "purpose": "Node.js Express Production Backend Web Service & 10GB Persistent Document Disk",
+      "purpose": "Stateless Node.js Express production/staging backend services; business documents persist in MongoDB GridFS",
       "operationalOwner": "Backend Infrastructure Lead",
       "statusPageUrl": "https://status.render.com",
       "credentialsOwner": "Primary Master",
       "failureImpact": "CRITICAL: Core API and document uploads become unavailable.",
-      "fallbackStrategy": "Point-in-time container restart or failover to secondary container instance.",
-      "recoveryProcedure": "DR-11 runbook in ZAMORIN_DISASTER_RECOVERY_RUNBOOK.md"
+      "fallbackStrategy": "Recover the stateless service from the authoritative main branch and verify health; no business-data recovery may depend on Render local filesystem.",
+      "recoveryProcedure": "config/disasterRecoveryRunbook.json#DR-11"
     },
     {
       "serviceId": "DEP-03",
       "name": "MongoDB Atlas",
-      "purpose": "3-Node Managed Replica Set (AWS Mumbai ap-south-1), Multi-Tenant Data Store",
+      "purpose": "Managed MongoDB Atlas replica set and GridFS-backed multi-tenant transactional data store",
       "operationalOwner": "Database Operations (DBA)",
       "statusPageUrl": "https://status.mongodb.com",
       "credentialsOwner": "Primary Master & DBA",
       "failureImpact": "CRITICAL: Complete transactional data store unavailable.",
-      "fallbackStrategy": "Automated replica-set failover; read-only mode if primary lost; PITR snapshot restore.",
-      "recoveryProcedure": "DR-10 runbook in ZAMORIN_DISASTER_RECOVERY_RUNBOOK.md"
+      "fallbackStrategy": "Use Atlas managed availability plus controlled write-quiesced logical backup on the current Free tier; restore only to an isolated target. Continuous backup/PITR remains blocked until a supported paid tier is approved.",
+      "recoveryProcedure": "config/disasterRecoveryRunbook.json#DR-10"
     },
     {
       "serviceId": "DEP-04",
@@ -46,7 +46,7 @@
       "credentialsOwner": "Primary Master",
       "failureImpact": "HIGH: Release pipeline blocked; production runtime remains operational.",
       "fallbackStrategy": "Local emergency tag and manual deploy deployment via CLI if authorized.",
-      "recoveryProcedure": "Emergency release procedure in ZAMORIN_PRODUCTION_OPERATIONS_RUNBOOK.md"
+      "recoveryProcedure": "config/disasterRecoveryRunbook.json#DR-13"
     },
     {
       "serviceId": "DEP-05",
@@ -57,18 +57,18 @@
       "credentialsOwner": "Primary Master",
       "failureImpact": "MEDIUM: Outbound email delayed; transactions and POS continue uninterrupted.",
       "fallbackStrategy": "In-app notifications via Notification model and NotificationOutbox queue retry.",
-      "recoveryProcedure": "ZAMORIN_ERP_OPERATIONS_EMAIL_SECURITY_RUNBOOK.md"
+      "recoveryProcedure": "config/disasterRecoveryRunbook.json#DR-15"
     },
     {
       "serviceId": "DEP-06",
-      "name": "External Malware Scanner (Pending Provider)",
-      "purpose": "Off-Site Antivirus Binary Scanning for Uploaded Business Attachments",
+      "name": "Private ClamAV Malware Scanner",
+      "purpose": "Private/internal ClamAV TCP INSTREAM scanning for uploaded business attachments",
       "operationalOwner": "Security Engineering",
-      "statusPageUrl": "PENDING_PRODUCTION_PROVIDER",
+      "statusPageUrl": "PRIVATE_SERVICE_PENDING_DEPLOYMENT",
       "credentialsOwner": "Security Engineering",
-      "failureImpact": "LOW (Controlled): Heuristic scanner remains active; external scan remains in quarantine until completed.",
-      "fallbackStrategy": "Local signature & header heuristic engine blocks EICAR, MZ, PE, ELF, and malicious PDF triggers.",
-      "recoveryProcedure": "Quarantine workflow in ZAMORIN_PRODUCTION_OPERATIONS_RUNBOOK.md"
+      "failureImpact": "CONTROLLED: New document promotion fails closed while core ERP/POS remains operational.",
+      "fallbackStrategy": "Keep uploads quarantined and non-downloadable until the private scanner is healthy; public third-party document scanning is prohibited.",
+      "recoveryProcedure": "config/disasterRecoveryRunbook.json#DR-14"
     }
   ]
 }

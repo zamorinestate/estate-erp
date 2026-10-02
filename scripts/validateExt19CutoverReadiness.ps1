@@ -42,9 +42,9 @@ Write-Host " EXT-18 Decision: $ext18Decision" -ForegroundColor Yellow
 # 3. Hard Blocker Register Evaluation
 $hardBlockers = @(
     @{ Id = 'EXT-01'; Area = 'Database Infrastructure'; Detail = 'MongoDB Atlas Free tier (512MB limit, shared compute, no SLA)' },
-    @{ Id = 'EXT-02'; Area = 'Malware Defense'; Detail = 'Live containerized ClamAV scanning daemon pending deployment' },
-    @{ Id = 'EXT-03'; Area = 'Database Backup & PITR'; Detail = 'Continuous cloud backup and point-in-time recovery unavailable on Free tier' },
-    @{ Id = 'EXT-05'; Area = 'Offsite Disaster Recovery'; Detail = 'Independent secondary offsite backup storage target unconfigured' },
+    @{ Id = 'EXT-02'; Area = 'Malware Defense'; Detail = 'Private ClamAV TCP INSTREAM daemon pending deployment (tracked in GitHub issue #39)' },
+    @{ Id = 'EXT-03'; Area = 'Database Backup & PITR'; Detail = 'Write-quiesced logical backup is available, but continuous cloud backup and PITR remain unavailable on the Atlas Free tier' },
+    @{ Id = 'EXT-05'; Area = 'Offsite Disaster Recovery'; Detail = 'Independent secondary/offsite backup target and restore evidence remain unconfigured' },
     @{ Id = 'EXT-07'; Area = 'Independent Pentest'; Detail = 'Accredited third-party black-box/grey-box penetration test pending' },
     @{ Id = 'EXT-08'; Area = 'Statutory CA Audit'; Detail = 'External CA sign-off on GST, tax calculations, and statutory ledgers pending' },
     @{ Id = 'EXT-10'; Area = 'Commercial Hosting & Domain'; Detail = 'Vercel project/team authorization, Render canonical-repository rebind, and commercial hosting/domain decisions pending (tracked in GitHub issue #31)' },
