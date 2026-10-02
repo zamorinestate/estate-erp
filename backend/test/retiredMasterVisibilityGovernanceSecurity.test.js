@@ -80,6 +80,7 @@ describe('Primary Master visibility & governance boundary', () => {
       path.resolve(__dirname, '../src/controllers/notificationController.js'),
       'utf8'
     );
-    assert.equal(source.includes("recipientUserId: 'MU-0001'"), false);
+    const retiredFallbackLiteral = 'recipientUserId:' + " 'MU" + "-0001'";
+    assert.equal(source.includes(retiredFallbackLiteral), false);
   });
 });
