@@ -2950,3 +2950,243 @@ html.dark input[type="month"],
     background: var(--surface-raised) !important;
   }
 }
+
+
+/* ==========================================================================
+   SYSTEM STATE POLISH
+   Loading, empty, feedback, progress, disabled and confirmation surfaces.
+   ========================================================================== */
+
+.empty-state,
+.not-available,
+.settings-state-box,
+.occ-empty-state,
+.occ-empty-state-sm {
+  border-radius: 16px !important;
+  color: var(--muted) !important;
+}
+.empty-state,
+.settings-state-box {
+  background: rgba(118,118,128,.055) !important;
+  border: 1px solid transparent !important;
+}
+.empty-state-icon,
+.settings-state-icon,
+.occ-empty-icon {
+  width: 48px;
+  height: 48px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  margin-inline: auto;
+  border-radius: 14px;
+  background: rgba(118,118,128,.09);
+  color: var(--muted) !important;
+  font-size: 24px !important;
+  opacity: 1 !important;
+}
+.empty-state-title,
+.settings-state-title,
+.occ-empty-title {
+  font-family: var(--font-display) !important;
+  font-weight: 650 !important;
+  letter-spacing: -.015em;
+}
+.empty-state-desc,
+.settings-state-desc,
+.occ-empty-desc {
+  color: var(--muted) !important;
+}
+
+/* Neutral system skeletons; one animation language across all modules. */
+.skeleton,
+.zamorin-skeleton,
+.card-skeleton {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(118,118,128,.055) 20%,
+      rgba(118,118,128,.13) 42%,
+      rgba(118,118,128,.055) 64%
+    ) !important;
+  background-size: 320% 100% !important;
+  border-radius: 10px !important;
+  animation: apple-ui-shimmer 1.45s var(--ease) infinite !important;
+}
+@keyframes apple-ui-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Notification-style feedback */
+#toast-root,
+.toast-stack {
+  bottom: max(16px, var(--sab)) !important;
+  right: max(16px, var(--sar)) !important;
+  gap: 8px !important;
+  width: min(370px, calc(100vw - 24px)) !important;
+}
+.toast-card {
+  padding: 13px 14px !important;
+  gap: 10px !important;
+  background: rgba(255,255,255,.90) !important;
+  border: 1px solid rgba(60,60,67,.14) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 12px 36px rgba(0,0,0,.14) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+html.dark .toast-card,
+[data-theme="midnight"] .toast-card,
+[data-theme="noir"] .toast-card {
+  background: rgba(44,44,46,.90) !important;
+  border-color: rgba(84,84,88,.56) !important;
+}
+.toast-card::before {
+  width: 3px !important;
+  border-radius: 999px !important;
+  inset: 8px auto 8px 5px !important;
+}
+.toast-title-text {
+  font-weight: 650 !important;
+  letter-spacing: -.01em;
+}
+.toast-close-btn {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 50% !important;
+  background: rgba(118,118,128,.08) !important;
+}
+.toast-close-btn:hover {
+  background: rgba(118,118,128,.15) !important;
+}
+
+/* Alerts */
+.alert,
+.notice-banner,
+.error-banner {
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+.alert.info {
+  background: rgba(0,122,255,.09) !important;
+  border-color: rgba(0,122,255,.18) !important;
+  color: #0062cc !important;
+}
+.alert.success {
+  background: rgba(52,199,89,.09) !important;
+  border-color: rgba(52,199,89,.18) !important;
+  color: #248a3d !important;
+}
+.alert.warning {
+  background: rgba(255,149,0,.09) !important;
+  border-color: rgba(255,149,0,.18) !important;
+  color: #a34e00 !important;
+}
+.alert.danger,
+.alert.error {
+  background: rgba(255,59,48,.09) !important;
+  border-color: rgba(255,59,48,.18) !important;
+  color: #b42318 !important;
+}
+
+/* Confirmation dialogs: centered on large screens, sheet-like on phones. */
+.dialog-overlay {
+  background: rgba(0,0,0,.28) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  padding: 16px;
+}
+.dialog-box {
+  width: min(440px, calc(100vw - 24px)) !important;
+  padding: 24px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 20px !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+.dialog-box h3 {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  letter-spacing: -.02em;
+}
+.dialog-actions {
+  gap: 8px !important;
+}
+
+/* Progress uses the system accent rather than legacy bronze gradients. */
+.progress-bar-wrap,
+.pace-bar {
+  background: rgba(118,118,128,.12) !important;
+}
+.progress-bar-fill {
+  background: var(--apple-blue) !important;
+}
+.zamorin-nav-progress {
+  height: 3px !important;
+  background: var(--apple-blue) !important;
+  box-shadow: 0 0 10px rgba(0,122,255,.30) !important;
+}
+
+/* Disabled state remains legible and visibly unavailable. */
+:where(button, .btn, input, select, textarea):disabled,
+:where(button, .btn)[aria-disabled="true"] {
+  opacity: .46 !important;
+  cursor: not-allowed !important;
+  filter: saturate(.65);
+  box-shadow: none !important;
+}
+:where(button, .btn):disabled:active,
+:where(button, .btn)[aria-disabled="true"]:active {
+  transform: none !important;
+}
+
+/* Busy state communicates activity without allowing duplicate interaction. */
+[aria-busy="true"] {
+  cursor: progress !important;
+}
+button[aria-busy="true"],
+.btn[aria-busy="true"] {
+  pointer-events: none;
+}
+
+/* Keep live/status updates stable and readable. */
+[aria-live] {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  #toast-root,
+  .toast-stack {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: max(12px, var(--sab)) !important;
+    width: auto !important;
+  }
+
+  .dialog-overlay {
+    align-items: flex-end !important;
+    padding: 10px 10px max(10px, var(--sab)) !important;
+  }
+  .dialog-box {
+    width: 100% !important;
+    max-width: none !important;
+    border-radius: 22px !important;
+    padding: 22px 18px 18px !important;
+  }
+  .dialog-box::before {
+    content: "";
+    display: block;
+    width: 38px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(118,118,128,.34);
+    margin: -10px auto 12px;
+  }
+  .dialog-actions {
+    flex-direction: column-reverse;
+  }
+  .dialog-actions .btn {
+    width: 100%;
+  }
+}
