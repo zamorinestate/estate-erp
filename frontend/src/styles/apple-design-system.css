@@ -2781,3 +2781,172 @@ html.dark input[type="month"],
     padding: 24px 18px !important;
   }
 }
+
+
+/* ==========================================================================
+   OUTPUT & ACCESSIBILITY HARDENING
+   Preserve print fidelity and strengthen touch/high-contrast interaction.
+   ========================================================================== */
+
+/* The Apple compatibility layer is intentionally screen-only in spirit.
+   Explicit print overrides prevent its late cascade position from changing
+   thermal receipt output or the browser's physical print canvas. */
+@media print {
+  html,
+  body,
+  body:not(.auth-page) {
+    background: #fff !important;
+    background-image: none !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: economy;
+    print-color-adjust: economy;
+  }
+
+  .pos-thermal-receipt,
+  .pos-thermal-receipt * {
+    font-family: var(--font-mono, "Courier New", monospace) !important;
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    filter: none !important;
+  }
+
+  .pos-thermal-receipt {
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .pos-thermal-receipt .receipt-divider {
+    border-top-color: #000 !important;
+  }
+
+  .pos-thermal-receipt .receipt-total-row {
+    border-top-color: #000 !important;
+  }
+
+  .sidebar,
+  .topbar,
+  .cafeops-context-bar,
+  .sidebar-overlay,
+  .popover,
+  .toast,
+  .toast-container {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+/* Touch targets: iPhone/iPad/Android tablets without bloating desktop density. */
+@media (pointer: coarse) {
+  .btn,
+  button.btn,
+  .nav-link,
+  .topbar-action-btn,
+  .profile-avatar-btn,
+  .occ-period-btn,
+  .occ-switch-btn,
+  .oto-tab-btn,
+  .settings-nav-link,
+  .pos-service-mode-btn,
+  .pos-cat-pill-btn,
+  .pill-btn,
+  .cc-page-num-btn {
+    min-height: 44px !important;
+  }
+
+  .topbar-action-btn,
+  .profile-avatar-btn {
+    min-width: 44px !important;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea,
+  .form-control,
+  .form-input,
+  .settings-field-input {
+    min-height: 44px !important;
+  }
+
+  .module-hub-tile,
+  .pos-item-card,
+  .calendar-day-cell {
+    touch-action: manipulation;
+  }
+}
+
+/* Windows High Contrast / forced-colours: preserve state and operability. */
+@media (forced-colors: active) {
+  .sidebar,
+  .topbar,
+  .card,
+  .glass-card,
+  .kpi-card,
+  .occ-kpi-card,
+  .occ-section-card,
+  .modal-card,
+  .modal-window,
+  .settings-section-card,
+  .settings-header-box,
+  .module-hub-tile,
+  .pos-item-card,
+  .pos-ticket-panel {
+    forced-color-adjust: auto;
+    border: 1px solid CanvasText !important;
+    background: Canvas !important;
+    color: CanvasText !important;
+    box-shadow: none !important;
+  }
+
+  .nav-link.active,
+  .btn-primary,
+  .btn-gold,
+  .cc-page-num-btn.active,
+  .settings-nav-link.active,
+  .pos-cat-pill-btn.active {
+    background: Highlight !important;
+    color: HighlightText !important;
+    border-color: Highlight !important;
+  }
+
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
+    box-shadow: none !important;
+  }
+
+  .status,
+  .pill,
+  .badge-tag,
+  .settings-status-chip,
+  .oto-badge {
+    border: 1px solid CanvasText !important;
+  }
+}
+
+/* Improve keyboard discoverability without adding persistent visual clutter. */
+:where(.module-hub-tile, .pos-item-card, .calendar-day-cell, .cc-page-tab):focus-visible {
+  outline: 2px solid var(--apple-blue) !important;
+  outline-offset: 2px !important;
+}
+
+/* Prevent transparent material effects from becoming unreadable when the
+   browser or device disables backdrop filtering. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .sidebar,
+  .topbar,
+  .cafeops-context-bar,
+  .popover,
+  .search-results-dropdown,
+  .search-results,
+  .modal-card,
+  .modal-window,
+  .occ-modal-card,
+  #app.auth-screen .light-glass-container,
+  #app.auth-screen .auth-shell-container {
+    background: var(--surface-raised) !important;
+  }
+}
