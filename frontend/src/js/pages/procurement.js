@@ -1400,6 +1400,8 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
     return;
   }
 
+  const allActiveVendors = [...activeVendors];
+
   const eligibleVendorIds = new Set(
     serverCatalogue.flatMap((item) =>
       Array.isArray(item.approvedVendors)
@@ -1709,14 +1711,94 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
     }
   });
 
+  const vendorSelect = document.getElementById('modal-order-vendor');
+  const cafeSelect = document.getElementById('modal-order-cafe');
+
+  vendorSelect?.addEventListener('change', () => {
+    const vendorId = vendorSelect.value;
+    const compatibleItems = serverCatalogue.filter((item) => Boolean(getVendorOffer(item, vendorId)));
+    if (!compatibleItems.length) {
+      showToast('This vendor has no approved catalogue items for the selected café.', 'coral');
+      return;
+    }
+
+    orderItems = orderItems
+      .filter((line) => compatibleItems.some((item) => item.itemId === line.itemId))
+      .map((line) => {
+        const source = compatibleItems.find((item) => item.itemId === line.itemId);
+        const normalized = normalizeCatalogueItem(source, vendorId);
+        return { ...normalized, qty: Math.max(Number(line.qty) || 0, normalized.qty) };
+      });
+
+    if (!orderItems.length) {
+      orderItems = [normalizeCatalogueItem(compatibleItems[0], vendorId)];
+    }
+    renderItemsTable();
+  });
+
+  cafeSelect?.addEventListener('change', async () => {
+    const cafeId = cafeSelect.value;
+    if (!cafeId || cafeId === 'ALL') return;
+
+    try {
+      const catRes = await apiGet(`/procurement/catalogue?cafeId=${encodeURIComponent(cafeId)}`);
+      const nextCatalogue = Array.isArray(catRes?.data?.catalogue)
+        ? catRes.data.catalogue.filter((item) => item?.itemId && item.isAvailableForCafe !== false)
+        : [];
+
+      if (!nextCatalogue.length) {
+        showToast('No approved procurement items are available for that café.', 'coral');
+        cafeSelect.value = defaultCafeId;
+        return;
+      }
+
+      const nextVendorIds = new Set(
+        nextCatalogue.flatMap((item) =>
+          Array.isArray(item.approvedVendors)
+            ? item.approvedVendors.map((vendor) => vendor?.vendorId).filter(Boolean)
+            : []
+        )
+      );
+      const nextVendors = allActiveVendors.filter((vendor) => nextVendorIds.has(vendor.vendorId));
+      if (!nextVendors.length) {
+        showToast('No active vendor is approved for that café catalogue.', 'coral');
+        cafeSelect.value = defaultCafeId;
+        return;
+      }
+
+      serverCatalogue = nextCatalogue;
+      activeVendors = nextVendors;
+      vendorSelect.innerHTML = activeVendors.map((vendor) =>
+        `<option value="${vendor.vendorId}">${vendor.name} (${vendor.vendorId})</option>`
+      ).join('');
+
+      const nextVendorId = activeVendors[0].vendorId;
+      vendorSelect.value = nextVendorId;
+      const firstItem = serverCatalogue.find((item) => Boolean(getVendorOffer(item, nextVendorId)));
+      if (!firstItem) {
+        showToast('No approved item/vendor mapping is available for that café.', 'coral');
+        cafeSelect.value = defaultCafeId;
+        return;
+      }
+
+      orderItems = [normalizeCatalogueItem(firstItem, nextVendorId)];
+      renderItemsTable();
+    } catch (error) {
+      showToast(`Unable to refresh the café catalogue: ${error.message}`, 'coral');
+      cafeSelect.value = defaultCafeId;
+    }
+  });
+
   document.getElementById('btn-add-order-item')?.addEventListener('click', () => {
-    const nextItem = COMMON_CATALOGUE[orderItems.length % COMMON_CATALOGUE.length];
-    orderItems.push({
-      itemId: nextItem.itemId,
-      baseUnit: nextItem.baseUnit,
-      qty: 10,
-      unitPriceRupees: nextItem.unitPriceRupees,
-    });
+    const vendorId = vendorSelect?.value || defaultVendorId;
+    const compatibleItems = serverCatalogue.filter((item) => Boolean(getVendorOffer(item, vendorId)));
+    if (!compatibleItems.length) {
+      showToast('No approved items are available for the selected vendor.', 'coral');
+      return;
+    }
+    const unused = compatibleItems.find((item) => !orderItems.some((line) => line.itemId === item.itemId));
+    const nextItem = unused || compatibleItems[0];
+    orderItems.push(normalizeCatalogueItem(nextItem, vendorId));
     renderItemsTable();
   });
 
@@ -1739,12 +1821,51 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
     }
 
     try {
-      const lineItems = orderItems.map((i) => ({
-        itemId: i.itemId.toUpperCase(),
-        orderedQuantityBase: Number(i.qty),
-        unitPricePaisa: Math.round(Number(i.unitPriceRupees || 0) * 100),
-        baseUnit: i.baseUnit || 'units',
-      }));
+      // Re-read the server catalogue at submission time so café/vendor/item mappings,
+      // MOQ, UOM and pricing cannot be stale or client-authored.
+      const catRes = await apiGet(`/procurement/catalogue?cafeId=${encodeURIComponent(cafeId)}`);
+      const liveCatalogue = Array.isArray(catRes?.data?.catalogue)
+        ? catRes.data.catalogue.filter((item) => item?.itemId && item.isAvailableForCafe !== false)
+        : [];
+
+      const lineItems = [];
+      for (const line of orderItems) {
+        const item = liveCatalogue.find((entry) => entry.itemId === line.itemId);
+        const offer = item && Array.isArray(item.approvedVendors)
+          ? item.approvedVendors.find((entry) => entry?.vendorId === vendorId)
+          : null;
+
+        if (!item || !offer) {
+          showToast(`Item ${line.itemId} is not currently approved for the selected café/vendor.`, 'coral');
+          return;
+        }
+
+        const minimumOrderQuantity = Math.max(
+          1,
+          Number(offer.minimumOrderQuantity ?? offer.moq ?? item.minimumOrderQuantity ?? item.moq ?? 1) || 1
+        );
+        const orderedQuantityBase = Number(line.qty);
+        if (orderedQuantityBase < minimumOrderQuantity) {
+          showToast(
+            `${item.name || item.itemId} requires a minimum order quantity of ${minimumOrderQuantity} ${offer.uom || item.baseUnit || 'units'}.`,
+            'coral'
+          );
+          return;
+        }
+
+        lineItems.push({
+          itemId: item.itemId,
+          orderedQuantityBase,
+          unitPricePaisa: Number(
+            offer.contractPricePaisa ??
+            offer.pricePaisa ??
+            item.contractPricePaisa ??
+            item.authorizedPricePaisa ??
+            0
+          ),
+          baseUnit: offer.uom || item.baseUnit || 'units',
+        });
+      }
 
       const payload = {
         vendorId,
