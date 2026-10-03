@@ -227,9 +227,26 @@ function createApp(environment) {
 
   app.disable('x-powered-by');
 
-  // Topology-aware trusted proxy configuration (loopback, linklocal, uniquelocal, plus TRUSTED_PROXY_CIDRS)
-  const trustedProxies = getTrustedProxies(process.env.TRUSTED_PROXY_CIDRS);
-  app.set('trust proxy', trustedProxies);
+  // Topology-aware trusted proxy configuration (loopback, linklocal, uniquelocal, plus TRUSTED_PROXY_CIDRS or TRUST_PROXY)
+  const trustProxyEnv = process.env.TRUST_PROXY;
+  if (trustProxyEnv) {
+    const trimmed = trustProxyEnv.trim().toLowerCase();
+    if (trimmed === 'true') {
+      app.set('trust proxy', true);
+    } else if (trimmed === 'false') {
+      app.set('trust proxy', false);
+    } else if (!isNaN(Number(trimmed))) {
+      app.set('trust proxy', Number(trimmed));
+    } else {
+      app.set('trust proxy', getTrustedProxies(trustProxyEnv));
+    }
+  } else if (process.env.RENDER === 'true') {
+    // When running on Render behind Vercel/Cloudflare ingress, trust reverse proxy hops
+    app.set('trust proxy', true);
+  } else {
+    const trustedProxies = getTrustedProxies(process.env.TRUSTED_PROXY_CIDRS);
+    app.set('trust proxy', trustedProxies);
+  }
 
   app.use(requestContext);
   app.use(cookieParser());

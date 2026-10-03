@@ -670,6 +670,20 @@ async function seedMasterUser({
     }
     const primary = existingPrimaryMasters[0];
     assertPrimaryMasterCandidate({ user: primary, organisationId });
+
+    if (User.updateOne) {
+      const updateFields = {
+        accountStatus: 'ACTIVE',
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      };
+      if (masterPassword) {
+        try {
+          updateFields.passwordHash = await hashPassword(masterPassword);
+        } catch {}
+      }
+      await User.updateOne({ _id: primary._id }, { $set: updateFields }).catch(() => {});
+    }
     return primary;
   }
 
