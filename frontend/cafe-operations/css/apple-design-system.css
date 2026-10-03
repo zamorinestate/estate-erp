@@ -311,3 +311,76 @@ textarea {
     scroll-behavior: auto !important;
   }
 }
+
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper-start: #000000;
+    --paper-end: #101012;
+    --surface: rgba(28,28,30,.82);
+    --surface-sunken: rgba(118,118,128,.16);
+    --ink: #f5f5f7;
+    --ink-900: #f5f5f7;
+    --ink-800: #e5e5ea;
+    --ink-700: #d1d1d6;
+    --muted: #aeaeb2;
+    --muted-2: #8e8e93;
+    --line: rgba(84,84,88,.58);
+    --line-strong: rgba(99,99,102,.70);
+    --shadow-card: 0 30px 80px rgba(0,0,0,.52);
+  }
+
+  .auth-page {
+    background:
+      radial-gradient(circle at 50% 0%, rgba(64,156,255,.10), transparent 34rem),
+      linear-gradient(145deg, #000 0%, #151517 100%) !important;
+  }
+  #cafeOpsRoot .auth-card,
+  .auth-card {
+    background: rgba(28,28,30,.78) !important;
+    border-color: rgba(84,84,88,.52) !important;
+  }
+  .auth-title,
+  .auth-modal h3,
+  .cafeops-menu-header .cafeops-menu-name {
+    color: #f5f5f7 !important;
+  }
+  .auth-input,
+  .auth-password input,
+  .cafeops-textarea,
+  .cafeops-pin-input {
+    background: rgba(118,118,128,.18) !important;
+    color: #f5f5f7 !important;
+  }
+  .auth-input:focus,
+  .auth-password input:focus,
+  .cafeops-textarea:focus,
+  .cafeops-pin-input:focus {
+    background: rgba(58,58,60,.80) !important;
+  }
+  .auth-code-digit,
+  .cafeops-pin-key,
+  .pin-key {
+    background: rgba(58,58,60,.74) !important;
+    color: #f5f5f7 !important;
+    border-color: rgba(84,84,88,.52) !important;
+  }
+  .auth-link-btn,
+  .auth-remember,
+  .auth-btn-secondary,
+  .cafeops-secondary-btn {
+    background: rgba(118,118,128,.16) !important;
+  }
+  .auth-modal,
+  .cafeops-modal,
+  .cafeops-menu,
+  .cafeops-toast {
+    background: rgba(28,28,30,.90) !important;
+    border-color: rgba(84,84,88,.58) !important;
+    color: #f5f5f7 !important;
+  }
+  .cafeops-context-bar {
+    background: rgba(0,0,0,.72) !important;
+  }
+}
