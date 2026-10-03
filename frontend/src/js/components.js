@@ -972,6 +972,20 @@ export function wireBell(root) {
         showToast(`Appearance changed to ${label}`);
       });
     });
+
+    const syncThemeChoices = (event) => {
+      if (!themePop.isConnected) {
+        window.removeEventListener("zamorin:theme-changed", syncThemeChoices);
+        return;
+      }
+      const activeTheme = event?.detail?.theme || state.settings?.theme || "paper";
+      themePop.querySelectorAll("[data-theme-choice]").forEach((choice) => {
+        const selected = choice.dataset.themeChoice === activeTheme;
+        choice.classList.toggle("selected", selected);
+        choice.setAttribute("aria-checked", selected ? "true" : "false");
+      });
+    };
+    window.addEventListener("zamorin:theme-changed", syncThemeChoices);
   }
 
   // Notification Bell
