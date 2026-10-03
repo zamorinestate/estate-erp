@@ -124,7 +124,10 @@ async function inspectMainLogin(page, profile) {
       cardWithinViewport: Boolean(rect) && rect.left >= -1 && rect.right <= window.innerWidth + 1,
       cardWidth: rect?.width || 0,
       submitHeight: buttonRect?.height || 0,
-      bodyBg: getComputedStyle(document.body).backgroundImage,
+      authBackground: (() => {
+        const bg = document.querySelector(".l2-bg-layer");
+        return bg ? getComputedStyle(bg).backgroundImage : "";
+      })(),
     };
   });
 }
@@ -227,7 +230,7 @@ async function main() {
       failures += report(`${profile.name}: no horizontal overflow`, result.overflowX <= 2, `${result.overflowX}px`) ? 0 : 1;
       failures += report(`${profile.name}: login card within viewport`, result.cardWithinViewport, `${Math.round(result.cardWidth)}px card`) ? 0 : 1;
       failures += report(`${profile.name}: login action usable`, result.submitHeight >= 36, `${Math.round(result.submitHeight)}px`) ? 0 : 1;
-      failures += report(`${profile.name}: visual canvas active`, result.bodyBg && result.bodyBg !== "none", result.bodyBg) ? 0 : 1;
+      failures += report(`${profile.name}: visual canvas active`, result.authBackground && result.authBackground !== "none", result.authBackground) ? 0 : 1;
 
       console.log(`\n--- Café Operations Login: ${profile.name} ---`);
       const cafeOps = await inspectCafeOpsLogin(page, profile);
