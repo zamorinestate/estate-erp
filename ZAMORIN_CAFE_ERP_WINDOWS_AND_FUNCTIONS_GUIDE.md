@@ -464,3 +464,158 @@ Located securely inside employee settings:
    - Normal Master role is permanently eliminated. Any attempt to introduce a 5th role or un-privilege Primary Master is prohibited.
 4. **GST Invoicing Rule 46(b)**:
    - Invoice serials must strictly satisfy $\le 16$ characters, adhere to `[A-Za-z0-9-/]`, maintain multi-series financial year uniqueness, and never re-use cancelled numbers.
+
+---
+
+## 10. Complete Backend Domain Models & Persistence Schemas
+
+The ERP data layer is structured across 7 core domain boundaries in MongoDB Atlas:
+
+### A. Identity, Authentication & Multi-Tenancy
+- **`User`**: Core user entity storing `email`, `hashedPassword` (calibrated scrypt), `role` (`MASTER`, `OWNER`, `CAFE_ADMIN`, `STAFF`, `VENDOR`), `isPrimaryMaster` boolean flag, `assignedCafes` array, `mfaSecret` (TOTP), and `status`.
+- **`Session` & `OperatorSession`**: Distributed session tokens, trusted device bindings, active operator PIN-pad lock state, and inactivity timeout trackers.
+- **`Cafe`**: Outlet master storing `name`, `code` (e.g., `ZC-0001`), `gstin`, `fssaiNumber`, `address`, `contactNumber`, `operatingHours`, `geofence` coordinates `{ latitude, longitude, radiusMeters }`, and `status`.
+- **`CafeAccess` & `CafeGatewayContext`**: Granular role-to-café authorization mapping ensuring complete multi-tenant store isolation.
+- **`DeviceRegistration` & `TrustedDevice`**: Authorized hardware terminals (iPads, touchscreens, mobile tills) with cryptographically bound hardware fingerprints.
+
+### B. POS, Billing & Revenue Engineering
+- **`Bill` & `TaxInvoice`**: Transaction records storing unique `billNumber`, `taxInvoiceNumber` (GST Rule 46b compliant, $\le 16$ chars), line items array with prices, GST percentages (CGST/SGST), discounts, payment method (`CASH`, `UPI`, `CARD`, `POINTS`), cashier ID, and terminal ID.
+- **`RegisterSession`**: Shift till management tracking `openingFloat`, `closingCount`, cash notes breakdown, system cash vs counted cash variance, and `zReportNumber`.
+- **`MenuItem`, `MenuSection`, `Menu`**: Commercial menu hierarchy storing item names, descriptions, categories, base selling price, tax rate, modifier groups, and availability per café.
+- **`Recipe` & `ServiceModeBOM`**: Bill of Materials linking menu items to raw material inventory SKUs with exact depletion ratios per serving size.
+- **`Customer`, `LoyaltyLedger`, `RewardDefinition`**: Customer directory, tier progression, loyalty points balance, and redemption histories.
+
+### C. Inventory Management & FEFO Lot Tracking
+- **`GlobalInventoryItem`**: Enterprise material catalogue storing SKU, item name, unit of measure (UOM: `KG`, `L`, `PCS`, `BOX`), HSN code, standard cost, and storage type (`DRY`, `CHILLED`, `FROZEN`).
+- **`CafeInventoryConfig`**: Outlet-level stock thresholds storing `currentStock`, `parLevel`, `reorderPoint`, `safetyStock`, and preferred vendor ID.
+- **`InventoryLot`**: Batch tracking implementing First-Expiry-First-Out (FEFO), storing `batchNumber`, `manufactureDate`, `expiryDate`, `initialQuantity`, `remainingQuantity`, and purchase order reference.
+- **`StockMovement`**: Immutable audit ledger recording every stock movement: `INWARD` (GRN), `OUTWARD` (POS sale depletion), `ADJUSTMENT` (Stocktake variance), `TRANSFER` (Inter-branch), or `WASTAGE` (Damaged/Spoiled).
+- **`WastageRecord` & `InventoryCycleCount`**: Formal variance adjustment sheets capturing physical vs book inventory, variance reasons, and manager approvals.
+
+### D. Authoritative Procurement & GRN Receiving
+- **`PurchaseOrder`**: Authoritative purchase order lifecycle document storing `orderNumber`, `cafeId`, `vendorId`, `urgency` (`SAME_DAY`, `NEXT_DAY`), `items` array with `orderedQuantity`, `receivedQuantity`, `shortageQuantity`, `discrepancyReason`, `status` (`DRAFT`, `SUBMITTED`, `VERIFIED_PENDING_MASTER_APPROVAL`, `APPROVED`, `REJECTED`), `editsPreApproval`, `editsPostApproval`, and `vendorBillFileId` (GridFS reference).
+- **`Vendor` & `VendorLedgerEntry`**: Registered supplier profiles with GSTIN, PAN, bank account details, credit terms, and transaction balance ledgers.
+- **`APInvoice`**: Accounts Payable vouchers linked directly to approved purchase orders and GridFS vendor bills for automated general ledger posting.
+
+### E. Financial General Ledger & Accounting
+- **`ChartOfAccount`**: Hierarchical chart of accounts categorized into Assets (`1000`), Liabilities (`2000`), Equity (`3000`), Revenue (`4000`), and Expenses (`5000`).
+- **`Journal`**: Double-entry ledger postings with balanced debit and credit entries, transaction references, posting dates, and fiscal period tags.
+- **`Expense` & `ExpenseRequest`**: Store and corporate expense vouchers with multi-tier approval statuses, receipts, and cost center allocations.
+- **`PersonalLedger`**: Strictly Master-only partner ledger tracking owner drawings, director loans, and equity infusions isolated from branch operations.
+- **`RevenueShareAgreement` & `RevenueShareSettlement`**: Franchise royalty contracts and monthly revenue share distribution statements.
+
+### F. Statutory Payroll & Workforce Management
+- **`Employee`**: Master workforce records containing PAN, Aadhaar, UAN (PF), ESI number, DOJ, salary structure (Basic, HRA, Allowances), bank details, and emergency contacts.
+- **`Shift` & `ShiftRoster`**: Outlet shift scheduling definitions, assigned personnel, break windows, and scheduled hours.
+- **`AttendanceSubmission`**: Geofenced clock-in/out records with GPS latitude, longitude, distance from outlet, selfie photograph URL, and attendance verification status.
+- **`PayrollRun` & `Payslip`**: Monthly statutory payroll batches calculating ESI Rule 50 continuity, EPF Scheme 1952 ceiling, deductions, net pay, and Indian currency words text.
+- **`LeaveRequest` & `StaffLoanAdvance`**: Staff self-service leave balances and loan/salary advance EMI deduction trackers.
+
+### G. Executive Governance, Risk & BCDR
+- **`FoodSafetyIncident`, `FoodSafetyRegistration`, `TemperatureLog`**: Cold-chain compliance logs and FSSAI statutory records.
+- **`EnterpriseRisk`, `InternalAuditPlan`, `AuditObservation`**: Risk registers, compliance heatmaps, and periodic internal store audit tracking.
+- **`DisasterRecoveryDrill`, `BusinessImpactProcess`**: Documented BCDR failover test records, database backup verifications, and offline till resilience logs.
+- **`AuditEvent`**: Cryptographically verifiable system audit log recording timestamp, actor ID, IP address, user agent, domain, action, and diff payload.
+
+---
+
+## 11. REST API Routing & Controller Architecture
+
+The backend exposes a structured, versioned REST API (`/api/v1/`) governed by role-based authorization middleware (`authenticateToken`, `requireRole`, `requirePrimaryMaster`):
+
+| API Route Group | Primary Controller | Supported Roles | Key Endpoint Operations |
+| :--- | :--- | :--- | :--- |
+| `/api/v1/auth` | `authController.js` | ALL / Public | `POST /login`, `POST /logout`, `POST /mfa/verify`, `POST /password-reset` |
+| `/api/v1/operator-session` | `operatorSessionController.js` | `CAFE_ADMIN`, `STAFF` | `POST /pin-unlock`, `POST /lock`, `POST /switch-operator` |
+| `/api/v1/dashboard` | `dashboardController.js` | `MASTER`, `OWNER`, `CAFE_ADMIN` | `GET /portfolio-pulse`, `GET /branch-ops`, `GET /trends`, `GET /attention-feed` |
+| `/api/v1/pos` | `posController.js` | `CAFE_ADMIN`, `MASTER` | `GET /catalog`, `POST /bills`, `POST /bills/:id/refund`, `GET /held-bills` |
+| `/api/v1/bills` | `billController.js` | `MASTER`, `CAFE_ADMIN` | `GET /`, `GET /:id`, `POST /print-receipt`, `GET /export-gst` |
+| `/api/v1/sales-cash` | `cashController.js` | `MASTER`, `CAFE_ADMIN`, `OWNER` | `GET /shifts`, `POST /shift-open`, `POST /shift-close`, `GET /z-report` |
+| `/api/v1/inventory` | `inventoryController.js` | `MASTER`, `CAFE_ADMIN`, `OWNER` | `GET /items`, `POST /stocktake`, `POST /movements`, `POST /wastage` |
+| `/api/v1/procurement` | `procurementController.js` | `MASTER`, `CAFE_ADMIN`, `OWNER` | `GET /orders`, `POST /orders`, `POST /orders/:id/verify-grn`, `POST /orders/:id/master-approve` |
+| `/api/v1/vendors` | `vendorController.js` | `MASTER`, `OWNER` | `GET /`, `POST /`, `PUT /:id`, `GET /:id/scorecard` |
+| `/api/v1/vendor-workspace`| `vendorWorkspaceController.js`| `VENDOR` | `GET /orders`, `GET /deliveries`, `GET /invoices`, `GET /statement` |
+| `/api/v1/finance` | `financeController.js` | `MASTER`, `OWNER` | `GET /chart-of-accounts`, `GET /trial-balance`, `GET /pnl`, `POST /journal` |
+| `/api/v1/personal-ledger` | `personalLedgerController.js` | `MASTER`, `OWNER` | `GET /entries`, `POST /drawings`, `POST /capital-infusion` |
+| `/api/v1/revenue-share` | `revenueShareController.js` | `MASTER`, `OWNER` | `GET /contracts`, `POST /calculate-settlement`, `POST /disputes` |
+| `/api/v1/expenses` | `expenseController.js` | `MASTER`, `CAFE_ADMIN`, `OWNER` | `GET /`, `POST /`, `POST /:id/approve`, `POST /:id/reject` |
+| `/api/v1/employees` | `employeeController.js` | `MASTER`, `OWNER` | `GET /`, `POST /onboard`, `PUT /:id`, `POST /:id/terminate` |
+| `/api/v1/shifts` | `shiftController.js` | `MASTER`, `CAFE_ADMIN`, `STAFF` | `GET /roster`, `POST /roster`, `POST /swap-request` |
+| `/api/v1/attendance` | `shiftController.js` | ALL Roles | `POST /punch-in`, `POST /punch-out`, `GET /history`, `POST /regularize` |
+| `/api/v1/payroll` | `payrollController.js` | `MASTER` (Primary) | `GET /runs`, `POST /execute-run`, `POST /approve`, `GET /payslips/:id` |
+| `/api/v1/menu` | `menuController.js` | `MASTER`, `CAFE_ADMIN`, `OWNER` | `GET /`, `POST /items`, `PUT /items/:id`, `POST /recipes` |
+| `/api/v1/reports` | `reportController.js` | `MASTER`, `OWNER` | `GET /sales-summary`, `GET /labor-cost`, `GET /wastage-trends` |
+| `/api/v1/owner-governance`| `ownerGovernanceDelegationController.js`| `OWNER`, `MASTER` | `GET /bcdr-status`, `GET /risk-audit`, `GET /food-safety-logs` |
+| `/api/v1/cafes` | `cafeController.js` | `MASTER` (Primary) | `GET /`, `POST /`, `PUT /:id`, `POST /:id/geofence` |
+| `/api/v1/admin` | `adminGovernanceController.js` | `MASTER` (Primary) | `GET /audit-logs`, `POST /device-provision`, `GET /system-health` |
+| `/api/v1/files` | `fileController.js` | Authenticated | `POST /upload` (GridFS), `GET /:id/download`, `GET /:id/view` |
+
+---
+
+## 12. Frontend Zero-Build ES Modules Architecture
+
+### A. Architectural Principles
+The frontend is implemented purely with **vanilla browser ES Modules** (`import` / `export`) loaded natively over HTTP/2 with zero bundler steps (no Webpack, Vite, or Babel required at runtime).
+
+### B. Core Client State Store (`state.js`)
+State management is unified into a reactive publish/subscribe store:
+- **`state.currentUser`**: Logged-in user profile, role, primary master flag, and permissions.
+- **`state.currentCafe`**: Active café outlet context. Automatically synchronized with local storage and topbar branch selectors.
+- **`state.theme`**: Light (`porcelain`) vs Dark (`obsidian`) theme tokens.
+- **`state.activeView`**: Current route hash (e.g., `#pos`, `#procurement`, `#dashboard`).
+- **`state.notifications`**: Real-time push notification queue.
+- **`state.cart`**: POS shopping cart line items, selected modifiers, active discounts, and held tickets.
+
+### C. Client Routing & View Controller
+The router listens to browser `hashchange` events:
+1. Validates user session and token expiration.
+2. Checks role permissions against requested route.
+3. Renders the target page view into the main DOM container.
+4. Updates topbar breadcrumbs and sidebar active indicator.
+5. Injects contextual action bars (e.g., Apple design system action controls).
+
+---
+
+## 13. Hardware Bridge & Store Peripherals
+
+The ERP seamlessly communicates with store-floor hardware peripherals:
+1. **ESC/POS Thermal Receipt Printers**:
+   - Network (Ethernet/Wi-Fi) and USB printing over standard ESC/POS protocol.
+   - Prints 80mm / 58mm customer tax invoices with GSTIN, HSN summary, and QR payment codes.
+2. **Electronic Cash Drawers**:
+   - Triggered via RJ11/RJ12 drawer kick pulse directly from the receipt printer upon cash tender completion.
+3. **Barcode & 2D Scanners**:
+   - Supports USB and Bluetooth HID barcode scanners for instant product lookup and batch barcode scanning.
+4. **Touchscreen POS Displays**:
+   - Optimized for Apple iPad (10.2", 11", 12.9") and Windows touchscreen terminals with dedicated large-format keypad inputs and gesture scrolling.
+
+---
+
+## 14. Cryptographic Document Vault, GridFS & BCDR
+
+1. **MongoDB GridFS Cryptographic Vault**:
+   - High-resolution vendor delivery receipts, tax bills, signed employment contracts, and employee ID proofs are chunked into 255KB blocks and stored in MongoDB GridFS.
+   - Streamed securely with MIME-type headers and authentication guards (`GET /api/v1/files/:id/download`).
+2. **ClamAV Anti-Malware Pipeline**:
+   - File uploads pass through streaming antivirus inspection prior to database commitment.
+3. **Business Continuity & Disaster Recovery (BCDR)**:
+   - Automated continuous oplog backups on MongoDB Atlas with point-in-time recovery (PITR).
+   - Semi-annual documented disaster recovery drills validating database reconstitution within $\le 30$ minutes RTO and zero RPO.
+
+---
+
+## 15. Statutory & Regulatory Compliance Reference
+
+1. **GST Invoicing Rule 46(b) (Central Goods and Services Tax Rules, 2017)**:
+   - Consecutive serial numbers, not exceeding 16 characters, in one or multiple series, containing alphabets, numerals, and special characters (hyphen `/` or dash `-`).
+   - Gaps in serial numbering are strictly prohibited.
+2. **ESI Rule 50 Continuity (Employees' State Insurance Act, 1948)**:
+   - Mandatory employee wage ceiling of ₹21,000 per month.
+   - Contribution periods: 1st April to 30th September and 1st October to 31st March.
+   - If an employee's wage exceeds ₹21,000 after the start of a contribution period, ESI deductions MUST continue until the end of that statutory contribution period.
+3. **EPF Scheme 1952 (Employees' Provident Funds and Miscellaneous Provisions Act)**:
+   - Statutory wage ceiling of ₹15,000 per month for mandatory contributions (12% Employee + 12% Employer split into 8.33% EPS and 3.67% EPF).
+4. **FSSAI Food Safety & Standards Regulations (2011)**:
+   - Daily temperature logging of refrigeration units ($\le 4^\circ\text{C}$ for milk/dairy, $\le -18^\circ\text{C}$ for frozen goods).
+   - Traceability of all ingredients back to registered FSSAI suppliers via batch lot numbers.
+
