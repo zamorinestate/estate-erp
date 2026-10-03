@@ -2546,3 +2546,238 @@ html.dark input[type="month"],
     padding: 8px 2px !important;
   }
 }
+
+
+/* Final legacy-pocket refinement: staff finance + Café gateway */
+
+/* Staff financial self-service */
+.staff-loans-root {
+  max-width: 1220px !important;
+  padding: 24px clamp(14px, 2.5vw, 30px) 52px !important;
+}
+.staff-loans-root > .card:first-of-type,
+.staff-loans-root #loans-nav-tabs {
+  border-radius: 14px !important;
+}
+#loans-nav-tabs {
+  padding: 3px !important;
+  gap: 3px !important;
+  background: rgba(118,118,128,.09);
+  border-radius: 10px;
+}
+#loans-nav-tabs .btn {
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  box-shadow: none !important;
+}
+#loans-nav-tabs .btn.btn-primary {
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,.10) !important;
+}
+.btn-loan-details,
+.btn-pause-loan,
+.btn-withdraw-loan {
+  border-radius: 9px !important;
+}
+.btn-withdraw-loan {
+  color: var(--apple-red) !important;
+}
+
+/* Payslip page has no dedicated root class: normalize its distinctive legacy KPI accents */
+#page-content .page-enter .card[style*="border-left:4px solid #10b981"] {
+  border-left-color: var(--apple-green) !important;
+}
+#page-content .page-enter .card[style*="border-left:4px solid #0284c7"] {
+  border-left-color: var(--apple-blue) !important;
+}
+#page-content .page-enter .card[style*="border-left:4px solid #8b5cf6"] {
+  border-left-color: var(--apple-purple) !important;
+}
+#page-content .page-enter .card[style*="border-left:4px solid #f59e0b"] {
+  border-left-color: var(--apple-orange) !important;
+}
+#page-content .page-enter .card[style*="background:rgba(200,157,92"] {
+  background: rgba(0,122,255,.07) !important;
+  border-color: rgba(0,122,255,.16) !important;
+}
+
+/* Announcements */
+.announcements-root {
+  max-width: 1400px !important;
+  margin: 0 auto;
+  padding: 24px clamp(14px, 2.5vw, 30px) 52px !important;
+}
+.announcements-root .announcement-card {
+  border-radius: 16px !important;
+  border-color: var(--line) !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+.announcements-root .announcement-card:hover {
+  border-color: var(--line-strong) !important;
+  box-shadow: var(--shadow-sm) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Café Operations Gateway rendered within the main SPA */
+.login-screen[data-page="cafe-gateway"] {
+  min-height: 100dvh !important;
+  padding: 20px !important;
+  background:
+    radial-gradient(circle at 50% 8%, rgba(0,122,255,.10), transparent 34rem),
+    var(--paper) !important;
+  color: var(--ink) !important;
+}
+.login-screen[data-page="cafe-gateway"] .login-card {
+  width: min(440px, calc(100vw - 24px)) !important;
+  max-width: 440px !important;
+  padding: 30px 28px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 22px !important;
+  box-shadow: var(--shadow-xl) !important;
+  color: var(--ink) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+}
+.login-screen[data-page="cafe-gateway"] .login-wordmark {
+  color: var(--ink) !important;
+  font-family: var(--font-display) !important;
+  letter-spacing: -.025em !important;
+}
+.login-screen[data-page="cafe-gateway"] .login-sub {
+  color: var(--apple-blue) !important;
+  text-transform: none !important;
+  letter-spacing: .01em !important;
+}
+.login-screen[data-page="cafe-gateway"] #gw-pin-container > div[style*="background:var(--surface"],
+.login-screen[data-page="cafe-gateway"] #gw-auth-container > div[style*="background:var(--surface-sunken"] {
+  background: rgba(118,118,128,.07) !important;
+  border-color: transparent !important;
+  border-radius: 14px !important;
+}
+.login-screen[data-page="cafe-gateway"] .gw-key-btn {
+  height: 48px !important;
+  border: 0 !important;
+  border-radius: 14px !important;
+  background: rgba(118,118,128,.09) !important;
+  color: var(--ink) !important;
+  box-shadow: none !important;
+}
+.login-screen[data-page="cafe-gateway"] .gw-key-btn:hover {
+  background: rgba(118,118,128,.15) !important;
+}
+.login-screen[data-page="cafe-gateway"] .gw-key-btn:active {
+  transform: scale(.97) !important;
+}
+.login-screen[data-page="cafe-gateway"] #gw-signin-submit-btn,
+.login-screen[data-page="cafe-gateway"] #gw-setup-code-submit-btn {
+  background: var(--apple-blue) !important;
+  border-color: var(--apple-blue) !important;
+  color: #fff !important;
+  border-radius: 12px !important;
+}
+.login-screen[data-page="cafe-gateway"] #gw-setup-code-input,
+.login-screen[data-page="cafe-gateway"] #gw-emp-id {
+  background: rgba(118,118,128,.09) !important;
+  border-color: transparent !important;
+  color: var(--ink) !important;
+  border-radius: 12px !important;
+}
+.login-screen[data-page="cafe-gateway"] #gw-setup-code-input:focus,
+.login-screen[data-page="cafe-gateway"] #gw-emp-id:focus {
+  background: var(--surface-raised) !important;
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+.login-screen[data-page="cafe-gateway"] .alert.danger {
+  background: rgba(255,59,48,.10) !important;
+  border-color: rgba(255,59,48,.18) !important;
+  color: var(--apple-red) !important;
+  border-radius: 12px !important;
+}
+
+/* Café device enrollment and routed Café sign-in cards */
+.login-screen[data-cafe-ops-screen] {
+  min-height: 100dvh !important;
+  padding: 20px !important;
+  background:
+    radial-gradient(circle at 50% 8%, rgba(0,122,255,.09), transparent 34rem),
+    var(--paper) !important;
+}
+.login-screen[data-cafe-ops-screen] .login-card {
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 22px !important;
+  box-shadow: var(--shadow-xl) !important;
+  color: var(--ink) !important;
+}
+.login-screen[data-cafe-ops-screen] .login-sub {
+  color: var(--apple-blue) !important;
+  text-transform: none !important;
+  letter-spacing: .01em !important;
+}
+.login-screen[data-cafe-ops-screen] .auth-input {
+  background: rgba(118,118,128,.09) !important;
+  border-color: transparent !important;
+  border-radius: 12px !important;
+}
+.login-screen[data-cafe-ops-screen] .auth-input:focus {
+  background: var(--surface-raised) !important;
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+.login-screen[data-cafe-ops-screen] .cafeops-device-strip {
+  background: rgba(118,118,128,.07) !important;
+  border-color: transparent !important;
+  border-radius: 14px !important;
+}
+.login-screen[data-cafe-ops-screen] .cafeops-textlink {
+  color: var(--apple-blue) !important;
+}
+.login-screen[data-cafe-ops-screen] .cafeops-connection {
+  border-radius: 999px !important;
+}
+
+/* Cafe Performance / access / creation modal surfaces */
+.cafe-performance-page,
+.cafe-performance-wrap {
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.modal-backdrop .modal-card[style*="background:var(--surface-raised)"],
+.modal-backdrop .modal-card[style*="border:1px solid var(--line-strong)"] {
+  background: var(--surface) !important;
+  border-color: var(--line) !important;
+  border-radius: 20px !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+
+/* Mobile refinement for remaining personal and gateway screens */
+@media (max-width: 720px) {
+  .staff-loans-root,
+  .announcements-root {
+    padding: 20px 12px calc(32px + var(--sab)) !important;
+  }
+  #loans-nav-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #loans-nav-tabs .btn {
+    flex: 0 0 auto;
+  }
+  .login-screen[data-page="cafe-gateway"],
+  .login-screen[data-cafe-ops-screen] {
+    padding: 10px !important;
+  }
+  .login-screen[data-page="cafe-gateway"] .login-card,
+  .login-screen[data-cafe-ops-screen] .login-card {
+    width: 100% !important;
+    border-radius: 20px !important;
+    padding: 24px 18px !important;
+  }
+}
