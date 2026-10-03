@@ -1708,3 +1708,786 @@ html.dark #app.auth-screen .l2-error-banner {
     color: transparent !important;
   }
 }
+
+
+/* ==========================================================================
+   OPERATIONAL MODULE REFINEMENT TRANCHE
+   Administration, Employees, Attendance, Inventory, Procurement, Finance,
+   Reports, Settings, Documents, Approvals and shared module hubs.
+   ========================================================================== */
+
+:root {
+  /* Compatibility aliases for older module-local inline variables. */
+  --primary: var(--apple-blue);
+  --primary-hover: var(--apple-blue-hover);
+  --card-bg: var(--surface-raised);
+  --border-color: var(--line);
+  --text-primary: var(--ink);
+  --text-secondary: var(--muted);
+  --accent: var(--apple-blue);
+  --brand-gold: var(--apple-blue);
+  --gold-accent: var(--apple-blue);
+  --accent-gold: var(--apple-blue);
+  --sky: var(--apple-blue);
+  --amber: var(--apple-orange);
+  --mint-500: var(--apple-green);
+  --lavender-500: var(--apple-purple);
+  --amber-500: var(--apple-orange);
+}
+
+/* Shared operational page canvas */
+.admin-page-wrap,
+.inventory-page,
+.finance-page,
+.tasks-page,
+#reports-analytics-container,
+#attendance-qr-scanner-root,
+.staff-docs-page {
+  max-width: 1600px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding: 28px clamp(18px, 3vw, 36px) 52px !important;
+  color: var(--ink) !important;
+}
+
+.admin-page-wrap .page-header,
+.inventory-page .page-header,
+.finance-page .page-header,
+.tasks-page .page-header,
+#reports-analytics-container .page-header {
+  align-items: flex-end !important;
+  margin-bottom: 22px !important;
+}
+
+.admin-page-wrap .page-title,
+.inventory-page .page-title,
+.finance-page .page-title,
+.tasks-page .page-title,
+#reports-analytics-container .page-title {
+  font-size: clamp(1.9rem, 2.5vw, 2.45rem) !important;
+  font-weight: 720 !important;
+  letter-spacing: -.038em !important;
+  line-height: 1.05 !important;
+}
+
+.admin-page-wrap .page-subtitle,
+.inventory-page .page-subtitle,
+.finance-page .page-subtitle,
+.tasks-page .page-subtitle,
+#reports-analytics-container .page-subtitle {
+  color: var(--muted) !important;
+  margin-top: 7px !important;
+}
+
+/* Shared form-control family still used by older modules */
+.form-control,
+.form-input,
+.filter-input,
+.filter-select {
+  min-height: 38px !important;
+  padding: 7px 11px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  box-shadow: none !important;
+  font-family: var(--font-ui) !important;
+}
+.form-control:focus,
+.form-input:focus,
+.filter-input:focus,
+.filter-select:focus {
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: var(--focus-ring) !important;
+  outline: none !important;
+}
+.form-control-sm {
+  min-height: 34px !important;
+  padding: 5px 9px !important;
+}
+
+/* Module hub tiles — iOS grouped launcher */
+.module-hub-container {
+  gap: 24px !important;
+}
+.module-hub-section {
+  gap: 10px !important;
+}
+.module-hub-section-title {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  padding-left: 4px !important;
+}
+.module-tile-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)) !important;
+  gap: 12px !important;
+}
+.module-hub-tile {
+  min-height: 84px !important;
+  padding: 15px 16px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 16px !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-xs) !important;
+  transition:
+    transform var(--motion-fast) var(--ease),
+    box-shadow var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease) !important;
+}
+.module-hub-tile:hover {
+  transform: translateY(-1px) !important;
+  border-color: var(--line-strong) !important;
+  background: var(--surface-raised) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.module-hub-tile.active {
+  border-color: rgba(0,122,255,.20) !important;
+  background: rgba(0,122,255,.08) !important;
+}
+.module-hub-tile .module-tile-icon-box {
+  width: 42px !important;
+  height: 42px !important;
+  min-width: 42px !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: rgba(0,122,255,.09) !important;
+  color: var(--apple-blue) !important;
+}
+.module-hub-tile:hover .module-tile-icon-box {
+  background: rgba(0,122,255,.13) !important;
+}
+.module-hub-tile .module-tile-title {
+  font-size: 13.5px !important;
+  font-weight: 650 !important;
+  letter-spacing: -.01em !important;
+}
+.module-hub-tile .module-tile-sub {
+  color: var(--muted) !important;
+}
+.module-hub-tile .module-tile-badge,
+.badge-tag {
+  border-radius: 999px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+.module-hub-tile .module-tile-badge.accent {
+  background: rgba(0,122,255,.10) !important;
+  color: var(--apple-blue) !important;
+  border-color: rgba(0,122,255,.18) !important;
+}
+
+/* Legacy badge palette normalized to Apple semantic colors */
+.badge-accent,
+.badge-info {
+  background: rgba(0,122,255,.10) !important;
+  color: #0062cc !important;
+  border-color: rgba(0,122,255,.18) !important;
+}
+.badge-success {
+  background: rgba(52,199,89,.10) !important;
+  color: #248a3d !important;
+  border-color: rgba(52,199,89,.18) !important;
+}
+.badge-warning,
+.badge-gold {
+  background: rgba(255,149,0,.10) !important;
+  color: #a34e00 !important;
+  border-color: rgba(255,149,0,.18) !important;
+}
+.badge-danger {
+  background: rgba(255,59,48,.10) !important;
+  color: #b42318 !important;
+  border-color: rgba(255,59,48,.18) !important;
+}
+.badge-neutral {
+  background: rgba(118,118,128,.10) !important;
+  color: var(--muted) !important;
+  border-color: transparent !important;
+}
+
+/* Administration / Café administration */
+.admin-page-wrap > .card,
+.admin-page-wrap .card {
+  border-radius: 16px !important;
+}
+.admin-page-wrap .card[style*="background:var(--surface-sunken)"] {
+  background: rgba(118,118,128,.06) !important;
+  border-color: transparent !important;
+}
+.admin-page-wrap .table-wrap {
+  border-radius: 14px !important;
+}
+#admin-cafe-search,
+#admin-user-search,
+#admin-audit-search {
+  min-width: min(260px, 100%);
+}
+.admin-page-wrap .pill {
+  border-radius: 999px !important;
+}
+.admin-page-wrap .modal-card {
+  border-radius: 20px !important;
+  background: var(--surface) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+
+/* Employee management */
+.open-employee-360-btn,
+.view-emp-attendance-btn,
+.edit-employee-btn,
+.open-credentials-modal-btn,
+.open-transfer-modal-btn,
+.open-offboard-modal-btn,
+.delete-employee-btn {
+  border-radius: 9px !important;
+  min-height: 32px !important;
+}
+.view-emp-attendance-btn,
+.open-credentials-modal-btn {
+  color: var(--apple-blue) !important;
+}
+.edit-employee-btn {
+  color: #248a3d !important;
+}
+.open-offboard-modal-btn,
+.delete-employee-btn {
+  color: var(--apple-red) !important;
+}
+.filter-cafe-btn {
+  border-radius: 10px !important;
+}
+
+/* Attendance QR + diagnostics */
+#attendance-qr-scanner-root {
+  gap: 18px !important;
+}
+#attendance-qr-scanner-root > div:first-child {
+  border-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+#attendance-qr-scanner-root > div:first-child > div:first-child > div:first-child {
+  color: var(--apple-blue) !important;
+  text-transform: none !important;
+  letter-spacing: .01em !important;
+}
+#attendance-qr-scanner-root > div:first-child h1 {
+  font-family: var(--font-display) !important;
+  font-size: clamp(1.9rem, 2.5vw, 2.45rem) !important;
+  font-weight: 720 !important;
+  letter-spacing: -.038em !important;
+  line-height: 1.05 !important;
+}
+#attendance-qr-scanner-root > .card {
+  border-radius: 16px !important;
+}
+#attendance-qr-scanner-root > .card:first-of-type {
+  background: rgba(118,118,128,.06) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+#attendance-qr-box {
+  border-radius: 18px !important;
+  border: 1px solid rgba(60,60,67,.16) !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,.08) !important;
+}
+#scanner-viewport-container {
+  border-radius: 16px !important;
+  background: #000 !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+}
+#scanner-viewfinder-overlay > div {
+  border-color: #64d2ff !important;
+  border-radius: 18px !important;
+}
+#scanner-viewfinder-overlay > div > div {
+  color: #64d2ff !important;
+  letter-spacing: .02em !important;
+}
+#diagnostic-results-box {
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: rgba(118,118,128,.07) !important;
+}
+
+/* Inventory / procurement / finance shared grouped sections */
+.inventory-page .card[style*="background:var(--surface-sunken)"],
+.finance-page .card[style*="background:var(--surface-sunken)"],
+#procurement-tab-content .card[style*="background:var(--surface-sunken)"] {
+  background: rgba(118,118,128,.065) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.inventory-page .glass-table,
+.finance-page .glass-table,
+#procurement-tab-content .glass-table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
+.inventory-page .glass-table th,
+.finance-page .glass-table th,
+#procurement-tab-content .glass-table th {
+  background: rgba(118,118,128,.07) !important;
+  text-transform: none !important;
+  letter-spacing: .01em !important;
+}
+.inventory-page .glass-table tr:hover td,
+.finance-page .glass-table tr:hover td,
+#procurement-tab-content .glass-table tr:hover td {
+  background: rgba(118,118,128,.055) !important;
+}
+
+/* Procurement */
+#procurement-action-centre > .card {
+  background: rgba(255,149,0,.08) !important;
+  border-color: rgba(255,149,0,.16) !important;
+  border-radius: 14px !important;
+}
+#procurement-action-centre [data-deep-tab] {
+  color: var(--apple-blue) !important;
+}
+.proc-order-request-modal,
+.proc-verify-delivery-modal {
+  border-radius: 20px !important;
+}
+
+/* Finance */
+.fin-action-pill {
+  min-height: 72px;
+  border: 1px solid var(--line) !important;
+  border-radius: 14px !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+.fin-action-pill:hover {
+  transform: translateY(-1px) !important;
+  border-color: var(--line-strong) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.fin-action-pill.has-action.is-danger {
+  border-left: 3px solid var(--apple-red) !important;
+}
+.fin-action-pill.has-action.is-warning {
+  border-left: 3px solid var(--apple-orange) !important;
+}
+.fin-action-pill.has-action.is-accent {
+  border-left: 3px solid var(--apple-blue) !important;
+}
+.fin-action-pill.is-clear {
+  border-left: 3px solid var(--apple-green) !important;
+}
+
+/* Reports & analytics */
+#reports-analytics-container {
+  gap: 18px !important;
+}
+.report-filter-bar,
+.report-header,
+.report-metadata-card,
+.category-card {
+  border-radius: 16px !important;
+  border-color: var(--line) !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+.report-filter-bar {
+  padding: 14px 16px !important;
+}
+.report-header {
+  padding: 18px !important;
+}
+.report-breadcrumbs {
+  color: var(--muted) !important;
+}
+.category-card:hover {
+  border-color: var(--line-strong) !important;
+  box-shadow: var(--shadow-sm) !important;
+  transform: translateY(-1px) !important;
+}
+.forecast-view-tab-btn {
+  border: 0 !important;
+  border-radius: 9px !important;
+  background: rgba(118,118,128,.08) !important;
+  color: var(--muted) !important;
+  box-shadow: none !important;
+}
+.forecast-view-tab-btn.active {
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,.10) !important;
+}
+.btn-table-drill {
+  color: var(--apple-blue) !important;
+  border-radius: 8px !important;
+}
+
+/* Operational tasks / approvals */
+.oto-summary-strip {
+  gap: 10px !important;
+}
+.oto-metric-card {
+  border: 1px solid var(--line) !important;
+  border-radius: 14px !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-xs) !important;
+  padding: 14px 16px !important;
+}
+.oto-metric-card.critical {
+  border-left: 3px solid var(--apple-red) !important;
+}
+.oto-metric-card.overdue {
+  border-left: 3px solid var(--apple-orange) !important;
+}
+.oto-metric-card.verification {
+  border-left: 3px solid var(--apple-blue) !important;
+}
+.oto-metric-card.ontime {
+  border-left: 3px solid var(--apple-green) !important;
+}
+.oto-metric-label {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+.oto-tabs-strip {
+  padding: 3px !important;
+  gap: 3px !important;
+  background: rgba(118,118,128,.09) !important;
+  border: 0 !important;
+  border-radius: 10px !important;
+}
+.oto-tab-btn {
+  min-height: 32px !important;
+  border-radius: 8px !important;
+  color: var(--muted) !important;
+}
+.oto-tab-btn:hover {
+  background: rgba(255,255,255,.45) !important;
+}
+.oto-tab-btn.active {
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,.10) !important;
+}
+.oto-badge {
+  border-radius: 999px !important;
+  letter-spacing: 0 !important;
+}
+
+/* Universal Settings Hub */
+.settings-workspace-layout {
+  gap: 20px !important;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 28px clamp(18px, 3vw, 36px) 52px !important;
+}
+.settings-secondary-nav {
+  width: 248px !important;
+  min-width: 248px !important;
+  top: calc(var(--topbar) + 16px) !important;
+  padding: 10px 8px !important;
+  border: 0 !important;
+  border-radius: 16px !important;
+  background: rgba(118,118,128,.07) !important;
+  box-shadow: none !important;
+}
+.settings-nav-group-title {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 11px !important;
+  padding: 7px 10px 4px !important;
+}
+.settings-nav-link {
+  min-height: 38px !important;
+  padding: 7px 10px !important;
+  border: 0 !important;
+  border-radius: 9px !important;
+}
+.settings-nav-link:hover {
+  background: rgba(118,118,128,.10) !important;
+}
+.settings-nav-link.active {
+  background: var(--apple-blue) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  font-weight: 600 !important;
+}
+.settings-nav-link.active .nav-icon {
+  color: #fff !important;
+}
+.settings-header-box,
+.settings-section-card {
+  border: 1px solid var(--line) !important;
+  border-radius: 16px !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+.settings-header-box {
+  padding: 20px 22px !important;
+}
+.settings-page-h1 {
+  font-size: clamp(1.75rem, 2.3vw, 2.25rem) !important;
+  font-weight: 720 !important;
+  letter-spacing: -.035em !important;
+}
+.settings-breadcrumb-link {
+  color: var(--apple-blue) !important;
+}
+.settings-card-header {
+  border-bottom-color: var(--line) !important;
+}
+.settings-field-label {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+.settings-field-input,
+.settings-readonly-field {
+  min-height: 40px !important;
+  border-radius: 10px !important;
+}
+.settings-field-input {
+  background: var(--surface-raised) !important;
+}
+.settings-field-input:focus {
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+.settings-readonly-field {
+  background: rgba(118,118,128,.07) !important;
+  border-color: transparent !important;
+}
+.settings-status-chip {
+  border-radius: 999px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+.settings-state-box {
+  border-radius: 16px !important;
+}
+
+/* Employee document hub: override its older hard-coded indigo/white system */
+.staff-docs-page {
+  max-width: 1280px !important;
+}
+.staff-docs-page > div:first-child h1 {
+  font-family: var(--font-display) !important;
+  font-size: clamp(1.9rem, 2.5vw, 2.35rem) !important;
+  font-weight: 720 !important;
+  letter-spacing: -.035em !important;
+  color: var(--ink) !important;
+}
+.staff-docs-page > div:first-child p {
+  color: var(--muted) !important;
+}
+.staff-docs-page .card {
+  border-radius: 16px !important;
+  border-color: var(--line) !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+.staff-docs-page .pill-btn {
+  min-height: 34px !important;
+  padding: 6px 12px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: rgba(118,118,128,.09) !important;
+  color: var(--muted) !important;
+}
+.staff-docs-page .pill-btn:hover {
+  background: rgba(118,118,128,.15) !important;
+}
+.staff-docs-page .pill-btn.active {
+  background: var(--apple-blue) !important;
+  color: #fff !important;
+}
+#doc-search-input {
+  min-height: 38px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+}
+#doc-search-input:focus {
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+#btn-open-upload-modal,
+#btn-empty-upload {
+  background: var(--apple-blue) !important;
+  color: #fff !important;
+  border-color: var(--apple-blue) !important;
+  border-radius: 10px !important;
+}
+#upload-doc-modal {
+  background: rgba(0,0,0,.28) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+}
+#upload-doc-modal > div {
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 20px !important;
+  box-shadow: var(--shadow-xl) !important;
+  color: var(--ink) !important;
+}
+#upload-doc-modal > div > div:first-child {
+  border-bottom-color: var(--line) !important;
+}
+#upload-doc-modal h3,
+#upload-doc-modal label {
+  color: var(--ink) !important;
+}
+#upload-doc-modal input,
+#upload-doc-modal select,
+#upload-doc-modal textarea {
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+  border-radius: 10px !important;
+}
+
+/* Generic data-table plugin chrome after vendor stylesheet */
+.datatable-wrapper,
+.dataTable-wrapper {
+  color: var(--ink) !important;
+}
+.datatable-top,
+.datatable-bottom,
+.dataTable-top,
+.dataTable-bottom {
+  padding: 10px 12px !important;
+  color: var(--muted) !important;
+}
+.datatable-input,
+.dataTable-input,
+.datatable-selector,
+.dataTable-selector {
+  min-height: 34px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 9px !important;
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  box-shadow: none !important;
+}
+.datatable-input:focus,
+.dataTable-input:focus,
+.datatable-selector:focus,
+.dataTable-selector:focus {
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+.datatable-pagination a,
+.dataTable-pagination a {
+  border-radius: 8px !important;
+  color: var(--ink) !important;
+}
+.datatable-pagination .active a,
+.dataTable-pagination .active a {
+  background: var(--apple-blue) !important;
+  color: #fff !important;
+}
+
+/* Dark semantic aliases used by old document/admin inline styles */
+html.dark,
+[data-theme="midnight"],
+[data-theme="noir"] {
+  --card-bg: var(--surface-raised);
+  --border-color: var(--line);
+  --text-primary: var(--ink);
+  --text-secondary: var(--muted);
+}
+
+/* Tablet + mobile operational modules */
+@media (max-width: 900px) {
+  .settings-workspace-layout {
+    display: block !important;
+  }
+  .settings-secondary-nav {
+    width: 100% !important;
+    min-width: 0 !important;
+    position: static !important;
+    max-height: none !important;
+    margin-bottom: 16px;
+    display: flex !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    gap: 6px !important;
+    padding: 6px !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .settings-nav-group {
+    display: contents !important;
+  }
+  .settings-nav-group-title {
+    display: none !important;
+  }
+  .settings-nav-link {
+    width: auto !important;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .settings-nav-link .nav-label {
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .admin-page-wrap,
+  .inventory-page,
+  .finance-page,
+  .tasks-page,
+  #reports-analytics-container,
+  #attendance-qr-scanner-root,
+  .staff-docs-page,
+  .settings-workspace-layout {
+    padding: 20px 12px calc(32px + var(--sab)) !important;
+  }
+
+  .module-tile-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .oto-tabs-strip {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .oto-tab-btn {
+    flex: 0 0 auto;
+  }
+
+  #attendance-qr-scanner-root > div[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+  #attendance-qr-box {
+    max-width: 100%;
+  }
+  #attendance-qr-box > div {
+    width: min(260px, calc(100vw - 90px)) !important;
+    height: min(260px, calc(100vw - 90px)) !important;
+  }
+
+  .staff-docs-page > div:first-child {
+    align-items: stretch !important;
+  }
+  .staff-docs-page > div:first-child > div:last-child {
+    width: 100%;
+  }
+  .staff-docs-page > div:first-child > div:last-child .btn {
+    flex: 1 1 auto;
+  }
+
+  .settings-form-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .settings-section-card {
+    padding: 16px !important;
+  }
+
+  .report-filter-bar,
+  .report-header {
+    padding: 14px !important;
+  }
+}
