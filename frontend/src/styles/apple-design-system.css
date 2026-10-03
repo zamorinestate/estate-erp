@@ -1518,3 +1518,193 @@ html.dark #app.auth-screen .l2-error-banner {
   background: rgba(255,59,48,.13) !important;
   border-color: rgba(255,105,97,.22) !important;
 }
+
+
+/* Global shell refinement: role context and compact status controls */
+.topbar-left,
+.topbar-right {
+  min-width: 0;
+}
+.primary-master-topbar-controls,
+.owner-topbar-controls {
+  min-width: 0;
+}
+.cafe-scope-dropdown {
+  min-width: 0;
+}
+#global-cafe-selector {
+  max-width: min(230px, 30vw) !important;
+  text-overflow: ellipsis;
+}
+.cafe-ops-context-bar,
+.cafe-scope-context,
+.vendor-scope-context,
+.training-mode-badge,
+.supervised-preview-badge,
+.system-status-indicator {
+  min-height: 32px !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+  font-family: var(--font-ui) !important;
+}
+.cafe-ops-context-bar,
+.cafe-scope-context {
+  background: rgba(118,118,128,.08) !important;
+  border: 1px solid transparent !important;
+  color: var(--ink-700) !important;
+}
+.cafe-ops-context-bar .btn {
+  min-height: 28px !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  padding: 3px 8px !important;
+}
+.cafe-ops-context-bar .btn:hover {
+  background: rgba(118,118,128,.12) !important;
+}
+.vendor-scope-context {
+  background: rgba(255,149,0,.10) !important;
+  border: 1px solid rgba(255,149,0,.18) !important;
+  color: #b35b00 !important;
+}
+.training-mode-badge {
+  background: rgba(255,149,0,.11) !important;
+  border: 1px solid rgba(255,149,0,.18) !important;
+  color: #a34e00 !important;
+  padding: 3px 9px !important;
+}
+.supervised-preview-badge {
+  background: rgba(0,122,255,.10) !important;
+  border: 1px solid rgba(0,122,255,.18) !important;
+  color: #0062cc !important;
+  padding: 3px 9px !important;
+}
+.supervised-preview-badge .btn {
+  color: var(--apple-blue) !important;
+  background: transparent !important;
+  border: 0 !important;
+  min-height: 24px !important;
+}
+.system-status-indicator.offline {
+  background: rgba(255,59,48,.10) !important;
+  border: 1px solid rgba(255,59,48,.18) !important;
+  color: var(--apple-red) !important;
+  padding: 3px 9px !important;
+}
+.profile-avatar-btn {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+.profile-avatar-btn:hover {
+  transform: none !important;
+  box-shadow: 0 0 0 4px rgba(0,122,255,.12) !important;
+}
+.theme-popover,
+.notif-popover,
+.profile-popover {
+  border-radius: 16px !important;
+  overflow: hidden;
+}
+.theme-options {
+  gap: 4px !important;
+}
+.theme-opt-btn {
+  border-radius: 10px !important;
+  border-color: transparent !important;
+}
+.theme-opt-btn:hover {
+  background: rgba(118,118,128,.10) !important;
+}
+.theme-opt-btn.selected {
+  background: rgba(0,122,255,.10) !important;
+  border-color: rgba(0,122,255,.18) !important;
+}
+.theme-opt-btn.selected strong {
+  color: var(--apple-blue) !important;
+}
+
+/* Apple-like scrollbar treatment where supported */
+@supports selector(::-webkit-scrollbar) {
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(120,120,128,.28);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(120,120,128,.42);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+}
+
+@media (max-width: 900px) {
+  #global-cafe-selector {
+    max-width: 180px !important;
+  }
+  .training-mode-badge,
+  .supervised-preview-badge {
+    max-width: 180px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar-left {
+    flex: 0 1 auto;
+    max-width: 42%;
+  }
+  .topbar-centre {
+    flex: 1 1 120px !important;
+  }
+  #global-cafe-selector {
+    max-width: 135px !important;
+  }
+  .cafe-scope-context,
+  .vendor-scope-context {
+    max-width: 140px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .cafe-ops-context-bar {
+    max-width: 150px;
+    overflow: hidden;
+    flex-wrap: nowrap !important;
+  }
+  .cafe-ops-context-bar > span:not(:first-child),
+  .cafe-ops-context-bar > button {
+    display: none !important;
+  }
+  .training-mode-badge,
+  .supervised-preview-badge {
+    display: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar-left {
+    max-width: 36%;
+  }
+  #global-cafe-selector {
+    max-width: 105px !important;
+    padding-left: 8px !important;
+    padding-right: 20px !important;
+  }
+  .topbar-centre {
+    flex-basis: 90px !important;
+  }
+  .global-search-wrap input::placeholder {
+    color: transparent !important;
+  }
+}
