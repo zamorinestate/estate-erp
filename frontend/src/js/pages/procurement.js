@@ -1329,115 +1329,171 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
   let selectedDeliveryDate = tomorrowStr;
   let timingType = 'NEXT_DAY';
 
-  // Fetch or resolve active vendors
+  // Fetch active vendors from the server. Procurement order creation fails closed
+  // when master data is unavailable; runtime placeholder vendors are forbidden.
   let activeVendors = [];
   try {
     const vRes = await apiGet('/vendors?status=ACTIVE');
-    if (vRes?.success && Array.isArray(vRes.data?.vendors) && vRes.data.vendors.length) {
-      activeVendors = vRes.data.vendors;
+    if (vRes?.success && Array.isArray(vRes.data?.vendors)) {
+      activeVendors = vRes.data.vendors.filter((vendor) => vendor?.vendorId);
     }
-  } catch (_) {}
+  } catch (error) {
+    showToast(`Unable to load active vendors: ${error.message}`, 'coral');
+    return;
+  }
   if (!activeVendors.length) {
-    activeVendors = [
-      { vendorId: 'VEN-0001', name: 'Malabar Fresh Dairy & Produce Ltd', category: 'FOOD_BEVERAGE' },
-      { vendorId: 'VEN-0002', name: 'Wayanad Estate Coffee Roasters', category: 'FOOD_BEVERAGE' },
-      { vendorId: 'VEN-0003', name: 'Kerala Eco Packaging Solutions Ltd', category: 'PACKAGING' },
-    ];
+    showToast('No active vendors are available. Add or activate a vendor before creating a purchase order.', 'coral');
+    return;
   }
 
-  // Fetch or resolve active cafes
-  let activeCafes = Array.isArray(state.cafes) && state.cafes.length ? [...state.cafes] : [];
+  // Fetch active cafés from application state or the server. Never manufacture
+  // café IDs when the source of truth returns no records.
+  let activeCafes = Array.isArray(state.cafes) && state.cafes.length
+    ? state.cafes.filter((cafe) => cafe?.cafeId && cafe.cafeId !== 'ALL')
+    : [];
   if (!activeCafes.length) {
     try {
       const cRes = await apiGet('/cafes');
-      if (cRes?.success && Array.isArray(cRes.data?.cafes) && cRes.data.cafes.length) {
-        activeCafes = cRes.data.cafes;
+      if (cRes?.success && Array.isArray(cRes.data?.cafes)) {
+        activeCafes = cRes.data.cafes.filter((cafe) => cafe?.cafeId && cafe.cafeId !== 'ALL');
       }
-    } catch (_) {}
+    } catch (error) {
+      showToast(`Unable to load cafés: ${error.message}`, 'coral');
+      return;
+    }
   }
   if (!activeCafes.length) {
-    activeCafes = [
-      { cafeId: 'ZC-0001', name: 'Koramangala Main Branch' },
-      { cafeId: 'ZC-0002', name: 'Indiranagar Central Branch' },
-    ];
+    showToast('No active café outlet is available for this account. Order creation has been stopped.', 'coral');
+    return;
   }
 
-  // Authoritative default cafe: NEVER 'ALL'
-  let defaultCafeId = 'ZC-0001';
-  if (state.selectedCafeId && state.selectedCafeId !== 'ALL') {
+  // Select a real café only. There is deliberately no hard-coded ZC-* fallback.
+  let defaultCafeId = null;
+  if (state.selectedCafeId && state.selectedCafeId !== 'ALL' && activeCafes.some((c) => c.cafeId === state.selectedCafeId)) {
     defaultCafeId = state.selectedCafeId;
-  } else if (state.currentCafeId && state.currentCafeId !== 'ALL') {
+  } else if (state.currentCafeId && state.currentCafeId !== 'ALL' && activeCafes.some((c) => c.cafeId === state.currentCafeId)) {
     defaultCafeId = state.currentCafeId;
-  } else if (activeCafes[0]?.cafeId) {
-    defaultCafeId = activeCafes[0].cafeId;
+  } else {
+    defaultCafeId = activeCafes[0]?.cafeId || null;
+  }
+  if (!defaultCafeId) {
+    showToast('A specific requesting café is required before an order can be created.', 'coral');
+    return;
   }
 
-  const defaultVendorId = preselectedVendorId || activeVendors[0]?.vendorId || 'VEN-0001';
+  // Guided-buying catalogue is the only item source for procurement orders.
+  // Free-form and hard-coded client SKUs are intentionally not supported.
+  let serverCatalogue = [];
+  try {
+    const catRes = await apiGet(`/procurement/catalogue?cafeId=${encodeURIComponent(defaultCafeId)}`);
+    if (catRes?.success && Array.isArray(catRes.data?.catalogue)) {
+      serverCatalogue = catRes.data.catalogue.filter(
+        (item) => item?.itemId && item.isAvailableForCafe !== false
+      );
+    }
+  } catch (error) {
+    showToast(`Unable to load the approved procurement catalogue: ${error.message}`, 'coral');
+    return;
+  }
+  if (!serverCatalogue.length) {
+    showToast('No approved catalogue items are available for this café. Order creation has been stopped.', 'coral');
+    return;
+  }
 
-  const COMMON_CATALOGUE = [
-    { itemId: 'ITEM-1002', name: 'Farm Fresh Whole Milk (3.5% Fat)', baseUnit: 'litre', unitPriceRupees: 62 },
-    { itemId: 'ITM-MILK-01', name: 'Organic Full Cream Milk', baseUnit: 'liter', unitPriceRupees: 60 },
-    { itemId: 'ITM-CREAM-01', name: 'Heavy Whipping Cream', baseUnit: 'pack', unitPriceRupees: 120 },
-    { itemId: 'ITEM-1001', name: 'Arabica Whole Beans (Estate Blend)', baseUnit: 'kg', unitPriceRupees: 850 },
-    { itemId: 'ITM-COFFEE-01', name: 'Arabica Dark Roast Beans', baseUnit: 'kg', unitPriceRupees: 900 },
-    { itemId: 'ITEM-1003', name: 'Madagascar Vanilla Bean Syrup (750ml)', baseUnit: 'bottle', unitPriceRupees: 750 },
-    { itemId: 'ITM-CUP-01', name: 'Biodegradable Hot Coffee Cups (250ml)', baseUnit: 'box', unitPriceRupees: 450 },
-  ];
+  const allActiveVendors = [...activeVendors];
 
-  const initialItem = COMMON_CATALOGUE.find(c => c.itemId === preselectedSku) || COMMON_CATALOGUE[1];
+  const eligibleVendorIds = new Set(
+    serverCatalogue.flatMap((item) =>
+      Array.isArray(item.approvedVendors)
+        ? item.approvedVendors.map((vendor) => vendor?.vendorId).filter(Boolean)
+        : []
+    )
+  );
+  activeVendors = activeVendors.filter((vendor) => eligibleVendorIds.has(vendor.vendorId));
+  if (!activeVendors.length) {
+    showToast('No active vendor has an approved catalogue mapping for this café.', 'coral');
+    return;
+  }
 
-  let orderItems = [
-    {
-      itemId: initialItem.itemId,
-      baseUnit: initialItem.baseUnit,
-      qty: 15,
-      unitPriceRupees: initialItem.unitPriceRupees,
-    },
-  ];
+  const preselectedItem = preselectedSku
+    ? serverCatalogue.find((item) => item.itemId === preselectedSku || item.sku === preselectedSku)
+    : null;
+  const preferredVendorId = preselectedItem?.preferredVendorId || null;
+  const defaultVendorId =
+    (preselectedVendorId && activeVendors.some((vendor) => vendor.vendorId === preselectedVendorId) && preselectedVendorId) ||
+    (preferredVendorId && activeVendors.some((vendor) => vendor.vendorId === preferredVendorId) && preferredVendorId) ||
+    activeVendors[0].vendorId;
+
+  function getVendorOffer(item, vendorId) {
+    if (!item || !Array.isArray(item.approvedVendors)) return null;
+    return item.approvedVendors.find((vendor) => vendor?.vendorId === vendorId) || null;
+  }
+
+  function normalizeCatalogueItem(item, vendorId = defaultVendorId) {
+    const offer = getVendorOffer(item, vendorId);
+    const pricePaisa = Number(
+      offer?.contractPricePaisa ??
+      offer?.pricePaisa ??
+      item?.contractPricePaisa ??
+      item?.authorizedPricePaisa ??
+      0
+    );
+    return {
+      itemId: item.itemId,
+      name: item.itemName || item.name || item.shortName || item.itemId,
+      baseUnit: offer?.uom || item.baseUnit || 'units',
+      qty: Math.max(1, Number(offer?.minimumOrderQuantity ?? offer?.moq ?? item.minimumOrderQuantity ?? item.moq ?? 1) || 1),
+      unitPriceRupees: pricePaisa / 100,
+    };
+  }
+
+  const initialCatalogueItem =
+    preselectedItem ||
+    serverCatalogue.find((item) => Boolean(getVendorOffer(item, defaultVendorId))) ||
+    serverCatalogue[0];
+  const initialItem = normalizeCatalogueItem(initialCatalogueItem, defaultVendorId);
+
+  let orderItems = [initialItem];
 
   function renderItemsTable() {
     const tbody = document.getElementById('order-items-tbody');
     const totalEl = document.getElementById('order-summary-total');
     if (!tbody) return;
 
+    const selectedVendorId = document.getElementById('modal-order-vendor')?.value || defaultVendorId;
+    const vendorCatalogue = serverCatalogue.filter((item) => Boolean(getVendorOffer(item, selectedVendorId)));
+    const selectableItems = vendorCatalogue.length ? vendorCatalogue : serverCatalogue;
+
     let grandTotalRupees = 0;
 
     tbody.innerHTML = orderItems.map((it, idx) => {
-      const lineSubtotal = (Number(it.qty) || 0) * (Number(it.unitPriceRupees) || 0);
+      const rawItem = serverCatalogue.find((item) => item.itemId === it.itemId);
+      const authoritativeItem = rawItem ? normalizeCatalogueItem(rawItem, selectedVendorId) : it;
+      const lineSubtotal = (Number(it.qty) || 0) * (Number(authoritativeItem.unitPriceRupees) || 0);
       grandTotalRupees += lineSubtotal;
-
-      const isKnown = COMMON_CATALOGUE.some(c => c.itemId === it.itemId);
 
       return `
         <tr data-item-idx="${idx}">
           <td style="padding:6px 8px;">
             <select class="select item-sku-select" data-field="itemId" style="font-size:11.5px;padding:4px 8px;width:100%;">
-              ${COMMON_CATALOGUE.map(c => `
-                <option value="${c.itemId}" ${c.itemId === it.itemId ? 'selected' : ''}>
-                  ${c.name} (${c.itemId}) — ₹${c.unitPriceRupees}/${c.baseUnit}
-                </option>
-              `).join('')}
-              ${!isKnown ? `<option value="${it.itemId}" selected>${it.itemId} (Custom)</option>` : ''}
-              <option value="__CUSTOM__">+ Custom SKU...</option>
+              ${selectableItems.map((item) => {
+                const normalized = normalizeCatalogueItem(item, selectedVendorId);
+                return `
+                  <option value="${normalized.itemId}" ${normalized.itemId === it.itemId ? 'selected' : ''}>
+                    ${normalized.name} (${normalized.itemId}) — ₹${normalized.unitPriceRupees}/${normalized.baseUnit}
+                  </option>
+                `;
+              }).join('')}
             </select>
-            <input type="text" class="input item-custom-sku" style="display:none;font-size:11px;padding:3px 6px;margin-top:4px;width:100%;" placeholder="Enter SKU (e.g. ITEM-999)">
           </td>
           <td style="padding:6px 8px;">
-            <select class="select item-unit-select" data-field="baseUnit" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;">
-              <option value="liter" ${it.baseUnit === 'liter' ? 'selected' : ''}>liter</option>
-              <option value="litre" ${it.baseUnit === 'litre' ? 'selected' : ''}>litre</option>
-              <option value="kg" ${it.baseUnit === 'kg' ? 'selected' : ''}>kg</option>
-              <option value="pack" ${it.baseUnit === 'pack' ? 'selected' : ''}>pack</option>
-              <option value="bottle" ${it.baseUnit === 'bottle' ? 'selected' : ''}>bottle</option>
-              <option value="box" ${it.baseUnit === 'box' ? 'selected' : ''}>box</option>
-              <option value="units" ${it.baseUnit === 'units' ? 'selected' : ''}>units</option>
-            </select>
+            <input type="text" class="input" readonly value="${authoritativeItem.baseUnit}" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;background:var(--surface-sunken);">
           </td>
           <td style="padding:6px 8px;">
             <input type="number" class="input item-qty-input" data-field="qty" min="1" step="any" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;" value="${it.qty}">
           </td>
           <td style="padding:6px 8px;">
-            <input type="number" class="input item-price-input" data-field="unitPriceRupees" min="0" step="any" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;" value="${it.unitPriceRupees}">
+            <input type="number" class="input" readonly value="${authoritativeItem.unitPriceRupees}" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;background:var(--surface-sunken);">
           </td>
           <td style="padding:6px 8px;text-align:right;font-weight:700;color:var(--ink);">
             ₹${lineSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1459,52 +1515,38 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
       sel.addEventListener('change', (e) => {
         const row = e.target.closest('tr');
         const idx = Number(row.dataset.itemIdx);
-        const val = e.target.value;
-        const customInput = row.querySelector('.item-custom-sku');
-        if (val === '__CUSTOM__') {
-          if (customInput) {
-            customInput.style.display = 'block';
-            customInput.focus();
-          }
-        } else {
-          if (customInput) customInput.style.display = 'none';
-          const match = COMMON_CATALOGUE.find(c => c.itemId === val);
-          if (match) {
-            orderItems[idx].itemId = match.itemId;
-            orderItems[idx].baseUnit = match.baseUnit;
-            orderItems[idx].unitPriceRupees = match.unitPriceRupees;
-          } else {
-            orderItems[idx].itemId = val;
-          }
+        const match = serverCatalogue.find((item) => item.itemId === e.target.value);
+        if (!match) {
+          showToast('That item is no longer present in the approved procurement catalogue.', 'coral');
           renderItemsTable();
+          return;
         }
+        const normalized = normalizeCatalogueItem(match, selectedVendorId);
+        orderItems[idx] = {
+          ...normalized,
+          qty: Math.max(Number(orderItems[idx]?.qty) || 0, normalized.qty),
+        };
+        renderItemsTable();
       });
     });
 
-    tbody.querySelectorAll('.item-custom-sku').forEach((inp) => {
-      inp.addEventListener('input', (e) => {
-        const row = e.target.closest('tr');
-        const idx = Number(row.dataset.itemIdx);
-        if (e.target.value.trim()) {
-          orderItems[idx].itemId = e.target.value.trim().toUpperCase();
-        }
-      });
-    });
-
-    tbody.querySelectorAll('.item-unit-select, .item-qty-input, .item-price-input').forEach((elem) => {
+    tbody.querySelectorAll('.item-qty-input').forEach((elem) => {
       elem.addEventListener('input', (e) => {
         const row = e.target.closest('tr');
         const idx = Number(row.dataset.itemIdx);
-        const field = e.target.dataset.field;
-        orderItems[idx][field] = e.target.value;
-        const subtotal = (Number(orderItems[idx].qty) || 0) * (Number(orderItems[idx].unitPriceRupees) || 0);
+        orderItems[idx].qty = e.target.value;
+        const rawItem = serverCatalogue.find((item) => item.itemId === orderItems[idx].itemId);
+        const normalized = rawItem ? normalizeCatalogueItem(rawItem, selectedVendorId) : orderItems[idx];
+        const subtotal = (Number(orderItems[idx].qty) || 0) * (Number(normalized.unitPriceRupees) || 0);
         const subtotalCell = row.cells[4];
         if (subtotalCell) {
           subtotalCell.textContent = '₹' + subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         }
         let total = 0;
-        orderItems.forEach(i => {
-          total += (Number(i.qty) || 0) * (Number(i.unitPriceRupees) || 0);
+        orderItems.forEach((line) => {
+          const source = serverCatalogue.find((item) => item.itemId === line.itemId);
+          const authoritative = source ? normalizeCatalogueItem(source, selectedVendorId) : line;
+          total += (Number(line.qty) || 0) * (Number(authoritative.unitPriceRupees) || 0);
         });
         if (totalEl) {
           totalEl.textContent = '₹' + total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1669,14 +1711,96 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
     }
   });
 
+  const vendorSelect = document.getElementById('modal-order-vendor');
+  const cafeSelect = document.getElementById('modal-order-cafe');
+  let lastValidCafeId = defaultCafeId;
+
+  vendorSelect?.addEventListener('change', () => {
+    const vendorId = vendorSelect.value;
+    const compatibleItems = serverCatalogue.filter((item) => Boolean(getVendorOffer(item, vendorId)));
+    if (!compatibleItems.length) {
+      showToast('This vendor has no approved catalogue items for the selected café.', 'coral');
+      return;
+    }
+
+    orderItems = orderItems
+      .filter((line) => compatibleItems.some((item) => item.itemId === line.itemId))
+      .map((line) => {
+        const source = compatibleItems.find((item) => item.itemId === line.itemId);
+        const normalized = normalizeCatalogueItem(source, vendorId);
+        return { ...normalized, qty: Math.max(Number(line.qty) || 0, normalized.qty) };
+      });
+
+    if (!orderItems.length) {
+      orderItems = [normalizeCatalogueItem(compatibleItems[0], vendorId)];
+    }
+    renderItemsTable();
+  });
+
+  cafeSelect?.addEventListener('change', async () => {
+    const cafeId = cafeSelect.value;
+    if (!cafeId || cafeId === 'ALL') return;
+
+    try {
+      const catRes = await apiGet(`/procurement/catalogue?cafeId=${encodeURIComponent(cafeId)}`);
+      const nextCatalogue = Array.isArray(catRes?.data?.catalogue)
+        ? catRes.data.catalogue.filter((item) => item?.itemId && item.isAvailableForCafe !== false)
+        : [];
+
+      if (!nextCatalogue.length) {
+        showToast('No approved procurement items are available for that café.', 'coral');
+        cafeSelect.value = lastValidCafeId;
+        return;
+      }
+
+      const nextVendorIds = new Set(
+        nextCatalogue.flatMap((item) =>
+          Array.isArray(item.approvedVendors)
+            ? item.approvedVendors.map((vendor) => vendor?.vendorId).filter(Boolean)
+            : []
+        )
+      );
+      const nextVendors = allActiveVendors.filter((vendor) => nextVendorIds.has(vendor.vendorId));
+      if (!nextVendors.length) {
+        showToast('No active vendor is approved for that café catalogue.', 'coral');
+        cafeSelect.value = lastValidCafeId;
+        return;
+      }
+
+      serverCatalogue = nextCatalogue;
+      activeVendors = nextVendors;
+      vendorSelect.innerHTML = activeVendors.map((vendor) =>
+        `<option value="${vendor.vendorId}">${vendor.name} (${vendor.vendorId})</option>`
+      ).join('');
+
+      const nextVendorId = activeVendors[0].vendorId;
+      vendorSelect.value = nextVendorId;
+      const firstItem = serverCatalogue.find((item) => Boolean(getVendorOffer(item, nextVendorId)));
+      if (!firstItem) {
+        showToast('No approved item/vendor mapping is available for that café.', 'coral');
+        cafeSelect.value = lastValidCafeId;
+        return;
+      }
+
+      orderItems = [normalizeCatalogueItem(firstItem, nextVendorId)];
+      lastValidCafeId = cafeId;
+      renderItemsTable();
+    } catch (error) {
+      showToast(`Unable to refresh the café catalogue: ${error.message}`, 'coral');
+      cafeSelect.value = lastValidCafeId;
+    }
+  });
+
   document.getElementById('btn-add-order-item')?.addEventListener('click', () => {
-    const nextItem = COMMON_CATALOGUE[orderItems.length % COMMON_CATALOGUE.length];
-    orderItems.push({
-      itemId: nextItem.itemId,
-      baseUnit: nextItem.baseUnit,
-      qty: 10,
-      unitPriceRupees: nextItem.unitPriceRupees,
-    });
+    const vendorId = vendorSelect?.value || defaultVendorId;
+    const compatibleItems = serverCatalogue.filter((item) => Boolean(getVendorOffer(item, vendorId)));
+    if (!compatibleItems.length) {
+      showToast('No approved items are available for the selected vendor.', 'coral');
+      return;
+    }
+    const unused = compatibleItems.find((item) => !orderItems.some((line) => line.itemId === item.itemId));
+    const nextItem = unused || compatibleItems[0];
+    orderItems.push(normalizeCatalogueItem(nextItem, vendorId));
     renderItemsTable();
   });
 
@@ -1699,12 +1823,51 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
     }
 
     try {
-      const lineItems = orderItems.map((i) => ({
-        itemId: i.itemId.toUpperCase(),
-        orderedQuantityBase: Number(i.qty),
-        unitPricePaisa: Math.round(Number(i.unitPriceRupees || 0) * 100),
-        baseUnit: i.baseUnit || 'units',
-      }));
+      // Re-read the server catalogue at submission time so café/vendor/item mappings,
+      // MOQ, UOM and pricing cannot be stale or client-authored.
+      const catRes = await apiGet(`/procurement/catalogue?cafeId=${encodeURIComponent(cafeId)}`);
+      const liveCatalogue = Array.isArray(catRes?.data?.catalogue)
+        ? catRes.data.catalogue.filter((item) => item?.itemId && item.isAvailableForCafe !== false)
+        : [];
+
+      const lineItems = [];
+      for (const line of orderItems) {
+        const item = liveCatalogue.find((entry) => entry.itemId === line.itemId);
+        const offer = item && Array.isArray(item.approvedVendors)
+          ? item.approvedVendors.find((entry) => entry?.vendorId === vendorId)
+          : null;
+
+        if (!item || !offer) {
+          showToast(`Item ${line.itemId} is not currently approved for the selected café/vendor.`, 'coral');
+          return;
+        }
+
+        const minimumOrderQuantity = Math.max(
+          1,
+          Number(offer.minimumOrderQuantity ?? offer.moq ?? item.minimumOrderQuantity ?? item.moq ?? 1) || 1
+        );
+        const orderedQuantityBase = Number(line.qty);
+        if (orderedQuantityBase < minimumOrderQuantity) {
+          showToast(
+            `${item.name || item.itemId} requires a minimum order quantity of ${minimumOrderQuantity} ${offer.uom || item.baseUnit || 'units'}.`,
+            'coral'
+          );
+          return;
+        }
+
+        lineItems.push({
+          itemId: item.itemId,
+          orderedQuantityBase,
+          unitPricePaisa: Number(
+            offer.contractPricePaisa ??
+            offer.pricePaisa ??
+            item.contractPricePaisa ??
+            item.authorizedPricePaisa ??
+            0
+          ),
+          baseUnit: offer.uom || item.baseUnit || 'units',
+        });
+      }
 
       const payload = {
         vendorId,
