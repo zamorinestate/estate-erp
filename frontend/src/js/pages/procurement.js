@@ -1458,44 +1458,40 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
     const totalEl = document.getElementById('order-summary-total');
     if (!tbody) return;
 
+    const selectedVendorId = document.getElementById('modal-order-vendor')?.value || defaultVendorId;
+    const vendorCatalogue = serverCatalogue.filter((item) => Boolean(getVendorOffer(item, selectedVendorId)));
+    const selectableItems = vendorCatalogue.length ? vendorCatalogue : serverCatalogue;
+
     let grandTotalRupees = 0;
 
     tbody.innerHTML = orderItems.map((it, idx) => {
-      const lineSubtotal = (Number(it.qty) || 0) * (Number(it.unitPriceRupees) || 0);
+      const rawItem = serverCatalogue.find((item) => item.itemId === it.itemId);
+      const authoritativeItem = rawItem ? normalizeCatalogueItem(rawItem, selectedVendorId) : it;
+      const lineSubtotal = (Number(it.qty) || 0) * (Number(authoritativeItem.unitPriceRupees) || 0);
       grandTotalRupees += lineSubtotal;
-
-      const isKnown = COMMON_CATALOGUE.some(c => c.itemId === it.itemId);
 
       return `
         <tr data-item-idx="${idx}">
           <td style="padding:6px 8px;">
             <select class="select item-sku-select" data-field="itemId" style="font-size:11.5px;padding:4px 8px;width:100%;">
-              ${COMMON_CATALOGUE.map(c => `
-                <option value="${c.itemId}" ${c.itemId === it.itemId ? 'selected' : ''}>
-                  ${c.name} (${c.itemId}) — ₹${c.unitPriceRupees}/${c.baseUnit}
-                </option>
-              `).join('')}
-              ${!isKnown ? `<option value="${it.itemId}" selected>${it.itemId} (Custom)</option>` : ''}
-              <option value="__CUSTOM__">+ Custom SKU...</option>
+              ${selectableItems.map((item) => {
+                const normalized = normalizeCatalogueItem(item, selectedVendorId);
+                return `
+                  <option value="${normalized.itemId}" ${normalized.itemId === it.itemId ? 'selected' : ''}>
+                    ${normalized.name} (${normalized.itemId}) — ₹${normalized.unitPriceRupees}/${normalized.baseUnit}
+                  </option>
+                `;
+              }).join('')}
             </select>
-            <input type="text" class="input item-custom-sku" style="display:none;font-size:11px;padding:3px 6px;margin-top:4px;width:100%;" placeholder="Enter SKU (e.g. ITEM-999)">
           </td>
           <td style="padding:6px 8px;">
-            <select class="select item-unit-select" data-field="baseUnit" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;">
-              <option value="liter" ${it.baseUnit === 'liter' ? 'selected' : ''}>liter</option>
-              <option value="litre" ${it.baseUnit === 'litre' ? 'selected' : ''}>litre</option>
-              <option value="kg" ${it.baseUnit === 'kg' ? 'selected' : ''}>kg</option>
-              <option value="pack" ${it.baseUnit === 'pack' ? 'selected' : ''}>pack</option>
-              <option value="bottle" ${it.baseUnit === 'bottle' ? 'selected' : ''}>bottle</option>
-              <option value="box" ${it.baseUnit === 'box' ? 'selected' : ''}>box</option>
-              <option value="units" ${it.baseUnit === 'units' ? 'selected' : ''}>units</option>
-            </select>
+            <input type="text" class="input" readonly value="${authoritativeItem.baseUnit}" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;background:var(--surface-sunken);">
           </td>
           <td style="padding:6px 8px;">
             <input type="number" class="input item-qty-input" data-field="qty" min="1" step="any" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;" value="${it.qty}">
           </td>
           <td style="padding:6px 8px;">
-            <input type="number" class="input item-price-input" data-field="unitPriceRupees" min="0" step="any" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;" value="${it.unitPriceRupees}">
+            <input type="number" class="input" readonly value="${authoritativeItem.unitPriceRupees}" style="font-size:11.5px;padding:4px 6px;width:100%;box-sizing:border-box;text-align:right;background:var(--surface-sunken);">
           </td>
           <td style="padding:6px 8px;text-align:right;font-weight:700;color:var(--ink);">
             ₹${lineSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1517,52 +1513,38 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
       sel.addEventListener('change', (e) => {
         const row = e.target.closest('tr');
         const idx = Number(row.dataset.itemIdx);
-        const val = e.target.value;
-        const customInput = row.querySelector('.item-custom-sku');
-        if (val === '__CUSTOM__') {
-          if (customInput) {
-            customInput.style.display = 'block';
-            customInput.focus();
-          }
-        } else {
-          if (customInput) customInput.style.display = 'none';
-          const match = COMMON_CATALOGUE.find(c => c.itemId === val);
-          if (match) {
-            orderItems[idx].itemId = match.itemId;
-            orderItems[idx].baseUnit = match.baseUnit;
-            orderItems[idx].unitPriceRupees = match.unitPriceRupees;
-          } else {
-            orderItems[idx].itemId = val;
-          }
+        const match = serverCatalogue.find((item) => item.itemId === e.target.value);
+        if (!match) {
+          showToast('That item is no longer present in the approved procurement catalogue.', 'coral');
           renderItemsTable();
+          return;
         }
+        const normalized = normalizeCatalogueItem(match, selectedVendorId);
+        orderItems[idx] = {
+          ...normalized,
+          qty: Math.max(Number(orderItems[idx]?.qty) || 0, normalized.qty),
+        };
+        renderItemsTable();
       });
     });
 
-    tbody.querySelectorAll('.item-custom-sku').forEach((inp) => {
-      inp.addEventListener('input', (e) => {
-        const row = e.target.closest('tr');
-        const idx = Number(row.dataset.itemIdx);
-        if (e.target.value.trim()) {
-          orderItems[idx].itemId = e.target.value.trim().toUpperCase();
-        }
-      });
-    });
-
-    tbody.querySelectorAll('.item-unit-select, .item-qty-input, .item-price-input').forEach((elem) => {
+    tbody.querySelectorAll('.item-qty-input').forEach((elem) => {
       elem.addEventListener('input', (e) => {
         const row = e.target.closest('tr');
         const idx = Number(row.dataset.itemIdx);
-        const field = e.target.dataset.field;
-        orderItems[idx][field] = e.target.value;
-        const subtotal = (Number(orderItems[idx].qty) || 0) * (Number(orderItems[idx].unitPriceRupees) || 0);
+        orderItems[idx].qty = e.target.value;
+        const rawItem = serverCatalogue.find((item) => item.itemId === orderItems[idx].itemId);
+        const normalized = rawItem ? normalizeCatalogueItem(rawItem, selectedVendorId) : orderItems[idx];
+        const subtotal = (Number(orderItems[idx].qty) || 0) * (Number(normalized.unitPriceRupees) || 0);
         const subtotalCell = row.cells[4];
         if (subtotalCell) {
           subtotalCell.textContent = '₹' + subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         }
         let total = 0;
-        orderItems.forEach(i => {
-          total += (Number(i.qty) || 0) * (Number(i.unitPriceRupees) || 0);
+        orderItems.forEach((line) => {
+          const source = serverCatalogue.find((item) => item.itemId === line.itemId);
+          const authoritative = source ? normalizeCatalogueItem(source, selectedVendorId) : line;
+          total += (Number(line.qty) || 0) * (Number(authoritative.unitPriceRupees) || 0);
         });
         if (totalEl) {
           totalEl.textContent = '₹' + total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
