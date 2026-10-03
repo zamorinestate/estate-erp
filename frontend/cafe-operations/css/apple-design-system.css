@@ -1,0 +1,313 @@
+/* Zamorin Cafe Operations — Apple-inspired UI compatibility layer */
+:root {
+  color-scheme: light;
+  --apple-blue: #007aff;
+  --apple-blue-hover: #006ee6;
+  --apple-green: #34c759;
+  --apple-red: #ff3b30;
+  --apple-orange: #ff9500;
+
+  --ink-900: #1d1d1f;
+  --ink-800: #2c2c2e;
+  --ink-700: #3a3a3c;
+  --bronze-700: #005fc7;
+  --bronze-600: #0071e3;
+  --bronze-500: var(--apple-blue);
+  --bronze-400: #409cff;
+  --bronze-100: rgba(0, 122, 255, 0.10);
+  --bronze-50: rgba(0, 122, 255, 0.06);
+
+  --paper-start: #f5f5f7;
+  --paper-end: #e9e9ee;
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-sunken: rgba(118, 118, 128, 0.09);
+  --ink: #1d1d1f;
+  --muted: #636366;
+  --muted-2: #8e8e93;
+  --line: rgba(60, 60, 67, 0.16);
+  --line-strong: rgba(60, 60, 67, 0.26);
+
+  --danger: var(--apple-red);
+  --danger-soft: rgba(255, 59, 48, .10);
+  --success: var(--apple-green);
+
+  --radius-input: 12px;
+  --radius-card: 24px;
+  --shadow-card: 0 28px 70px rgba(0, 0, 0, .16);
+  --shadow-warm-xs: 0 1px 2px rgba(0, 0, 0, .03);
+  --shadow-btn: none;
+
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  --ease: cubic-bezier(.25, .1, .25, 1);
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-ui) !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+.auth-page {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255,255,255,.92), transparent 38rem),
+    linear-gradient(145deg, #f5f5f7 0%, #e6e6eb 100%) !important;
+}
+
+.auth-glow {
+  width: 760px !important;
+  height: 760px !important;
+  background:
+    radial-gradient(circle, rgba(0,122,255,.10), transparent 58%) !important;
+  filter: blur(36px) !important;
+  animation: none !important;
+}
+
+.auth-blob {
+  filter: blur(68px) !important;
+}
+.auth-blob--1 {
+  background: radial-gradient(circle, rgba(0,122,255,.14), transparent 70%) !important;
+}
+.auth-blob--2 {
+  background: radial-gradient(circle, rgba(175,82,222,.08), transparent 70%) !important;
+}
+.auth-blob--3 {
+  background: radial-gradient(circle, rgba(52,199,89,.08), transparent 70%) !important;
+}
+.auth-grid {
+  background-image: radial-gradient(rgba(60,60,67,.12) 1px, transparent 1px) !important;
+  opacity: .22 !important;
+}
+.auth-particles {
+  display: none !important;
+}
+
+#cafeOpsRoot .auth-card,
+.auth-card {
+  max-width: 560px !important;
+  background: rgba(255,255,255,.76) !important;
+  border: 1px solid rgba(255,255,255,.72) !important;
+  border-top: 1px solid rgba(255,255,255,.72) !important;
+  border-radius: var(--radius-card) !important;
+  box-shadow: var(--shadow-card) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  backdrop-filter: blur(32px) saturate(180%);
+  padding: 44px 42px 38px !important;
+}
+.auth-card:hover {
+  transform: none !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+.auth-title,
+.auth-modal h3,
+.cafeops-menu-header .cafeops-menu-name {
+  font-family: var(--font-display) !important;
+  color: var(--ink-900) !important;
+  font-weight: 700 !important;
+  letter-spacing: -.025em !important;
+}
+.auth-title {
+  font-size: 1.5rem !important;
+}
+.auth-subtitle {
+  color: var(--muted) !important;
+}
+
+.auth-field label {
+  color: var(--ink-700) !important;
+  font-weight: 600 !important;
+}
+.auth-input,
+.auth-password input,
+.cafeops-textarea,
+.cafeops-pin-input {
+  background: rgba(118,118,128,.10) !important;
+  color: var(--ink) !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-input) !important;
+  box-shadow: none !important;
+}
+.auth-input:hover,
+.auth-password:hover input,
+.cafeops-textarea:hover,
+.cafeops-pin-input:hover {
+  border-color: rgba(60,60,67,.16) !important;
+}
+.auth-input:focus,
+.auth-password input:focus,
+.cafeops-textarea:focus,
+.cafeops-pin-input:focus {
+  background: rgba(255,255,255,.86) !important;
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: 0 0 0 4px rgba(0,122,255,.16) !important;
+  outline: none !important;
+}
+.auth-input::placeholder,
+.auth-password input::placeholder,
+.cafeops-textarea::placeholder {
+  color: var(--muted-2) !important;
+}
+
+.auth-show-toggle,
+.auth-link-btn {
+  color: var(--apple-blue) !important;
+}
+.auth-link-btn,
+.auth-remember {
+  background: rgba(118,118,128,.08) !important;
+  border-color: transparent !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+}
+.auth-link-btn:hover,
+.auth-remember:hover {
+  background: rgba(118,118,128,.14) !important;
+  transform: none !important;
+}
+.auth-remember:has(input:checked) {
+  color: var(--apple-blue) !important;
+  border-color: rgba(0,122,255,.24) !important;
+  background: rgba(0,122,255,.10) !important;
+}
+.auth-remember:has(input:checked) .auth-remember-dot {
+  background: var(--apple-green) !important;
+  border-color: var(--apple-green) !important;
+}
+
+.auth-btn-primary,
+.auth-modal-btn,
+.cafeops-primary-btn {
+  background: var(--apple-blue) !important;
+  border: 1px solid var(--apple-blue) !important;
+  border-radius: var(--radius-input) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+  font-weight: 650 !important;
+  letter-spacing: -.01em !important;
+}
+.auth-btn-primary:hover:not(:disabled),
+.auth-modal-btn:hover,
+.cafeops-primary-btn:hover:not(:disabled) {
+  background: var(--apple-blue-hover) !important;
+  border-color: var(--apple-blue-hover) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+.auth-btn-secondary,
+.cafeops-secondary-btn {
+  background: rgba(118,118,128,.10) !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-input) !important;
+  color: var(--ink) !important;
+  box-shadow: none !important;
+}
+.auth-btn-secondary:hover:not(:disabled),
+.cafeops-secondary-btn:hover:not(:disabled) {
+  background: rgba(118,118,128,.16) !important;
+  transform: none !important;
+}
+
+.auth-code-digit,
+.cafeops-pin-key,
+.pin-key {
+  border-radius: 14px !important;
+  border-color: var(--line) !important;
+  background: rgba(255,255,255,.72) !important;
+  color: var(--ink) !important;
+  box-shadow: none !important;
+}
+.auth-code-digit:focus {
+  border-color: rgba(0,122,255,.48) !important;
+  box-shadow: 0 0 0 4px rgba(0,122,255,.16) !important;
+}
+.cafeops-pin-key:active,
+.pin-key:active {
+  background: rgba(118,118,128,.18) !important;
+  transform: scale(.97) !important;
+}
+
+.auth-error {
+  background: rgba(255,59,48,.09) !important;
+  border-color: rgba(255,59,48,.22) !important;
+  color: #b42318 !important;
+  border-radius: 12px !important;
+}
+.auth-status,
+.cafeops-status-panel {
+  border-radius: 14px !important;
+}
+
+.auth-modal-overlay {
+  background: rgba(0,0,0,.24) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+}
+.auth-modal,
+.cafeops-modal,
+.cafeops-menu,
+.cafeops-toast {
+  background: rgba(255,255,255,.88) !important;
+  border: 1px solid rgba(60,60,67,.16) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 24px 68px rgba(0,0,0,.18) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+}
+
+.cafeops-context-bar {
+  background: rgba(245,245,247,.78) !important;
+  border-bottom: 1px solid var(--line) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  backdrop-filter: saturate(180%) blur(22px);
+}
+.cafeops-context-operator {
+  background: rgba(118,118,128,.10) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.cafeops-context-operator:hover {
+  border-color: transparent !important;
+  background: rgba(118,118,128,.16) !important;
+  transform: none !important;
+}
+.cafeops-context-avatar {
+  background: linear-gradient(145deg, #2c2c2e, #111113) !important;
+  color: #fff !important;
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 4px rgba(0,122,255,.18) !important;
+}
+
+@media (max-width: 600px) {
+  .auth-page {
+    padding: 10px !important;
+  }
+  #cafeOpsRoot .auth-card,
+  .auth-card {
+    padding: 30px 20px 26px !important;
+    border-radius: 22px !important;
+  }
+  .auth-brand {
+    margin-bottom: 24px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
