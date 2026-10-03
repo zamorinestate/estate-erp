@@ -2491,3 +2491,58 @@ html.dark,
     padding: 14px !important;
   }
 }
+
+
+/* Calendar and date-control refinement */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
+input[type="month"] {
+  accent-color: var(--apple-blue);
+  color-scheme: light;
+}
+html.dark input[type="date"],
+html.dark input[type="datetime-local"],
+html.dark input[type="time"],
+html.dark input[type="month"],
+[data-theme="midnight"] input[type="date"],
+[data-theme="midnight"] input[type="datetime-local"],
+[data-theme="midnight"] input[type="time"],
+[data-theme="midnight"] input[type="month"],
+[data-theme="noir"] input[type="date"],
+[data-theme="noir"] input[type="datetime-local"],
+[data-theme="noir"] input[type="time"],
+[data-theme="noir"] input[type="month"] {
+  color-scheme: dark;
+}
+.staff-leave-root {
+  max-width: 1220px !important;
+  padding: 24px clamp(14px, 2.5vw, 30px) 52px !important;
+}
+.staff-leave-root .calendar-day-cell {
+  min-height: 58px !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  background: rgba(118,118,128,.07) !important;
+  transition:
+    background var(--motion-fast) var(--ease),
+    transform var(--motion-fast) var(--ease),
+    box-shadow var(--motion-fast) var(--ease) !important;
+}
+.staff-leave-root .calendar-day-cell:hover {
+  background: rgba(0,122,255,.09) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.05);
+}
+.staff-leave-root .calendar-day-cell:focus-visible {
+  box-shadow: var(--focus-ring) !important;
+}
+@media (max-width: 720px) {
+  .staff-leave-root {
+    padding: 20px 12px calc(32px + var(--sab)) !important;
+  }
+  .staff-leave-root .calendar-day-cell {
+    min-height: 52px !important;
+    padding: 8px 2px !important;
+  }
+}
