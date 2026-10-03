@@ -1713,6 +1713,7 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
 
   const vendorSelect = document.getElementById('modal-order-vendor');
   const cafeSelect = document.getElementById('modal-order-cafe');
+  let lastValidCafeId = defaultCafeId;
 
   vendorSelect?.addEventListener('change', () => {
     const vendorId = vendorSelect.value;
@@ -1748,7 +1749,7 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
 
       if (!nextCatalogue.length) {
         showToast('No approved procurement items are available for that café.', 'coral');
-        cafeSelect.value = defaultCafeId;
+        cafeSelect.value = lastValidCafeId;
         return;
       }
 
@@ -1762,7 +1763,7 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
       const nextVendors = allActiveVendors.filter((vendor) => nextVendorIds.has(vendor.vendorId));
       if (!nextVendors.length) {
         showToast('No active vendor is approved for that café catalogue.', 'coral');
-        cafeSelect.value = defaultCafeId;
+        cafeSelect.value = lastValidCafeId;
         return;
       }
 
@@ -1777,15 +1778,16 @@ export async function openPlaceOrderRequestModal(root, preselectedSku = null, pr
       const firstItem = serverCatalogue.find((item) => Boolean(getVendorOffer(item, nextVendorId)));
       if (!firstItem) {
         showToast('No approved item/vendor mapping is available for that café.', 'coral');
-        cafeSelect.value = defaultCafeId;
+        cafeSelect.value = lastValidCafeId;
         return;
       }
 
       orderItems = [normalizeCatalogueItem(firstItem, nextVendorId)];
+      lastValidCafeId = cafeId;
       renderItemsTable();
     } catch (error) {
       showToast(`Unable to refresh the café catalogue: ${error.message}`, 'coral');
-      cafeSelect.value = defaultCafeId;
+      cafeSelect.value = lastValidCafeId;
     }
   });
 
