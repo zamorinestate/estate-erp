@@ -47,3 +47,21 @@ test('procurement order submission revalidates catalogue authority immediately b
   assert.match(submission, /unitPricePaisa:\s*Number\(/);
   assert.match(submission, /baseUnit:\s*offer\.uom \|\| item\.baseUnit/);
 });
+
+test('procurement order modal enforces vendor compatibility, cafe context fallback, and MOQ', () => {
+  const modal = getOrderModalSource();
+
+  // Vendor switching updates compatible items
+  assert.match(modal, /vendorSelect\?\.addEventListener\('change'/);
+  assert.match(modal, /getVendorOffer\(item, vendorId\)/);
+
+  // Cafe switching refreshes catalogue and falls back to lastValidCafeId on failure
+  assert.match(modal, /cafeSelect\?\.addEventListener\('change'/);
+  assert.match(modal, /lastValidCafeId\s*=\s*defaultCafeId/);
+  assert.match(modal, /cafeSelect\.value\s*=\s*lastValidCafeId/);
+
+  // MOQ check prevents invalid submission
+  assert.match(modal, /orderedQuantityBase\s*<\s*minimumOrderQuantity/);
+  assert.match(modal, /requires a minimum order quantity of/);
+});
+
