@@ -3233,3 +3233,363 @@ button[aria-busy="true"],
     width: 100%;
   }
 }
+
+
+/* ==========================================================================
+   APPLE APPEARANCE & CONTEXTUAL CONTROLS V2
+   Unified light/dark themes, menus, listboxes, popovers and modal controls.
+   ========================================================================== */
+
+/* Explicit light variants keep the application in a real light color-scheme
+   even after a previous dark session. */
+[data-theme="paper"],
+[data-theme="pearl"] {
+  color-scheme: light;
+}
+[data-theme="paper"] {
+  --paper: #f5f5f7;
+  --surface: rgba(255,255,255,.92);
+  --surface-raised: #ffffff;
+  --surface-sunken: #f2f2f7;
+  --surface-hover: #e9e9ee;
+  --ink: #1d1d1f;
+  --muted: #636366;
+  --muted-2: #8e8e93;
+  --line: rgba(60,60,67,.16);
+  --line-strong: rgba(60,60,67,.28);
+}
+[data-theme="pearl"] {
+  --paper: #f6f4ef;
+  --surface: rgba(255,254,250,.94);
+  --surface-raised: #fffefa;
+  --surface-sunken: #efede8;
+  --surface-hover: #e8e5df;
+  --ink: #222224;
+  --muted: #69686b;
+  --muted-2: #8e8c90;
+  --line: rgba(70,68,64,.15);
+  --line-strong: rgba(70,68,64,.27);
+}
+
+/* Keep the existing Apple-dark treatment and give Noir a subtly deeper OLED
+   surface without changing interaction semantics. */
+[data-theme="noir"] {
+  --paper: #000000;
+  --surface: rgba(18,18,20,.92);
+  --surface-raised: #121214;
+  --surface-sunken: #1c1c1e;
+  --surface-hover: #2c2c2e;
+}
+
+/* Appearance chooser */
+.theme-popover {
+  width: min(360px, calc(100vw - 24px)) !important;
+  padding: 8px !important;
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent) !important;
+}
+.theme-popover .popover-head {
+  padding: 8px 10px 10px !important;
+}
+.theme-popover .popover-head h4 {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: -.01em;
+  color: var(--ink) !important;
+}
+.theme-options {
+  display: grid !important;
+  gap: 4px !important;
+}
+.theme-opt-btn {
+  position: relative;
+  display: grid !important;
+  grid-template-columns: 30px minmax(0,1fr) 22px;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 10px !important;
+  text-align: left !important;
+  color: var(--ink) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+  transition:
+    background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease),
+    transform var(--motion-fast) var(--ease) !important;
+}
+.theme-opt-btn:hover {
+  background: rgba(118,118,128,.10) !important;
+}
+.theme-opt-btn:active {
+  transform: scale(.992);
+}
+.theme-opt-btn.selected {
+  background: rgba(0,122,255,.10) !important;
+  border-color: rgba(0,122,255,.20) !important;
+}
+.theme-color-dot {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 9px !important;
+  box-shadow: inset 0 0 0 1px rgba(60,60,67,.16), 0 1px 3px rgba(0,0,0,.08);
+}
+.theme-swatch-light { background: linear-gradient(145deg,#fff 0%,#f2f2f7 100%) !important; }
+.theme-swatch-soft-light { background: linear-gradient(145deg,#fffefa 0%,#ece8df 100%) !important; }
+.theme-swatch-dark { background: linear-gradient(145deg,#3a3a3c 0%,#1c1c1e 60%,#000 100%) !important; }
+.theme-swatch-deep-dark { background: linear-gradient(145deg,#1c1c1e 0%,#000 75%) !important; }
+.theme-text {
+  min-width: 0;
+  display: flex !important;
+  flex-direction: column;
+  gap: 2px;
+}
+.theme-text strong {
+  color: var(--ink) !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+}
+.theme-text > span {
+  color: var(--muted) !important;
+  font-size: 11.5px !important;
+  line-height: 1.3;
+}
+.theme-check {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: transparent;
+  font-size: 12px;
+  font-weight: 800;
+}
+.theme-opt-btn.selected .theme-check {
+  color: #fff;
+  background: var(--apple-blue);
+}
+
+/* Canonical Apple popover/menu surface. */
+.popover,
+.search-results-dropdown,
+.search-results,
+.cafeops-menu,
+.mega-menu-dropdown,
+.zamorin-select-menu,
+.zamorin-calendar-popup,
+.dropdown-menu,
+[role="menu"].dropdown,
+[role="listbox"].dropdown {
+  color: var(--ink) !important;
+  background: color-mix(in srgb, var(--surface-raised) 90%, transparent) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 18px 50px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.07) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(26px) !important;
+  backdrop-filter: saturate(180%) blur(26px) !important;
+}
+
+/* Context-menu/listbox rows */
+.popover-menu-item,
+.search-item,
+.search-result,
+.cafeops-menu-item,
+.zamorin-select-option,
+.dropdown-item,
+[role="option"],
+[role="menuitem"] {
+  color: var(--ink) !important;
+  border-radius: 10px !important;
+  transition:
+    background var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease) !important;
+}
+.popover-menu-item:hover,
+.popover-menu-item:focus-visible,
+.search-item:hover,
+.search-item:focus-visible,
+.search-result:hover,
+.search-result:focus-visible,
+.cafeops-menu-item:hover,
+.cafeops-menu-item:focus-visible,
+.zamorin-select-option:hover,
+.zamorin-select-option.highlighted,
+.dropdown-item:hover,
+[role="option"]:hover,
+[role="option"].highlighted,
+[role="menuitem"]:hover {
+  background: rgba(118,118,128,.12) !important;
+}
+.zamorin-select-option.selected,
+[role="option"][aria-selected="true"] {
+  background: rgba(0,122,255,.11) !important;
+  color: var(--apple-blue) !important;
+  font-weight: 650 !important;
+}
+.zamorin-select-option.selected::after,
+[role="option"][aria-selected="true"]::after {
+  content: "✓";
+  margin-left: auto;
+  color: var(--apple-blue);
+  font-weight: 800;
+}
+
+/* Custom select trigger */
+.zamorin-select-trigger {
+  min-height: 38px !important;
+  padding: 7px 11px !important;
+  color: var(--ink) !important;
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,.02) !important;
+}
+.zamorin-select-trigger:hover {
+  border-color: var(--line-strong) !important;
+}
+.zamorin-select-trigger:focus-visible,
+.zamorin-select-wrap.open .zamorin-select-trigger {
+  border-color: var(--apple-blue) !important;
+  box-shadow: var(--focus-ring) !important;
+  outline: none !important;
+}
+.zamorin-select-menu {
+  top: calc(100% + 6px) !important;
+  padding: 5px !important;
+  max-height: 320px !important;
+}
+.zamorin-select-option {
+  min-height: 34px;
+  padding: 7px 10px !important;
+}
+
+/* Native selects cannot fully replace the OS-owned menu on every platform,
+   but the field and available option styling now match the Apple surface. */
+select,
+.select,
+.select-scope,
+.filter-select,
+.occ-select,
+.datatable-selector,
+.dataTable-selector {
+  color: var(--ink) !important;
+  background-color: var(--surface-raised) !important;
+  border-color: var(--line) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+}
+select:hover,
+.select:hover,
+.select-scope:hover,
+.filter-select:hover,
+.occ-select:hover {
+  border-color: var(--line-strong) !important;
+}
+select:focus,
+.select:focus,
+.select-scope:focus,
+.filter-select:focus,
+.occ-select:focus,
+.datatable-selector:focus,
+.dataTable-selector:focus {
+  border-color: var(--apple-blue) !important;
+  box-shadow: var(--focus-ring) !important;
+  outline: none !important;
+}
+select option,
+select optgroup {
+  color: var(--ink);
+  background: var(--surface-raised);
+}
+
+/* Popover sections and profile/notification menus */
+.popover-head,
+.notif-popover-head,
+.popover-foot {
+  color: var(--ink) !important;
+  background: transparent !important;
+  border-color: var(--line) !important;
+}
+.popover-divider {
+  border-color: var(--line) !important;
+}
+.popover-menu-item.logout {
+  color: var(--apple-red) !important;
+}
+.popover-menu-item.logout:hover {
+  background: rgba(255,59,48,.10) !important;
+}
+
+/* Modal dropdowns and sheets inherit the same surface rather than legacy
+   bronze/indigo controls. */
+.modal-card select,
+.modal-window select,
+.occ-modal-card select,
+.light-modal-content select,
+.settings-section-card select,
+#upload-doc-modal select {
+  background-color: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+}
+.modal-card select:focus,
+.modal-window select:focus,
+.occ-modal-card select:focus,
+.light-modal-content select:focus,
+.settings-section-card select:focus {
+  border-color: var(--apple-blue) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+
+/* Appearance cards in Settings */
+.settings-section-card [data-theme-btn] {
+  background: var(--surface-sunken) !important;
+  border-color: var(--line) !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+.settings-section-card [data-theme-btn]:hover {
+  background: var(--surface-hover) !important;
+  border-color: var(--line-strong) !important;
+}
+.settings-section-card [data-theme-btn].selected {
+  background: rgba(0,122,255,.09) !important;
+  border-color: rgba(0,122,255,.32) !important;
+  box-shadow: 0 0 0 1px rgba(0,122,255,.06) !important;
+}
+
+/* Open-state animation remains subtle and respects reduced motion below. */
+.popover.open,
+.zamorin-select-wrap.open .zamorin-select-menu {
+  animation: apple-context-enter var(--motion-standard) var(--ease-enter);
+  transform-origin: top right;
+}
+@keyframes apple-context-enter {
+  from { opacity: 0; transform: translateY(-5px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .popover.open,
+  .zamorin-select-wrap.open .zamorin-select-menu {
+    animation: none !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .theme-popover,
+  .notif-popover,
+  .profile-popover {
+    width: min(100% - 20px, 420px) !important;
+    left: 10px !important;
+    right: 10px !important;
+    max-width: none !important;
+  }
+  .theme-opt-btn {
+    min-height: 62px;
+  }
+}

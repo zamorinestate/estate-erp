@@ -196,6 +196,109 @@ async function inspectInternalRoute(page, target, viewport) {
   }, target.selector || "");
 }
 
+async function verifyAppearanceControls(page) {
+  await page.setViewport({ width: 1280, height: 820, deviceScaleFactor: 1, isMobile: false, hasTouch: false });
+  await page.goto(`http://127.0.0.1:${PORT}/?role=master#dashboard`, {
+    waitUntil: "domcontentloaded",
+    timeout: 15000,
+  });
+
+  await page.waitForSelector("#theme-btn", { timeout: 10000 });
+  await page.waitForSelector("#profile-avatar-btn", { timeout: 10000 });
+  await page.waitForSelector("#notif-bell-btn", { timeout: 10000 });
+
+  // Start from canonical Apple Light, then exercise the actual theme UI.
+  await page.evaluate(() => {
+    localStorage.setItem("zamorin-theme", "paper");
+    localStorage.setItem("color-theme", "light");
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("#theme-btn", { timeout: 10000 });
+
+  await page.click("#theme-btn");
+  await page.waitForSelector("#themePopover.open", { timeout: 5000 });
+
+  const lightOpen = await page.evaluate(() => {
+    const pop = document.querySelector("#themePopover");
+    const selected = pop?.querySelector('[data-theme-choice="paper"]');
+    const rect = pop?.getBoundingClientRect();
+    const style = pop ? getComputedStyle(pop) : null;
+    return {
+      selected: selected?.classList.contains("selected") || false,
+      checked: selected?.getAttribute("aria-checked") === "true",
+      radius: style?.borderRadius || "",
+      background: style?.backgroundColor || "",
+      withinViewport: Boolean(rect) && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+    };
+  });
+
+  await page.click('#themePopover [data-theme-choice="midnight"]');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "midnight");
+
+  const darkState = await page.evaluate(() => ({
+    theme: document.documentElement.dataset.theme,
+    darkClass: document.documentElement.classList.contains("dark"),
+    storedTheme: localStorage.getItem("zamorin-theme"),
+    legacyTheme: localStorage.getItem("color-theme"),
+    colorScheme: getComputedStyle(document.documentElement).colorScheme,
+    popoverClosed: !document.querySelector("#themePopover")?.classList.contains("open"),
+  }));
+
+  await page.click("#theme-btn");
+  await page.waitForSelector("#themePopover.open", { timeout: 5000 });
+  const darkSelected = await page.evaluate(() => {
+    const selected = document.querySelector('#themePopover [data-theme-choice="midnight"]');
+    return {
+      selected: selected?.classList.contains("selected") || false,
+      checked: selected?.getAttribute("aria-checked") === "true",
+    };
+  });
+
+  await page.click('#themePopover [data-theme-choice="paper"]');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "paper");
+
+  const lightState = await page.evaluate(() => ({
+    theme: document.documentElement.dataset.theme,
+    darkClass: document.documentElement.classList.contains("dark"),
+    storedTheme: localStorage.getItem("zamorin-theme"),
+    legacyTheme: localStorage.getItem("color-theme"),
+    colorScheme: getComputedStyle(document.documentElement).colorScheme,
+  }));
+
+  // Verify the other topbar contextual surfaces use the same Apple material.
+  await page.click("#profile-avatar-btn");
+  await page.waitForSelector("#profilePopover.open", { timeout: 5000 });
+  const profileSurface = await page.evaluate(() => {
+    const pop = document.querySelector("#profilePopover");
+    const style = pop ? getComputedStyle(pop) : null;
+    const rect = pop?.getBoundingClientRect();
+    return {
+      open: pop?.classList.contains("open") || false,
+      radius: style?.borderRadius || "",
+      withinViewport: Boolean(rect) && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+    };
+  });
+
+  await page.click("#notif-bell-btn");
+  await page.waitForSelector("#notifPopover.open", { timeout: 5000 });
+  const notifSurface = await page.evaluate(() => {
+    const pop = document.querySelector("#notifPopover");
+    const style = pop ? getComputedStyle(pop) : null;
+    const rect = pop?.getBoundingClientRect();
+    const cafeSelect = document.querySelector("#global-cafe-selector");
+    const selectStyle = cafeSelect ? getComputedStyle(cafeSelect) : null;
+    return {
+      open: pop?.classList.contains("open") || false,
+      radius: style?.borderRadius || "",
+      withinViewport: Boolean(rect) && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+      nativeSelectRadius: selectStyle?.borderRadius || "",
+      nativeSelectBackground: selectStyle?.backgroundColor || "",
+    };
+  });
+
+  return { lightOpen, darkState, darkSelected, lightState, profileSurface, notifSurface };
+}
+
 async function verifyDarkAppearance(page) {
   await page.setViewport({ width: 1024, height: 768, deviceScaleFactor: 1 });
   await page.goto(`http://127.0.0.1:${PORT}/#login2`, {
@@ -299,6 +402,24 @@ async function main() {
         failures += report(`${shellProfile.name}: ${target.name} page has no global horizontal overflow`, mounted.overflowX <= 2, `${mounted.overflowX}px`) ? 0 : 1;
       }
     }
+
+    console.log("\n--- Appearance & Contextual Controls ---");
+    const appearance = await verifyAppearanceControls(page);
+    failures += report("Apple Light option is selected and accessible", appearance.lightOpen.selected && appearance.lightOpen.checked) ? 0 : 1;
+    failures += report("Theme popover uses Apple rounded material", appearance.lightOpen.radius !== "0px" && appearance.lightOpen.withinViewport, appearance.lightOpen.radius) ? 0 : 1;
+    failures += report("Apple Dark selection updates data-theme", appearance.darkState.theme === "midnight", appearance.darkState.theme) ? 0 : 1;
+    failures += report("Apple Dark selection synchronizes html.dark", appearance.darkState.darkClass) ? 0 : 1;
+    failures += report("Apple Dark persists canonical storage", appearance.darkState.storedTheme === "midnight", appearance.darkState.storedTheme) ? 0 : 1;
+    failures += report("Apple Dark synchronizes legacy storage", appearance.darkState.legacyTheme === "dark", appearance.darkState.legacyTheme) ? 0 : 1;
+    failures += report("Apple Dark switches browser color scheme", appearance.darkState.colorScheme.includes("dark"), appearance.darkState.colorScheme) ? 0 : 1;
+    failures += report("Theme popover closes after selection", appearance.darkState.popoverClosed) ? 0 : 1;
+    failures += report("Selected dark choice keeps selected/check state", appearance.darkSelected.selected && appearance.darkSelected.checked) ? 0 : 1;
+    failures += report("Apple Light restores canonical state", appearance.lightState.theme === "paper" && !appearance.lightState.darkClass) ? 0 : 1;
+    failures += report("Apple Light persists both storage keys", appearance.lightState.storedTheme === "paper" && appearance.lightState.legacyTheme === "light") ? 0 : 1;
+    failures += report("Apple Light restores light browser color scheme", appearance.lightState.colorScheme.includes("light"), appearance.lightState.colorScheme) ? 0 : 1;
+    failures += report("Profile popover opens inside viewport", appearance.profileSurface.open && appearance.profileSurface.withinViewport) ? 0 : 1;
+    failures += report("Notification popover opens inside viewport", appearance.notifSurface.open && appearance.notifSurface.withinViewport) ? 0 : 1;
+    failures += report("Native café dropdown uses rounded Apple control", appearance.notifSurface.nativeSelectRadius !== "0px", appearance.notifSurface.nativeSelectRadius) ? 0 : 1;
 
     console.log("\n--- Dark Appearance ---");
     const dark = await verifyDarkAppearance(page);

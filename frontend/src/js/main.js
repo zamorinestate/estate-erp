@@ -16,7 +16,7 @@
 //   4. Development step-up auto-approval is restricted to localhost only.
 // =============================================================================
 
-import { state, setState } from "./state.js";
+import { state, setState, applyTheme, toggleTheme, isDarkTheme } from "./state.js";
 import { NAVIGATION, ROLES, isRouteAllowed } from "./navigation.js";
 import {
   apiGet,
@@ -1187,10 +1187,9 @@ async function boot() {
   try {
     initLanguage();
 
-    document.documentElement.setAttribute(
-      "data-theme",
-      state.settings.theme || "paper"
-    );
+    // Apply one canonical appearance state before the first render. This keeps
+    // data-theme, html.dark, state, and both storage keys synchronized.
+    applyTheme(state.settings.theme || "paper", { persist: true, notify: false });
 
     document.documentElement.setAttribute(
       "data-font-size",
@@ -1554,48 +1553,40 @@ if (typeof window !== "undefined") {
 // FLOWBITE DARK MODE SWITCHER
 // =============================================================================
 export function initDarkModeSwitcher() {
-  var themeToggleDarkIcon = document.getElementById('theme-toggle-dark-icon');
-  var themeToggleLightIcon = document.getElementById('theme-toggle-light-icon');
+  const themeToggleDarkIcon = document.getElementById("theme-toggle-dark-icon");
+  const themeToggleLightIcon = document.getElementById("theme-toggle-light-icon");
+  const themeToggleBtn = document.getElementById("theme-toggle");
 
-  // Change the icons inside the button based on previous settings
-  if (themeToggleDarkIcon && themeToggleLightIcon) {
-    if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      themeToggleLightIcon.classList.remove('hidden');
-      themeToggleDarkIcon.classList.add('hidden');
-    } else {
-      themeToggleDarkIcon.classList.remove('hidden');
-      themeToggleLightIcon.classList.add('hidden');
-    }
-  }
+  const syncIcons = () => {
+    const dark = isDarkTheme(state.settings.theme);
+    if (themeToggleDarkIcon) themeToggleDarkIcon.classList.toggle("hidden", dark);
+    if (themeToggleLightIcon) themeToggleLightIcon.classList.toggle("hidden", !dark);
+    themeToggleBtn?.setAttribute("aria-pressed", dark ? "true" : "false");
+    themeToggleBtn?.setAttribute(
+      "title",
+      dark ? "Switch to Apple Light appearance" : "Switch to Apple Dark appearance"
+    );
+  };
 
-  var themeToggleBtn = document.getElementById('theme-toggle');
+  // Re-apply the canonical ERP preference here for legacy pages that still call
+  // the older Flowbite initializer after the application shell has mounted.
+  applyTheme(state.settings.theme || "paper", { persist: true, notify: false });
+  syncIcons();
+
   if (themeToggleBtn && !themeToggleBtn.dataset.flowbiteWired) {
     themeToggleBtn.dataset.flowbiteWired = "true";
-    themeToggleBtn.addEventListener('click', function() {
-      // toggle icons inside button
-      if (themeToggleDarkIcon) themeToggleDarkIcon.classList.toggle('hidden');
-      if (themeToggleLightIcon) themeToggleLightIcon.classList.toggle('hidden');
-
-      // if set via local storage previously
-      if (localStorage.getItem('color-theme')) {
-        if (localStorage.getItem('color-theme') === 'light') {
-          document.documentElement.classList.add('dark');
-          localStorage.setItem('color-theme', 'dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-          localStorage.setItem('color-theme', 'light');
-        }
-      // if NOT set via local storage previously
-      } else {
-        if (document.documentElement.classList.contains('dark')) {
-          document.documentElement.classList.remove('dark');
-          localStorage.setItem('color-theme', 'light');
-        } else {
-          document.documentElement.classList.add('dark');
-          localStorage.setItem('color-theme', 'dark');
-        }
-      }
+    themeToggleBtn.addEventListener("click", () => {
+      toggleTheme();
+      syncIcons();
+      window.dispatchEvent(new CustomEvent("zamorin:theme-changed", {
+        detail: { theme: state.settings.theme }
+      }));
     });
+  }
+
+  if (typeof window !== "undefined" && !window.__zamorinThemeIconListener) {
+    window.__zamorinThemeIconListener = true;
+    window.addEventListener("zamorin:theme-changed", syncIcons);
   }
 }
 

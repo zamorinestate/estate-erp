@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr" style="background-color: #0b1120 !important; background: #0b1120 !important; color-scheme: dark;">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="color-scheme" content="light dark" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Zamorin Cafe ERP</title>
-  <meta name="theme-color" content="#101a30" />
+  <meta name="theme-color" content="#f5f5f7" id="zamorin-theme-color" />
   <meta name="description" content="Zamorin Cafe ERP — secure multi-location café management system" />
   <link rel="icon" type="image/svg+xml" href="/src/assets/zamorin-app-icon-vector.svg" />
   <link rel="apple-touch-icon" href="/src/assets/zamorin-app-icon-1024.png" />
@@ -27,11 +27,27 @@
       }).catch(function() {});
     } catch (e) {}
 
-    // On page load or when changing themes, best to add inline in `head` to avoid FOUC
-    if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.classList.add('dark');
-    } else {
-        document.documentElement.classList.remove('dark');
+    // Apply the canonical appearance synchronously before first paint. The ERP
+    // theme key is authoritative; the old Flowbite key is maintained only for
+    // compatibility with legacy controls.
+    try {
+      var storedAppearance = (localStorage.getItem('zamorin-theme') || '').toLowerCase();
+      var allowedAppearances = ['paper', 'pearl', 'midnight', 'noir'];
+      if (!allowedAppearances.includes(storedAppearance)) {
+        storedAppearance = localStorage.getItem('color-theme') === 'dark' ? 'midnight' : 'paper';
+      }
+      var initialDark = storedAppearance === 'midnight' || storedAppearance === 'noir';
+      document.documentElement.dataset.theme = storedAppearance;
+      document.documentElement.classList.toggle('dark', initialDark);
+      document.documentElement.style.colorScheme = initialDark ? 'dark' : 'light';
+      localStorage.setItem('zamorin-theme', storedAppearance);
+      localStorage.setItem('color-theme', initialDark ? 'dark' : 'light');
+      var themeColorMeta = document.getElementById('zamorin-theme-color');
+      if (themeColorMeta) themeColorMeta.setAttribute('content', initialDark ? '#000000' : '#f5f5f7');
+    } catch (e) {
+      document.documentElement.dataset.theme = 'paper';
+      document.documentElement.classList.remove('dark');
+      document.documentElement.style.colorScheme = 'light';
     }
     // Unregister any active PWA service workers on localhost to ensure zero stale cache
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
@@ -46,26 +62,37 @@
     }
   </script>
 
-  <!-- Critical zero-latency dark base paint: First element in head to ensure dark canvas on byte 1 -->
+  <!-- Critical zero-latency appearance paint: respects the saved Apple light/dark choice. -->
   <style>
     :root {
-      color-scheme: dark;
+      color-scheme: light;
+      background: #f5f5f7;
+      color: #1d1d1f;
     }
-    :root, html, body {
-      background-color: #0b1120 !important;
-      background: #0b1120 !important;
-      color: #f8fafc;
+    html, body {
+      background-color: #f5f5f7 !important;
+      background: #f5f5f7 !important;
+      color: #1d1d1f;
       margin: 0;
       padding: 0;
       min-height: 100vh;
       min-height: 100dvh;
     }
-    html:has(#app.auth-screen),
-    body:has(#app.auth-screen),
-    body.auth-page {
-      background-color: #0b1120 !important;
-      background: #0b1120 !important;
-      color: #f8fafc;
+    html.dark,
+    html[data-theme="midnight"],
+    html[data-theme="noir"] {
+      color-scheme: dark;
+      background: #000000 !important;
+      color: #f5f5f7;
+    }
+    html.dark body,
+    html[data-theme="midnight"] body,
+    html[data-theme="noir"] body {
+      background-color: #000000 !important;
+      background: #000000 !important;
+      color: #f5f5f7;
+    }
+    html:has(#app.auth-screen) body {
       overflow: hidden;
     }
     #app.auth-screen {
@@ -1138,8 +1165,8 @@ body:has(#app.auth-screen) {
             });
           }
         }
-        var savedTheme = localStorage.getItem('zamorin-theme') || 'paper';
-        document.documentElement.dataset.theme = savedTheme;
+        // Theme state is already synchronized in the first-paint bootstrap above.
+        // Do not re-apply a partial theme here or it can desynchronize html.dark.
         var savedFontSize = localStorage.getItem('zamorin-font-size') || 'standard';
         document.documentElement.dataset.fontSize = savedFontSize;
       } catch (e) {}

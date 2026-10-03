@@ -4,7 +4,7 @@
 
 import { NAVIGATION, ROLES, getGroupedNavItems } from "./navigation.js";
 import { icon, flowbiteIcon } from "./icons.js";
-import { state, setState } from "./state.js";
+import { state, setState, setTheme } from "./state.js";
 import { navigate } from "./router.js";
 import { forRole, unreadCount, markRead, markAllRead, syncNotificationsFromServer } from "./notifications.js";
 import { apiGet, apiPost, clearAllAuthTokens, clearApiCacheAndInFlight } from "./apiClient.js";
@@ -387,7 +387,7 @@ function renderMegaMenuContent(role, isPrimary) {
    Topbar — Design System v2 Header with Persistent Cafe Context Bar
    ------------------------------------------------------------------------- */
 export function renderTopbar({ scopeChip } = {}) {
-  const currentTheme = document.documentElement.dataset.theme || "paper";
+  const currentTheme = state.settings?.theme || document.documentElement.dataset.theme || "paper";
   const user = state.auth?.user || state.user || {};
   const role = state.role || ROLES.MASTER;
   const initials = user.name
@@ -552,34 +552,38 @@ export function renderTopbar({ scopeChip } = {}) {
       <div class="popover-head">
         <h4>Appearance &amp; Themes</h4>
       </div>
-      <div class="theme-options">
-        <button class="theme-opt-btn ${currentTheme === "paper" ? "selected" : ""}" data-theme-choice="paper">
-          <span class="theme-color-dot" style="background:#faf9f5;border:1px solid #d7d0bd;"></span>
+      <div class="theme-options" role="radiogroup" aria-label="Application appearance">
+        <button class="theme-opt-btn ${currentTheme === "paper" ? "selected" : ""}" data-theme-choice="paper" role="radio" aria-checked="${currentTheme === "paper"}">
+          <span class="theme-color-dot theme-swatch-light"></span>
           <span class="theme-text">
-            <strong>Paper (Default)</strong>
-            <span>Warm porcelain light theme</span>
+            <strong>Apple Light</strong>
+            <span>Clean white and soft system-gray surfaces</span>
           </span>
+          <span class="theme-check" aria-hidden="true">✓</span>
         </button>
-        <button class="theme-opt-btn ${currentTheme === "pearl" ? "selected" : ""}" data-theme-choice="pearl">
-          <span class="theme-color-dot" style="background:#f7f0e2;border:1px solid #c99a5c;"></span>
+        <button class="theme-opt-btn ${currentTheme === "pearl" ? "selected" : ""}" data-theme-choice="pearl" role="radio" aria-checked="${currentTheme === "pearl"}">
+          <span class="theme-color-dot theme-swatch-soft-light"></span>
           <span class="theme-text">
-            <strong>Pearl</strong>
-            <span>Warm parchment roastery light</span>
+            <strong>Soft Light</strong>
+            <span>Warmer light appearance with Apple controls</span>
           </span>
+          <span class="theme-check" aria-hidden="true">✓</span>
         </button>
-        <button class="theme-opt-btn ${currentTheme === "midnight" ? "selected" : ""}" data-theme-choice="midnight">
-          <span class="theme-color-dot" style="background:#0e1729;border:1px solid #b17d38;"></span>
+        <button class="theme-opt-btn ${currentTheme === "midnight" ? "selected" : ""}" data-theme-choice="midnight" role="radio" aria-checked="${currentTheme === "midnight"}">
+          <span class="theme-color-dot theme-swatch-dark"></span>
           <span class="theme-text">
-            <strong>Midnight</strong>
-            <span>Zamorin Navy brand dark mode</span>
+            <strong>Apple Dark</strong>
+            <span>Dark system surfaces with the current Apple feel</span>
           </span>
+          <span class="theme-check" aria-hidden="true">✓</span>
         </button>
-        <button class="theme-opt-btn ${currentTheme === "noir" ? "selected" : ""}" data-theme-choice="noir">
-          <span class="theme-color-dot" style="background:#0a0c10;border:1px solid #445064;"></span>
+        <button class="theme-opt-btn ${currentTheme === "noir" ? "selected" : ""}" data-theme-choice="noir" role="radio" aria-checked="${currentTheme === "noir"}">
+          <span class="theme-color-dot theme-swatch-deep-dark"></span>
           <span class="theme-text">
-            <strong>Noir</strong>
-            <span>Charcoal high-contrast dark</span>
+            <strong>Deep Dark</strong>
+            <span>High-contrast near-black appearance</span>
           </span>
+          <span class="theme-check" aria-hidden="true">✓</span>
         </button>
       </div>
     </div>
@@ -953,16 +957,35 @@ export function wireBell(root) {
     themePop.querySelectorAll("[data-theme-choice]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        const theme = btn.dataset.themeChoice;
-        document.documentElement.dataset.theme = theme;
-        localStorage.setItem("zamorin-theme", theme);
-        themePop.querySelectorAll("[data-theme-choice]").forEach((b) => b.classList.remove("selected"));
-        btn.classList.add("selected");
+        const theme = setTheme(btn.dataset.themeChoice);
+        themePop.querySelectorAll("[data-theme-choice]").forEach((choice) => {
+          const selected = choice.dataset.themeChoice === theme;
+          choice.classList.toggle("selected", selected);
+          choice.setAttribute("aria-checked", selected ? "true" : "false");
+        });
         themePop.style.display = "none";
         themePop.classList.remove("open");
-        showToast(`Theme updated to ${theme.toUpperCase()}`);
+        window.dispatchEvent(new CustomEvent("zamorin:theme-changed", {
+          detail: { theme }
+        }));
+        const label = btn.querySelector("strong")?.textContent?.trim() || theme;
+        showToast(`Appearance changed to ${label}`);
       });
     });
+
+    const syncThemeChoices = (event) => {
+      if (!themePop.isConnected) {
+        window.removeEventListener("zamorin:theme-changed", syncThemeChoices);
+        return;
+      }
+      const activeTheme = event?.detail?.theme || state.settings?.theme || "paper";
+      themePop.querySelectorAll("[data-theme-choice]").forEach((choice) => {
+        const selected = choice.dataset.themeChoice === activeTheme;
+        choice.classList.toggle("selected", selected);
+        choice.setAttribute("aria-checked", selected ? "true" : "false");
+      });
+    };
+    window.addEventListener("zamorin:theme-changed", syncThemeChoices);
   }
 
   // Notification Bell
