@@ -1694,10 +1694,27 @@ html.dark #app.auth-screen .l2-error-banner {
 
 @media (max-width: 480px) {
   .topbar-left {
-    max-width: 36%;
+    max-width: 40%;
+  }
+  .cafe-scope-context,
+  .vendor-scope-context {
+    max-width: 116px !important;
+    padding: 3px 7px !important;
+    font-size: 11px !important;
+    gap: 3px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .cafe-scope-context span:last-child {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    display: inline-block !important;
+    max-width: 86px !important;
   }
   #global-cafe-selector {
-    max-width: 105px !important;
+    max-width: 110px !important;
     padding-left: 8px !important;
     padding-right: 20px !important;
   }
@@ -1708,6 +1725,32 @@ html.dark #app.auth-screen .l2-error-banner {
     color: transparent !important;
   }
 }
+
+@media (max-width: 360px) {
+  .topbar-right {
+    gap: 3px !important;
+  }
+  .topbar-action-btn,
+  .topbar-user-chip,
+  .profile-avatar-btn {
+    width: 30px !important;
+    height: 30px !important;
+  }
+  .cafe-scope-context,
+  .vendor-scope-context {
+    max-width: 78px !important;
+    padding: 2px 5px !important;
+    font-size: 10px !important;
+  }
+  .cafe-scope-context span:last-child {
+    max-width: 52px !important;
+  }
+  #global-cafe-selector {
+    max-width: 84px !important;
+    font-size: 11px !important;
+  }
+}
+
 
 
 /* ==========================================================================
