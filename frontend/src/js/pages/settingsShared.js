@@ -21,7 +21,7 @@
 //      network/session errors with retry actions.
 // =============================================================================
 
-import { state, setState, setSettings } from "../state.js";
+import { state, setState, setSettings, setTheme } from "../state.js";
 import { ROLES } from "../navigation.js";
 import { navigate } from "../router.js";
 import { showToast, confirmAction, renderCafeContextStrip } from "../components.js";
@@ -61,10 +61,10 @@ const ALL_LANGUAGES = [
 ];
 
 const THEMES = [
-  { code: "paper",    label: "Paper",    desc: "Warm porcelain light (Default)", swatch: "#f8f6f0", border: "#d4af37" },
-  { code: "pearl",    label: "Pearl",    desc: "Parchment roastery tone",       swatch: "#ede7de", border: "#c9933e" },
-  { code: "midnight", label: "Midnight", desc: "Zamorin Navy deep dark",        swatch: "#0f172a", border: "#38bdf8" },
-  { code: "noir",     label: "Noir",     desc: "High contrast charcoal obsidian", swatch: "#05070a", border: "#e2e8f0" },
+  { code: "paper",    label: "Apple Light", desc: "Clean white and soft system-gray surfaces", swatch: "#f5f5f7", border: "#d1d1d6" },
+  { code: "pearl",    label: "Soft Light",  desc: "Warm light appearance with Apple controls", swatch: "#f7f5f0", border: "#d8d2c8" },
+  { code: "midnight", label: "Apple Dark",  desc: "Dark system surfaces with the current Apple feel", swatch: "#1c1c1e", border: "#48484a" },
+  { code: "noir",     label: "Deep Dark",   desc: "High-contrast near-black appearance", swatch: "#000000", border: "#636366" },
 ];
 
 const FONT_SIZES = [
@@ -178,7 +178,7 @@ export const SETTINGS_DESTINATIONS = {
     route: "settings/appearance",
     category: "PERSONAL PREFERENCES",
     icon: "🎨",
-    desc: "Personalise colour themes (Paper, Pearl, Midnight, Noir), font size & density.",
+    desc: "Personalise Apple Light, Soft Light, Apple Dark and Deep Dark appearances, font size & density.",
     keywords: "theme appearance color dark mode light mode font size density compact",
     permission: "all",
   },
@@ -1552,7 +1552,7 @@ function renderLanguage() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function renderAppearance() {
-  const currentTheme = document.documentElement.dataset.theme || localStorage.getItem("zamorin-theme") || "paper";
+  const currentTheme = state.settings?.theme || document.documentElement.dataset.theme || localStorage.getItem("zamorin-theme") || "paper";
   const currentFont = state.settings?.fontSize || localStorage.getItem("zamorin-font-size") || "standard";
   const currentDensity = state.settings?.density || "standard";
 
@@ -2725,11 +2725,13 @@ async function _wireDelegation(root) {
 function _wireAppearance(root) {
   root.querySelectorAll("[data-theme-btn]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const theme = btn.dataset.themeBtn;
-      document.documentElement.dataset.theme = theme;
-      localStorage.setItem("zamorin-theme", theme);
+      const theme = setTheme(btn.dataset.themeBtn);
+      window.dispatchEvent(new CustomEvent("zamorin:theme-changed", {
+        detail: { theme }
+      }));
       _rerenderInPlace(root);
-      showToast(`Theme changed to ${theme.toUpperCase()}`, "mint");
+      const label = THEMES.find((entry) => entry.code === theme)?.label || theme;
+      showToast(`Appearance changed to ${label}`, "mint");
     });
   });
 
@@ -2753,12 +2755,14 @@ function _wireAppearance(root) {
   });
 
   root.querySelector("#settings-appearance-reset")?.addEventListener("click", () => {
-    document.documentElement.dataset.theme = "paper";
-    localStorage.setItem("zamorin-theme", "paper");
+    const theme = setTheme("paper");
     localStorage.setItem("zamorin-font-size", "standard");
     setSettings({ fontSize: "standard", density: "standard" });
+    window.dispatchEvent(new CustomEvent("zamorin:theme-changed", {
+      detail: { theme }
+    }));
     _rerenderInPlace(root);
-    showToast("Appearance defaults restored (Paper theme).", "mint");
+    showToast("Appearance defaults restored (Apple Light).", "mint");
   });
 }
 
