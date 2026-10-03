@@ -1453,3 +1453,68 @@ html.dark .cafeops-context-bar,
     width: 160px !important;
   }
 }
+
+
+/* Apple auth dark appearance */
+html.dark #app.auth-screen .l2-bg-overlay {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(64,156,255,.12), transparent 32rem),
+    linear-gradient(to bottom, rgba(0,0,0,.18), rgba(0,0,0,.48)) !important;
+}
+html.dark #app.auth-screen .light-glass-container,
+html.dark #app.auth-screen .auth-shell-container {
+  background: rgba(28,28,30,.78) !important;
+  border-color: rgba(84,84,88,.52) !important;
+  color: #f5f5f7 !important;
+  box-shadow: 0 30px 80px rgba(0,0,0,.48) !important;
+}
+html.dark #app.auth-screen .login-header h2,
+html.dark #app.auth-screen .l2-cafe-banner > div:nth-child(2) {
+  color: #f5f5f7 !important;
+}
+html.dark #app.auth-screen .login-subtitle,
+html.dark #app.auth-screen .light-toggle-label,
+html.dark #app.auth-screen .auth-footer,
+html.dark #app.auth-screen .l2-cafe-banner > div:first-child,
+html.dark #app.auth-screen .l2-cafe-banner > div:nth-child(2) span,
+html.dark #app.auth-screen .l2-cafe-banner > div:nth-child(3) {
+  color: #aeaeb2 !important;
+}
+html.dark #app.auth-screen .l2-cafe-banner {
+  background: rgba(118,118,128,.16) !important;
+  border-color: rgba(84,84,88,.44) !important;
+}
+html.dark #app.auth-screen .light-input-group input,
+html.dark #app.auth-screen .l2-pin-box {
+  background: rgba(118,118,128,.18) !important;
+  color: #f5f5f7 !important;
+}
+html.dark #app.auth-screen .light-input-group input:focus,
+html.dark #app.auth-screen .l2-pin-box:focus {
+  background: rgba(58,58,60,.78) !important;
+}
+html.dark #app.auth-screen .light-input-icon {
+  color: #aeaeb2 !important;
+}
+html.dark #app.auth-screen .btn-pill-white,
+html.dark #app.auth-screen .btn-pill-translucent,
+html.dark #app.auth-screen .tc-trigger-btn {
+  color: #f5f5f7 !important;
+}
+html.dark #app.auth-screen .tc-trigger-row {
+  border-top-color: rgba(84,84,88,.42) !important;
+}
+html.dark #app.auth-screen .social-btn {
+  color: #f5f5f7 !important;
+  background: rgba(118,118,128,.16) !important;
+}
+html.dark #app.auth-screen .l2-notice-banner {
+  color: #78b9ff !important;
+  background: rgba(0,122,255,.13) !important;
+  border-color: rgba(64,156,255,.24) !important;
+}
+html.dark #app.auth-screen .l2-error-banner {
+  color: #ff6961 !important;
+  background: rgba(255,59,48,.13) !important;
+  border-color: rgba(255,105,97,.22) !important;
+}
