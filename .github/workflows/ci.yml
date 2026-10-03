@@ -46,6 +46,9 @@ jobs:
       - name: Verify Frontend Router Imports
         run: node frontend/verifyRouterImports.mjs
 
+      - name: Run Apple UI Responsive Smoke Gate
+        run: npm run test:apple-ui-smoke
+
       - name: Run Master System Verification Engine
         run: node scripts/master_system_verification.mjs
 

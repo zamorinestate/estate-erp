@@ -1287,6 +1287,9 @@ body:has(#app.auth-screen) {
     onload="this.media='all'"
   />
 
+  <!-- Final visual compatibility layer: must load after all vendor CSS. -->
+  <link rel="stylesheet" href="/src/styles/apple-design-system.css?v=1.0.0" />
+
   <!-- Flowbite JS: Interactive behaviors — dropdowns, modals, drawers, tooltips,
        popovers, tabs, accordions, datepicker, clipboard, toast, dismiss.
        Pure vanilla JS — zero Tailwind dependency. -->

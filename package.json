@@ -29,7 +29,8 @@
     "check:deploy-readiness": "node scripts/check_deploy_readiness.mjs",
     "scan:secrets": "node scripts/scan_secrets.mjs",
     "migrate:dry-run": "node scripts/migration_runner.mjs --dry-run",
-    "build": "echo \"Zamorin Cafe ERP uses zero-build Vanilla JS frontend and CommonJS backend. No compile step required.\""
+    "build": "echo \"Zamorin Cafe ERP uses zero-build Vanilla JS frontend and CommonJS backend. No compile step required.\"",
+    "test:apple-ui-smoke": "node scripts/verify_apple_ui_smoke.mjs"
   },
   "keywords": [
     "zamorin-cafe-erp",
