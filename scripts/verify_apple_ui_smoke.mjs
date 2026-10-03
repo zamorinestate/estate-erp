@@ -161,6 +161,41 @@ async function inspectCafeOpsLogin(page, profile) {
   });
 }
 
+async function inspectInternalRoute(page, target, viewport) {
+  await page.setViewport(viewport);
+  await page.goto(`http://127.0.0.1:${PORT}/?role=${encodeURIComponent(target.role)}${target.route}`, {
+    waitUntil: "domcontentloaded",
+    timeout: 15000,
+  });
+
+  await page.waitForSelector(".sidebar, #sidebar", { timeout: 10000 });
+  await page.waitForSelector("#page-content", { timeout: 10000 });
+  if (target.selector) {
+    await page.waitForSelector(target.selector, { timeout: 10000 });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  return page.evaluate((selector) => {
+    const styleLink = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+      .find((link) => String(link.getAttribute("href") || "").includes("/src/styles/apple-design-system.css"));
+    const shell = document.querySelector(".app-shell");
+    const topbar = document.querySelector(".topbar");
+    const sidebar = document.querySelector(".sidebar, #sidebar");
+    const pageContent = document.querySelector("#page-content");
+    const marker = selector ? document.querySelector(selector) : pageContent;
+    const rootStyle = getComputedStyle(document.documentElement);
+
+    return {
+      appleStylesheetLoaded: Boolean(styleLink?.sheet),
+      appleBlue: rootStyle.getPropertyValue("--apple-blue").trim(),
+      hasShell: Boolean(shell && topbar && sidebar && pageContent),
+      hasMarker: Boolean(marker),
+      overflowX: document.documentElement.scrollWidth - window.innerWidth,
+      contentOverflowX: pageContent ? pageContent.scrollWidth - pageContent.clientWidth : 0,
+    };
+  }, target.selector || "");
+}
+
 async function verifyDarkAppearance(page) {
   await page.setViewport({ width: 1024, height: 768, deviceScaleFactor: 1 });
   await page.goto(`http://127.0.0.1:${PORT}/#login2`, {
@@ -239,6 +274,30 @@ async function main() {
       failures += report(`${profile.name}: Café Operations Apple stylesheet loaded`, cafeOps.appleStylesheetLoaded) ? 0 : 1;
       failures += report(`${profile.name}: Café Operations no horizontal overflow`, cafeOps.overflowX <= 2, `${cafeOps.overflowX}px`) ? 0 : 1;
       failures += report(`${profile.name}: Café Operations card within viewport`, cafeOps.cardWithinViewport) ? 0 : 1;
+    }
+
+    const routeTargets = [
+      { name: "Primary Master Command Centre", role: "master", route: "#dashboard", selector: ".command-centre-wrap" },
+      { name: "Administration Cafés", role: "master", route: "#admin/cafes", selector: ".admin-page-wrap" },
+      { name: "Inventory", role: "master", route: "#inventory", selector: ".inventory-page" },
+      { name: "Reports & Analytics", role: "master", route: "#reports", selector: "#reports-analytics-container" },
+      { name: "Owner Command Centre", role: "owner", route: "#dashboard", selector: "#owner-command-centre" },
+      { name: "Employee Home", role: "staff", route: "#staff-home", selector: "#staff-dashboard-container" },
+      { name: "Café Operations Devices", role: "cafe_admin", route: "#cafe-ops-devices", selector: ".page-container" },
+    ];
+    const shellProfiles = [
+      { name: "Desktop 1440", viewport: { width: 1440, height: 900, deviceScaleFactor: 1, isMobile: false, hasTouch: false } },
+      { name: "Phone 390", viewport: { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true } },
+    ];
+
+    for (const shellProfile of shellProfiles) {
+      console.log(`\n--- Authenticated Shell: ${shellProfile.name} ---`);
+      for (const target of routeTargets) {
+        const mounted = await inspectInternalRoute(page, target, shellProfile.viewport);
+        failures += report(`${shellProfile.name}: ${target.name} shell mounted`, mounted.hasShell && mounted.hasMarker) ? 0 : 1;
+        failures += report(`${shellProfile.name}: ${target.name} Apple stylesheet active`, mounted.appleStylesheetLoaded && mounted.appleBlue.toLowerCase() === "#007aff", mounted.appleBlue) ? 0 : 1;
+        failures += report(`${shellProfile.name}: ${target.name} page has no global horizontal overflow`, mounted.overflowX <= 2, `${mounted.overflowX}px`) ? 0 : 1;
+      }
     }
 
     console.log("\n--- Dark Appearance ---");
