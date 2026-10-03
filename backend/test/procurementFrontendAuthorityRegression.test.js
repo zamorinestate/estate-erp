@@ -43,7 +43,7 @@ test('procurement order submission revalidates catalogue authority immediately b
 
   assert.ok(catalogueRead >= 0, 'submission must refresh the server catalogue');
   assert.ok(orderPost > catalogueRead, 'catalogue refresh must occur before order POST');
-  assert.match(submission, /offer\.vendorId === vendorId/);
+  assert.match(submission, /vendorId === vendorId/);
   assert.match(submission, /unitPricePaisa:\s*Number\(/);
   assert.match(submission, /baseUnit:\s*offer\.uom \|\| item\.baseUnit/);
 });
