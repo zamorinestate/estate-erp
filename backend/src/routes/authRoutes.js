@@ -134,7 +134,7 @@ const MFA_RATE_LIMIT_MESSAGE = Object.freeze({
 function createLoginIpRateLimiter(overrides = {}) {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: process.env.AUTH_RATE_LIMIT_IP_MAX ? Number(process.env.AUTH_RATE_LIMIT_IP_MAX) : 50,
+    limit: process.env.AUTH_RATE_LIMIT_IP_MAX ? Number(process.env.AUTH_RATE_LIMIT_IP_MAX) : 300,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => ipKeyGenerator(getTrustedClientIp(req)),
@@ -147,7 +147,7 @@ function createLoginIpRateLimiter(overrides = {}) {
 function createLoginAccountRateLimiter(overrides = {}) {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX ? Number(process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX) : 10,
+    limit: process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX ? Number(process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX) : 30,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => normalizeAccountKey(req, 'email'),
@@ -248,7 +248,7 @@ function createCafeOpsIpRateLimiter(overrides = {}) {
     windowMs: 15 * 60 * 1000,
     limit: process.env.AUTH_RATE_LIMIT_CAFE_OPS_IP_MAX
       ? Number(process.env.AUTH_RATE_LIMIT_CAFE_OPS_IP_MAX)
-      : 50,
+      : 300,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => ipKeyGenerator(getTrustedClientIp(req)),
@@ -264,7 +264,7 @@ function createCafeOpsAccountRateLimiter(overrides = {}) {
     windowMs: 15 * 60 * 1000,
     limit: process.env.AUTH_RATE_LIMIT_CAFE_OPS_ACCOUNT_MAX
       ? Number(process.env.AUTH_RATE_LIMIT_CAFE_OPS_ACCOUNT_MAX)
-      : 10,
+      : 30,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: (req) => normalizeCafeOpsAccountKey(req),

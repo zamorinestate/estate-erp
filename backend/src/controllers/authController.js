@@ -1079,6 +1079,7 @@ const requestPasswordReset = asyncHandler(
 
     const normalizedEmail = rawIdentifier.toLowerCase();
     const canonicalOrg = String(organisationId || '').trim().toUpperCase();
+    const canonicalId = String(rawIdentifier || '').trim().toUpperCase();
     const user = await User.findOne({
       $and: [
         {
