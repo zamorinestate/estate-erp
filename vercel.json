@@ -4,10 +4,6 @@
   "trailingSlash": false,
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "https://zamorin-cafe-erp-backend.onrender.com/api/$1"
-    },
-    {
       "src": "/sw.js",
       "dest": "/frontend/sw.js",
       "headers": {
