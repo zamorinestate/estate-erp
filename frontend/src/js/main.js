@@ -266,6 +266,21 @@ export function renderProductionFailClosedScreen() {
   `;
 }
 
+export function renderFrontendOnlyScreen() {
+  if (typeof document === "undefined") return;
+  const appEl = document.getElementById("app");
+  if (!appEl) return;
+  appEl.className = "auth-screen";
+  appEl.innerHTML = `
+    <main style="min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--paper,#f5f5f7);color:var(--ink,#1d1d1f);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <section style="width:min(560px,100%);padding:28px;border:1px solid var(--line,rgba(60,60,67,.16));border-radius:24px;background:var(--surface-raised,#fff);box-shadow:0 18px 50px rgba(0,0,0,.10);">
+        <h1 style="margin:0 0 10px;font-size:28px;">Frontend-only mode</h1>
+        <p style="margin:0;color:var(--muted,#636366);line-height:1.55;">Server-backed features are unavailable. Preserved data is not exposed to this frontend.</p>
+      </section>
+    </main>
+  `;
+}
+
 // =============================================================================
 // AUTHENTICATION HELPERS
 // =============================================================================
@@ -1195,6 +1210,11 @@ async function boot() {
       "data-font-size",
       state.settings.fontSize || "normal"
     );
+
+    if (!isLocalDevelopmentOrigin()) {
+      renderFrontendOnlyScreen();
+      return;
+    }
 
     // Permanently ensure no dev preview banner exists
     document.getElementById("zamorin-dev-preview-banner")?.remove();
