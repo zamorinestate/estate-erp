@@ -24,7 +24,7 @@ const server = http.createServer(async (req, res) => {
 
   // Reverse proxy /api/* requests to local backend with seamless cloud fallback
   if (parsedUrl.pathname.startsWith("/api/")) {
-    const primaryHost = process.env.BACKEND_URL || "http://127.0.0.1:4000";
+    const primaryHost = "";
     const cloudHost = "";
 
     try {
