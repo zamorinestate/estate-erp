@@ -15,16 +15,6 @@
     // App shell direction is fixed to LTR. Remove obsolete saved direction state.
     try { localStorage.removeItem('zamorin-dir'); } catch (e) {}
 
-    // Immediate non-blocking background wake-up ping for Render backend during cold starts
-    try {
-      fetch('https://zamorin-cafe-erp-backend.onrender.com/api/v1/health/live', {
-        method: 'GET',
-        cache: 'no-store',
-        credentials: 'omit',
-        mode: 'no-cors'
-      }).catch(function() {});
-    } catch (e) {}
-
     // Apply the canonical appearance synchronously before first paint. The ERP
     // theme key is authoritative; the old Flowbite key is maintained only for
     // compatibility with legacy controls.
