@@ -518,7 +518,7 @@ export function triggerBackendWarmup() {
     }).catch(() => {});
 
     // Also trigger direct Render backend wake-up to eliminate cold-start wait
-    fetch("https://zamorin-cafe-erp-backend.onrender.com/api/v1/health/live", {
+    fetch("/api/v1/health/live", {
       method: "GET",
       cache: "no-store",
       credentials: "omit",
