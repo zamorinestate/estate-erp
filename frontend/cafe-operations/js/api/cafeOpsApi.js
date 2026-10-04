@@ -37,6 +37,10 @@
   function clearSessionToken() { try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch (_) {} }
 
   async function apiRequest(path, { method, body, auth } = {}) {
+    const unavailable = new Error('Server-backed café operations are unavailable.');
+    unavailable.code = 'API_UNAVAILABLE';
+    unavailable.status = 410;
+    throw unavailable;
     const headers = { 'Content-Type': 'application/json' };
     if (auth !== 'none') {
       const deviceToken = getDeviceToken();

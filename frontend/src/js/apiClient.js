@@ -6,22 +6,9 @@
 
 import { state } from "./state.js";
 
-const VERCEL_API_BASE_URL = "https://zamorin-cafe-erp.vercel.app/api/v1";
-export const DIRECT_BACKEND_URL = "https://zamorin-cafe-erp-backend.onrender.com/api/v1";
-
-const DEFAULT_API_BASE_URL =
-  typeof globalThis.location !== "undefined" &&
-  (globalThis.location.hostname === "localhost" ||
-   globalThis.location.hostname === "127.0.0.1" ||
-   globalThis.location.hostname.startsWith("10.") ||
-   globalThis.location.hostname.startsWith("192.168.") ||
-   /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(globalThis.location.hostname) ||
-   globalThis.location.hostname.endsWith(".local") ||
-   globalThis.location.port === "3000" ||
-   globalThis.location.hostname.includes("vercel.app") ||
-   (globalThis.location.protocol && globalThis.location.protocol.startsWith("http")))
-    ? "/api/v1"
-    : VERCEL_API_BASE_URL;
+export const BACKEND_RUNTIME_AVAILABLE = false;
+export const DIRECT_BACKEND_URL = "";
+const DEFAULT_API_BASE_URL = "/api/v1";
 
 function normalizeApiBaseUrl(value) {
   const candidate =
@@ -306,6 +293,15 @@ export function getPolicyTTL(policy) {
  * Format: k:{orgId}::{userId}::{role}::{cafeId}::{deviceId}::{method}:{normalizedPath}
  */
 export function generateCacheKey(path, options = {}) {
+  if (!BACKEND_RUNTIME_AVAILABLE) {
+    throw new ApiClientError({
+      status: 410,
+      code: "API_UNAVAILABLE",
+      message: "Application server is unavailable.",
+      userMessage: "Server-backed features are currently unavailable."
+    });
+  }
+
   const normalizedPath = normalizeApiPath(path);
   const orgId = options.organisationId || state?.auth?.user?.organisationId || state?.user?.organisationId || "ORG_DEFAULT";
   const userId = options.userId || state?.auth?.user?.userId || state?.user?.userId || "ANON";

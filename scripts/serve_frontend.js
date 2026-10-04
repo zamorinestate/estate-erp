@@ -24,8 +24,8 @@ const server = http.createServer(async (req, res) => {
 
   // Reverse proxy /api/* requests to local backend with seamless cloud fallback
   if (parsedUrl.pathname.startsWith("/api/")) {
-    const primaryHost = process.env.BACKEND_URL || "http://127.0.0.1:4000";
-    const cloudHost = process.env.CLOUD_BACKEND_URL || "https://zamorin-cafe-erp-backend.onrender.com";
+    const primaryHost = "";
+    const cloudHost = "";
 
     try {
       const headers = { ...req.headers };

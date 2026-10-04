@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   backend-web:
-    name: Web & Backend Verification Suite
+    name: Frontend Verification Suite
     runs-on: ubuntu-latest
 
     steps:
@@ -28,33 +28,19 @@ jobs:
 
       - name: Install Root Dependencies
         run: npm ci
-
-      - name: Install Backend Dependencies
-        working-directory: ./backend
-        run: npm ci
-
-      - name: Verify Backend JavaScript Syntax
-        working-directory: ./backend
-        run: npm run check
-
       - name: Scan Repository for Committed Secrets
         run: node scripts/scan_secrets.mjs
-
-      - name: Run Canonical Regression Suite
-        run: npm test
-
       - name: Verify Frontend Router Imports
         run: node frontend/verifyRouterImports.mjs
 
       - name: Run Apple UI Responsive Smoke Gate
         run: npm run test:apple-ui-smoke
 
-      - name: Run Master System Verification Engine
-        run: node scripts/master_system_verification.mjs
+      - name: Verify Frontend Router Imports
+        run: node frontend/verifyRouterImports.mjs
 
-      - name: Run Deployment Readiness Check
-        run: node scripts/check_deploy_readiness.mjs
-
+      - name: Run Apple UI Responsive Smoke Gate
+        run: npm run test:apple-ui-smoke
   android:
     name: Android Native Client CI
     runs-on: ubuntu-latest
